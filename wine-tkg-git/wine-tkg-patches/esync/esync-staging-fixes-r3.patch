@@ -1,0 +1,208 @@
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Fri, 2 Nov 2018 04:15:10 +0100
+Subject: Esync staging patch for 3.20+ - minimalistic edition. Requires git apply -C1
+
+Signed-off-by: Tk-Glitch <ti3nou@gmail.com>
+
+diff --git a/0002-server-Create-server-objects-for-eventfd-based-synch.patch b/0002-server-Create-server-objects-for-eventfd-based-synch.patch
+index f1469ca..3a0996d 100644
+--- a/0002-server-Create-server-objects-for-eventfd-based-synch.patch
++++ b/0002-server-Create-server-objects-for-eventfd-based-synch.patch
+@@ -42,25 +42,25 @@ index 511ad5c..180432c 100644
+  {
+      REQ_new_process,
+ @@ -5950,6 +5966,7 @@ enum request
+-     REQ_set_job_limits,
+-     REQ_set_job_completion_port,
+-     REQ_terminate_job,
++     REQ_get_system_info,
++     REQ_suspend_process,
++     REQ_resume_process,
+ +    REQ_create_esync,
+      REQ_NB_REQUESTS
+  };
+  
+ @@ -6248,6 +6265,7 @@ union generic_request
+-     struct set_job_limits_request set_job_limits_request;
+-     struct set_job_completion_port_request set_job_completion_port_request;
+-     struct terminate_job_request terminate_job_request;
++     struct get_system_info_request get_system_info_request;
++     struct suspend_process_request suspend_process_request;
++     struct resume_process_request resume_process_request;
+ +    struct create_esync_request create_esync_request;
+  };
+  union generic_reply
+  {
+ @@ -6544,6 +6562,7 @@ union generic_reply
+-     struct set_job_limits_reply set_job_limits_reply;
+-     struct set_job_completion_port_reply set_job_completion_port_reply;
+-     struct terminate_job_reply terminate_job_reply;
++     struct get_system_info_reply get_system_info_reply;
++     struct suspend_process_reply suspend_process_reply;
++     struct resume_process_reply resume_process_reply;
+ +    struct create_esync_reply create_esync_reply;
+  };
+  
+@@ -242,25 +242,25 @@ index 10fd850..0a8dbac 100644
+ --- a/server/request.h
+ +++ b/server/request.h
+ @@ -403,6 +403,7 @@ DECL_HANDLER(process_in_job);
+- DECL_HANDLER(set_job_limits);
+- DECL_HANDLER(set_job_completion_port);
+- DECL_HANDLER(terminate_job);
++ DECL_HANDLER(get_system_info);
++ DECL_HANDLER(suspend_process);
++ DECL_HANDLER(resume_process);
+ +DECL_HANDLER(create_esync);
+  
+  #ifdef WANT_REQUEST_HANDLERS
+  
+ @@ -700,6 +701,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+-     (req_handler)req_set_job_limits,
+-     (req_handler)req_set_job_completion_port,
+-     (req_handler)req_terminate_job,
++     (req_handler)req_get_system_info,
++     (req_handler)req_suspend_process,
++     (req_handler)req_resume_process,
+ +    (req_handler)req_create_esync,
+  };
+  
+  C_ASSERT( sizeof(affinity_t) == 8 );
+ @@ -2406,6 +2408,12 @@ C_ASSERT( sizeof(struct set_job_completion_port_request) == 32 );
+- C_ASSERT( FIELD_OFFSET(struct terminate_job_request, handle) == 12 );
+- C_ASSERT( FIELD_OFFSET(struct terminate_job_request, status) == 16 );
+- C_ASSERT( sizeof(struct terminate_job_request) == 24 );
++ C_ASSERT( sizeof(struct suspend_process_request) == 16 );
++ C_ASSERT( FIELD_OFFSET(struct resume_process_request, handle) == 12 );
++ C_ASSERT( sizeof(struct resume_process_request) == 16 );
+ +C_ASSERT( FIELD_OFFSET(struct create_esync_request, access) == 12 );
+ +C_ASSERT( FIELD_OFFSET(struct create_esync_request, initval) == 16 );
+ +C_ASSERT( FIELD_OFFSET(struct create_esync_request, flags) == 20 );
+@@ -295,9 +295,9 @@ index e6ed964..d504ea4 100644
+      (dump_func)dump_new_process_request,
+      (dump_func)dump_get_new_process_info_request,
+ @@ -4833,6 +4846,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
+-     (dump_func)dump_set_job_limits_request,
+-     (dump_func)dump_set_job_completion_port_request,
+-     (dump_func)dump_terminate_job_request,
++     (dump_func)dump_get_system_info_request,
++     (dump_func)dump_suspend_process_request,
++     (dump_func)dump_resume_process_request,
+ +    (dump_func)dump_create_esync_request,
+  };
+  
+@@ -311,9 +311,9 @@ index e6ed964..d504ea4 100644
+  
+  static const char * const req_names[REQ_NB_REQUESTS] = {
+ @@ -5421,6 +5436,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
+-     "set_job_limits",
+-     "set_job_completion_port",
+-     "terminate_job",
++     "get_system_info",
++     "suspend_process",
++     "resume_process",
+ +    "create_esync",
+  };
+  
+diff --git a/0020-server-Create-eventfd-file-descriptors-for-thread-ob.patch b/0020-server-Create-eventfd-file-descriptors-for-thread-ob.patch
+index 9a7a38e..38b1997 100644
+--- a/0020-server-Create-eventfd-file-descriptors-for-thread-ob.patch
++++ b/0020-server-Create-eventfd-file-descriptors-for-thread-ob.patch
+@@ -31,9 +31,9 @@ index 147a60d..fc815b2 100644
+      no_signal,                  /* signal */
+      no_get_fd,                  /* get_fd */
+ @@ -202,6 +203,7 @@ static inline void init_thread_structure( struct thread *thread )
+-     thread->suspend         = 0;
+-     thread->desktop_users   = 0;
+-     thread->token           = NULL;
++     thread->exit_poll       = NULL;
++     thread->shm_fd          = -1;
++     thread->shm             = NULL;
+ +    thread->esync_fd        = -1;
+  
+      thread->creation_time = current_time;
+@@ -76,9 +76,9 @@ index 3cb7cb6..2a40c16 100644
+ --- a/server/thread.h
+ +++ b/server/thread.h
+ @@ -89,6 +89,7 @@ struct thread
+-     timeout_t              creation_time; /* Thread creation time */
+-     timeout_t              exit_time;     /* Thread exit time */
+-     struct token          *token;         /* security token associated with this thread */
++     struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
++     int                    shm_fd;        /* file descriptor for thread local shared memory */
++     shmlocal_t            *shm;           /* thread local shared memory pointer */
+ +    int                    esync_fd;      /* esync file descriptor (signalled on exit) */
+  };
+  
+diff --git a/0022-server-Create-eventfd-file-descriptors-for-message-q.patch b/0022-server-Create-eventfd-file-descriptors-for-message-q.patch
+index e53d466..590f736 100644
+--- a/0022-server-Create-eventfd-file-descriptors-for-message-q.patch
++++ b/0022-server-Create-eventfd-file-descriptors-for-message-q.patch
+@@ -23,9 +23,9 @@ index cb164d6..df327cf 100644
+  #define WM_NCMOUSEFIRST WM_NCMOUSEMOVE
+  #define WM_NCMOUSELAST  (WM_NCMOUSEFIRST+(WM_MOUSELAST-WM_MOUSEFIRST))
+ @@ -140,6 +141,7 @@ struct msg_queue
+-     struct thread_input   *input;           /* thread input descriptor */
+      struct hook_table     *hooks;           /* hook table */
+      timeout_t              last_get_msg;    /* time of last get message call */
++     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
+ +    int                    esync_fd;        /* esync file descriptor (signalled on message) */
+  };
+  
+@@ -48,9 +48,9 @@ index cb164d6..df327cf 100644
+      no_signal,                 /* signal */
+      no_get_fd,                 /* get_fd */
+ @@ -300,12 +303,16 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+-         queue->input           = (struct thread_input *)grab_object( input );
+          queue->hooks           = NULL;
+          queue->last_get_msg    = current_time;
++         queue->ignore_post_msg = 0;
+ +        queue->esync_fd        = -1;
+          list_init( &queue->send_result );
+          list_init( &queue->callback_result );
+@@ -63,11 +63,11 @@ index cb164d6..df327cf 100644
+ +
+          thread->queue = queue;
+      }
+-     if (new_input) release_object( new_input );
++     if (new_input)
+ @@ -450,6 +457,9 @@ static inline void clear_queue_bits( struct msg_queue *queue, unsigned int bits
+- {
+      queue->wake_bits &= ~bits;
+      queue->changed_bits &= ~bits;
++     update_shm_queue_bits( queue );
+ +
+ +    if (do_esync() && !is_signaled( queue ))
+ +        esync_clear( queue->esync_fd );
+diff --git a/0023-ntdll-wineandroid.drv-winemac.drv-winex11.drv-Store-.patch b/0023-ntdll-wineandroid.drv-winemac.drv-winex11.drv-Store-.patch
+index d0988dc..e00c2f5 100644
+--- a/0023-ntdll-wineandroid.drv-winemac.drv-winex11.drv-Store-.patch
++++ b/0023-ntdll-wineandroid.drv-winemac.drv-winex11.drv-Store-.patch
+@@ -49,9 +49,9 @@ index ca405b6..c806eaa 100644
+ --- a/dlls/ntdll/ntdll_misc.h
+ +++ b/dlls/ntdll/ntdll_misc.h
+ @@ -235,6 +235,7 @@ struct ntdll_thread_data
+-     int                wait_fd[2];    /* fd for sleeping server requests */
+      BOOL               wow64_redir;   /* Wow64 filesystem redirection flag */
+      pthread_t          pthread_id;    /* pthread thread id */
++     void              *pthread_stack; /* pthread stack */
+ +    int                esync_queue_fd;/* fd to wait on for driver events */
+  };
+  
+diff --git a/0025-server-Create-eventfd-descriptors-for-device-manager.patch b/0025-server-Create-eventfd-descriptors-for-device-manager.patch
+index 767578c..b01fd58 100644
+--- a/0025-server-Create-eventfd-descriptors-for-device-manager.patch
++++ b/0025-server-Create-eventfd-descriptors-for-device-manager.patch
+@@ -73,9 +73,9 @@ index c745726..c74d86b 100644
+  {
+      struct device_manager *manager = (struct device_manager *)obj;
+ @@ -618,6 +631,9 @@ static void device_manager_destroy( struct object *obj )
+-     {
+-         struct device *device = LIST_ENTRY( ptr, struct device, entry );
++         grab_object( &device->obj );
+          delete_device( device );
++         release_object( &device->obj );
+ +
+ +        if (do_esync())
+ +            close( manager->esync_fd );
+ 

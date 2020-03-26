@@ -1,0 +1,70 @@
+2018-12-12
+--- a/programs/winecfg/resource.h
++++ b/programs/winecfg/resource.h
+@@ -219,6 +219,7 @@
+ #define IDC_ENABLE_EAX                  9003
+ #define IDC_ENABLE_HIDEWINE             9004
+ #define IDC_ENABLE_GTK3                 9005
++#define IDC_ENABLE_ARB                  9006
+ 
+ /* About tab */
+ #define IDC_ABT_OWNER                8432
+
+
+--- a/programs/winecfg/staging.c
++++ b/programs/winecfg/staging.c
+@@ -133,6 +133,23 @@
+ #endif
+ }
+ 
++ /*
++  * OpenGL shading language toggle
++  */
++ static BOOL glsl_get(void)
++ {
++     char *buf = get_reg_key(config_key, "Direct3D", "MaxVersionGL", NULL);
++     BOOL ret = buf ? !!*buf : FALSE;
++     HeapFree(GetProcessHeap(), 0, buf);
++     return ret;
++ }
++
++ static void glsl_set(BOOL status)
++ {
++     set_reg_key(config_key, "Direct3D", "UseGLSL", status ? "disabled" : "enabled");
++     set_reg_key_dword(config_key, "Direct3D", "MaxVersionGL", status ? 0x00030001 : NULL);
++ }
++
+ static void load_staging_settings(HWND dialog)
+ {
+     CheckDlgButton(dialog, IDC_DISABLE_CSMT, csmt_get() ? BST_CHECKED : BST_UNCHECKED);
+@@ -140,6 +157,7 @@
+     CheckDlgButton(dialog, IDC_ENABLE_EAX, eax_get() ? BST_CHECKED : BST_UNCHECKED);
+     CheckDlgButton(dialog, IDC_ENABLE_HIDEWINE, hidewine_get() ? BST_CHECKED : BST_UNCHECKED);
+     CheckDlgButton(dialog, IDC_ENABLE_GTK3, gtk3_get() ? BST_CHECKED : BST_UNCHECKED);
++    CheckDlgButton(dialog, IDC_ENABLE_ARB, glsl_get() ? BST_CHECKED : BST_UNCHECKED);
+ 
+ #ifndef HAVE_VAAPI
+     disable(IDC_ENABLE_VAAPI);
+@@ -192,6 +210,10 @@
+             gtk3_set(IsDlgButtonChecked(hDlg, IDC_ENABLE_GTK3) == BST_CHECKED);
+             SendMessageW(GetParent(hDlg), PSM_CHANGED, 0, 0);
+             return TRUE;
++            case IDC_ENABLE_ARB:
++            glsl_set(IsDlgButtonChecked(hDlg, IDC_ENABLE_ARB) == BST_CHECKED);
++            SendMessageW(GetParent(hDlg), PSM_CHANGED, 0, 0);
++            return TRUE;
+         }
+         break;
+     }
+
+
+--- a/programs/winecfg/winecfg.rc   
++++ b/programs/winecfg/winecfg.rc
+@@ -324,6 +324,7 @@
+     CONTROL     "Enable Environmental Audio E&xtensions (EAX)",IDC_ENABLE_EAX,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,70,230,8
+     CONTROL     "&Hide Wine version from applications",IDC_ENABLE_HIDEWINE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,85,230,8
+     CONTROL     "Enable &GTK3 Theming",IDC_ENABLE_GTK3,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,100,230,8
++    CONTROL     "&Use ARB Shaders",IDC_ENABLE_ARB,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,115,230,8
+ END
+ 
+ LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL

@@ -1,0 +1,134 @@
+From f31cbcf4cb8fe1285091d8ab053febb115fc08af Mon Sep 17 00:00:00 2001
+From: Firerat <firer4t@googlemail.com>
+Date: Sat, 7 Apr 2018 01:05:29 +0100
+Subject: [PATCH] winecfg-Staging: Toggle upstream CSMT implementation
+
+  Logic on the toggle is now inverted
+    'on' disables upstream's CSMT
+   'off' lets upstream wine use its default
+---
+ patches/patchinstall.sh                            |  2 +
+ ...necfg-Toggle-upstream-CSMT-implementation.patch | 95 ++++++++++++++++++++++
+ 2 files changed, 97 insertions(+)
+ create mode 100644 patches/winecfg-Staging/0006-winecfg-Toggle-upstream-CSMT-implementation.patch
+
+diff --git a/patches/patchinstall.sh b/patches/patchinstall.sh
+index 0ba33ed3..9ffeffc4 100755
+--- a/patches/patchinstall.sh
++++ b/patches/patchinstall.sh
+@@ -7593,12 +7593,14 @@ if test "$enable_winecfg_Staging" -eq 1; then
+ 	patch_apply winecfg-Staging/0003-winecfg-Add-checkbox-to-enable-disable-EAX-support.patch
+ 	patch_apply winecfg-Staging/0004-winecfg-Add-checkbox-to-enable-disable-HideWineExpor.patch
+ 	patch_apply winecfg-Staging/0005-winecfg-Add-option-to-enable-disable-GTK3-theming.patch
++	patch_apply winecfg-Staging/0006-winecfg-Toggle-upstream-CSMT-implementation.patch
+ 	(
+ 		printf '%s\n' '+    { "Michael Müller", "winecfg: Add staging tab for CSMT.", 1 },';
+ 		printf '%s\n' '+    { "Sebastian Lackner", "winecfg: Add checkbox to enable/disable vaapi GPU decoder.", 1 },';
+ 		printf '%s\n' '+    { "Mark Harmstone", "winecfg: Add checkbox to enable/disable EAX support.", 1 },';
+ 		printf '%s\n' '+    { "Sebastian Lackner", "winecfg: Add checkbox to enable/disable HideWineExports registry key.", 1 },';
+ 		printf '%s\n' '+    { "Michael Müller", "winecfg: Add option to enable/disable GTK3 theming.", 1 },';
++		printf '%s\n' '+    { "Firerat", "winecfg: Toggle upstream CSMT implementation.", 1},';
+ 	) >> "$patchlist"
+ fi
+ 
+diff --git a/patches/winecfg-Staging/0006-winecfg-Toggle-upstream-CSMT-implementation.patch b/patches/winecfg-Staging/0006-winecfg-Toggle-upstream-CSMT-implementation.patch
+new file mode 100644
+index 00000000..6ff97674
+--- /dev/null
++++ b/patches/winecfg-Staging/0006-winecfg-Toggle-upstream-CSMT-implementation.patch
+@@ -0,0 +1,95 @@
++From 635a7d18629ae7498648193b40de5fddd23ca2cb Mon Sep 17 00:00:00 2001
++From: Firerat <firer4t@googlemail.com>
++Date: Fri, 6 Apr 2018 23:50:21 +0100
++Subject: [PATCH] winecfg: Toggle upstream CSMT implementation
++
++  Logic on the toggle is now inverted
++    'on' disables upstream's CSMT
++   'off' lets upstream wine use its default
++---
++ programs/winecfg/resource.h |  2 +-
++ programs/winecfg/staging.c  | 22 +++++++++++++++++-----
++ programs/winecfg/winecfg.rc |  2 +-
++ 3 files changed, 19 insertions(+), 7 deletions(-)
++
++diff --git a/programs/winecfg/resource.h b/programs/winecfg/resource.h
++index b94e773b60..98d7ba152b 100644
++--- a/programs/winecfg/resource.h
+++++ b/programs/winecfg/resource.h
++@@ -213,7 +213,7 @@
++ #define IDC_SYSPARAMS_MENUBAR           8431
++ 
++ /* Staging tab */
++-#define IDC_ENABLE_CSMT                 9001
+++#define IDC_DISABLE_CSMT                9001
++ #define IDC_ENABLE_VAAPI                9002
++ #define IDC_ENABLE_EAX                  9003
++ #define IDC_ENABLE_HIDEWINE             9004
++diff --git a/programs/winecfg/staging.c b/programs/winecfg/staging.c
++index df9bf0f1ad..51f213f5cb 100644
++--- a/programs/winecfg/staging.c
+++++ b/programs/winecfg/staging.c
++@@ -36,13 +36,25 @@
++ static BOOL csmt_get(void)
++ {
++     char *buf = get_reg_key(config_key, "Direct3D", "csmt", NULL);
++-    BOOL ret = buf ? !!*buf : TRUE;
+++    // (dword=0 csmt=off, dword=1 csmt=on )
+++    // since we want this toggle to disable upstream's CSMT
+++    // flip existing csmt dword, returning false if not set.
+++    BOOL ret = buf ? !*buf : FALSE;
++     HeapFree(GetProcessHeap(), 0, buf);
++     return ret;
++ }
++ static void csmt_set(BOOL status)
++ {
++-    set_reg_key_dword(config_key, "Direct3D", "csmt", status);
+++    if (status)
+++    {
+++        // TRUE, we disable upstream's csmt by setting dword to 0
+++        set_reg_key_dword(config_key, "Direct3D", "csmt", 0);
+++    }
+++    else
+++    {
+++        // FALSE, we remove the csmt key letting wine use its default
+++        set_reg_key(config_key, "Direct3D", "csmt", NULL);
+++    }
++ }
++ 
++ /*
++@@ -123,7 +135,7 @@ static void gtk3_set(BOOL status)
++ 
++ static void load_staging_settings(HWND dialog)
++ {
++-    CheckDlgButton(dialog, IDC_ENABLE_CSMT, csmt_get() ? BST_CHECKED : BST_UNCHECKED);
+++    CheckDlgButton(dialog, IDC_DISABLE_CSMT, csmt_get() ? BST_CHECKED : BST_UNCHECKED);
++     CheckDlgButton(dialog, IDC_ENABLE_VAAPI, vaapi_get() ? BST_CHECKED : BST_UNCHECKED);
++     CheckDlgButton(dialog, IDC_ENABLE_EAX, eax_get() ? BST_CHECKED : BST_UNCHECKED);
++     CheckDlgButton(dialog, IDC_ENABLE_HIDEWINE, hidewine_get() ? BST_CHECKED : BST_UNCHECKED);
++@@ -160,8 +172,8 @@ INT_PTR CALLBACK StagingDlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPar
++         if (HIWORD(wParam) != BN_CLICKED) break;
++         switch (LOWORD(wParam))
++         {
++-        case IDC_ENABLE_CSMT:
++-            csmt_set(IsDlgButtonChecked(hDlg, IDC_ENABLE_CSMT) == BST_CHECKED);
+++        case IDC_DISABLE_CSMT:
+++            csmt_set(IsDlgButtonChecked(hDlg, IDC_DISABLE_CSMT) == BST_CHECKED);
++             SendMessageW(GetParent(hDlg), PSM_CHANGED, 0, 0);
++             return TRUE;
++         case IDC_ENABLE_VAAPI:
++diff --git a/programs/winecfg/winecfg.rc b/programs/winecfg/winecfg.rc
++index f838a04a4e..8cd5b391ae 100644
++--- a/programs/winecfg/winecfg.rc
+++++ b/programs/winecfg/winecfg.rc
++@@ -315,7 +315,7 @@ FONT 8, "MS Shell Dlg"
++ BEGIN
++     GROUPBOX    "Staging settings",IDC_STATIC,8,4,244,210
++     LTEXT       "The following settings are experimental and may break stuff!\nMake sure to reset them again in case of a problem.",IDC_STATIC,16,16,230,16
++-    CONTROL     "Enable &CSMT for better graphic performance (deprecated)",IDC_ENABLE_CSMT,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,40,230,8
+++    CONTROL     "Disable upstream &CSMT (not recommended)",IDC_DISABLE_CSMT,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,40,230,8
++     CONTROL     "Enable &VAAPI as backend for DXVA2 GPU decoding",IDC_ENABLE_VAAPI,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,55,230,8
++     CONTROL     "Enable Environmental Audio E&xtensions (EAX)",IDC_ENABLE_EAX,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,70,230,8
++     CONTROL     "&Hide Wine version from applications",IDC_ENABLE_HIDEWINE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,85,230,8
++-- 
++2.17.0
++

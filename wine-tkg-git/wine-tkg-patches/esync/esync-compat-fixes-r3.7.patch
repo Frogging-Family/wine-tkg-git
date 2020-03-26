@@ -1,0 +1,157 @@
+From cfb4c81c30a543708b8f653e5ec7ba07a9fff616 Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Fri, 8 Nov 2019 10:27:14 +0100
+Subject: esync fixup for wine 4.20+
+
+
+diff --git a/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch b/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch
+index 398b963c6..370752ece 100644
+--- a/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch
++++ b/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch
+@@ -657,6 +657,20 @@ index ba9e9ec4ac..0a784b0e79 100644
+  extern NTSTATUS esync_close( HANDLE handle ) DECLSPEC_HIDDEN;
+  
+  extern NTSTATUS esync_create_semaphore(HANDLE *handle, ACCESS_MASK access,
++diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
++index 9972d680e..2f66065e3 100644
++--- a/dlls/ntdll/loader.c
+++++ b/dlls/ntdll/loader.c
++@@ -4407,6 +4407,9 @@ void __wine_process_init(void)
++     init_directories();
++     init_user_process_params( info_size );
++
+++    if (do_esync())
+++        esync_init();
+++
++     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
++
++     /* retrieve current umask */
+ diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+ index 12124a054c..3fd50e5065 100644
+ --- a/dlls/ntdll/thread.c
+@@ -669,16 +683,6 @@ index 12124a054c..3fd50e5065 100644
+  
+  WINE_DEFAULT_DEBUG_CHANNEL(thread);
+  
+-@@ -401,6 +402,9 @@ void thread_init(void)
+- 
+-     fill_cpu_info();
+- 
+-+    if (do_esync())
+-+        esync_init();
+-+
+-     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
+- }
+- 
+ -- 
+ 2.19.1
+ 
+diff --git a/0074-ntdll-server-Abort-if-esync-is-enabled-for-the-serve.patch b/0074-ntdll-server-Abort-if-esync-is-enabled-for-the-serve.patch
+index a3b1afb37..8822604df 100644
+--- a/0074-ntdll-server-Abort-if-esync-is-enabled-for-the-serve.patch
++++ b/0074-ntdll-server-Abort-if-esync-is-enabled-for-the-serve.patch
+@@ -61,20 +61,20 @@ index 32cb68ad9b..4d3e29490d 100644
+  
+      pagesize = sysconf( _SC_PAGESIZE );
+  
+-diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+-index cd94e56b1d..99aaf29a5d 100644
+---- a/dlls/ntdll/thread.c
+-+++ b/dlls/ntdll/thread.c
+-@@ -403,8 +403,7 @@ void thread_init(void)
+- 
+-     fill_cpu_info();
++diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
++index 2f66065e3..98cd95055 100644
++--- a/dlls/ntdll/loader.c
+++++ b/dlls/ntdll/loader.c
++@@ -4407,8 +4407,7 @@ void __wine_process_init(void)
++     init_directories();
++     init_user_process_params( info_size );
+  
+ -    if (do_esync())
+ -        esync_init();
+ +    esync_init();
+  
+      NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
+- }
++ 
+ diff --git a/server/esync.c b/server/esync.c
+ index a0745a2306..10001a243b 100644
+ --- a/server/esync.c
+
+diff --git a/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch b/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch
+index 370752ece..630156029 100644
+--- a/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch
++++ b/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch
+@@ -658,30 +658,26 @@ index ba9e9ec4ac..0a784b0e79 100644
+  
+  extern NTSTATUS esync_create_semaphore(HANDLE *handle, ACCESS_MASK access,
+ diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+-index 9972d680e..2f66065e3 100644
++index 9972d680e..f9c529357 100644
+ --- a/dlls/ntdll/loader.c
+ +++ b/dlls/ntdll/loader.c
+-@@ -4407,6 +4407,9 @@ void __wine_process_init(void)
+-     init_directories();
+-     init_user_process_params( info_size );
+-
+-+    if (do_esync())
+-+        esync_init();
+-+
+-     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
+-
+-     /* retrieve current umask */
+-diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+-index 12124a054c..3fd50e5065 100644
+---- a/dlls/ntdll/thread.c
+-+++ b/dlls/ntdll/thread.c
+-@@ -45,6 +45,7 @@
++@@ -44,6 +44,7 @@
++ #include "wine/server.h"
+  #include "ntdll_misc.h"
+  #include "ddk/wdm.h"
+- #include "wine/exception.h"
+ +#include "esync.h"
+  
+- WINE_DEFAULT_DEBUG_CHANNEL(thread);
++ WINE_DEFAULT_DEBUG_CHANNEL(module);
++ WINE_DECLARE_DEBUG_CHANNEL(relay);
++@@ -4404,6 +4405,9 @@ void __wine_process_init(void)
++     peb->ProcessHeap = RtlCreateHeap( HEAP_GROWABLE, NULL, 0, 0, NULL, NULL );
++     peb->LoaderLock = &loader_section;
++ 
+++    if (do_esync())
+++        esync_init();
+++
++     init_directories();
++     init_user_process_params( info_size );
+  
+ -- 
+ 2.19.1
+diff --git a/0074-ntdll-server-Abort-if-esync-is-enabled-for-the-serve.patch b/0074-ntdll-server-Abort-if-esync-is-enabled-for-the-serve.patch
+index 8822604df..cacf8b262 100644
+--- a/0074-ntdll-server-Abort-if-esync-is-enabled-for-the-serve.patch
++++ b/0074-ntdll-server-Abort-if-esync-is-enabled-for-the-serve.patch
+@@ -65,16 +65,16 @@ diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+ index 2f66065e3..98cd95055 100644
+ --- a/dlls/ntdll/loader.c
+ +++ b/dlls/ntdll/loader.c
+-@@ -4407,8 +4407,7 @@ void __wine_process_init(void)
+-     init_directories();
+-     init_user_process_params( info_size );
++@@ -4405,8 +4405,7 @@ void __wine_process_init(void)
++     peb->ProcessHeap = RtlCreateHeap( HEAP_GROWABLE, NULL, 0, 0, NULL, NULL );
++     peb->LoaderLock = &loader_section;
+  
+ -    if (do_esync())
+ -        esync_init();
+ +    esync_init();
+  
+-     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
+- 
++     init_directories();
++     init_user_process_params( info_size );
+ diff --git a/server/esync.c b/server/esync.c
+ index a0745a2306..10001a243b 100644
+ --- a/server/esync.c

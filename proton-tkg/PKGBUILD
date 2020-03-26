@@ -1,0 +1,202 @@
+# Created by: Tk-Glitch <ti3nou at gmail dot com>
+
+pkgname=proton-tkg-git
+pkgver=5.4.r12.ge5da84dc
+pkgrel=1
+_frogwhere=$PWD
+export BUILDDIR="${_frogwhere}" # Override makepkg BUILDDIR path and use PKGBUILDs dirs instead
+arch=('x86_64')
+pkgdesc='Custom Proton build with even more frog spice'
+url='https://github.com/Tk-Glitch/PKGBUILDS/tree/master/proton-tkg'
+options=('staticlibs')
+license=('LGPL')
+depends=(
+    'attr'                  'lib32-attr'
+    'fontconfig'            'lib32-fontconfig'
+    'lcms2'                 'lib32-lcms2'
+    'libxml2'               'lib32-libxml2'
+    'libxcursor'            'lib32-libxcursor'
+    'libxrandr'             'lib32-libxrandr'
+    'libxdamage'            'lib32-libxdamage'
+    'libxi'                 'lib32-libxi'
+    'gettext'               'lib32-gettext'
+    'freetype2'             'lib32-freetype2'
+    'glu'                   'lib32-glu'
+    'libsm'                 'lib32-libsm'
+    'gcc-libs'              'lib32-gcc-libs'
+    'libpcap'               'lib32-libpcap'
+    'faudio'                'lib32-faudio'
+    'desktop-file-utils'    'tk'
+    'wine-mono'             'vulkan-icd-loader'
+    'lib32-vulkan-icd-loader'
+)
+makedepends=(
+    'git'                   'autoconf'
+    'ncurses'               'bison'
+    'perl'                  'fontforge'
+    'flex'                  'python-fonttools'
+    'gcc>=4.5.0-2'          'pkgconf'
+    'giflib'                'lib32-giflib'
+    'libpng'                'lib32-libpng'
+    'gnutls'                'lib32-gnutls'
+    'libxinerama'           'lib32-libxinerama'
+    'libxcomposite'         'lib32-libxcomposite'
+    'libxmu'                'lib32-libxmu'
+    'libxxf86vm'            'lib32-libxxf86vm'
+    'libldap'               'lib32-libldap'
+    'mpg123'                'lib32-mpg123'
+    'openal'                'lib32-openal'
+    'v4l-utils'             'lib32-v4l-utils'
+    'alsa-lib'              'lib32-alsa-lib'
+    'libxcomposite'         'lib32-libxcomposite'
+    'mesa'                  'lib32-mesa'
+    'libgl'                 'lib32-libgl'
+    'libxslt'               'lib32-libxslt'
+    'libpulse'              'lib32-libpulse'
+    'libva'                 'lib32-libva'
+    'gtk3'                  'lib32-gtk3'
+    'gst-plugins-base-libs' 'lib32-gst-plugins-base-libs'
+    'gst-plugins-good'      'lib32-gst-plugins-good'
+    'vulkan-icd-loader'     'lib32-vulkan-icd-loader'
+    'sdl2'                  'lib32-sdl2'
+    'libcups'               'lib32-libcups'
+    'samba'                 'schedtool'
+    'meson'                 'ninja'
+    'glslang'               'wget'
+    'ocl-icd'               'lib32-ocl-icd'
+    'vkd3d'                 'lib32-vkd3d'
+    'opencl-headers'
+)
+optdepends=(
+    'giflib'                'lib32-giflib'
+    'libpng'                'lib32-libpng'
+    'libldap'               'lib32-libldap'
+    'gnutls'                'lib32-gnutls'
+    'mpg123'                'lib32-mpg123'
+    'openal'                'lib32-openal'
+    'v4l-utils'             'lib32-v4l-utils'
+    'libpulse'              'lib32-libpulse'
+    'alsa-plugins'          'lib32-alsa-plugins'
+    'alsa-lib'              'lib32-alsa-lib'
+    'libjpeg-turbo'         'lib32-libjpeg-turbo'
+    'libxcomposite'         'lib32-libxcomposite'
+    'libxinerama'           'lib32-libxinerama'
+    'ncurses'               'lib32-ncurses'
+    'libxslt'               'lib32-libxslt'
+    'libva'                 'lib32-libva'
+    'gtk3'                  'lib32-gtk3'
+    'gst-plugins-base-libs' 'lib32-gst-plugins-base-libs'
+    'sdl2'                  'lib32-sdl2'
+    'cups'                  'zapcc'
+    'samba'                 'clang'
+    'dosbox'                'ccache'
+    'mingw-w64-gcc'
+)
+
+exit_cleanup() {
+  rm -rf src
+  rm -rf pkg
+  remove_deps
+  msg2 'exit cleanup done'
+}
+
+pkgver() {
+  warning "This step might take some time, please be patient..."
+
+  # overcomplicated BS
+  source "${_frogwhere}"/proton-tkg.cfg
+  source "${_frogwhere}"/proton-tkg-profiles/advanced-customization.cfg
+  if [ -e "$_EXT_CONFIG_PATH" ]; then
+    source "$_EXT_CONFIG_PATH"
+  fi
+  if [ -n "$_LOCAL_PRESET" ] && [ -e "${_frogwhere}"/../wine-tkg-git/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
+    source "${_frogwhere}"/../wine-tkg-git/wine-tkg-profiles/wine-tkg.cfg && source "${_frogwhere}"/../wine-tkg-git/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg
+  fi
+  if [ -n "$_custom_wine_source" ]; then
+    _winesrcdir=$( sed 's|/|-|g' <<< $(sed 's|.*://.[^/]*/||g' <<< $_custom_wine_source))
+  else
+    if [ "$_plain_mirrorsrc" == "true" ]; then
+      _winesrcdir="wine-mirror-git"
+      _winesrctarget="https://github.com/wine-mirror/wine.git"
+    else
+      _winesrcdir="wine-git"
+      _winesrctarget="git://source.winehq.org/git/wine.git"
+    fi
+  fi
+
+  cd "${_frogwhere}/../wine-tkg-git"
+  # Empty clone failsafe
+  git clone --mirror "${_winesrctarget}" "$_winesrcdir" >/dev/null 2>&1 || true
+  _srcdirlock=$PWD
+
+  if [ "$_use_staging" == "true" ]; then
+    _stgsrcdir='wine-staging-git'
+    # Empty clone failsafe
+    git clone --mirror https://github.com/wine-staging/wine-staging.git "$_stgsrcdir" >/dev/null 2>&1 || true
+    _pkgvertargdir="${_stgsrcdir}"
+  else
+    _pkgvertargdir="${_winesrcdir}"
+  fi
+
+  cd "${_srcdirlock}/${_pkgvertargdir}"
+  git fetch --all -p >/dev/null 2>&1
+  rm -rf "${_srcdirlock}/src/${_pkgvertargdir}" && git clone "${_srcdirlock}/${_pkgvertargdir}" "${_srcdirlock}/src/${_pkgvertargdir}" >/dev/null 2>&1
+  cd "${_srcdirlock}/src/${_pkgvertargdir}"
+  git checkout --force --no-track -B makepkg origin/HEAD >/dev/null 2>&1
+  if [ -n "$_plain_version" ] && [ "$_use_staging" != "true" ]; then
+    git checkout "${_plain_version}"
+  fi
+  if [ -n "$_staging_version" ] && [ "$_use_staging" == "true" ]; then
+    git checkout "${_staging_version}"
+  fi
+
+  git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//'
+}
+
+prepare() {
+  cd ${_frogwhere}
+  mkdir -p Proton
+  mkdir -p liberation-fonts
+  mkdir -p dxvk
+  ln -s -f "${_frogwhere}/Proton" "${srcdir}/"
+  ln -s -f "${_frogwhere}/liberation-fonts" "${srcdir}/"
+  ln -s -f "${_frogwhere}/dxvk" "${srcdir}/"
+  ln -s -f "${_frogwhere}/proton_template" "${srcdir}/"
+  ln -s -f "${_frogwhere}/proton-tkg.cfg" "${srcdir}/"
+  ln -s -f "${_frogwhere}/proton-tkg.sh" "${srcdir}/"
+  ln -s -f "${_frogwhere}/proton-tkg-userpatches" "${srcdir}/"
+  ln -s -f "${_frogwhere}/proton-tkg-profiles" "${srcdir}/"
+}
+
+build() {
+  warning "SteamVR support is currently disabled when using this. If you need it, please use the proton-tkg.sh script instead." && sleep 2
+  cd "${srcdir}"
+  _ispkgbuild="true" ./proton-tkg.sh
+}
+
+package() {
+  provides=("$pkgname=$pkgver")
+  conflicts=("$pkgname")
+
+  cd "${srcdir}"
+  rm -f proton_tkg_token
+  mkdir -p "${pkgdir}/usr/share/steam/compatibilitytools.d"
+  mv proton_tkg_* "${pkgdir}/usr/share/steam/compatibilitytools.d/"
+  cd ${pkgdir}/usr/share/steam/compatibilitytools.d/proton_tkg_*
+
+  mkdir -p dist
+  tar -xf proton_dist.tar.gz -C dist
+
+  # deps
+  chmod 755 ./*
+  chmod 755 ./dist/*
+  chmod 755 ./dist/bin/*
+  chmod -R 644 ./dist/include
+  chmod -R 754 ./dist/lib
+  chmod -R 754 ./dist/lib64
+  chmod -R 754 ./dist/share
+
+  ln -s -f "/tmp" "__pycache__"
+}
+
+trap exit_cleanup EXIT

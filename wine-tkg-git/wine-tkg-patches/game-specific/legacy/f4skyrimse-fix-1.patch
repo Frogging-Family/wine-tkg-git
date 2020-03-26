@@ -1,0 +1,20 @@
+This is one of two patches to get Fallout 4 Script Extender working in wine. f4se allocates memory for trampolines in the spaces before the Fallout4 exe image and the f4se dll image. This patch:
+
+    Fix VirtualQuery rejecting any blocks before the image as already allocated (it looks like get_free_mem_state_callback sees blocks before the exe base address as overlapping the exe base from calculating the block end address as block start address + size, ie a 256 byte block starting at 0x100 would "end" at 0x200).
+
+Apparently it also get SkyrimSE script extender working, but I don't own that so I can't test that.
+
+https://github.com/hdmap/wine-hackery
+
+
+--- a/dlls/ntdll/virtual.c	2018-05-15 12:07:53.839882299 -0400
++++ a/dlls/ntdll/virtual.c	2018-05-15 14:51:22.632513314 -0400
+@@ -2750,7 +2753,7 @@ static int get_free_mem_state_callback(
+     MEMORY_BASIC_INFORMATION *info = arg;
+     void *end = (char *)start + size;
+ 
+-    if ((char *)info->BaseAddress + info->RegionSize < (char *)start) return 0;
++    if ((char *)info->BaseAddress + info->RegionSize <= (char *)start) return 0;
+ 
+     if (info->BaseAddress >= end)
+     {

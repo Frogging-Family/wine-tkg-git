@@ -1,0 +1,73 @@
+From 68621c9d55a19a6820b3f4ca3e9fb1a2464412c5 Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Tue, 11 Feb 2020 11:23:10 +0100
+Subject: proton-tkg: makepkg build adjustments
+
+
+diff --git a/proton b/proton
+index 811de5e..7aacb34 100755
+--- a/proton
++++ b/proton
+@@ -103,7 +103,7 @@ class Proton:
+         self.wine_bin = self.bin_dir + "wine"
+         self.wineserver_bin = self.bin_dir + "wineserver"
+         self.winetricks_bin = self.base_dir + "/dist/share/winetricks/winetricks_runner"
+-        self.dist_lock = FileLock(self.path("dist.lock"), timeout=-1)
++        self.dist_lock = FileLock("/tmp/dist.lock", timeout=-1)
+ 
+     def path(self, d):
+         return self.base_dir + d
+@@ -127,16 +127,6 @@ class Proton:
+                 tar.close()
+                 try_copy(self.version_file, self.dist_dir)
+ 
+-    def make_default_prefix(self):
+-        with self.dist_lock:
+-            local_env = dict(g_session.env)
+-            if not os.path.isdir(self.default_pfx_dir):
+-                #make default prefix
+-                local_env["WINEPREFIX"] = self.default_pfx_dir
+-                local_env["WINEDEBUG"] = "-all"
+-                g_session.run_proc([self.wine_bin, "wineboot"], local_env)
+-                g_session.run_proc([self.wineserver_bin, "-w"], local_env)
+-
+ class CompatData:
+     def __init__(self, compatdata):
+         self.base_dir = compatdata + "/"
+@@ -295,15 +285,17 @@ class CompatData:
+             if os.path.exists(self.version_file):
+                 with open(self.version_file, "r") as f:
+                     self.upgrade_pfx(f.readline().strip())
++                    g_session.run_proc([g_proton.wine_bin, "wineboot"])
++                    g_session.run_proc([g_proton.wineserver_bin, "-w"])
+             else:
+                 self.upgrade_pfx(None)
++                g_session.run_proc([g_proton.wine_bin, "wineboot"])
++                g_session.run_proc([g_proton.wineserver_bin, "-w"])
+ 
+             if not os.path.exists(self.prefix_dir):
+                 makedirs(self.prefix_dir + "/drive_c")
+                 set_dir_casefold_bit(self.prefix_dir + "/drive_c")
+ 
+-            if not os.path.exists(self.prefix_dir + "/user.reg"):
+-                self.copy_pfx()
+ 
+             with open(self.version_file, "w") as f:
+                 f.write(CURRENT_PREFIX_VERSION + "\n")
+@@ -789,6 +789,7 @@ class Session:
+         if local_env is None:
+             local_env = self.env
+         subprocess.call(args, env=local_env, stderr=self.log_file, stdout=self.log_file)
++        self.env["PYTHONPYCACHEPREFIX"] = "/tmp"
+ 
+     def run(self):
+         if "PROTON_DUMP_DEBUG_COMMANDS" in self.env and nonzero(self.env["PROTON_DUMP_DEBUG_COMMANDS"]):
+@@ -858,8 +848,6 @@ if __name__ == "__main__":
+ 
+     g_session.init_wine()
+ 
+-    g_proton.make_default_prefix()
+-
+     g_session.init_session()
+ 
+     #determine mode
