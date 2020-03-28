@@ -1423,7 +1423,7 @@ EOM
 	fi
 
 	# Add support for dxvk_config library to Wine's dxgi when vkd3d support is enabled
-	if [ "$_use_vkd3d" == "true" ] && [ "$_use_dxvk" != "release" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
+	if [ "$_use_vkd3d" == "true" ] && [ -n "$_use_dxvk" ] && [ "$_use_dxvk" != "release" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	  if git merge-base --is-ancestor 591068cec06257f3d5ed23e19ee4ad055ad978aa HEAD; then
 	    _patchname='dxvk_config_dxgi_support.patch' && _patchmsg="Add support for dxvk_config library to Wine's dxgi" && nonuser_patcher
 	  else
@@ -1482,7 +1482,11 @@ EOM
 	  _version_tags+=(Nine)
 	fi
 	if [ "$_use_vkd3d" == "true" ]; then
-	  _version_tags+=(Vkd3d)
+	  if [ -n "$_use_dxvk" ] && [ "$_use_dxvk" != "release" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
+	    _version_tags+=(Vkd3d DXVK-Compatible)
+	  else
+	    _version_tags+=(Vkd3d)
+	  fi
 	fi
 	sed -i "s/\\\1/\\\1  ( ${_version_tags[*]} )/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
 
