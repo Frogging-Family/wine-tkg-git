@@ -1134,8 +1134,10 @@ EOM
 
 	# Workarounds to prevent crashes on some mf functions
 	if [ "$_use_staging" == "true" ] && [ "$_proton_mf_hacks" == "true" ] && git merge-base --is-ancestor b182ba882cfcce7b8769470f49f0fba216095c45 HEAD; then
-	  if git merge-base --is-ancestor 7c5fcfffe7b3a001c980f19cb6ed1cee049c26c8 HEAD; then
+	  if git merge-base --is-ancestor 120505ed6b590daea11486a512dd563600d0329f HEAD; then
 	    _patchname='proton_mf_hacks.patch' && _patchmsg="Applied proton mf hacks patch" && nonuser_patcher
+	  elif git merge-base --is-ancestor 7c5fcfffe7b3a001c980f19cb6ed1cee049c26c8 HEAD; then
+	    _patchname='proton_mf_hacks-120505e.patch' && _patchmsg="Applied proton mf hacks patch" && nonuser_patcher
 	  else
 	    _patchname='proton_mf_hacks-7c5fcff.patch' && _patchmsg="Applied proton mf hacks patch" && nonuser_patcher
 	  fi
@@ -1217,7 +1219,7 @@ EOM
 	echo -e "" >> "$_where"/last_build_config.log
 
 	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ] || ([ "$_protonify" == "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
-	  if git merge-base --is-ancestor 9d38c4864c4800313812feef2c3bc6ca6551ce57 HEAD; then
+	  if git merge-base --is-ancestor 120505ed6b590daea11486a512dd563600d0329f HEAD; then
 	    if [ "$_use_staging" == "true" ]; then
 	      _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/3" && nonuser_patcher
 	      _patchname='proton-tkg-staging.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 2/3" && nonuser_patcher
@@ -1232,7 +1234,11 @@ EOM
 	      fi
 	    fi
 	  else
-	    if git merge-base --is-ancestor 14df0183b0b43049d0f645f72f435309cb6836a4 HEAD; then
+	    if git merge-base --is-ancestor 9d38c4864c4800313812feef2c3bc6ca6551ce57 HEAD; then
+	      _lastcommit="120505e"
+	      _rpc="1"
+	      _stmbits="1"
+	    elif git merge-base --is-ancestor 14df0183b0b43049d0f645f72f435309cb6836a4 HEAD; then
 	      _lastcommit="9d38c48"
 	      _rpc="1"
 	      _stmbits="1"
