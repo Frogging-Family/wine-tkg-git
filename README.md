@@ -8,7 +8,7 @@ It can also make custom Proton builds with its wrapping script: https://github.c
 
 **By default, it'll pull current wine/wine-staging git versions. You can target a specific release or commit in the .cfg if needed.**
 
-**Can be built with your own patches - See [README in ./wine-tkg-userpatches](wine-tkg-userpatches/README.md) for instructions**
+**Can be built with your own patches - See [README in wine-tkg-git/wine-tkg-userpatches](https://github.com/Frogging-Family/wine-tkg-git/blob/master/wine-tkg-git/wine-tkg-userpatches/README.md) for instructions**
 
 Wine : https://github.com/wine-mirror/wine
 
