@@ -2,12 +2,12 @@
 
 ## PLEASE DO NOT REPORT BUGS ENCOUNTERED WITH THIS AT WINEHQ OR VALVESOFTWARE, REPORT HERE INSTEAD !
 
-This is an addon script for [wine-tkg-git](https://github.com/Tk-Glitch/PKGBUILDS/tree/master/wine-tkg-git).
+This is an addon script for [wine-tkg-git](https://github.com/Frogging-Family/wine-tkg-git/tree/master/wine-tkg-git).
 
 It can create Steamplay compatible wine builds based on wine-tkg-git + additional proton patches and libraries. Wine-staging based? Latest master? Yup, you can.
-( **Older than 3.16 wine bases are untested.** )
+( **Older than 3.16 wine bases are untested, and some commits or commit ranges might prove problematic with certain combinations of patches.** )
 
-### This is not standalone and requires Steam. If you want a standalone wine build, use [wine-tkg-git](https://github.com/Tk-Glitch/PKGBUILDS/tree/master/wine-tkg-git) instead.
+### This is not standalone and requires Steam. If you want a standalone wine build, please see [wine-tkg-git](https://github.com/Frogging-Family/wine-tkg-git/tree/master/wine-tkg-git) instead.
 
 ## How to build
 
@@ -33,9 +33,9 @@ It can create Steamplay compatible wine builds based on wine-tkg-git + additiona
 
 You can find all your usual options in the proton-tkg.cfg file. If you create a proton-tkg.cfg file in ~/.config/frogminer dir, it'll be used as an override.
 
-## The prebuilt DXVK/D9VK "problem"
+## The prebuilt DXVK "problem"
 
-By default, proton-tkg will download latest official DXVK release from github. You have nothing to do, it's all good. **However, if you want to build/use a development or modified version of DXVK, it's recommended to use [dxvk-tools](https://github.com/Tk-Glitch/PKGBUILDS/tree/master/dxvk-tools)**
+By default, proton-tkg will download latest official DXVK release from github. You have nothing to do, it's all good. **However, if you want to build/use a development or modified version of DXVK, it's recommended to use [dxvk-tools](https://github.com/Frogging-Family/dxvk-tools)**
 
 ### If you're not using dxvk-tools/can't build DXVK/D9VK :
 
@@ -46,15 +46,6 @@ proton-tkg
    |__dxvk___x64--> d3d11.dll, dxgi.dll etc.
           |
           |__x32--> d3d11.dll, dxgi.dll etc.
-```
-
-When `_use_d9vk` is set to `"prebuilt"`, you'll need to put your prebuilt D9VK dlls inside a d9vk folder, in the root folder of proton-tkg (here):
-```
-proton-tkg
-   |
-   |__d9vk___x64--> d3d9.dll
-          |
-          |__x32--> d3d9.dll
 ```
 
 ## Special options and builtin features :
@@ -76,8 +67,4 @@ You can also change their default values before building in your `proton-tkg.cfg
 
 - Proton-tkg **can** handle 32-bit prefixes. However you'll have to create such a prefix by hand as the Steam client doesn't offer such an option. Also, that prefix will have to be deleted if you want to use an official Proton build with the game bound to it.
 
-- In the userpatches folder, you'll find three patches I decided against merging in the master patch for proton-tkg. You can put them in wine-tkg-git userpatches dir if you want to use them. They might not apply cleanly on older wine bases.
-
 - Proton-tkg builds will get installed in `~/.steam/root/compatibilitytools.d` directory. If no game is bound to use a specific Proton-tkg build, you can safely delete it. **IT IS HIGHLY RECOMMENDED TO USE THE UNINSTALL FUNCTION OF THE SCRIPT TO REMOVE SUPERFLUOUS BUILDS**
-
-If you end up removing a Proton build (not necessarily -tkg) that's bound to a game, you can fix the issue by editing your `~/.steam/root/config/config.vdf` file and replacing the deleted build reference name with one from a currently installed build.
