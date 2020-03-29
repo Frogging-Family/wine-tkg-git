@@ -280,7 +280,7 @@ elif [ "$1" == "build_steamhelper" ]; then
   build_steamhelper
 else
   # If $1 contains a path, and it exists, use it as default for config
-  if [ -e "$1" ]; then
+  if [ -n "$1" ]; then
     user_config_file_option=$(readlink -m $1)
     if [ ! -f $user_config_file_option ]; then
       echo "External user config file '${user_config_file_option}' not found! Please fix your passed path!"
