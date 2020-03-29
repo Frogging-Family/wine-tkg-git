@@ -280,8 +280,13 @@ elif [ "$1" == "build_steamhelper" ]; then
   build_steamhelper
 else
   # If $1 contains a path, and it exists, use it as default for config
-  if [ -e "$1" ]; then
-    sed -i -e "s|_EXT_CONFIG_PATH.*|_EXT_CONFIG_PATH=$(readlink -m $1)|" "$_nowhere"/proton-tkg-profiles/advanced-customization.cfg
+  if [ -n "$1" ]; then
+    user_config_file_option=$(readlink -m $1)
+    if [ ! -f $user_config_file_option ]; then
+      echo "External user config file '${user_config_file_option}' not found! Please fix your passed path!"
+      exit 0
+    fi
+    sed -i -e "s|_EXT_CONFIG_PATH.*|_EXT_CONFIG_PATH=${user_config_file_option}|" "$_nowhere"/proton-tkg-profiles/advanced-customization.cfg
   fi
 
   rm -rf "$_nowhere"/proton_dist_tmp
