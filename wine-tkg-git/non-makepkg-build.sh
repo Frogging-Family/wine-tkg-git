@@ -251,7 +251,7 @@ else
       echo "External user config file '${user_config_file_option}' not found! Please fix your passed path!"
       exit 0
     fi
-    sed -i -e "s|_EXT_CONFIG_PATH.*|_EXT_CONFIG_PATH=${user_config_file_option}|" "$_nowhere"/wine-tkg-profiles/advanced-customization.cfg
+    sed -i -e "s|_EXT_CONFIG_PATH.*|_EXT_CONFIG_PATH=${user_config_file_option}|" "$_where"/wine-tkg-profiles/advanced-customization.cfg
   fi
 
   build_wine_tkg
