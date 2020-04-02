@@ -14,9 +14,9 @@ An ever evolving selection of staging, experimental and/or hacky patches are als
 
 **Can be built with your own patches - See [README in wine-tkg-git/wine-tkg-userpatches](https://github.com/Frogging-Family/wine-tkg-git/blob/master/wine-tkg-git/wine-tkg-userpatches/README.md) for instructions**
 
-Generated Wine-tkg sources (staging-based):
-Wine-tkg : https://github.com/Tk-Glitch/wine-tkg
-Proton-tkg : https://github.com/Tk-Glitch/wine-proton-tkg
+### Generated Wine-tkg sources (staging-based):
+ - Wine-tkg : https://github.com/Tk-Glitch/wine-tkg
+ - Proton-tkg : https://github.com/Tk-Glitch/wine-proton-tkg
 
 Wine : https://github.com/wine-mirror/wine
 
