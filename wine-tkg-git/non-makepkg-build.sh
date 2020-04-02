@@ -22,7 +22,7 @@ pkgname=wine-tkg-git
 
 _stgsrcdir='wine-staging-git'
 _esyncsrcdir='esync'
-_where=$PWD # track basedir as different Arch based distros are moving srcdir around
+_where="$PWD" # track basedir as different Arch based distros are moving srcdir around
 
 # set srcdir, Arch style
 mkdir -p "$_where"/src

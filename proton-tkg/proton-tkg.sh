@@ -12,7 +12,7 @@
 
 set -e
 
-_nowhere=$PWD
+_nowhere="$PWD"
 _nomakepkg="true"
 _no_steampath="false"
 
