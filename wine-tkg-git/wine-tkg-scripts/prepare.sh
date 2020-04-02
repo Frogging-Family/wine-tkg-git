@@ -488,6 +488,12 @@ _prepare() {
 	  fi
 	}
 
+	if [ "$_warframelauncher_fix" == "true" ] && git merge-base --is-ancestor 5e218fe758fe6beed5c7ad73405eccf33c307e6d HEAD; then
+	  _committorevert=bae4776c571cf975be1689594f4caf93ad23e0ca && nonuser_reverter
+	  _committorevert=5e218fe758fe6beed5c7ad73405eccf33c307e6d && nonuser_reverter
+	  echo -e "( Warframe Launcher unbreak reverts applied )\n" >> "$_where"/last_build_config.log
+	fi
+
 	if [ "$_proton_fs_hack" == "true" ]; then
 	  if ! git merge-base --is-ancestor aee91dc4ac08428e74fbd21f97438db38f84dbe5 HEAD; then
 	    _committorevert=427152ec7b4ee85631617b693dbf1deea763c0ba && nonuser_reverter
@@ -500,7 +506,7 @@ _prepare() {
 	    _committorevert=de94cfa775f9f41d1d65cbd8e7bf861cd7f9a871 && nonuser_reverter
 	    _committorevert=6dbb153ede48e77a87dddf37e5276276a701c5c3 && nonuser_reverter
 	    _committorevert=81f8b6e8c215dc04a19438e4369fcba8f7f4f333 && nonuser_reverter
-	    echo -e "FS hack unbreak reverts applied )\n" >> "$_where"/last_build_config.log
+	    echo -e "( FS hack unbreak reverts applied )\n" >> "$_where"/last_build_config.log
 	  elif git merge-base --is-ancestor 2538b0100fbbe1223e7c18a52bade5cfe5f8d3e3 HEAD; then
 	    _committorevert=2538b0100fbbe1223e7c18a52bade5cfe5f8d3e3 && nonuser_reverter
 	    echo -e "( FS hack unbreak revert applied )\n" >> "$_where"/last_build_config.log
