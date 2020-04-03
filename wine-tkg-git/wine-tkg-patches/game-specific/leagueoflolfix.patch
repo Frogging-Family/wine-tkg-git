@@ -15,17 +15,17 @@ index abdc0efc51..411abb86d8 100644
      }
  #endif
  
--    if (!wine_ldt_is_system(CS_sig(sigcontext)) ||
-+    if ((CS_sig(sigcontext) != wine_cs && !wine_ldt_is_system(CS_sig(sigcontext))) ||
-         !wine_ldt_is_system(SS_sig(sigcontext)))  /* 16-bit mode */
+-    if (!ldt_is_system(CS_sig(sigcontext)) || !ldt_is_system(SS_sig(sigcontext)))  /* 16-bit mode */
++    if ((CS_sig(sigcontext) != wine_cs && !ldt_is_system(CS_sig(sigcontext))) ||
      {
          /*
+          * Win16 or DOS protected mode. Note that during switch
 @@ -1576,7 +1578,7 @@ static inline DWORD is_privileged_instr( CONTEXT *context )
      BYTE instr[16];
      unsigned int i, len, prefix_count = 0;
  
--    if (!wine_ldt_is_system( context->SegCs )) return 0;
-+    if (context->SegCs != wine_cs && !wine_ldt_is_system( context->SegCs )) return 0;
+-    if (!ldt_is_system( context->SegCs )) return 0;
++    if (context->SegCs != wine_cs && !ldt_is_system( context->SegCs )) return 0;
      len = virtual_uninterrupted_read_memory( (BYTE *)context->Eip, instr, sizeof(instr) );
  
      for (i = 0; i < len; i++) switch (instr[i])
@@ -33,8 +33,8 @@ index abdc0efc51..411abb86d8 100644
      WORD system_gs = x86_thread_data()->gs;
  
      if (context->SegGs == system_gs) return FALSE;
--    if (!wine_ldt_is_system( context->SegCs )) return FALSE;
-+    if (context->SegCs != wine_cs && !wine_ldt_is_system( context->SegCs )) return 0;
+-    if (!ldt_is_system( context->SegCs )) return FALSE;
++    if (context->SegCs != wine_cs && !ldt_is_system( context->SegCs )) return 0;
      /* only handle faults in system libraries */
      if (virtual_is_valid_code_address( instr, 1 )) return FALSE;
  
@@ -56,12 +56,12 @@ index abdc0efc51..411abb86d8 100644
 +    LDT_ENTRY entry;
 +
 +    if (!wine_cs)
-+        wine_cs = wine_ldt_alloc_entries( 1 );
++        wine_cs = ldt_alloc_entries( 1 );
 +
-+    wine_ldt_set_base( &entry, 0 );
-+    wine_ldt_set_limit( &entry, (UINT_PTR)-1 );
-+    wine_ldt_set_flags( &entry, WINE_LDT_FLAGS_CODE|WINE_LDT_FLAGS_32BIT );
-+    wine_ldt_set_entry( wine_cs, &entry );
++    ldt_set_base( &entry, 0 );
++    ldt_set_limit( &entry, (UINT_PTR)-1 );
++    ldt_set_flags( &entry, ldt_FLAGS_CODE|ldt_FLAGS_32BIT );
++    ldt_set_entry( wine_cs, &entry );
 +
 +    wine_set_cs( wine_cs );
 +}
