@@ -246,12 +246,12 @@ elif [ "$1" == "--deps32" ]; then
 else
   # If $1 contains a path, and it exists, use it as default for config
   if [ -n "$1" ]; then
-    user_config_file_option=$(readlink -m $1)
-    if [ ! -f $user_config_file_option ]; then
-      echo "External user config file '${user_config_file_option}' not found! Please fix your passed path!"
+    _EXT_CONFIG_PATH="$(readlink -m $1)"
+    if [ ! -f "$_EXT_CONFIG_PATH" ]; then
+      echo "User-supplied external config file '${_EXT_CONFIG_PATH}' not found! Please fix your passed path!"
       exit 0
     fi
-    sed -i -e "s|_EXT_CONFIG_PATH.*|_EXT_CONFIG_PATH=${user_config_file_option}|" "$_where"/wine-tkg-profiles/advanced-customization.cfg
+    sed -i -e "s|_EXT_CONFIG_PATH.*|_EXT_CONFIG_PATH=${_EXT_CONFIG_PATH}|" "$_where"/wine-tkg-profiles/advanced-customization.cfg
   fi
 
   build_wine_tkg
