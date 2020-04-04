@@ -451,6 +451,11 @@ else
       cd "$_nowhere"
     fi
 
+    # Patch our proton script to remove mfplay dll override when _proton_mf_hacks is disabled
+    if [ "$_proton_mf_hacks" != "true" ]; then
+      sed -i '/.*#disable built-in mfplay.*/d' "proton_tkg_$_protontkg_version/proton"
+    fi
+
     # Set Proton-tkg user_settings.py defaults
     if [ "$_proton_nvapi_disable" == "true" ]; then
       sed -i 's/.*PROTON_NVAPI_DISABLE.*/     "PROTON_NVAPI_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
