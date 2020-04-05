@@ -592,6 +592,9 @@ _prepare() {
 	# Disable winex11.drv-mouse-coorrds and winex11-MWM_Decorations patchsets on staging for proton FS hack
 	if [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
+	  if git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD; then
+	    _patchname='staging-44d1a45-localreverts.patch' && _patchmsg="Applied local reverts for staging 44d1a45 fshack" && nonuser_patcher
+	  fi
 	  if git merge-base --is-ancestor 7cc69d770780b8fb60fb249e007f1a777a03e51a HEAD; then
 	    _staging_args+=(-W winex11.drv-mouse-coorrds -W winex11-MWM_Decorations)
 	    if git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD; then
