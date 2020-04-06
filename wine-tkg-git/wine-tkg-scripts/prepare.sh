@@ -489,7 +489,7 @@ _prepare() {
 	  fi
 	}
 
-	if [ "$_warframelauncher_fix" == "true" ] && git merge-base --is-ancestor 5e218fe758fe6beed5c7ad73405eccf33c307e6d HEAD; then
+	if [ "$_warframelauncher_fix" == "true" ] && git merge-base --is-ancestor 5e218fe758fe6beed5c7ad73405eccf33c307e6d HEAD && ! git merge-base --is-ancestor adfb042819472a23f4d07f7aeea194e463855806 HEAD; then
 	  _committorevert=bae4776c571cf975be1689594f4caf93ad23e0ca && nonuser_reverter
 	  _committorevert=5e218fe758fe6beed5c7ad73405eccf33c307e6d && nonuser_reverter
 	  echo -e "( Warframe Launcher unbreak reverts applied )\n" >> "$_where"/last_build_config.log
