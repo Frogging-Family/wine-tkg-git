@@ -1076,7 +1076,7 @@ EOM
 	  else
 	    echo "Fsync forcefully disabled due to incompatible tree" >> "$_where"/last_build_config.log
 	  fi
-	  if [ "$_fsync_spincounts" == "true" ] && [ "$_use_staging" == "true" ]; then # Temporarily only allow on staging
+	  if [ "$_fsync_spincounts" == "true" ] && [ "$_use_staging" == "true" ] && $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8b2fd051c97187c68dee2ba2f0df7aca65c4cca6 && cd "${srcdir}"/"${_winesrcdir}"); then # Temporarily only allow on staging - we depend on esync mutexes abandonment
 	    _patchname='fsync-spincounts.patch' && _patchmsg="Add a configurable spin count to fsync" && nonuser_patcher
 	  fi
 	fi
