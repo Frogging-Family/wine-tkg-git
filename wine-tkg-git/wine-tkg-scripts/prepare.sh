@@ -956,8 +956,10 @@ _prepare() {
 
 	# Fix for LoL 9.20+ crashing - https://bugs.winehq.org/show_bug.cgi?id=47198
 	if [ "$_lol920_fix" == "true" ] && [ "$_use_staging" == "true" ]; then
-	  if git merge-base --is-ancestor 3b16f35413f3a6641df42b782ead294f343e7d5e HEAD; then
+	  if git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
 	    _patchname='leagueoflolfix.patch' && _patchmsg="Applied LoL 9.20+ fix - Requires vdso32 disabled (echo 0 > /proc/sys/abi/vsyscall32)" && nonuser_patcher
+	  elif git merge-base --is-ancestor 3b16f35413f3a6641df42b782ead294f343e7d5e HEAD; then
+	    _patchname='leagueoflolfix-b87256c.patch' && _patchmsg="Applied LoL 9.20+ fix - Requires vdso32 disabled (echo 0 > /proc/sys/abi/vsyscall32)" && nonuser_patcher
 	  elif git merge-base --is-ancestor b8f0e32b9f00f63abee6ca31e190ff794c053b67 HEAD; then
 	    _patchname='leagueoflolfix-3b16f35.patch' && _patchmsg="Applied LoL 9.20+ fix - Requires vdso32 disabled (echo 0 > /proc/sys/abi/vsyscall32)" && nonuser_patcher
 	  elif git merge-base --is-ancestor 39138478fdd93cc0dfc1e83b85784bc468e8d237 HEAD; then
