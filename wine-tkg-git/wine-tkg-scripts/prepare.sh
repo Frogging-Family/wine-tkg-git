@@ -616,6 +616,11 @@ _prepare() {
 	  if $(cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor d8496cacd170347bbde755ead066be8394fbb82b HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
 	    _staging_args+=(-W user32-rawinput-keyboard)
 	  fi
+	  cd "${srcdir}"/"${_stgsrcdir}"
+	  if [ "$_proton_fs_hack" == "false" ] && git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD; then
+	    _patchname='staging-44d1a45-localreverts.patch' && _patchmsg="Applied local reverts for staging 44d1a45 proton-nofshack" && nonuser_patcher
+	  fi
+	  cd "${srcdir}"/"${_winesrcdir}"
 	fi
 
 	# Disable some staging patchsets to prevent bad interactions with proton gamepad additions
