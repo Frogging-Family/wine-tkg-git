@@ -46,6 +46,7 @@ _exit_cleanup() {
     echo "_steamvr_support='${_steamvr_support}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_NUKR='${_NUKR}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_winesrcdir='${_winesrcdir}'" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_standard_dlopen='${_standard_dlopen}'" >> "$_proton_tkg_path"/proton_tkg_token
     if $(cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 1e478b804f72a9b5122fc6adafac5479b816885e HEAD); then
       echo "_dxvk_minimald3d10='true'" >> "$_proton_tkg_path"/proton_tkg_token
     fi
@@ -1464,6 +1465,13 @@ EOM
 	  else
 	    _patchname='dxvk_config_dxgi_support-591068c.patch' && _patchmsg="Add support for dxvk_config library to Wine's dxgi" && nonuser_patcher
 	  fi
+	fi
+
+	# Proton-tkg needs to know if standard dlopen() is in use
+	if git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
+	  _standard_dlopen="true"
+	else
+	  _standard_dlopen="false"
 	fi
 
 	echo -e "" >> "$_where"/last_build_config.log

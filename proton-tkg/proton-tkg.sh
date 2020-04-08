@@ -112,8 +112,12 @@ function build_lsteamclient {
   export CFLAGS="-O2 -g"
   export CXXFLAGS="-fpermissive -Wno-attributes -O2 -g"
   export PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
-  if [ "$_proton_branch" == "proton_5.0" ]; then
+  if [[ "$_proton_branch" != proton_3.* ]] && [[ "$_proton_branch" != proton_4.* ]]; then
     _cxx_addon="-std=gnu++11"
+    if [ "$_standard_dlopen" == "true" ]; then
+      patch -Np1 < "$_nowhere/proton_template/steamclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch"
+      _cxx_addon+=" -ldl"
+    fi
   fi
 
   mkdir -p build/lsteamclient.win64
