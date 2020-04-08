@@ -544,8 +544,10 @@ _prepare() {
 
 	# Fixes (partially) systray on plasma 5 - https://bugs.winehq.org/show_bug.cgi?id=38409
 	if [ "$_plasma_systray_fix" == "true" ]; then
-	  if git merge-base --is-ancestor 473914f6a5943c4abfc8d0e394c71f395063d89f HEAD; then
+	  if git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
 	    _patchname='plasma_systray_fix.patch' && _patchmsg="Applied plasma 5 systray fix" && nonuser_patcher
+	  elif git merge-base --is-ancestor 473914f6a5943c4abfc8d0e394c71f395063d89f HEAD; then
+	    _patchname='plasma_systray_fix-b87256c.patch' && _patchmsg="Applied plasma 5 systray fix (<b87256c)" && nonuser_patcher
 	  else
 	    _patchname='plasma_systray_fix-473914f.patch' && _patchmsg="Applied plasma 5 systray fix (<473914f)" && nonuser_patcher
 	  fi
@@ -1242,7 +1244,7 @@ EOM
 	echo -e "" >> "$_where"/last_build_config.log
 
 	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ] || ([ "$_protonify" == "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
-	  if git merge-base --is-ancestor 120505ed6b590daea11486a512dd563600d0329f HEAD; then
+	  if git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
 	    if [ "$_use_staging" == "true" ]; then
 	      _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/3" && nonuser_patcher
 	      _patchname='proton-tkg-staging.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 2/3" && nonuser_patcher
@@ -1258,7 +1260,11 @@ EOM
 	      fi
 	    fi
 	  else
-	    if git merge-base --is-ancestor 9d38c4864c4800313812feef2c3bc6ca6551ce57 HEAD; then
+	    if git merge-base --is-ancestor 120505ed6b590daea11486a512dd563600d0329f HEAD; then
+	      _lastcommit="b87256c"
+	      _rpc="1"
+	      _stmbits="1"
+	    elif git merge-base --is-ancestor 9d38c4864c4800313812feef2c3bc6ca6551ce57 HEAD; then
 	      _lastcommit="120505e"
 	      _rpc="1"
 	      _stmbits="1"
@@ -1345,7 +1351,11 @@ EOM
 	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ]; then
 	  # SDL Joystick support - from Proton
 	  if [ "$_sdl_joy_support" == "true" ]; then
-	    _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
+	    if git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
+	      _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
+	    else
+	      _patchname='proton-sdl-joy-b87256c.patch' && _patchmsg="Enable SDL Joystick support (from Proton) (<b87256c)" && nonuser_patcher
+	    fi
 	    if git merge-base --is-ancestor 1daeef73325e9d35073231baf874600050126c7f HEAD; then
 	      _patchname='proton-sdl-joy-2.patch' && _patchmsg="Enable SDL Joystick support additions (from Proton)" && nonuser_patcher
 	    fi

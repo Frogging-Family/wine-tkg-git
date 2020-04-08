@@ -1465,12 +1465,13 @@ index 2823a1cd4f1..69e5f60e7c6 100644
  
  static inline LPCSTR debugstr_us( const UNICODE_STRING *us )
  {
-@@ -82,6 +84,8 @@ static const WCHAR servicesW[] = {'\\','R','e','g','i','s','t','r','y',
+@@ -82,6 +82,8 @@ static const WCHAR servicesW[] = {'\\','R','e','g','i','s','t','r','y',
+                                   '\\','C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t',
                                    '\\','S','e','r','v','i','c','e','s',
                                    '\\',0};
- 
-+DWORD send_device_notification( DEV_BROADCAST_DEVICEINTERFACE_W *broadcast, BOOL enable );
 +
++DWORD send_device_notification( DEV_BROADCAST_DEVICEINTERFACE_W *broadcast, BOOL enable );
+ 
  struct wine_device
  {
      DEVICE_OBJECT device_obj;
@@ -2078,6 +2079,66 @@ index 00000000000..7231f86b722
 +    else
 +        win_skip("I_ScRegisterDeviceNotification is not available\n");
 +}
+From 33cd3de313071c787bece5acc31351c36abd74e9 Mon Sep 17 00:00:00 2001
+From: Brendan Shanks <bshanks@codeweavers.com>
+Date: Tue, 22 Oct 2019 16:27:51 -0700
+Subject: [PATCH] HACK: ntdll: Run WT_EXECUTEINWAITTHREAD wait callbacks
+ serially.
+
+On Windows, waits registered with the WT_EXECUTEINWAITTHREAD flag will
+often have their callbacks run serially (since they're all handled by
+the same wait thread). Running them in parallel can expose race
+conditions.
+Use a process-wide critical section to serialize these callbacks.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=47843
+---
+ dlls/ntdll/threadpool.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/dlls/ntdll/threadpool.c b/dlls/ntdll/threadpool.c
+index 639e032f629..dbd9577d6bc 100644
+--- a/dlls/ntdll/threadpool.c
++++ b/dlls/ntdll/threadpool.c
+@@ -84,6 +84,17 @@ struct wait_work_item
+     int CallbackInProgress;
+ };
+ 
++static RTL_CRITICAL_SECTION_DEBUG wait_thread_executeinwaitthread_cs_debug;
++
++static RTL_CRITICAL_SECTION wait_thread_executeinwaitthread_cs = {&wait_thread_executeinwaitthread_cs_debug, -1, 0, 0, 0, 0};
++
++static RTL_CRITICAL_SECTION_DEBUG wait_thread_executeinwaitthread_cs_debug =
++{
++    0, 0, &wait_thread_executeinwaitthread_cs,
++    { &wait_thread_executeinwaitthread_cs_debug.ProcessLocksList, &wait_thread_executeinwaitthread_cs_debug.ProcessLocksList },
++      0, 0, { (DWORD_PTR)(__FILE__ ": wait_thread_executeinwaitthread_cs") }
++};
++
+ struct timer_queue;
+ struct queue_timer
+ {
+@@ -527,7 +538,20 @@ static DWORD CALLBACK wait_thread_proc(LPVOID Arg)
+                 TRACE( "Work has been canceled.\n" );
+                 break;
+             }
++
++            /* HACK: On Windows, waits created with WT_EXECUTEINWAITTHREAD often end up on the same wait thread
++             * and run serialized. Running these waits simultaneously on separate threads may expose race conditions
++             * not seen on Windows.
++             * Use a critical section to ensure these callbacks run serially.
++             */
++            if (wait_work_item->Flags & WT_EXECUTEINWAITTHREAD)
++                enter_critical_section(&wait_thread_executeinwaitthread_cs);
++
+             wait_work_item->Callback( wait_work_item->Context, TimerOrWaitFired );
++
++            if (wait_work_item->Flags & WT_EXECUTEINWAITTHREAD)
++                leave_critical_section(&wait_thread_executeinwaitthread_cs);
++
+             interlocked_xchg( &wait_work_item->CallbackInProgress, FALSE );
+ 
+             if (wait_work_item->Flags & WT_EXECUTEONLYONCE)
 From 5cd65deffffad9073538acf4fd8e794ac07824a5 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Wed, 9 Oct 2019 09:47:12 +0200
@@ -2504,78 +2565,33 @@ Content-Transfer-Encoding: 8bit
 
 Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
 ---
- configure                     |  1 +
- configure.ac                  |  1 +
- dlls/dwmapi/tests/Makefile.in |  6 +++
- dlls/dwmapi/tests/dwmapi.c    | 75 +++++++++++++++++++++++++++++++++++
- 4 files changed, 83 insertions(+)
- create mode 100644 dlls/dwmapi/tests/Makefile.in
- create mode 100644 dlls/dwmapi/tests/dwmapi.c
-
-diff --git a/configure b/configure
-index d4a1fb46b3a..6608fd0a0f7 100755
---- a/configure
-+++ b/configure
-@@ -20500,6 +20500,7 @@ wine_fn_config_makefile dlls/dssenh/tests enable_tests
- wine_fn_config_makefile dlls/dswave enable_dswave
- wine_fn_config_makefile dlls/dswave/tests enable_tests
- wine_fn_config_makefile dlls/dwmapi enable_dwmapi
-+wine_fn_config_makefile dlls/dwmapi/tests enable_tests
- wine_fn_config_makefile dlls/dwrite enable_dwrite
- wine_fn_config_makefile dlls/dwrite/tests enable_tests
- wine_fn_config_makefile dlls/dx8vb enable_dx8vb
-diff --git a/configure.ac b/configure.ac
-index 41aabf2d2ea..ce24b716ba6 100644
---- a/configure.ac
-+++ b/configure.ac
-@@ -3253,6 +3253,7 @@ WINE_CONFIG_MAKEFILE(dlls/dssenh/tests)
- WINE_CONFIG_MAKEFILE(dlls/dswave)
- WINE_CONFIG_MAKEFILE(dlls/dswave/tests)
- WINE_CONFIG_MAKEFILE(dlls/dwmapi)
-+WINE_CONFIG_MAKEFILE(dlls/dwmapi/tests)
- WINE_CONFIG_MAKEFILE(dlls/dwrite)
- WINE_CONFIG_MAKEFILE(dlls/dwrite/tests)
- WINE_CONFIG_MAKEFILE(dlls/dx8vb)
 diff --git a/dlls/dwmapi/tests/Makefile.in b/dlls/dwmapi/tests/Makefile.in
-new file mode 100644
-index 00000000000..b441d9db35f
---- /dev/null
+index f365f96c72..947e3312b5 100644
+--- a/dlls/dwmapi/tests/Makefile.in
 +++ b/dlls/dwmapi/tests/Makefile.in
-@@ -0,0 +1,6 @@
-+TESTDLL   = dwmapi.dll
+@@ -1,5 +1,5 @@
+ TESTDLL   = dwmapi.dll
+-IMPORTS   = dwmapi
 +IMPORTS   = dwmapi gdi32 user32
-+
-+
-+C_SRCS = \
-+	dwmapi.c
+ 
+ C_SRCS = \
+ 	dwmapi.c
 diff --git a/dlls/dwmapi/tests/dwmapi.c b/dlls/dwmapi/tests/dwmapi.c
-new file mode 100644
-index 00000000000..0fc8820b095
---- /dev/null
+index 7c51e77c4a..68babd6eb2 100644
+--- a/dlls/dwmapi/tests/dwmapi.c
 +++ b/dlls/dwmapi/tests/dwmapi.c
-@@ -0,0 +1,75 @@
-+/*
-+ * Copyright 2019 Gabriel Ivăncescu for CodeWeavers
-+ *
-+ * This library is free software; you can redistribute it and/or
-+ * modify it under the terms of the GNU Lesser General Public
-+ * License as published by the Free Software Foundation; either
-+ * version 2.1 of the License, or (at your option) any later version.
-+ *
-+ * This library is distributed in the hope that it will be useful,
-+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
-+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-+ * Lesser General Public License for more details.
-+ *
-+ * You should have received a copy of the GNU Lesser General Public
-+ * License along with this library; if not, write to the Free Software
-+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
-+ */
-+
+@@ -19,13 +19,40 @@
+  *
+  */
+ 
 +#include <windows.h>
-+#include <dwmapi.h>
-+#include "wine/test.h"
-+
+ #include "dwmapi.h"
+-
+ #include "wine/test.h"
+ 
+ static HRESULT (WINAPI *pDwmIsCompositionEnabled)(BOOL*);
+ static HRESULT (WINAPI *pDwmEnableComposition)(UINT);
+ static HRESULT (WINAPI *pDwmGetTransportAttributes)(BOOL*,BOOL*,DWORD*);
 +static HWND test_wnd;
 +static LRESULT WINAPI test_wndproc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 +{
@@ -2603,8 +2619,13 @@ index 00000000000..0fc8820b095
 +    ok(nc_rendering == FALSE || nc_rendering == TRUE, "non-boolean value 0x%x.\n", nc_rendering);
 +}
 +
-+START_TEST(dwmapi)
-+{
+ 
+ BOOL dwmenabled;
+ 
+@@ -92,6 +119,21 @@ static void test_dwm_get_transport_attributes(void)
+ START_TEST(dwmapi)
+ {
+     HMODULE hmod = LoadLibraryA("dwmapi.dll");
 +    HINSTANCE inst = GetModuleHandleA(NULL);
 +    WNDCLASSA cls;
 +
@@ -2620,6 +2641,14 @@ index 00000000000..0fc8820b095
 +    cls.lpszClassName = "Test";
 +    RegisterClassA(&cls);
 +
+ 
+     if (!hmod)
+     {
+@@ -105,4 +147,14 @@ START_TEST(dwmapi)
+ 
+     test_isdwmenabled();
+     test_dwm_get_transport_attributes();
++
 +    test_wnd = CreateWindowExA(0, "Test", "Test Window", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 +                               100, 100, 200, 200, 0, 0, 0, NULL);
 +    ok(test_wnd != NULL, "Failed to create test window.\n");
@@ -2628,7 +2657,8 @@ index 00000000000..0fc8820b095
 +
 +    DestroyWindow(test_wnd);
 +    UnregisterClassA("Test", inst);
-+}
++
+ }
 From 1a2e600a9c35a9558b32e7986668d7dc81c8b5ae Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
 Date: Fri, 13 Dec 2019 15:54:30 +0200
@@ -2999,11 +3029,11 @@ index 868f898bbbb..95f498123ea 100644
 +++ b/dlls/bcrypt/gnutls.c
 @@ -267,8 +267,11 @@ BOOL gnutls_initialize(void)
      }
-     if (!(pgnutls_decode_rs_value = dlsym( libgnutls_handle, "gnutls_decode_rs_value" )))
+     if (!(pgnutls_decode_rs_value = wine_dlsym( libgnutls_handle, "gnutls_decode_rs_value", NULL, 0 )))
      {
 -        WARN("gnutls_decode_rs_value not found\n");
 -        pgnutls_decode_rs_value = compat_gnutls_decode_rs_value;
-+        if (!(pgnutls_decode_rs_value = dlsym( libgnutls_handle, "_gnutls_decode_ber_rs_raw" )))
++        if (!(pgnutls_decode_rs_value = wine_dlsym( libgnutls_handle, "_gnutls_decode_ber_rs_raw", NULL, 0)))
 +        {
 +            WARN("gnutls_decode_rs_value and legacy alternative _gnutls_decode_ber_rs_raw not found\n");
 +            pgnutls_decode_rs_value = compat_gnutls_decode_rs_value;
