@@ -9,14 +9,69 @@ It can create Steamplay compatible wine builds based on wine-tkg-git + additiona
 
 ### This is not standalone and requires Steam. If you want a standalone wine build, please see [wine-tkg-git](https://github.com/Frogging-Family/wine-tkg-git/tree/master/wine-tkg-git) instead.
 
-## How to build
 
-### Running the proton-tkg.sh script will launch the usual wine-tkg-git building process... with extra spice.
+# Quick how-to :
+
+(for dependencies, see the [wiki page](https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git) )
+
+
+## Download the source :
+
+ * Clone the repo (allows you to use `git pull` to get updates) :
+```
+https://github.com/Frogging-Family/wine-tkg-git.git
+```
+
+ * To optionally make use of community patches, you'll want to clone its repo as well:
+```
+git clone https://github.com/Frogging-Family/community-patches.git
+```
+
+## Configuration/customization :
+
+If you want to customize the patches and features of your builds, you can find basic settings in [proton-tkg.cfg](https://github.com/Frogging-Family/wine-tkg-git/blob/master/proton-tkg/proton-tkg.cfg) and advanced settings in [proton-tkg-profiles/advanced-customization.cfg](https://github.com/Frogging-Family/wine-tkg-git/blob/master/proton-tkg/proton-tkg-profiles/advanced-customization.cfg).
+
+You can also create an external configuration file that will contain all settings in a centralized way and survive repo updates. A sample file for this can be found [here](https://github.com/Frogging-Family/wine-tkg-git/blob/master/proton-tkg/proton-tkg-profiles/sample-external-config.cfg). The default path for this file is `~/.config/frogminer/proton-tkg.cfg` and can be changed in `proton-tkg-profiles/advanced-customization.cfg` with the `_EXT_CONFIG_PATH` option.
+
+
+## Building :
+
+ * We need to get into the proton-tkg dir first:
+```
+cd proton-tkg
+```
+
+### For Arch (and other pacman/makepkg distros) :
+
+**You have two options on pacman based distros. You can either make a pacman package (with a few limitations), or use a more powerful but also less user-friendly way.**
+
+
+#### Pacman package way :
+
+Using this option will enforce a "proton-tkg-makepkg" naming scheme in Steam, and prevents having multiple versions installed side-by-side. This option also disables steamvr support currently.
+
+ * From the `proton-tkg` directory (where the PKGBUILD is located), run the following command in a terminal to start the building process :
+```
+makepkg -si
+```
+
+#### Unpackaged, vanilla way :
+
+None of the limitations above apply here.
+
+ * From the `proton-tkg` directory (where the PKGBUILD is located), run the following command in a terminal to start the building process :
 ```
 ./proton-tkg.sh
 ```
 
-### How to uninstall superfluous builds the easy way
+### For other distros (make sure to check the [wiki page](https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git) :
+
+ * From the `proton-tkg` directory (where the PKGBUILD is located), running the proton-tkg.sh script will launch the usual wine-tkg-git building process... with extra spice :
+```
+./proton-tkg.sh
+```
+
+### How to uninstall superfluous builds the easy way when not using a pacman package :
 ```
 ./proton-tkg.sh clean
 ```
@@ -32,6 +87,7 @@ It can create Steamplay compatible wine builds based on wine-tkg-git + additiona
 **All other wine-tkg-git settings can be tweaked such as wine version, staging, esync, game fixes (etc.) and the userpatches functionality is kept intact.**
 
 You can find all your usual options in the proton-tkg.cfg file. If you create a proton-tkg.cfg file in ~/.config/frogminer dir, it'll be used as an override.
+
 
 ## The prebuilt DXVK "problem"
 
