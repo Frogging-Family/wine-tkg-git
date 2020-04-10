@@ -1465,13 +1465,12 @@ index 2823a1cd4f1..69e5f60e7c6 100644
  
  static inline LPCSTR debugstr_us( const UNICODE_STRING *us )
  {
-@@ -82,6 +82,8 @@ static const WCHAR servicesW[] = {'\\','R','e','g','i','s','t','r','y',
-                                   '\\','C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t',
+@@ -82,6 +84,8 @@ static const WCHAR servicesW[] = {'\\','R','e','g','i','s','t','r','y',
                                    '\\','S','e','r','v','i','c','e','s',
                                    '\\',0};
-+
-+DWORD send_device_notification( DEV_BROADCAST_DEVICEINTERFACE_W *broadcast, BOOL enable );
  
++DWORD send_device_notification( DEV_BROADCAST_DEVICEINTERFACE_W *broadcast, BOOL enable );
++
  struct wine_device
  {
      DEVICE_OBJECT device_obj;
@@ -2079,66 +2078,6 @@ index 00000000000..7231f86b722
 +    else
 +        win_skip("I_ScRegisterDeviceNotification is not available\n");
 +}
-From 33cd3de313071c787bece5acc31351c36abd74e9 Mon Sep 17 00:00:00 2001
-From: Brendan Shanks <bshanks@codeweavers.com>
-Date: Tue, 22 Oct 2019 16:27:51 -0700
-Subject: [PATCH] HACK: ntdll: Run WT_EXECUTEINWAITTHREAD wait callbacks
- serially.
-
-On Windows, waits registered with the WT_EXECUTEINWAITTHREAD flag will
-often have their callbacks run serially (since they're all handled by
-the same wait thread). Running them in parallel can expose race
-conditions.
-Use a process-wide critical section to serialize these callbacks.
-
-Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=47843
----
- dlls/ntdll/threadpool.c | 24 ++++++++++++++++++++++++
- 1 file changed, 24 insertions(+)
-
-diff --git a/dlls/ntdll/threadpool.c b/dlls/ntdll/threadpool.c
-index 639e032f629..dbd9577d6bc 100644
---- a/dlls/ntdll/threadpool.c
-+++ b/dlls/ntdll/threadpool.c
-@@ -84,6 +84,17 @@ struct wait_work_item
-     int CallbackInProgress;
- };
- 
-+static RTL_CRITICAL_SECTION_DEBUG wait_thread_executeinwaitthread_cs_debug;
-+
-+static RTL_CRITICAL_SECTION wait_thread_executeinwaitthread_cs = {&wait_thread_executeinwaitthread_cs_debug, -1, 0, 0, 0, 0};
-+
-+static RTL_CRITICAL_SECTION_DEBUG wait_thread_executeinwaitthread_cs_debug =
-+{
-+    0, 0, &wait_thread_executeinwaitthread_cs,
-+    { &wait_thread_executeinwaitthread_cs_debug.ProcessLocksList, &wait_thread_executeinwaitthread_cs_debug.ProcessLocksList },
-+      0, 0, { (DWORD_PTR)(__FILE__ ": wait_thread_executeinwaitthread_cs") }
-+};
-+
- struct timer_queue;
- struct queue_timer
- {
-@@ -527,7 +538,20 @@ static DWORD CALLBACK wait_thread_proc(LPVOID Arg)
-                 TRACE( "Work has been canceled.\n" );
-                 break;
-             }
-+
-+            /* HACK: On Windows, waits created with WT_EXECUTEINWAITTHREAD often end up on the same wait thread
-+             * and run serialized. Running these waits simultaneously on separate threads may expose race conditions
-+             * not seen on Windows.
-+             * Use a critical section to ensure these callbacks run serially.
-+             */
-+            if (wait_work_item->Flags & WT_EXECUTEINWAITTHREAD)
-+                enter_critical_section(&wait_thread_executeinwaitthread_cs);
-+
-             wait_work_item->Callback( wait_work_item->Context, TimerOrWaitFired );
-+
-+            if (wait_work_item->Flags & WT_EXECUTEINWAITTHREAD)
-+                leave_critical_section(&wait_thread_executeinwaitthread_cs);
-+
-             interlocked_xchg( &wait_work_item->CallbackInProgress, FALSE );
- 
-             if (wait_work_item->Flags & WT_EXECUTEONLYONCE)
 From 5cd65deffffad9073538acf4fd8e794ac07824a5 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Wed, 9 Oct 2019 09:47:12 +0200
@@ -2565,33 +2504,78 @@ Content-Transfer-Encoding: 8bit
 
 Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
 ---
+ configure                     |  1 +
+ configure.ac                  |  1 +
+ dlls/dwmapi/tests/Makefile.in |  6 +++
+ dlls/dwmapi/tests/dwmapi.c    | 75 +++++++++++++++++++++++++++++++++++
+ 4 files changed, 83 insertions(+)
+ create mode 100644 dlls/dwmapi/tests/Makefile.in
+ create mode 100644 dlls/dwmapi/tests/dwmapi.c
+
+diff --git a/configure b/configure
+index d4a1fb46b3a..6608fd0a0f7 100755
+--- a/configure
++++ b/configure
+@@ -20500,6 +20500,7 @@ wine_fn_config_makefile dlls/dssenh/tests enable_tests
+ wine_fn_config_makefile dlls/dswave enable_dswave
+ wine_fn_config_makefile dlls/dswave/tests enable_tests
+ wine_fn_config_makefile dlls/dwmapi enable_dwmapi
++wine_fn_config_makefile dlls/dwmapi/tests enable_tests
+ wine_fn_config_makefile dlls/dwrite enable_dwrite
+ wine_fn_config_makefile dlls/dwrite/tests enable_tests
+ wine_fn_config_makefile dlls/dx8vb enable_dx8vb
+diff --git a/configure.ac b/configure.ac
+index 41aabf2d2ea..ce24b716ba6 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -3253,6 +3253,7 @@ WINE_CONFIG_MAKEFILE(dlls/dssenh/tests)
+ WINE_CONFIG_MAKEFILE(dlls/dswave)
+ WINE_CONFIG_MAKEFILE(dlls/dswave/tests)
+ WINE_CONFIG_MAKEFILE(dlls/dwmapi)
++WINE_CONFIG_MAKEFILE(dlls/dwmapi/tests)
+ WINE_CONFIG_MAKEFILE(dlls/dwrite)
+ WINE_CONFIG_MAKEFILE(dlls/dwrite/tests)
+ WINE_CONFIG_MAKEFILE(dlls/dx8vb)
 diff --git a/dlls/dwmapi/tests/Makefile.in b/dlls/dwmapi/tests/Makefile.in
-index f365f96c72..947e3312b5 100644
---- a/dlls/dwmapi/tests/Makefile.in
+new file mode 100644
+index 00000000000..b441d9db35f
+--- /dev/null
 +++ b/dlls/dwmapi/tests/Makefile.in
-@@ -1,5 +1,5 @@
- TESTDLL   = dwmapi.dll
--IMPORTS   = dwmapi
+@@ -0,0 +1,6 @@
++TESTDLL   = dwmapi.dll
 +IMPORTS   = dwmapi gdi32 user32
- 
- C_SRCS = \
- 	dwmapi.c
++
++
++C_SRCS = \
++	dwmapi.c
 diff --git a/dlls/dwmapi/tests/dwmapi.c b/dlls/dwmapi/tests/dwmapi.c
-index 7c51e77c4a..68babd6eb2 100644
---- a/dlls/dwmapi/tests/dwmapi.c
+new file mode 100644
+index 00000000000..0fc8820b095
+--- /dev/null
 +++ b/dlls/dwmapi/tests/dwmapi.c
-@@ -19,13 +19,40 @@
-  *
-  */
- 
+@@ -0,0 +1,75 @@
++/*
++ * Copyright 2019 Gabriel Ivăncescu for CodeWeavers
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
 +#include <windows.h>
- #include "dwmapi.h"
--
- #include "wine/test.h"
- 
- static HRESULT (WINAPI *pDwmIsCompositionEnabled)(BOOL*);
- static HRESULT (WINAPI *pDwmEnableComposition)(UINT);
- static HRESULT (WINAPI *pDwmGetTransportAttributes)(BOOL*,BOOL*,DWORD*);
++#include <dwmapi.h>
++#include "wine/test.h"
++
 +static HWND test_wnd;
 +static LRESULT WINAPI test_wndproc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 +{
@@ -2619,13 +2603,8 @@ index 7c51e77c4a..68babd6eb2 100644
 +    ok(nc_rendering == FALSE || nc_rendering == TRUE, "non-boolean value 0x%x.\n", nc_rendering);
 +}
 +
- 
- BOOL dwmenabled;
- 
-@@ -92,6 +119,21 @@ static void test_dwm_get_transport_attributes(void)
- START_TEST(dwmapi)
- {
-     HMODULE hmod = LoadLibraryA("dwmapi.dll");
++START_TEST(dwmapi)
++{
 +    HINSTANCE inst = GetModuleHandleA(NULL);
 +    WNDCLASSA cls;
 +
@@ -2641,14 +2620,6 @@ index 7c51e77c4a..68babd6eb2 100644
 +    cls.lpszClassName = "Test";
 +    RegisterClassA(&cls);
 +
- 
-     if (!hmod)
-     {
-@@ -105,4 +147,14 @@ START_TEST(dwmapi)
- 
-     test_isdwmenabled();
-     test_dwm_get_transport_attributes();
-+
 +    test_wnd = CreateWindowExA(0, "Test", "Test Window", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 +                               100, 100, 200, 200, 0, 0, 0, NULL);
 +    ok(test_wnd != NULL, "Failed to create test window.\n");
@@ -2657,8 +2628,7 @@ index 7c51e77c4a..68babd6eb2 100644
 +
 +    DestroyWindow(test_wnd);
 +    UnregisterClassA("Test", inst);
-+
- }
++}
 From 1a2e600a9c35a9558b32e7986668d7dc81c8b5ae Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
 Date: Fri, 13 Dec 2019 15:54:30 +0200
@@ -3504,283 +3474,45 @@ index 9cd6812d032..9e5fe2f3129 100644
      while (*candidates)
      {
          WCHAR **args = CommandLineToArgvW( candidates, &count );
-From 3082a724542ba7527fa52eaac3611ed97ff91cac Mon Sep 17 00:00:00 2001
-From: Andrew Eikum <aeikum@codeweavers.com>
-Date: Mon, 10 Dec 2018 12:48:41 -0600
-Subject: [PATCH] xaudio2: Set PulseAudio application name property in the
- environment
+From 4ab9453691e6edba7fd7b32dd883abe608d2be87 Mon Sep 17 00:00:00 2001
+From: Hans-Kristian Arntzen <post@arntzen-software.no>
+Date: Tue, 31 Mar 2020 13:19:41 +0200
+Subject: [PATCH] dlls/dxgi: Implement IDXGIFactory5::CheckFeatureSupport.
 
-So PA doesn't present all Wine applications as "wine-preloader", and
-allows PA to store per-application settings.
+Enables certain D3D12 games to use sync off, since they gate their use
+of swap_interval == 0 on this feature being present.
+
+Signed-off-by: Hans-Kristian Arntzen <post@arntzen-software.no>
 ---
- dlls/winepulse.drv/mmdevdrv.c |  1 +
- dlls/xaudio2_7/xaudio_dll.c   | 21 +++++++++++++++++++++
- 2 files changed, 22 insertions(+)
+ dlls/dxgi/factory.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
 
-diff --git a/dlls/winepulse.drv/mmdevdrv.c b/dlls/winepulse.drv/mmdevdrv.c
-index c80ea4f9d04..6a2906761a7 100644
---- a/dlls/winepulse.drv/mmdevdrv.c
-+++ b/dlls/winepulse.drv/mmdevdrv.c
-@@ -571,6 +571,7 @@ static HRESULT pulse_connect(void)
-     WideCharToMultiByte(CP_UNIXCP, 0, name, -1, str, len, NULL, NULL);
-     TRACE("Name: %s\n", str);
-     pulse_ctx = pa_context_new(pa_mainloop_get_api(pulse_ml), str);
-+    setenv("PULSE_PROP_application.name", str, 1);
-     pa_xfree(str);
-     if (!pulse_ctx) {
-         ERR("Failed to create context\n");
-diff --git a/dlls/xaudio2_7/xaudio_dll.c b/dlls/xaudio2_7/xaudio_dll.c
-index 4ca04198b6e..483e2b4138a 100644
---- a/dlls/xaudio2_7/xaudio_dll.c
-+++ b/dlls/xaudio2_7/xaudio_dll.c
-@@ -38,6 +38,7 @@
- #include "wine/asm.h"
- #include "wine/debug.h"
- #include "wine/heap.h"
-+#include "wine/unicode.h"
- 
- WINE_DEFAULT_DEBUG_CHANNEL(xaudio2);
- 
-@@ -1948,6 +1949,26 @@ static HRESULT WINAPI XAudio2CF_CreateInstance(IClassFactory *iface, IUnknown *p
-     pthread_cond_init(&object->mst.engine_done, NULL);
-     pthread_cond_init(&object->mst.engine_ready, NULL);
- 
-+    /* set PulseAudio's application.name in the environment since FAudio and
-+     * SDL provide no way to pass this in */
-+    {
-+        WCHAR path[MAX_PATH], *name;
-+        char *str;
-+        DWORD len;
-+
-+        GetModuleFileNameW(NULL, path, ARRAY_SIZE(path));
-+        name = strrchrW(path, '\\');
-+        if (!name)
-+            name = path;
-+        else
-+            name++;
-+        len = WideCharToMultiByte(CP_UNIXCP, 0, name, -1, NULL, 0, NULL, NULL);
-+        str = HeapAlloc(GetProcessHeap(), 0, len);
-+        WideCharToMultiByte(CP_UNIXCP, 0, name, -1, str, len, NULL, NULL);
-+        setenv("PULSE_PROP_application.name", str, 1);
-+        HeapFree(GetProcessHeap(), 0, str);
-+    }
-+
-     FAudioCOMConstructWithCustomAllocatorEXT(
-         &object->faudio,
-         XAUDIO2_VER,
-From 9180fdea2d446513bdae681431cb4d872f9214cb Mon Sep 17 00:00:00 2001
-From: Andrew Eikum <aeikum@codeweavers.com>
-Date: Tue, 7 Apr 2020 11:05:47 -0500
-Subject: [PATCH] winepulse: Add stub IAudioClockAdjustment implementation
-
----
- dlls/winepulse.drv/mmdevdrv.c | 47 +++++++++++++++++++++++++++++++++++
- 1 file changed, 47 insertions(+)
-
-diff --git a/dlls/winepulse.drv/mmdevdrv.c b/dlls/winepulse.drv/mmdevdrv.c
-index 6a2906761a7..c5f12301c2e 100644
---- a/dlls/winepulse.drv/mmdevdrv.c
-+++ b/dlls/winepulse.drv/mmdevdrv.c
-@@ -162,6 +162,7 @@ struct ACImpl {
-     IAudioCaptureClient IAudioCaptureClient_iface;
-     IAudioClock IAudioClock_iface;
-     IAudioClock2 IAudioClock2_iface;
-+    IAudioClockAdjustment IAudioClockAdjustment_iface;
-     IAudioStreamVolume IAudioStreamVolume_iface;
-     IUnknown *marshal;
-     IMMDevice *parent;
-@@ -206,6 +207,7 @@ static const ISimpleAudioVolumeVtbl SimpleAudioVolume_Vtbl;
- static const IChannelAudioVolumeVtbl ChannelAudioVolume_Vtbl;
- static const IAudioClockVtbl AudioClock_Vtbl;
- static const IAudioClock2Vtbl AudioClock2_Vtbl;
-+static const IAudioClockAdjustmentVtbl AudioClockAdjustment_Vtbl;
- static const IAudioStreamVolumeVtbl AudioStreamVolume_Vtbl;
- 
- static AudioSessionWrapper *AudioSessionWrapper_Create(ACImpl *client);
-@@ -250,6 +252,11 @@ static inline ACImpl *impl_from_IAudioClock2(IAudioClock2 *iface)
-     return CONTAINING_RECORD(iface, ACImpl, IAudioClock2_iface);
- }
- 
-+static inline ACImpl *impl_from_IAudioClockAdjustment(IAudioClockAdjustment *iface)
-+{
-+    return CONTAINING_RECORD(iface, ACImpl, IAudioClockAdjustment_iface);
-+}
-+
- static inline ACImpl *impl_from_IAudioStreamVolume(IAudioStreamVolume *iface)
+diff --git a/dlls/dxgi/factory.c b/dlls/dxgi/factory.c
+index a0038b4fe77..83dddfe5f8b 100644
+--- a/dlls/dxgi/factory.c
++++ b/dlls/dxgi/factory.c
+@@ -442,10 +442,21 @@ static HRESULT STDMETHODCALLTYPE dxgi_factory_EnumWarpAdapter(IWineDXGIFactory *
+ static HRESULT STDMETHODCALLTYPE dxgi_factory_CheckFeatureSupport(IWineDXGIFactory *iface,
+         DXGI_FEATURE feature, void *feature_data, UINT data_size)
  {
-     return CONTAINING_RECORD(iface, ACImpl, IAudioStreamVolume_iface);
-@@ -1246,6 +1253,7 @@ HRESULT WINAPI AUDDRV_GetAudioEndpoint(GUID *guid, IMMDevice *dev, IAudioClient
-     This->IAudioCaptureClient_iface.lpVtbl = &AudioCaptureClient_Vtbl;
-     This->IAudioClock_iface.lpVtbl = &AudioClock_Vtbl;
-     This->IAudioClock2_iface.lpVtbl = &AudioClock2_Vtbl;
-+    This->IAudioClockAdjustment_iface.lpVtbl = &AudioClockAdjustment_Vtbl;
-     This->IAudioStreamVolume_iface.lpVtbl = &AudioStreamVolume_Vtbl;
-     This->dataflow = dataflow;
-     This->parent = dev;
-@@ -1278,6 +1286,8 @@ static HRESULT WINAPI AudioClient_QueryInterface(IAudioClient *iface,
-     *ppv = NULL;
-     if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IAudioClient))
-         *ppv = iface;
-+    else if (IsEqualIID(riid, &IID_IAudioClockAdjustment))
-+        *ppv = &This->IAudioClockAdjustment_iface;
-     if (*ppv) {
-         IUnknown_AddRef((IUnknown*)*ppv);
-         return S_OK;
-@@ -2728,6 +2738,43 @@ static const IAudioClock2Vtbl AudioClock2_Vtbl =
-     AudioClock2_GetDevicePosition
- };
- 
-+static HRESULT WINAPI AudioClockAdjustment_QueryInterface(IAudioClockAdjustment *iface,
-+        REFIID riid, void **ppv)
-+{
-+    ACImpl *This = impl_from_IAudioClockAdjustment(iface);
-+    return IAudioClock_QueryInterface(&This->IAudioClock_iface, riid, ppv);
-+}
-+
-+static ULONG WINAPI AudioClockAdjustment_AddRef(IAudioClockAdjustment *iface)
-+{
-+    ACImpl *This = impl_from_IAudioClockAdjustment(iface);
-+    return IAudioClient_AddRef(&This->IAudioClient_iface);
-+}
-+
-+static ULONG WINAPI AudioClockAdjustment_Release(IAudioClockAdjustment *iface)
-+{
-+    ACImpl *This = impl_from_IAudioClockAdjustment(iface);
-+    return IAudioClient_Release(&This->IAudioClient_iface);
-+}
-+
-+static HRESULT WINAPI AudioClockAdjustment_SetSampleRate(IAudioClockAdjustment *iface,
-+        float new_rate)
-+{
-+    ACImpl *This = impl_from_IAudioClockAdjustment(iface);
-+
-+    TRACE("(%p)->(%f)\n", This, new_rate);
-+
-+    return E_NOTIMPL;
-+}
-+
-+static const IAudioClockAdjustmentVtbl AudioClockAdjustment_Vtbl =
-+{
-+    AudioClockAdjustment_QueryInterface,
-+    AudioClockAdjustment_AddRef,
-+    AudioClockAdjustment_Release,
-+    AudioClockAdjustment_SetSampleRate
-+};
-+
- static HRESULT WINAPI AudioStreamVolume_QueryInterface(
-         IAudioStreamVolume *iface, REFIID riid, void **ppv)
- {
-From 21888ad1af89c449b78d3fc5aaa71e9608d50e42 Mon Sep 17 00:00:00 2001
-From: Andrew Eikum <aeikum@codeweavers.com>
-Date: Tue, 7 Apr 2020 14:01:02 -0500
-Subject: [PATCH] winepulse: Implement IAudioClockAdjustment::SetSampleRate
-
----
- dlls/winepulse.drv/mmdevdrv.c | 73 +++++++++++++++++++++++++++++++++--
- 1 file changed, 70 insertions(+), 3 deletions(-)
-
-diff --git a/dlls/winepulse.drv/mmdevdrv.c b/dlls/winepulse.drv/mmdevdrv.c
-index c5f12301c2e..eeb153f78b1 100644
---- a/dlls/winepulse.drv/mmdevdrv.c
-+++ b/dlls/winepulse.drv/mmdevdrv.c
-@@ -493,7 +493,7 @@ static void pulse_probe_settings(int render, WAVEFORMATEXTENSIBLE *fmt) {
-         ret = -1;
-     else if (render)
-         ret = pa_stream_connect_playback(stream, NULL, &attr,
--        PA_STREAM_START_CORKED|PA_STREAM_FIX_RATE|PA_STREAM_FIX_CHANNELS|PA_STREAM_EARLY_REQUESTS, NULL, NULL);
-+        PA_STREAM_START_CORKED|PA_STREAM_FIX_RATE|PA_STREAM_FIX_CHANNELS|PA_STREAM_EARLY_REQUESTS|PA_STREAM_VARIABLE_RATE, NULL, NULL);
-     else
-         ret = pa_stream_connect_record(stream, NULL, &attr, PA_STREAM_START_CORKED|PA_STREAM_FIX_RATE|PA_STREAM_FIX_CHANNELS|PA_STREAM_EARLY_REQUESTS);
-     if (ret >= 0) {
-@@ -1163,7 +1163,7 @@ static HRESULT pulse_stream_connect(ACImpl *This, UINT32 period_bytes) {
-     dump_attr(&attr);
-     if (This->dataflow == eRender)
-         ret = pa_stream_connect_playback(This->stream, NULL, &attr,
--        PA_STREAM_START_CORKED|PA_STREAM_START_UNMUTED|PA_STREAM_ADJUST_LATENCY|moving, NULL, NULL);
-+        PA_STREAM_START_CORKED|PA_STREAM_START_UNMUTED|PA_STREAM_ADJUST_LATENCY|PA_STREAM_VARIABLE_RATE|moving, NULL, NULL);
-     else
-         ret = pa_stream_connect_record(This->stream, NULL, &attr,
-         PA_STREAM_START_CORKED|PA_STREAM_START_UNMUTED|PA_STREAM_ADJUST_LATENCY|moving);
-@@ -2757,14 +2757,81 @@ static ULONG WINAPI AudioClockAdjustment_Release(IAudioClockAdjustment *iface)
-     return IAudioClient_Release(&This->IAudioClient_iface);
- }
- 
-+static BOOL pulse_update_sample_rate(ACImpl *This, uint32_t new_rate)
-+{
-+    pa_operation *o;
-+    int success;
-+
-+    o = pa_stream_update_sample_rate(This->stream, new_rate, pulse_op_cb, &success);
-+    if (o)
-+    {
-+        while (pa_operation_get_state(o) == PA_OPERATION_RUNNING)
-+            pthread_cond_wait(&pulse_cond, &pulse_lock);
-+        pa_operation_unref(o);
-+    } else
-+        success = 0;
-+
-+    return success != 0;
-+}
-+
- static HRESULT WINAPI AudioClockAdjustment_SetSampleRate(IAudioClockAdjustment *iface,
-         float new_rate)
- {
-     ACImpl *This = impl_from_IAudioClockAdjustment(iface);
-+    int success;
-+    uint32_t old_rate;
-+    pa_operation *o;
-+    HRESULT hr;
-+    pa_buffer_attr attr;
- 
-     TRACE("(%p)->(%f)\n", This, new_rate);
+-    FIXME("iface %p, feature %#x, feature_data %p, data_size %u stub!\n",
++    TRACE("iface %p, feature %#x, feature_data %p, data_size %u.\n",
+             iface, feature, feature_data, data_size);
  
 -    return E_NOTIMPL;
-+    pthread_mutex_lock(&pulse_lock);
-+    hr = pulse_stream_valid(This);
-+    if (FAILED(hr)) {
-+        pthread_mutex_unlock(&pulse_lock);
-+        return hr;
-+    }
-+
-+    if(!pulse_update_sample_rate(This, new_rate)){
-+        WARN("Something went wrong during update_sample_rate\n");
-+        pthread_mutex_unlock(&pulse_lock);
-+        return E_FAIL;
-+    }
-+
-+    old_rate = This->ss.rate;
-+    This->ss.rate = new_rate;
-+    This->period_bytes = pa_frame_size(&This->ss) * MulDiv(This->mmdev_period_usec, This->ss.rate, 1000000);
-+
-+    attr.minreq = attr.fragsize = This->period_bytes;
-+    attr.tlength = This->period_bytes * 3;
-+    attr.maxlength = This->bufsize_frames * pa_frame_size(&This->ss);
-+    attr.prebuf = pa_frame_size(&This->ss);
-+
-+    o = pa_stream_set_buffer_attr(This->stream, &attr, pulse_op_cb, &success);
-+    if (o)
++    if (feature == DXGI_FEATURE_PRESENT_ALLOW_TEARING)
 +    {
-+        while (pa_operation_get_state(o) == PA_OPERATION_RUNNING)
-+            pthread_cond_wait(&pulse_cond, &pulse_lock);
-+        pa_operation_unref(o);
-+    } else
-+        success = 0;
-+
-+    if(!success){
-+        WARN("Something went wrong during set_buffer_attr\n");
-+        if(pulse_update_sample_rate(This, old_rate)){
-+            This->ss.rate = old_rate;
-+            This->period_bytes = pa_frame_size(&This->ss) * MulDiv(This->mmdev_period_usec, This->ss.rate, 1000000);
++        if (data_size == sizeof(BOOL))
++        {
++            *(BOOL *)feature_data = TRUE;
++            return S_OK;
 +        }
-+        pthread_mutex_unlock(&pulse_lock);
-+        return E_FAIL;
++        else
++            return DXGI_ERROR_INVALID_CALL;
 +    }
-+
-+    TRACE("period_bytes now: %u\n", This->period_bytes);
-+
-+    pthread_mutex_unlock(&pulse_lock);
-+
-+    return S_OK;
++    else
++        return DXGI_ERROR_UNSUPPORTED;
  }
  
- static const IAudioClockAdjustmentVtbl AudioClockAdjustment_Vtbl =
+ static const struct IWineDXGIFactoryVtbl dxgi_factory_vtbl =
+
