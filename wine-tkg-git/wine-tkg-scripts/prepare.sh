@@ -41,7 +41,6 @@ _exit_cleanup() {
     echo "_proton_mf_hacks=${_proton_mf_hacks}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_dxvk_dxgi=${_dxvk_dxgi}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_use_dxvk=${_use_dxvk}" >> "$_proton_tkg_path"/proton_tkg_token
-    echo "_use_d9vk=${_use_d9vk}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_pkgdest='${pkgdir}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_steamvr_support='${_steamvr_support}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_NUKR='${_NUKR}'" >> "$_proton_tkg_path"/proton_tkg_token
@@ -195,17 +194,12 @@ msg2 ''
     _highcorecount_fix="true"
     _update_winevulkan="true"
     _use_mono="true"
-    if [ "$_use_dxvk" == "true" ]; then
+    if [ "$_use_dxvk" == "true" ] || [ "$_use_dxvk" == "release" ]; then
       _use_dxvk="release"
-    fi
-    if [ "$_use_d9vk" == "true" ]; then
-      _use_d9vk="release"
+      _dxvk_dxgi="true"
     fi
     if [ "$_ispkgbuild" == "true" ]; then
       _steamvr_support="false"
-    fi
-    if [ "$_use_dxvk" == "release" ]; then
-      _dxvk_dxgi="true"
     fi
   elif [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ]; then
     error "It looks like you're attempting to build a Proton version of wine-tkg-git."
