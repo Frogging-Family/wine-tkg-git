@@ -64,7 +64,7 @@ None of the limitations above apply here.
 ./proton-tkg.sh
 ```
 
-### For other distros (make sure to check the [wiki page](https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git) :
+### For other distros (make sure to check the [wiki page](https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git)) :
 
  * From the `proton-tkg` directory (where the PKGBUILD is located), running the proton-tkg.sh script will launch the usual wine-tkg-git building process... with extra spice :
 ```

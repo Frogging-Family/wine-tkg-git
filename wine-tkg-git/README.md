@@ -43,7 +43,7 @@ cd wine-tkg-git
 makepkg -si
 ```
 
-### For other distros (make sure to check the [wiki page](https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git) :
+### For other distros (make sure to check the [wiki page](https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git)) :
 
  * From the `wine-tkg-git` directory (where the PKGBUILD is located), run the following command in a terminal to start the building process :
 ```
