@@ -1,0 +1,63 @@
+From 477e570e669e90f6e137d686c9f254b085d6c1ab Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Thu, 14 Apr 2020 02:13:20 +0200
+Subject: esync fixup for wine 5.6+ (8701260)
+
+
+diff --git a/0045-server-ntdll-Implement-alertable-waits.patch b/0045-server-ntdll-Implement-alertable-waits.patch
+index 551e48304..b9310cbea 100644
+--- a/0045-server-ntdll-Implement-alertable-waits.patch
++++ b/0045-server-ntdll-Implement-alertable-waits.patch
+@@ -184,8 +184,8 @@ index 119a36f36..8a41f6961 100644
+ +    TRACE("Woken up by user APC.\n");
+ +
+ +    /* We have to make a server call anyway to get the APC to execute, so just
+-+     * delegate down to server_select(). */
+-+    ret = server_select( NULL, 0, SELECT_INTERRUPTIBLE | SELECT_ALERTABLE, &zero );
+++     * delegate down to server_wait(). */
+++    ret = server_wait( NULL, 0, SELECT_INTERRUPTIBLE | SELECT_ALERTABLE, &zero );
+ +
+ +    /* This can happen if we received a system APC, and the APC fd was woken up
+ +     * before we got SIGUSR1. poll() doesn't return EINTR in that case. The
+ 
+diff --git a/0055-ntdll-Let-the-server-know-when-we-are-doing-a-messag.patch b/0055-ntdll-Let-the-server-know-when-we-are-doing-a-messag.patch
+index 6adca2b95..32b363ef0 100644
+--- a/0055-ntdll-Let-the-server-know-when-we-are-doing-a-messag.patch
++++ b/0055-ntdll-Let-the-server-know-when-we-are-doing-a-messag.patch
+@@ -29,7 +28,7 @@ index 5eef7e3c8..d935a4af5 100644
+ +         * hung queues. Do it like this. */
+ +        select_op.wait.op = SELECT_WAIT;
+ +        select_op.wait.handles[0] = wine_server_obj_handle( handles[count - 1] );
+-+        ret = server_select( &select_op, offsetof( select_op_t, wait.handles[1] ), 0, &zero );
+++        ret = server_wait( &select_op, offsetof( select_op_t, wait.handles[1] ), 0, &zero );
+ +        if (ret != STATUS_WAIT_0 && ret != STATUS_TIMEOUT)
+ +            ERR("Unexpected ret %#x\n", ret);
+      }
+ 
+diff --git a/0056-ntdll-Avoid-server_select-when-waiting-for-critical-.patch b/0056-ntdll-Avoid-server_select-when-waiting-for-critical-.patch
+index 60bc56159..18b34e470 100644
+--- a/0056-ntdll-Avoid-server_select-when-waiting-for-critical-.patch
++++ b/0056-ntdll-Avoid-server_select-when-waiting-for-critical-.patch
+@@ -25,7 +24,7 @@ index 6b17cebe0..d9add3f06 100644
+          time.QuadPart = timeout * (LONGLONG)-10000000;
+ -        select_op.wait.op = SELECT_WAIT;
+ -        select_op.wait.handles[0] = wine_server_obj_handle( sem );
+--        ret = server_select( &select_op, offsetof( select_op_t, wait.handles[1] ), 0, &time );
++-        ret = server_wait( &select_op, offsetof( select_op_t, wait.handles[1] ), 0, &time );
+ +        ret = NtWaitForSingleObject( sem, FALSE, &time );
+      }
+      return ret;
+ 
+diff --git a/0079-ntdll-server-Revert-to-old-implementation-of-hung-qu.patch b/0079-ntdll-server-Revert-to-old-implementation-of-hung-qu.patch
+index b3e73dd89..7518ef573 100644
+--- a/0079-ntdll-server-Revert-to-old-implementation-of-hung-qu.patch
++++ b/0079-ntdll-server-Revert-to-old-implementation-of-hung-qu.patch
+@@ -53,7 +53,7 @@ index ea4654d1f13..4ffbc4bd25e 100644
+ -         * hung queues. Do it like this. */
+ -        select_op.wait.op = SELECT_WAIT;
+ -        select_op.wait.handles[0] = wine_server_obj_handle( handles[count - 1] );
+--        ret = server_select( &select_op, offsetof( select_op_t, wait.handles[1] ), 0, &zero );
++-        ret = server_wait( &select_op, offsetof( select_op_t, wait.handles[1] ), 0, &zero );
+ -        if (ret != STATUS_WAIT_0 && ret != STATUS_TIMEOUT)
+ -            ERR("Unexpected ret %#x\n", ret);
+      }

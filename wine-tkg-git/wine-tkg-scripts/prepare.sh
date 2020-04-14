@@ -856,6 +856,13 @@ _prepare() {
 	      _patchname='esync-compat-fixes-r3.11.patch' && _patchmsg="Using esync 5.5+(b664ae8) additional compat fixes" && nonuser_patcher
 	      cd "${srcdir}"/"${_winesrcdir}"
 	    fi
+
+	    # if using a wine version that includes 8701260, apply 5.6+ additional fixes
+	    if git merge-base --is-ancestor 87012607688f730755ee91de14620e6e3b78395c HEAD; then
+	      cd "${srcdir}"/"${_esyncsrcdir}"
+	      _patchname='esync-compat-fixes-r3.12.patch' && _patchmsg="Using esync 5.6+(8701260) additional compat fixes" && nonuser_patcher
+	      cd "${srcdir}"/"${_winesrcdir}"
+	    fi
 	  # if using a wine version that includes aec7bef, use 3.17+ fixes
 	  elif git merge-base --is-ancestor aec7befb5115d866724149bbc5576c7259fef820 HEAD; then # server: Avoid potential size overflow for empty object attributes
 	    if [ "$_use_staging" == "true" ]; then
