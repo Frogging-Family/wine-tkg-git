@@ -1056,8 +1056,10 @@ EOM
 	# fsync - experimental replacement for esync introduced with Proton 4.11-1
 	if [ "$_use_fsync" == "true" ]; then
 	  if [ "$_staging_esync" == "true" ]; then
-	    if git merge-base --is-ancestor fc17535eb98a4b200d6a418337a7e280568c7cfd HEAD; then
+	    if git merge-base --is-ancestor 87012607688f730755ee91de14620e6e3b78395c HEAD; then
 	      _patchname='fsync-staging.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging)" && nonuser_patcher
+	    elif git merge-base --is-ancestor fc17535eb98a4b200d6a418337a7e280568c7cfd HEAD; then
+	      _patchname='fsync-staging-8701260.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging)" && nonuser_patcher
 	    elif git merge-base --is-ancestor 608d086f1b1bb7168e9322c65224c23f34e75f29 HEAD; then
 	      _patchname='fsync-staging-fc17535.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging <fc17535)" && nonuser_patcher
 	    elif $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor cf04b8d6ac710c83dc9a433aea3e5d3c451095a1 HEAD); then
@@ -1069,8 +1071,10 @@ EOM
 	      _patchname='fsync-staging-no_alloc_handle.patch' && _patchmsg="Added no_alloc_handle object method to fsync" && nonuser_patcher
 	    fi
 	  elif [ "$_use_esync" == "true" ]; then
-	    if git merge-base --is-ancestor fc17535eb98a4b200d6a418337a7e280568c7cfd HEAD; then
+	    if git merge-base --is-ancestor 87012607688f730755ee91de14620e6e3b78395c HEAD; then
 	      _patchname='fsync-mainline.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
+	    elif git merge-base --is-ancestor fc17535eb98a4b200d6a418337a7e280568c7cfd HEAD; then
+	      _patchname='fsync-mainline-8701260.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
 	    elif git merge-base --is-ancestor 608d086f1b1bb7168e9322c65224c23f34e75f29 HEAD; then
 	      _patchname='fsync-mainline-fc17535.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
 	    elif git merge-base --is-ancestor 29914d583fe098521472332687b8da69fc692690 HEAD; then
