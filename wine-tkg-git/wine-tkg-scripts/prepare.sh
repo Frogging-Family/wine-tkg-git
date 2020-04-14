@@ -590,6 +590,9 @@ _prepare() {
 	if [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  if git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD; then
+	    if git merge-base --is-ancestor 437038604a09c7952a52b28c373cfbe706d8e78b HEAD; then
+	      sed -i 's/-@@ -3383,3 +3393,14 @@ DECL_HANDLER(get_rawinput_devices)/-@@ -3432,3 +3442,14 @@ DECL_HANDLER(get_rawinput_devices)/g' "$_where"/staging-44d1a45-localreverts.patch
+	    fi
 	    _patchname='staging-44d1a45-localreverts.patch' && _patchmsg="Applied local reverts for staging 44d1a45 fshack" && nonuser_patcher
 	  fi
 	  if git merge-base --is-ancestor 7cc69d770780b8fb60fb249e007f1a777a03e51a HEAD; then
