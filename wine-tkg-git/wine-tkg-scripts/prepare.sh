@@ -361,6 +361,9 @@ _prepare() {
 
 	# Community patches
 	if [ -n "$_community_patches" ]; then
+	  if [ ! -d "$_where/../../community-patches" ]; then
+	    cd "$_where/../.." && git clone https://github.com/Frogging-Family/community-patches.git
+	  fi
 	  _community_patches=($_community_patches)
 	  for _p in ${_community_patches[@]}; do
 	    ln -s "$_where"/../../community-patches/wine-tkg-git/$_p "$_where"/
