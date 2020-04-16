@@ -483,9 +483,15 @@ _prepare() {
 	# Reverts for commits known to break specific versions of the FS hack
 	nonuser_reverter() {
 	  if git merge-base --is-ancestor $_committorevert HEAD; then
-	    $(git revert -n --no-edit $_committorevert && echo "$_committorevert reverted" >> "$_where"/last_build_config.log) || exit 1
+	    git revert -n --no-edit $_committorevert || exit 1
+	    echo "$_committorevert reverted" >> "$_where"/last_build_config.log
 	  fi
 	}
+
+	if [ "$_gamepad_additions" == "true" ] && [ "$_use_staging" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && git merge-base --is-ancestor da7d60bf97fb8726828e57f852e8963aacde21e9 HEAD; then
+	  _committorevert=da7d60bf97fb8726828e57f852e8963aacde21e9 && nonuser_reverter
+	  echo -e "( Proton gamepad additions unbreak revert applied )\n" >> "$_where"/last_build_config.log
+	fi
 
 	if [ "$_warframelauncher_fix" == "true" ] && git merge-base --is-ancestor 5e218fe758fe6beed5c7ad73405eccf33c307e6d HEAD && ! git merge-base --is-ancestor adfb042819472a23f4d07f7aeea194e463855806 HEAD; then
 	  _committorevert=bae4776c571cf975be1689594f4caf93ad23e0ca && nonuser_reverter
@@ -1392,10 +1398,8 @@ EOM
 	    fi
 	    # Gamepad additions - from Proton
 	    if [ "$_gamepad_additions" == "true" ] && [ "$_use_staging" == "true" ]; then
-	      if git merge-base --is-ancestor da7d60bf97fb8726828e57f852e8963aacde21e9 HEAD; then
+	      if git merge-base --is-ancestor 6cb3d0fb3778f660546e581787b1734e2b1d2955 HEAD; then
 	        _patchname='proton-gamepad-additions.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
-	      elif git merge-base --is-ancestor 6cb3d0fb3778f660546e581787b1734e2b1d2955 HEAD; then
-	        _patchname='proton-gamepad-additions-da7d60b.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
 	      elif git merge-base --is-ancestor c074966b9d75d9519e8640e87725ad439f4ffa0c HEAD; then
 	        _patchname='proton-gamepad-additions-6cb3d0f.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
 	      elif git merge-base --is-ancestor aa482426dc4d6f291e6d1dd75be4701636cab31d HEAD; then
