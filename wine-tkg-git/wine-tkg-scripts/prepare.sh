@@ -1159,8 +1159,10 @@ EOM
 
 	# Proton compatible rawinput patchset
 	if [ "$_proton_rawinput" == "true" ] && [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ] && git merge-base --is-ancestor 6d7828e8df68178ca662bc618f7598254afcfbe1 HEAD; then
-	  if git merge-base --is-ancestor 19c6524e48db1d785095953d25591f1e2d2872d9 HEAD; then
+	  if git merge-base --is-ancestor dbe7694c533ce8bc454248255a2abad66f221e01 HEAD; then
 	    _patchname='proton-rawinput.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
+	  elif git merge-base --is-ancestor 19c6524e48db1d785095953d25591f1e2d2872d9 HEAD; then
+	    _patchname='proton-rawinput-dbe7694.patch' && _patchmsg="Using rawinput patchset (<19c6524)" && nonuser_patcher
 	  elif git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	    _patchname='proton-rawinput-19c6524.patch' && _patchmsg="Using rawinput patchset (<19c6524)" && nonuser_patcher
 	  else
