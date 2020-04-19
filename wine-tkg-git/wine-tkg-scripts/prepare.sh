@@ -606,6 +606,9 @@ _prepare() {
 	  fi
 	  if git merge-base --is-ancestor 7cc69d770780b8fb60fb249e007f1a777a03e51a HEAD; then
 	    _staging_args+=(-W winex11.drv-mouse-coorrds -W winex11-MWM_Decorations)
+	    if git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD && ! git merge-base --is-ancestor fd3bb06a4c1102cf424bc78ead25ee440db1b0fa HEAD; then
+	      _staging_args+=(-W user32-rawinput)
+	    fi
 	    if git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD; then
 	      _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-nolegacy -W user32-rawinput-mouse-experimental -W user32-rawinput-hid -W winex11-key_translation)
 	      if ! git merge-base --is-ancestor d8496cacd170347bbde755ead066be8394fbb82b HEAD; then
@@ -1105,6 +1108,23 @@ EOM
 
 	echo -e "" >> "$_where"/last_build_config.log
 
+	# Legacy Proton Fullscreen inline patching
+	if [ "$_proton_rawinput" == "true" ] && [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ] && git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD; then
+	  for _f in "$_where"/valve_proton_fullscreen_hack-staging-{938dddf,de64501,82c6ec3,7cc69d7,0cb79db,a4b9460,57bb5cc,6e87235}.patch; do
+	    patch ${_f} << 'EOM'
+@@ -2577,7 +2577,7 @@ index 1209a250b0..077c18ac10 100644
+ +    input.u.mi.dx = pt.x;
+ +    input.u.mi.dy = pt.y;
+ +
+-     TRACE( "pos %d,%d (event %f,%f, accum %f,%f)\n", input.u.mi.dx, input.u.mi.dy, dx, dy, x_rel->accum, y_rel->accum );
++     TRACE( "pos %d,%d (event %f,%f)\n", input.u.mi.dx, input.u.mi.dy, dx, dy );
+  
+      input.type = INPUT_MOUSE;
+ diff --git a/dlls/winex11.drv/opengl.c b/dlls/winex11.drv/opengl.c
+EOM
+      done
+	fi
+
 	# Proton Fullscreen patch - Allows resolution changes for fullscreen games without changing desktop resolution
 	if [ "$_proton_fs_hack" == "true" ]; then
 	  if [ "$_FS_bypass_compositor" != "true" ]; then
@@ -1161,7 +1181,7 @@ EOM
 	fi
 
 	# Proton compatible rawinput patchset
-	if [ "$_proton_rawinput" == "true" ] && [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ] && git merge-base --is-ancestor 6d7828e8df68178ca662bc618f7598254afcfbe1 HEAD; then
+	if [ "$_proton_rawinput" == "true" ] && [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ] && git merge-base --is-ancestor cfcc280905b7804efde8f42bcd6bddbe5ebd8cad HEAD; then
 	  if git merge-base --is-ancestor dbe7694c533ce8bc454248255a2abad66f221e01 HEAD; then
 	    _patchname='proton-rawinput.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
 	  elif git merge-base --is-ancestor 19c6524e48db1d785095953d25591f1e2d2872d9 HEAD; then
@@ -1491,6 +1511,8 @@ EOM
 	# Proton fs hack additions
 	if git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && [ "$_proton_fs_hack" == "true" ]; then
 	  _patchname='proton-vk-bits-4.5.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
+	fi
+	if git merge-base --is-ancestor 458e0ad5133c9a449e22688a89183f3a6ab286e4 HEAD && [ "$_proton_fs_hack" == "true" ]; then
 	  _patchname='proton_fs_hack_integer_scaling.patch' && _patchmsg="Enable Proton fs hack integer scaling" && nonuser_patcher
 	fi
 	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ] || ([ "$_protonify" == "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
