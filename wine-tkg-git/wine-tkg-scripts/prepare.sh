@@ -1424,6 +1424,9 @@ EOM
 	      fi
 	    fi
 	  fi
+	  if [ "$_staging_pulse_disable" != "true" ] && [ "$_use_staging" == "true" ]; then
+	    _patchname='proton-pa-staging.patch' && _patchmsg="Enable Proton's PA additions" && nonuser_patcher
+	  fi
 	fi
 
 	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ]; then
