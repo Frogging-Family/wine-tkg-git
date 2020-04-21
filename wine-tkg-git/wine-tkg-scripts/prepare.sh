@@ -1561,7 +1561,11 @@ EOM
 
 	# Set the default wine version to win10
 	if [ "$_win10_default" == "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
-	  _patchname='proton-win10-default.patch' && _patchmsg="Enforce win10 as default wine version" && nonuser_patcher
+	  if git merge-base --is-ancestor e13d54665765d9dd8829233f0ea748fd685a1913 HEAD; then
+	    _patchname='proton-win10-default.patch' && _patchmsg="Enforce win10 as default wine version" && nonuser_patcher
+	  else
+	    _patchname='proton-win10-default-e13d546.patch' && _patchmsg="Enforce win10 as default wine version" && nonuser_patcher
+	  fi
 	fi
 
 	# Add support for dxvk_config library to Wine's dxgi when vkd3d support is enabled
