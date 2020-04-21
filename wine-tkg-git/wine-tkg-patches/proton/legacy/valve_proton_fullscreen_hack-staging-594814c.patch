@@ -1,7 +1,7 @@
 From 33529f06c4edd37e6061d70da1fb007f929931d4 Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
 Date: Mon, 10 Feb 2020 13:03:57 +0100
-Subject: Proton fs hack patchset, 5.0 rebased edition
+Subject: Proton fs hack patchset, 5.0 staging rebased edition
 
 
 diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
@@ -1875,7 +1875,7 @@ index fecf9ab502..e53154d1ef 100644
 --- a/dlls/winevulkan/vulkan_thunks.c
 +++ b/dlls/winevulkan/vulkan_thunks.c
 @@ -376,69 +376,6 @@ static inline void free_VkBufferImageCopy_array(VkBufferImageCopy_host *in, uint
-     free_VkIndirectCommandsStreamNV_array((VkIndirectCommandsStreamNV_host *)in->pStreams, in->streamCount);
+     heap_free(in);
  }
  
 -static inline VkBufferMemoryBarrier_host *convert_VkBufferMemoryBarrier_array_win_to_host(const VkBufferMemoryBarrier *in, uint32_t count)
@@ -2081,9 +2081,9 @@ index fecf9ab502..e53154d1ef 100644
 -#endif
 -}
 -
- static void WINAPI wine_vkCmdPreprocessGeneratedCommandsNV(VkCommandBuffer commandBuffer, const VkGeneratedCommandsInfoNV *pGeneratedCommandsInfo)
+ void WINAPI wine_vkCmdPushConstants(VkCommandBuffer commandBuffer, VkPipelineLayout layout, VkShaderStageFlags stageFlags, uint32_t offset, uint32_t size, const void *pValues)
  {
-     #if defined(USE_STRUCT_CONVERSION)
+     TRACE("%p, 0x%s, %#x, %u, %u, %p\n", commandBuffer, wine_dbgstr_longlong(layout), stageFlags, offset, size, pValues);
 @@ -3561,23 +3512,6 @@ VkResult WINAPI wine_vkCreateShaderModule(VkDevice device, const VkShaderModuleC
      return device->funcs.p_vkCreateShaderModule(device->device, pCreateInfo, NULL, pShaderModule);
  }
@@ -5012,11 +5012,12 @@ index 930e0282be..2d17ff4d4f 100644
      xrandr_mode_count = 0;
      for (i = 0; i < output_info->nmode; ++i)
      {
-@@ -536,11 +573,22 @@ static int xrandr12_init_modes(void)
+@@ -536,12 +573,22 @@ static int xrandr12_init_modes(void)
  
              if (mode->id == output_info->modes[i])
              {
--                unsigned int refresh = get_frequency( mode );
+-                unsigned int dots = mode->hTotal * mode->vTotal;
+-                unsigned int refresh = dots ? (mode->dotClock + dots / 2) / dots : 0;
 +                XRRModeInfo rotated_mode = *mode;
 +                if((crtc_info->rotation & RR_Rotate_90) ||
 +                        (crtc_info->rotation & RR_Rotate_270))
