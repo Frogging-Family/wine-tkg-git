@@ -357,12 +357,20 @@ _prepare() {
 	# holds extra configure arguments, if applicable
 	_configure_args=()
 
+	if [ "$_use_staging" == "true" ] && [ "$_staging_upstreamignore" != "true" ]; then
+	  cd "${srcdir}"/"${_winesrcdir}"
+	  # change back to the wine upstream commit that this version of wine-staging is based in
+	  msg2 'Changing wine HEAD to the wine-staging base commit...'
+	  git checkout "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)"
+	fi
+
 	source "$_where"/wine-tkg-patches/hotfixes/hotfixer
 
 	# Community patches
 	if [ -n "$_community_patches" ]; then
 	  if [ ! -d "$_where/../../community-patches" ]; then
 	    cd "$_where/../.." && git clone https://github.com/Frogging-Family/community-patches.git
+	    cd "${srcdir}"/"${_winesrcdir}"
 	  fi
 	  _community_patches=($_community_patches)
 	  for _p in ${_community_patches[@]}; do
@@ -378,13 +386,6 @@ _prepare() {
 	  hotfixer
 	  user_patcher
 	  cd "${srcdir}"/"${_winesrcdir}"
-	fi
-
-	if [ "$_use_staging" == "true" ] && [ "$_staging_upstreamignore" != "true" ]; then
-	  cd "${srcdir}"/"${_winesrcdir}"
-	  # change back to the wine upstream commit that this version of wine-staging is based in
-	  msg2 'Changing wine HEAD to the wine-staging base commit...'
-	  git checkout "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)"
 	fi
 
 	# output config to logfile
