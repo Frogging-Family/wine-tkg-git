@@ -882,6 +882,13 @@ _prepare() {
 	      _patchname='esync-compat-fixes-r3.12.patch' && _patchmsg="Using esync 5.6+(8701260) additional compat fixes" && nonuser_patcher
 	      cd "${srcdir}"/"${_winesrcdir}"
 	    fi
+
+	    # if using a wine version that includes 40e849f, apply 5.7+ additional fixes
+	    if git merge-base --is-ancestor 40e849ffa46ae3cd060e2db83305dda1c4d2648e HEAD; then
+	      cd "${srcdir}"/"${_esyncsrcdir}"
+	      _patchname='esync-compat-fixes-r3.13.patch' && _patchmsg="Using esync 5.7+(40e849f) additional compat fixes" && nonuser_patcher
+	      cd "${srcdir}"/"${_winesrcdir}"
+	    fi
 	  # if using a wine version that includes aec7bef, use 3.17+ fixes
 	  elif git merge-base --is-ancestor aec7befb5115d866724149bbc5576c7259fef820 HEAD; then # server: Avoid potential size overflow for empty object attributes
 	    if [ "$_use_staging" == "true" ]; then
@@ -1077,8 +1084,10 @@ EOM
 	# fsync - experimental replacement for esync introduced with Proton 4.11-1
 	if [ "$_use_fsync" == "true" ]; then
 	  if [ "$_staging_esync" == "true" ]; then
-	    if git merge-base --is-ancestor 87012607688f730755ee91de14620e6e3b78395c HEAD; then
+	    if git merge-base --is-ancestor 40e849ffa46ae3cd060e2db83305dda1c4d2648e HEAD; then
 	      _patchname='fsync-staging.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging)" && nonuser_patcher
+	    elif git merge-base --is-ancestor 87012607688f730755ee91de14620e6e3b78395c HEAD; then
+	      _patchname='fsync-staging-40e849f.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging)" && nonuser_patcher
 	    elif git merge-base --is-ancestor fc17535eb98a4b200d6a418337a7e280568c7cfd HEAD; then
 	      _patchname='fsync-staging-8701260.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging)" && nonuser_patcher
 	    elif git merge-base --is-ancestor 608d086f1b1bb7168e9322c65224c23f34e75f29 HEAD; then
@@ -1092,8 +1101,10 @@ EOM
 	      _patchname='fsync-staging-no_alloc_handle.patch' && _patchmsg="Added no_alloc_handle object method to fsync" && nonuser_patcher
 	    fi
 	  elif [ "$_use_esync" == "true" ]; then
-	    if git merge-base --is-ancestor 87012607688f730755ee91de14620e6e3b78395c HEAD; then
+	    if git merge-base --is-ancestor 40e849ffa46ae3cd060e2db83305dda1c4d2648e HEAD; then
 	      _patchname='fsync-mainline.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
+	    elif git merge-base --is-ancestor 87012607688f730755ee91de14620e6e3b78395c HEAD; then
+	      _patchname='fsync-mainline-40e849f.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
 	    elif git merge-base --is-ancestor fc17535eb98a4b200d6a418337a7e280568c7cfd HEAD; then
 	      _patchname='fsync-mainline-8701260.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
 	    elif git merge-base --is-ancestor 608d086f1b1bb7168e9322c65224c23f34e75f29 HEAD; then
