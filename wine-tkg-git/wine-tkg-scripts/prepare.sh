@@ -1319,7 +1319,11 @@ EOM
 	    _patchname='staging-winex11-key_translation.patch' && _patchmsg="Applied non-fshack friendly staging winex11-key_translation patchset" && nonuser_patcher
 	  fi
 	  if [ "$_steamclient_noswap" != "true" ] && git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
-	    _patchname='proton-tkg-steamclient-swap.patch' && _patchmsg="Applied steamclient substitution hack" && nonuser_patcher
+	    if git merge-base --is-ancestor 09db718d99026959c8bcf0718dccad589cad34f3 HEAD; then
+	      _patchname='proton-tkg-steamclient-swap.patch' && _patchmsg="Applied steamclient substitution hack" && nonuser_patcher
+	    else
+	      _patchname='proton-tkg-steamclient-swap-09db718.patch' && _patchmsg="Applied steamclient substitution hack" && nonuser_patcher
+	    fi
 	  fi
 	fi
 
