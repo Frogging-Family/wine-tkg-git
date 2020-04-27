@@ -687,12 +687,12 @@ _prepare() {
 	  fi
 	fi
 
-	# Magic The Gathering: Arena crash fix
-	if [ "$_mtga_fix" == "true" ]; then
+	# Magic The Gathering: Arena crash fix - (<aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6)
+	if [ "$_mtga_fix" == "true" ] && ! git merge-base --is-ancestor aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6 HEAD; then
 	  if ! git merge-base --is-ancestor ce7e10868a1279573acc5be5a9659d254e936b27 HEAD; then
 	    _patchname='mtga-legacy-addition.patch' && _patchmsg="Applied MTGA msi installers hack" && nonuser_patcher
 	  fi
-	  _patchname='mtga.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
+	  _patchname='mtga-legacy.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
 	fi
 
 	# The Sims 2 fix - disable wined3d-WINED3D_RS_COLORWRITEENABLE and wined3d-Indexed_Vertex_Blending staging patchsets for 4.2+devel and lower - The actual patch is applied after staging
@@ -1234,6 +1234,15 @@ EOM
 	# Overwatch mf crash fix from Guy1524 - https://bugs.winehq.org/show_bug.cgi?id=47385 - Fixed in b182ba88
 	if [ "$_OW_fix" == "true" ] && git merge-base --is-ancestor 9bf4db1325d303a876bf282543289e15f9c698ad HEAD && ! git merge-base --is-ancestor b182ba882cfcce7b8769470f49f0fba216095c45 HEAD; then
 	   _patchname='overwatch-mfstub.patch' && _patchmsg="Applied Overwatch mf crash fix" && nonuser_patcher
+	fi
+
+	# Magic The Gathering: Arena crash fix - (>aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6)
+	if [ "$_mtga_fix" == "true" ] && git merge-base --is-ancestor aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6 HEAD; then
+	  if [ "$_use_staging" == "true" ]; then
+	    _patchname='mtga-staging.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
+	  else
+	    _patchname='mtga-mainline.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
+	  fi
 	fi
 
 	# Workarounds to prevent crashes on some mf functions

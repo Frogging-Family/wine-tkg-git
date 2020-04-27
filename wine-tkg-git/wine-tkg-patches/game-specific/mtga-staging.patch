@@ -1,0 +1,445 @@
+From 2d71f3c8dc379809a953ac5322db05fc34f18f49 Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Mon, 27 Apr 2020 14:22:06 +0200
+Subject: Revert "server: Don't wait for client thread to enter suspended state
+ in set_thread_context."
+
+This reverts commit aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6.
+
+diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+index b8c270c16d..ee3c925f91 100644
+--- a/dlls/ntdll/thread.c
++++ b/dlls/ntdll/thread.c
+@@ -787,16 +787,42 @@ TEB_ACTIVE_FRAME * WINAPI RtlGetFrame(void)
+ NTSTATUS set_thread_context( HANDLE handle, const context_t *context, BOOL *self )
+ {
+     NTSTATUS ret;
++    DWORD dummy, i;
+ 
+     SERVER_START_REQ( set_thread_context )
+     {
+         req->handle  = wine_server_obj_handle( handle );
++        req->suspend = 1;
+         wine_server_add_data( req, context, sizeof(*context) );
+         ret = wine_server_call( req );
+         *self = reply->self;
+     }
+     SERVER_END_REQ;
+ 
++    if (ret == STATUS_PENDING)
++    {
++        for (i = 0; i < 100; i++)
++        {
++            SERVER_START_REQ( set_thread_context )
++            {
++                req->handle  = wine_server_obj_handle( handle );
++                req->suspend = 0;
++                wine_server_add_data( req, context, sizeof(*context) );
++                ret = wine_server_call( req );
++            }
++            SERVER_END_REQ;
++            if (ret == STATUS_PENDING)
++            {
++                LARGE_INTEGER timeout;
++                timeout.QuadPart = -10000;
++                NtDelayExecution( FALSE, &timeout );
++            }
++            else break;
++        }
++        NtResumeThread( handle, &dummy );
++        if (ret == STATUS_PENDING) ret = STATUS_ACCESS_DENIED;
++    }
++
+     return ret;
+ }
+ 
+diff --git a/server/thread.c b/server/thread.c
+index de508c6ace..07be868d48 100644
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -1859,21 +1859,35 @@ DECL_HANDLER(set_thread_context)
+     if (!(thread = get_thread_from_handle( req->handle, THREAD_SET_CONTEXT ))) return;
+     reply->self = (thread == current);
+ 
+-    if (thread->state == TERMINATED) set_error( STATUS_UNSUCCESSFUL );
+-    else if (context->cpu != thread->process->cpu) set_error( STATUS_INVALID_PARAMETER );
+-    else
++    if (thread != current && (!thread->context || thread->context->status == STATUS_PENDING))
++    {
++        /* thread is not suspended, retry (if it's still running) */
++        if (thread->state == RUNNING)
++        {
++            set_error( STATUS_PENDING );
++            if (req->suspend)
++            {
++                release_object( thread );
++                /* make sure we have suspend access */
++                if (!(thread = get_thread_from_handle( req->handle, THREAD_SUSPEND_RESUME ))) return;
++                suspend_thread( thread );
++            }
++        }
++        else set_error( STATUS_UNSUCCESSFUL );
++    }
++    else if (context->cpu == thread->process->cpu)
+     {
+         unsigned int system_flags = get_context_system_regs(context->cpu) & context->flags;
+         unsigned int client_flags = context->flags & ~system_flags;
+ 
+         if (system_flags) set_thread_context( thread, context, system_flags );
+-        if (thread != current && !get_error()) stop_thread( thread );
+         if (thread->context && !get_error())
+         {
+             copy_context( &thread->context->regs, context, context->flags );
+             thread->context->regs.flags |= client_flags;
+         }
+     }
++    else set_error( STATUS_INVALID_PARAMETER );
+ 
+     release_object( thread );
+ }
+From b89abf5e64f991ed6b40bfb9c8ad10018293b8b5 Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Mon, 27 Apr 2020 14:22:00 +0200
+Subject: Revert "server: Block by waiting on context handle in
+ get_thread_context."
+
+This reverts commit c4dab9b76eb7397f6e5325ff4bdf792cf500e571.
+
+diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+index e27b3a0c6d..b8c270c16d 100644
+--- a/dlls/ntdll/thread.c
++++ b/dlls/ntdll/thread.c
+@@ -807,35 +807,42 @@ NTSTATUS set_thread_context( HANDLE handle, const context_t *context, BOOL *self
+ NTSTATUS get_thread_context( HANDLE handle, context_t *context, unsigned int flags, BOOL *self )
+ {
+     NTSTATUS ret;
++    DWORD dummy, i;
+ 
+     SERVER_START_REQ( get_thread_context )
+     {
+         req->handle  = wine_server_obj_handle( handle );
+         req->flags   = flags;
++        req->suspend = 1;
+         wine_server_set_reply( req, context, sizeof(*context) );
+         ret = wine_server_call( req );
+         *self = reply->self;
+-        handle = wine_server_ptr_handle( reply->handle );
+     }
+     SERVER_END_REQ;
+ 
+     if (ret == STATUS_PENDING)
+     {
+-        LARGE_INTEGER timeout;
+-        timeout.QuadPart = -1000000;
+-        if (NtWaitForSingleObject( handle, FALSE, &timeout ))
++        for (i = 0; i < 100; i++)
+         {
+-            NtClose( handle );
+-            return STATUS_ACCESS_DENIED;
+-        }
+-        SERVER_START_REQ( get_thread_context )
+-        {
+-            req->handle  = wine_server_obj_handle( handle );
+-            req->flags   = flags;
+-            wine_server_set_reply( req, context, sizeof(*context) );
+-            ret = wine_server_call( req );
++            SERVER_START_REQ( get_thread_context )
++            {
++                req->handle  = wine_server_obj_handle( handle );
++                req->flags   = flags;
++                req->suspend = 0;
++                wine_server_set_reply( req, context, sizeof(*context) );
++                ret = wine_server_call( req );
++            }
++            SERVER_END_REQ;
++            if (ret == STATUS_PENDING)
++            {
++                LARGE_INTEGER timeout;
++                timeout.QuadPart = -10000;
++                NtDelayExecution( FALSE, &timeout );
++            }
++            else break;
+         }
+-        SERVER_END_REQ;
++        NtResumeThread( handle, &dummy );
++        if (ret == STATUS_PENDING) ret = STATUS_ACCESS_DENIED;
+     }
+     return ret;
+ }
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index dfcb22143b..9cdb9c765f 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -2900,14 +2900,14 @@ struct get_thread_context_request
+     struct request_header __header;
+     obj_handle_t handle;
+     unsigned int flags;
+-    char __pad_20[4];
++    int          suspend;
+ };
+ struct get_thread_context_reply
+ {
+     struct reply_header __header;
+     int          self;
+-    obj_handle_t handle;
+     /* VARARG(context,context); */
++    char __pad_12[4];
+ };
+ 
+ 
+@@ -2916,7 +2916,9 @@ struct set_thread_context_request
+ {
+     struct request_header __header;
+     obj_handle_t handle;
++    int          suspend;
+     /* VARARG(context,context); */
++    char __pad_20[4];
+ };
+ struct set_thread_context_reply
+ {
+diff --git a/server/protocol.def b/server/protocol.def
+index 06a29b153e..1413021a39 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -2157,11 +2157,11 @@ enum char_info_mode
+ 
+ /* Retrieve the current context of a thread */
+ @REQ(get_thread_context)
+-    obj_handle_t handle;       /* thread or context handle */
++    obj_handle_t handle;       /* thread handle */
+     unsigned int flags;        /* context flags */
++    int          suspend;      /* suspend the thread if needed */
+ @REPLY
+     int          self;         /* was it a handle to the current thread? */
+-    obj_handle_t handle;       /* pending context handle */
+     VARARG(context,context);   /* thread context */
+ @END
+ 
+@@ -2169,6 +2169,7 @@ enum char_info_mode
+ /* Set the current context of a thread */
+ @REQ(set_thread_context)
+     obj_handle_t handle;       /* thread handle */
++    int          suspend;      /* suspend the thread if needed */
+     VARARG(context,context);   /* thread context */
+ @REPLY
+     int          self;         /* was it a handle to the current thread? */
+diff --git a/server/request.h b/server/request.h
+index b472603e59..0d4c083460 100644
+--- a/server/request.h
++++ b/server/request.h
+@@ -1484,12 +1484,13 @@ C_ASSERT( FIELD_OFFSET(struct get_timer_info_reply, signaled) == 16 );
+ C_ASSERT( sizeof(struct get_timer_info_reply) == 24 );
+ C_ASSERT( FIELD_OFFSET(struct get_thread_context_request, handle) == 12 );
+ C_ASSERT( FIELD_OFFSET(struct get_thread_context_request, flags) == 16 );
++C_ASSERT( FIELD_OFFSET(struct get_thread_context_request, suspend) == 20 );
+ C_ASSERT( sizeof(struct get_thread_context_request) == 24 );
+ C_ASSERT( FIELD_OFFSET(struct get_thread_context_reply, self) == 8 );
+-C_ASSERT( FIELD_OFFSET(struct get_thread_context_reply, handle) == 12 );
+ C_ASSERT( sizeof(struct get_thread_context_reply) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct set_thread_context_request, handle) == 12 );
+-C_ASSERT( sizeof(struct set_thread_context_request) == 16 );
++C_ASSERT( FIELD_OFFSET(struct set_thread_context_request, suspend) == 16 );
++C_ASSERT( sizeof(struct set_thread_context_request) == 24 );
+ C_ASSERT( FIELD_OFFSET(struct set_thread_context_reply, self) == 8 );
+ C_ASSERT( sizeof(struct set_thread_context_reply) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct get_selector_entry_request, handle) == 12 );
+diff --git a/server/thread.c b/server/thread.c
+index cfdf42c756..de508c6ace 100644
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -136,7 +136,6 @@ struct context
+ };
+ 
+ static void dump_context( struct object *obj, int verbose );
+-static int context_signaled( struct object *obj, struct wait_queue_entry *entry );
+ 
+ static const struct object_ops context_ops =
+ {
+@@ -145,7 +144,7 @@ static const struct object_ops context_ops =
+     no_get_type,                /* get_type */
+     add_queue,                  /* add_queue */
+     remove_queue,               /* remove_queue */
+-    context_signaled,           /* signaled */
++    NULL,                       /* signaled */
+     NULL,                       /* get_esync_fd */
+     NULL,                       /* get_fsync_fd */
+     no_satisfied,               /* satisfied */
+@@ -268,13 +267,6 @@ static void dump_context( struct object *obj, int verbose )
+ }
+ 
+ 
+-static int context_signaled( struct object *obj, struct wait_queue_entry *entry )
+-{
+-    struct context *context = (struct context *)obj;
+-    return context->status != STATUS_PENDING;
+-}
+-
+-
+ static struct context *create_thread_context( struct thread *thread )
+ {
+     struct context *context;
+@@ -385,7 +377,6 @@ static void cleanup_thread( struct thread *thread )
+     if (thread->context)
+     {
+         thread->context->status = STATUS_ACCESS_DENIED;
+-        wake_up( &thread->context->obj, 0 );
+         release_object( thread->context );
+         thread->context = NULL;
+     }
+@@ -1628,11 +1619,9 @@ DECL_HANDLER(select)
+         }
+ 
+         if (!current->context && !(current->context = create_thread_context( current ))) return;
+-        copy_context( &current->context->regs, context,
+-                      context->flags & ~(current->context->regs.flags | get_context_system_regs(current->process->cpu)) );
++        copy_context( &current->context->regs, context, context->flags & ~current->context->regs.flags );
+         current->context->status = STATUS_SUCCESS;
+         current->suspend_cookie = req->cookie;
+-        wake_up( &current->context->obj, 0 );
+     }
+ 
+     if (!req->cookie)
+@@ -1813,8 +1802,6 @@ DECL_HANDLER(get_apc_result)
+ /* retrieve the current context of a thread */
+ DECL_HANDLER(get_thread_context)
+ {
+-    struct context *thread_context = NULL;
+-    unsigned int system_flags;
+     struct thread *thread;
+     context_t *context;
+ 
+@@ -1823,58 +1810,39 @@ DECL_HANDLER(get_thread_context)
+         set_error( STATUS_INVALID_PARAMETER );
+         return;
+     }
++    if (!(thread = get_thread_from_handle( req->handle, THREAD_GET_CONTEXT ))) return;
++    reply->self = (thread == current);
+ 
+-    if ((thread_context = (struct context *)get_handle_obj( current->process, req->handle, 0, &context_ops )))
++    if (thread != current && (!thread->context || thread->context->status == STATUS_PENDING))
+     {
+-        close_handle( current->process, req->handle ); /* avoid extra server call */
+-        system_flags = get_context_system_regs( thread_context->regs.cpu );
+-    }
+-    else if ((thread = get_thread_from_handle( req->handle, THREAD_GET_CONTEXT )))
+-    {
+-        clear_error();
+-        system_flags = get_context_system_regs( thread->process->cpu );
++        /* thread is not suspended, retry (if it's still running) */
+         if (thread->state == RUNNING)
+         {
+-            reply->self = (thread == current);
+-            if (thread != current) stop_thread( thread );
+-            if (thread->context)
++            set_error( STATUS_PENDING );
++            if (req->suspend)
+             {
+-                /* make sure that system regs are valid in thread context */
+-                if (req->flags & system_flags & ~thread->context->regs.flags)
+-                    get_thread_context( thread, &thread->context->regs, req->flags & system_flags );
+-                if (!get_error()) thread_context = (struct context *)grab_object( thread->context );
+-            }
+-            else if (!get_error() && (context = set_reply_data_size( sizeof(context_t) )))
+-            {
+-                assert( reply->self );
+-                memset( context, 0, sizeof(context_t) );
+-                context->cpu = thread_context->regs.cpu;
+-                if (req->flags & system_flags)
+-                {
+-                    get_thread_context( thread, context, req->flags & system_flags );
+-                    context->flags |= req->flags & system_flags;
+-                }
++                release_object( thread );
++                /* make sure we have suspend access */
++                if (!(thread = get_thread_from_handle( req->handle, THREAD_SUSPEND_RESUME ))) return;
++                suspend_thread( thread );
+             }
+         }
+         else set_error( STATUS_UNSUCCESSFUL );
+-        release_object( thread );
+     }
+-    if (get_error() || !thread_context) return;
+-
+-    set_error( thread_context->status );
+-    if (!thread_context->status && (context = set_reply_data_size( sizeof(context_t) )))
++    else if ((context = set_reply_data_size( sizeof(context_t) )))
+     {
++        unsigned int flags = get_context_system_regs( thread->process->cpu );
++
+         memset( context, 0, sizeof(context_t) );
+-        context->cpu = thread_context->regs.cpu;
+-        copy_context( context, &thread_context->regs, req->flags );
+-        context->flags = req->flags;
+-    }
+-    else if (thread_context->status == STATUS_PENDING)
+-    {
+-        reply->handle = alloc_handle( current->process, thread_context, SYNCHRONIZE, 0 );
++        context->cpu = thread->process->cpu;
++        if (thread->context)
++        {
++            copy_context( context, &thread->context->regs, req->flags & ~flags );
++            context->flags |= req->flags & ~flags;
++        }
++        if (req->flags & flags) get_thread_context( thread, context, req->flags & flags );
+     }
+-
+-    release_object( thread_context );
++    release_object( thread );
+ }
+ 
+ /* set the current context of a thread */
+diff --git a/server/trace.c b/server/trace.c
+index 2b58ed9fd2..dd63b166f3 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -2675,18 +2675,19 @@ static void dump_get_thread_context_request( const struct get_thread_context_req
+ {
+     fprintf( stderr, " handle=%04x", req->handle );
+     fprintf( stderr, ", flags=%08x", req->flags );
++    fprintf( stderr, ", suspend=%d", req->suspend );
+ }
+ 
+ static void dump_get_thread_context_reply( const struct get_thread_context_reply *req )
+ {
+     fprintf( stderr, " self=%d", req->self );
+-    fprintf( stderr, ", handle=%04x", req->handle );
+     dump_varargs_context( ", context=", cur_size );
+ }
+ 
+ static void dump_set_thread_context_request( const struct set_thread_context_request *req )
+ {
+     fprintf( stderr, " handle=%04x", req->handle );
++    fprintf( stderr, ", suspend=%d", req->suspend );
+     dump_varargs_context( ", context=", cur_size );
+ }
+ 
+diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+index 9f4a08fdb9..035ad680eb 100644
+--- a/dlls/ntdll/thread.c
++++ b/dlls/ntdll/thread.c
+@@ -778,7 +778,7 @@ NTSTATUS set_thread_context( HANDLE handle, const context_t *context, BOOL *self
+ NTSTATUS get_thread_context( HANDLE handle, context_t *context, unsigned int flags, BOOL *self )
+ {
+     NTSTATUS ret;
+-    DWORD dummy, i;
++    DWORD dummy;
+ 
+     SERVER_START_REQ( get_thread_context )
+     {
+@@ -793,7 +793,7 @@ NTSTATUS get_thread_context( HANDLE handle, context_t *context, unsigned int fla
+ 
+     if (ret == STATUS_PENDING)
+     {
+-        for (i = 0; i < 100; i++)
++        while (TRUE)
+         {
+             SERVER_START_REQ( get_thread_context )
+             {
+@@ -813,7 +813,6 @@ NTSTATUS get_thread_context( HANDLE handle, context_t *context, unsigned int fla
+             else break;
+         }
+         NtResumeThread( handle, &dummy );
+-        if (ret == STATUS_PENDING) ret = STATUS_ACCESS_DENIED;
+     }
+     return ret;
+ }
