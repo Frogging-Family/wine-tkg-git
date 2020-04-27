@@ -1247,10 +1247,18 @@ EOM
 
 	# Magic The Gathering: Arena crash fix - (>aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6)
 	if [ "$_mtga_fix" == "true" ] && git merge-base --is-ancestor aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6 HEAD; then
-	  if [ "$_use_staging" == "true" ]; then
-	    _patchname='mtga-staging.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
+	  if git merge-base --is-ancestor c3fac6e36caab168974dd04a60ae1bbb1a0fd919 HEAD; then
+	    if [ "$_use_staging" == "true" ]; then
+	      _patchname='mtga-staging.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
+	    else
+	      _patchname='mtga-mainline.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
+	    fi
 	  else
-	    _patchname='mtga-mainline.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
+	    if [ "$_use_staging" == "true" ]; then
+	      _patchname='mtga-staging-c3fac6e.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
+	    else
+	      _patchname='mtga-mainline-c3fac6e.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
+	    fi
 	  fi
 	fi
 
