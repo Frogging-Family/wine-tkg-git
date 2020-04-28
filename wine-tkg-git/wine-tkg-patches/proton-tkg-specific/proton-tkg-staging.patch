@@ -2010,3 +2010,47 @@ index 4ca04198b6e..483e2b4138a 100644
      FAudioCOMConstructWithCustomAllocatorEXT(
          &object->faudio,
          XAUDIO2_VER,
+From b739d48093cce805b7b4f48fdbd9d0bb62bc8013 Mon Sep 17 00:00:00 2001
+From: Brendan Shanks <bshanks@codeweavers.com>
+Date: Mon, 13 Apr 2020 16:25:47 -0700
+Subject: [PATCH] HACK: dxgi: Swap around memory sizes for GTA IV
+
+GTA IV ends up using its "Intel integrated" codepath for determining
+VRAM size (since nvapi/atiadlxx fail), but this requires that
+DedicatedVideoMemory is a very small dummy value, and SharedSystemMemory
+is the actual VRAM size.
+Swap the memory values around so this works.
+---
+ dlls/dxgi/adapter.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/dlls/dxgi/adapter.c b/dlls/dxgi/adapter.c
+index 5a97590dbce..a5563498cdd 100644
+--- a/dlls/dxgi/adapter.c
++++ b/dlls/dxgi/adapter.c
+@@ -200,6 +200,25 @@ static HRESULT dxgi_adapter_get_desc(struct dxgi_adapter *adapter, DXGI_ADAPTER_
+     desc->GraphicsPreemptionGranularity = 0; /* FIXME */
+     desc->ComputePreemptionGranularity = 0; /* FIXME */
+ 
++    {
++        /* HACK
++         *
++         * Grand Theft Auto IV first tries to get VRAM size using nvapi/atiadlxx,
++         * after that fails it falls back to the Intel integrated codepath which
++         * uses DXGI.
++         *
++         * DedicatedVideoMemory must be a dummy value less than 200 MB, then
++         * SharedSystemMemory will be used as the VRAM size.
++         * In case of failure, the game will just use 512 MB as VRAM size.
++         */
++        const char *sgi = getenv("SteamGameId");
++        if(sgi && !strcmp(sgi, "12210"))
++        {
++            desc->SharedSystemMemory = adapter_id.video_memory;
++            desc->DedicatedVideoMemory = 32 * 1024 * 1024;
++        }
++    }
++
+     return hr;
+ }
+ 
