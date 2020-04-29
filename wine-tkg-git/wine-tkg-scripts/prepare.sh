@@ -488,6 +488,12 @@ _prepare() {
 	  fi
 	}
 
+	if [ "$_mtga_fix" == "true" ] && git merge-base --is-ancestor e5a9c256ce08868f65ed730c00cf016a97369ce3 HEAD; then
+	  _committorevert=341068aa61a71afecb712feda9aabb3dc1c3ab5f && nonuser_reverter
+	  _committorevert=e5a9c256ce08868f65ed730c00cf016a97369ce3 && nonuser_reverter
+	  echo -e "( MTGA bandaid reverts applied )\n" >> "$_where"/last_build_config.log
+	fi
+
 	if [ "$_gamepad_additions" == "true" ] && [ "$_use_staging" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && git merge-base --is-ancestor da7d60bf97fb8726828e57f852e8963aacde21e9 HEAD; then
 	  _committorevert=da7d60bf97fb8726828e57f852e8963aacde21e9 && nonuser_reverter
 	  echo -e "( Proton gamepad additions unbreak revert applied )\n" >> "$_where"/last_build_config.log
