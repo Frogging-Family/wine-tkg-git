@@ -990,7 +990,11 @@ _prepare() {
 
 	# Workaround for Final Fantasy XIV Launcher 404 error - Thanks @varris1 ! - Fixed by d535df42f665a097ec721b10fb49d7b18f899be9 (4.10)
 	if [ "$_ffxivlauncher_fix" == "true" ]; then
-	  _patchname='ffxiv-launcher-workaround.patch' && _patchmsg="Applied Final Fantasy XIV Launcher fix" && nonuser_patcher
+	  if $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 4e6a477acd32651dd571205786132666505aeb5b HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	    _patchname='ffxiv-launcher-workaround.patch' && _patchmsg="Applied Final Fantasy XIV Launcher fix" && nonuser_patcher
+	  else
+	    _patchname='ffxiv-launcher-workaround-4e6a477.patch' && _patchmsg="Applied Final Fantasy XIV Launcher fix" && nonuser_patcher
+	  fi
 	fi
 
 	# Fix for LoL 9.20+ crashing - https://bugs.winehq.org/show_bug.cgi?id=47198
