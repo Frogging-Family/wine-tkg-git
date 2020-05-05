@@ -1620,14 +1620,16 @@ EOM
 	  _patchname='proton_fs_hack_integer_scaling.patch' && _patchmsg="Enable Proton fs hack integer scaling" && nonuser_patcher
 	fi
 	if [ "$_update_winevulkan" == "true" ] && git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
-	  if git merge-base --is-ancestor 594814c00ab059d9686ed836b1865f8a94859c8a HEAD; then
+	  if git merge-base --is-ancestor d2f552d1508dbabb595eae23db9e5c157eaf9b41 HEAD; then
 	    if [ "$_proton_fs_hack" == "true" ]; then
 	      _patchname='proton-winevulkan.patch' && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
 	    else
 	      _patchname='proton-winevulkan-nofshack.patch' && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
 	    fi
 	  else
-	    if git merge-base --is-ancestor 086c686e817a596e35c41dd5b37f3c28587af9d5 HEAD; then
+	    if git merge-base --is-ancestor 594814c00ab059d9686ed836b1865f8a94859c8a HEAD; then
+	      _lastcommit="d2f552d"
+	    elif git merge-base --is-ancestor 086c686e817a596e35c41dd5b37f3c28587af9d5 HEAD; then
 	      _lastcommit="594814c"
 	    elif git merge-base --is-ancestor bdeae71bc129ac83c44753672d110b06a480c93c HEAD; then
 	      _lastcommit="086c686"

@@ -1,57 +1,190 @@
-From 0470f04991cf293df54baa3df7ce2707cc20a6e3 Mon Sep 17 00:00:00 2001
+From 61174aaf0d58210b62f799d447b48c89e92c456d Mon Sep 17 00:00:00 2001
 From: Joshua Ashton <joshua@froggi.es>
-Date: Thu, 5 Mar 2020 16:12:25 +0000
-Subject: [PATCH] winevulkan: Define alloca and forceinline
+Date: Thu, 5 Mar 2020 06:19:51 +0000
+Subject: [PATCH] winevulkan: Eliminate shared conversion structs
 
-Sets up these definitions needed for future patches
-
-Signed-off-by: Joshua Ashton <joshua@froggi.es>
+We don't need these any more since we stopped intercepting vkCmdPipelineBarrier for fshack.
 ---
- dlls/winevulkan/vulkan_private.h | 12 ++++++++++++
- 1 file changed, 12 insertions(+)
-
-diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
-index 17072d23419..88233dacedf 100644
---- a/dlls/winevulkan/vulkan_private.h
-+++ b/dlls/winevulkan/vulkan_private.h
-@@ -34,6 +34,18 @@
- 
- #include "vulkan_thunks.h"
- 
-+#if defined(__GNUC__) || defined(__clang__)
-+#include <alloca.h>
-+#define WINEVULKAN_FORCEINLINE __attribute__((always_inline)) inline
-+#define WINEVULKAN_ALLOCA(x)   alloca(x)
-+#elif defined(_MSC_VER)
-+#include <malloc.h>
-+#define WINEVULKAN_FORCEINLINE __forceinline
-+#define WINEVULKAN_ALLOCA(x)   _alloca(x)
-+#else
-+#error Unsupported platform for forceinline/alloca
-+#endif
-+
- /* Magic value defined by Vulkan ICD / Loader spec */
- #define VULKAN_ICD_MAGIC_VALUE 0x01CDC0DE
- 
-From dd9a88a0416e2b0aae4ddf3d01c15ee7565f6ecd Mon Sep 17 00:00:00 2001
-From: Joshua Ashton <joshua@froggi.es>
-Date: Thu, 5 Mar 2020 16:15:58 +0000
-Subject: [PATCH] winevulkan: Replace temp heap_allocs with alloca
-
-This allocates these structs and arrays of structures on the stack instead of the heap (which is expensive and takes time!)
-
-These structures and arrays of structures are small, and this is all super duper hot path code.
-
-We need to forceinline these conversion functions in the compiler as otherwise the alloca would invalidate their inlining.
-
-Signed-off-by: Joshua Ashton <joshua@froggi.es>
----
- dlls/winevulkan/make_vulkan | 142 ++----------------------------------
- dlls/winevulkan/vulkan.c    |  13 +---
- 2 files changed, 8 insertions(+), 147 deletions(-)
+ dlls/winevulkan/make_vulkan | 58 ++++++++++---------------------------
+ 1 file changed, 15 insertions(+), 43 deletions(-)
 
 diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
-index 35934100414..954d484933c 100755
+index b58ca9301cc..25bc7369074 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -219,8 +219,6 @@ STRUCT_CHAIN_CONVERSIONS = [
+     "VkInstanceCreateInfo",
+ ]
+ 
+-shared_conversion_structs = ["VkBufferMemoryBarrier", "VkImageMemoryBarrier"]
+-
+ class Direction(Enum):
+     """ Parameter direction: input, output, input_output. """
+     INPUT = 1
+@@ -1080,14 +1078,14 @@ class VkMember(object):
+         struct = self.type_info["data"]
+         direction = Direction.OUTPUT if struct.returnedonly else Direction.INPUT
+         if self.is_dynamic_array():
+-            conversions.append(ConversionFunction(False, True, struct.name in shared_conversion_structs, direction, struct))
++            conversions.append(ConversionFunction(False, True, direction, struct))
+         elif self.is_static_array():
+-            conversions.append(ConversionFunction(True, False, struct.name in shared_conversion_structs, direction, struct))
++            conversions.append(ConversionFunction(True, False, direction, struct))
+         else:
+-            conversions.append(ConversionFunction(False, False, struct.name in shared_conversion_structs, direction, struct))
++            conversions.append(ConversionFunction(False, False, direction, struct))
+ 
+         if self.needs_free():
+-            conversions.append(FreeFunction(self.is_dynamic_array(), struct.name in shared_conversion_structs, struct))
++            conversions.append(FreeFunction(self.is_dynamic_array(), struct))
+ 
+         return conversions
+ 
+@@ -1244,16 +1242,16 @@ class VkParam(object):
+ 
+         # Input functions require win to host conversion.
+         if self._direction in [Direction.INPUT, Direction.INPUT_OUTPUT]:
+-            self.input_conv = ConversionFunction(False, self.is_dynamic_array(), self.struct.name in shared_conversion_structs, Direction.INPUT, self.struct)
++            self.input_conv = ConversionFunction(False, self.is_dynamic_array(), Direction.INPUT, self.struct)
+ 
+         # Output functions require host to win conversion.
+         if self._direction in [Direction.INPUT_OUTPUT, Direction.OUTPUT]:
+-            self.output_conv = ConversionFunction(False, self.is_dynamic_array(), self.struct.name in shared_conversion_structs, Direction.OUTPUT, self.struct)
++            self.output_conv = ConversionFunction(False, self.is_dynamic_array(), Direction.OUTPUT, self.struct)
+ 
+         # Dynamic arrays, but also some normal structs (e.g. VkCommandBufferBeginInfo) need memory
+         # allocation and thus some cleanup.
+         if self.is_dynamic_array() or self.struct.needs_free():
+-            self.free_func = FreeFunction(self.is_dynamic_array(), self.struct.name in shared_conversion_structs, self.struct)
++            self.free_func = FreeFunction(self.is_dynamic_array(), self.struct)
+ 
+     def _set_direction(self):
+         """ Internal helper function to set parameter direction (input/output/input_output). """
+@@ -1729,10 +1727,9 @@ class VkStruct(Sequence):
+ 
+ 
+ class ConversionFunction(object):
+-    def __init__(self, array, dyn_array, shared, direction, struct):
++    def __init__(self, array, dyn_array, direction, struct):
+         self.array = array
+         self.direction = direction
+-        self.shared = shared
+         self.dyn_array = dyn_array
+         self.struct = struct
+         self.type = struct.name
+@@ -1753,10 +1750,7 @@ class ConversionFunction(object):
+             return_type = "{0}_host".format(self.type)
+ 
+         # Generate function prototype.
+-        if self.shared:
+-            body = ""
+-        else:
+-            body = "static inline "
++        body = "static inline "
+         body += "{0} *{1}(".format(return_type, self.name)
+         body += ", ".join(p for p in params)
+         body += ")\n{\n"
+@@ -1788,10 +1782,7 @@ class ConversionFunction(object):
+         else:
+             params = ["const {0} *in".format(self.type), "{0}_host *out".format(self.type)]
+ 
+-        if self.shared:
+-            body = ""
+-        else:
+-            body = "static inline "
++        body = "static inline "
+         body += "void {0}(".format(self.name)
+ 
+         # Generate parameter list
+@@ -1825,10 +1816,7 @@ class ConversionFunction(object):
+             params = ["const {0} *in".format(self.type), "{0} *out_host".format(self.type), "uint32_t count"]
+ 
+         # Generate function prototype.
+-        if self.shared:
+-            body = ""
+-        else:
+-            body = "static inline "
++        body = "static inline "
+         body += "void {0}(".format(self.name)
+         body += ", ".join(p for p in params)
+         body += ")\n{\n"
+@@ -1908,9 +1896,8 @@ class ConversionFunction(object):
+ 
+ 
+ class FreeFunction(object):
+-    def __init__(self, dyn_array, shared, struct):
++    def __init__(self, dyn_array, struct):
+         self.dyn_array = dyn_array
+-        self.shared = shared
+         self.struct = struct
+         self.type = struct.name
+ 
+@@ -1926,10 +1913,7 @@ class FreeFunction(object):
+         """ Helper function for cleaning up temporary buffers required for array conversions. """
+ 
+         # Generate function prototype.
+-        if self.shared:
+-            body = ""
+-        else:
+-            body = "static inline "
++        body = "static inline "
+         body += "void {0}({1}_host *in, uint32_t count)\n{{\n".format(self.name, self.type)
+ 
+         # E.g. VkGraphicsPipelineCreateInfo_host needs freeing for pStages.
+@@ -1963,10 +1947,7 @@ class FreeFunction(object):
+             return ""
+ 
+         # Generate function prototype.
+-        if self.shared:
+-            body = ""
+-        else:
+-            body = "static inline "
++        body = "static inline "
+         body += "void {0}({1}_host *in)\n{{\n".format(self.name, self.type)
+ 
+         for m in self.struct:
+@@ -2137,14 +2118,9 @@ class VkGenerator(object):
+         # Generate any conversion helper functions.
+         f.write("#if defined(USE_STRUCT_CONVERSION)\n")
+         for conv in self.conversions:
+-            if not conv.shared:
+-                f.write(conv.definition())
++            f.write(conv.definition())
+         f.write("#endif /* USE_STRUCT_CONVERSION */\n\n")
+ 
+-        for conv in self.conversions:
+-            if conv.shared:
+-                f.write(conv.definition())
+-
+         for conv in self.struct_chain_conversions:
+             f.write(conv.definition())
+ 
+@@ -2308,10 +2284,6 @@ class VkGenerator(object):
+             f.write(func.prototype(postfix="DECLSPEC_HIDDEN") + ";\n")
+         f.write("\n")
+ 
+-        for conv in self.conversions:
+-            if conv.shared:
+-                f.write(conv.prototype())
+-
+         f.write("/* For use by vkDevice and children */\n")
+         f.write("struct vulkan_device_funcs\n{\n")
+         for vk_func in self.registry.device_funcs:
+From 2e70e641784151d5a15db904ff6d1b25365de9b2 Mon Sep 17 00:00:00 2001
+From: Joshua Ashton <joshua@froggi.es>
+Date: Thu, 5 Mar 2020 06:26:22 +0000
+Subject: [PATCH] winevulkan: Use alloca for struct conversions
+
+This allocates these structs on the stack instead of the heap (which is expensive and takes time!)
+
+These structures and arrays of structures are fairly small, and this is all super hot path code.
+---
+ dlls/winevulkan/make_vulkan      | 155 ++-----------------------------
+ dlls/winevulkan/vulkan_private.h |  12 +++
+ 2 files changed, 22 insertions(+), 145 deletions(-)
+
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index 25bc7369074..7f7967fde35 100755
 --- a/dlls/winevulkan/make_vulkan
 +++ b/dlls/winevulkan/make_vulkan
 @@ -666,13 +666,6 @@ class VkFunction(object):
@@ -166,19 +299,20 @@ index 35934100414..954d484933c 100755
      def needs_struct_extensions_conversion(self):
          """ Checks if structure extensions in pNext chain need conversion. """
          ret = False
-@@ -1750,7 +1694,10 @@ class ConversionFunction(object):
+@@ -1749,8 +1693,10 @@ class ConversionFunction(object):
+             params = ["const {0} *in".format(self.type), "uint32_t count"]
              return_type = "{0}_host".format(self.type)
  
-         # Generate function prototype.
--        body = "static inline {0} *{1}(".format(return_type, self.name)
+-        # Generate function prototype.
+-        body = "static inline "
 +        # We *must* forceinline otherwise our alloca will be
 +        # garbage when this function returns.
 +        # Regular inline won't cut it, alloca invalidates regular inlining.
-+        body = "static WINEVULKAN_FORCEINLINE {0} *{1}(".format(return_type, self.name)
++        body = "static WINEVULKAN_FORCEINLINE "
+         body += "{0} *{1}(".format(return_type, self.name)
          body += ", ".join(p for p in params)
          body += ")\n{\n"
- 
-@@ -1758,7 +1705,7 @@ class ConversionFunction(object):
+@@ -1759,7 +1705,7 @@ class ConversionFunction(object):
          body += "    unsigned int i;\n\n"
          body += "    if (!in) return NULL;\n\n"
  
@@ -187,29 +321,54 @@ index 35934100414..954d484933c 100755
  
          body += "    for (i = 0; i < count; i++)\n"
          body += "    {\n"
-@@ -1781,7 +1728,7 @@ class ConversionFunction(object):
+@@ -1782,7 +1728,7 @@ class ConversionFunction(object):
          else:
              params = ["const {0} *in".format(self.type), "{0}_host *out".format(self.type)]
  
--        body = "static inline void {0}(".format(self.name)
-+        body = "static WINEVULKAN_FORCEINLINE void {0}(".format(self.name)
+-        body = "static inline "
++        body = "static WINEVULKAN_FORCEINLINE "
+         body += "void {0}(".format(self.name)
  
          # Generate parameter list
-         body += ", ".join(p for p in params)
-@@ -1814,7 +1761,7 @@ class ConversionFunction(object):
+@@ -1816,7 +1762,7 @@ class ConversionFunction(object):
              params = ["const {0} *in".format(self.type), "{0} *out_host".format(self.type), "uint32_t count"]
  
          # Generate function prototype.
--        body = "static inline void {0}(".format(self.name)
-+        body = "static WINEVULKAN_FORCEINLINE void {0}(".format(self.name)
+-        body = "static inline "
++        body = "static WINEVULKAN_FORCEINLINE "
+         body += "void {0}(".format(self.name)
          body += ", ".join(p for p in params)
          body += ")\n{\n"
-         body += "    unsigned int i;\n\n"
-@@ -1856,81 +1803,6 @@ class ConversionFunction(object):
-         else:
-             return self._generate_conversion_func()
+@@ -1868,7 +1814,7 @@ class ConversionFunction(object):
+                 params = ["const {0} *in".format(self.type), "{0} *out_host".format(self.type), "uint32_t count"]
+                 return_type = "{0}_host".format(self.type)
  
--
+-            body = "void {0}(".format(self.name)
++            body = "static WINEVULKAN_FORCEINLINE void {0}(".format(self.name)
+             body += ", ".join(p for p in params)
+             body += ");\n"
+         elif self.dyn_array:
+@@ -1879,7 +1825,7 @@ class ConversionFunction(object):
+                 params = ["const {0} *in".format(self.type), "uint32_t count"]
+                 return_type = "{0}_host".format(self.type)
+ 
+-            body = "{0} *{1}(".format(return_type, self.name)
++            body = "static WINEVULKAN_FORCEINLINE {0} *{1}(".format(return_type, self.name)
+             body += ", ".join(p for p in params)
+             body += ");\n"
+         else:
+@@ -1888,94 +1834,13 @@ class ConversionFunction(object):
+             else:
+                 params = ["const {0} *in".format(self.type), "{0}_host *out".format(self.type)]
+ 
+-            body = "void {0}(".format(self.name)
++            body = "static WINEVULKAN_FORCEINLINE void {0}(".format(self.name)
+             body += ", ".join(p for p in params)
+             body += ");\n"
+ 
+         return body
+ 
+ 
 -class FreeFunction(object):
 -    def __init__(self, dyn_array, struct):
 -        self.dyn_array = dyn_array
@@ -228,7 +387,8 @@ index 35934100414..954d484933c 100755
 -        """ Helper function for cleaning up temporary buffers required for array conversions. """
 -
 -        # Generate function prototype.
--        body = "static inline void {0}({1}_host *in, uint32_t count)\n{{\n".format(self.name, self.type)
+-        body = "static inline "
+-        body += "void {0}({1}_host *in, uint32_t count)\n{{\n".format(self.name, self.type)
 -
 -        # E.g. VkGraphicsPipelineCreateInfo_host needs freeing for pStages.
 -        if self.struct.needs_free():
@@ -261,7 +421,8 @@ index 35934100414..954d484933c 100755
 -            return ""
 -
 -        # Generate function prototype.
--        body = "static inline void {0}({1}_host *in)\n{{\n".format(self.name, self.type)
+-        body = "static inline "
+-        body += "void {0}({1}_host *in)\n{{\n".format(self.name, self.type)
 -
 -        for m in self.struct:
 -            if m.needs_conversion() and m.is_dynamic_array():
@@ -283,78 +444,50 @@ index 35934100414..954d484933c 100755
 -            # E.g. VkCommandBufferBeginInfo
 -            return self._generate_free_func()
 -
+-    def prototype(self):
+-        if self.dyn_array:
+-            return "void {0}({1}_host *in, uint32_t count);\n".format(self.name, self.type)
+-        return "void {0}({1}_host *in);\n".format(self.name, self.type)
+-
 -
  class StructChainConversionFunction(object):
      def __init__(self, direction, struct):
          self.direction = direction
-diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
-index 59472bcef89..1cc1b4f61f7 100644
---- a/dlls/winevulkan/vulkan.c
-+++ b/dlls/winevulkan/vulkan.c
-@@ -520,23 +520,12 @@ void WINAPI wine_vkCmdExecuteCommands(VkCommandBuffer buffer, uint32_t count,
-     if (!buffers || !count)
-         return;
+diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
+index 00626eff1e3..ea2501ebc68 100644
+--- a/dlls/winevulkan/vulkan_private.h
++++ b/dlls/winevulkan/vulkan_private.h
+@@ -34,6 +34,18 @@
  
--    /* Unfortunately we need a temporary buffer as our command buffers are wrapped.
--     * This call is called often and if a performance concern, we may want to use
--     * alloca as we shouldn't need much memory and it needs to be cleaned up after
--     * the call anyway.
--     */
--    if (!(tmp_buffers = heap_alloc(count * sizeof(*tmp_buffers))))
--    {
--        ERR("Failed to allocate memory for temporary command buffers\n");
--        return;
--    }
-+    tmp_buffers = WINEVULKAN_ALLOCA(count * sizeof(*tmp_buffers));
+ #include "vulkan_thunks.h"
  
-     for (i = 0; i < count; i++)
-         tmp_buffers[i] = buffers[i]->command_buffer;
++#if defined(__GNUC__) || defined(__clang__)
++#include <alloca.h>
++#define WINEVULKAN_FORCEINLINE __attribute__((always_inline)) inline
++#define WINEVULKAN_ALLOCA(x)   alloca(x)
++#elif defined(_MSC_VER)
++#include <malloc.h>
++#define WINEVULKAN_FORCEINLINE __forceinline
++#define WINEVULKAN_ALLOCA(x)   _alloca(x)
++#else
++#error Unsupported platform for forceinline/alloca
++#endif
++
+ /* Magic value defined by Vulkan ICD / Loader spec */
+ #define VULKAN_ICD_MAGIC_VALUE 0x01CDC0DE
  
-     buffer->device->funcs.p_vkCmdExecuteCommands(buffer->command_buffer, count, tmp_buffers);
--
--    heap_free(tmp_buffers);
- }
- 
- VkResult WINAPI wine_vkCreateDevice(VkPhysicalDevice phys_dev,
-From 43f03a8254c24f49d5f7f1878ae352cc98326567 Mon Sep 17 00:00:00 2001
+From 8e1498a5e028a3a5375c52c42e65652d21fa4d97 Mon Sep 17 00:00:00 2001
 From: Joshua Ashton <joshua@froggi.es>
-Date: Thu, 5 Mar 2020 16:16:51 +0000
-Subject: [PATCH] winevulkan: Remove unnecessary checks in
- wine_vkCmdExecuteCommands
-
-The Vulkan spec states commandBufferCount must be greater than zero and pCommandBuffers must be a valid pointer.
-
-Signed-off-by: Joshua Ashton <joshua@froggi.es>
----
- dlls/winevulkan/vulkan.c | 3 ---
- 1 file changed, 3 deletions(-)
-
-diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
-index 1cc1b4f61f7..f767b86dc46 100644
---- a/dlls/winevulkan/vulkan.c
-+++ b/dlls/winevulkan/vulkan.c
-@@ -517,9 +517,6 @@ void WINAPI wine_vkCmdExecuteCommands(VkCommandBuffer buffer, uint32_t count,
- 
-     TRACE("%p %u %p\n", buffer, count, buffers);
- 
--    if (!buffers || !count)
--        return;
--
-     tmp_buffers = WINEVULKAN_ALLOCA(count * sizeof(*tmp_buffers));
- 
-     for (i = 0; i < count; i++)
-From d77859c97c5f91ca86deeb922b74c065252aa08c Mon Sep 17 00:00:00 2001
-From: Joshua Ashton <joshua@froggi.es>
-Date: Thu, 5 Mar 2020 16:17:27 +0000
+Date: Thu, 5 Mar 2020 06:26:48 +0000
 Subject: [PATCH] winevulkan: Regenerate thunks
 
-Signed-off-by: Joshua Ashton <joshua@froggi.es>
 ---
- dlls/winevulkan/vulkan_thunks.c | 436 +++++++-------------------------
- 1 file changed, 95 insertions(+), 341 deletions(-)
+ dlls/winevulkan/vulkan_thunks.c | 512 +++++++++-----------------------
+ dlls/winevulkan/vulkan_thunks.h |   4 -
+ 2 files changed, 133 insertions(+), 383 deletions(-)
 
 diff --git a/dlls/winevulkan/vulkan_thunks.c b/dlls/winevulkan/vulkan_thunks.c
-index fecf9ab502b..8953a0f0bdb 100644
+index ea9e8262d83..ae68cdeccc8 100644
 --- a/dlls/winevulkan/vulkan_thunks.c
 +++ b/dlls/winevulkan/vulkan_thunks.c
 @@ -43,7 +43,7 @@
@@ -370,21 +503,12 @@ index fecf9ab502b..8953a0f0bdb 100644
      out->deviceMask = in->deviceMask;
  }
  
--static inline void convert_VkAcquireProfilingLockInfoKHR_win_to_host(const VkAcquireProfilingLockInfoKHR *in, VkAcquireProfilingLockInfoKHR_host *out)
-+static WINEVULKAN_FORCEINLINE void convert_VkAcquireProfilingLockInfoKHR_win_to_host(const VkAcquireProfilingLockInfoKHR *in, VkAcquireProfilingLockInfoKHR_host *out)
- {
-     if (!in) return;
- 
-@@ -66,7 +66,7 @@ static inline void convert_VkAcquireProfilingLockInfoKHR_win_to_host(const VkAcq
-     out->timeout = in->timeout;
- }
- 
 -static inline void convert_VkDescriptorSetAllocateInfo_win_to_host(const VkDescriptorSetAllocateInfo *in, VkDescriptorSetAllocateInfo_host *out)
 +static WINEVULKAN_FORCEINLINE void convert_VkDescriptorSetAllocateInfo_win_to_host(const VkDescriptorSetAllocateInfo *in, VkDescriptorSetAllocateInfo_host *out)
  {
      if (!in) return;
  
-@@ -77,7 +77,7 @@ static inline void convert_VkDescriptorSetAllocateInfo_win_to_host(const VkDescr
+@@ -67,7 +67,7 @@ static inline void convert_VkDescriptorSetAllocateInfo_win_to_host(const VkDescr
      out->pSetLayouts = in->pSetLayouts;
  }
  
@@ -393,7 +517,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -87,14 +87,14 @@ static inline void convert_VkMemoryAllocateInfo_win_to_host(const VkMemoryAlloca
+@@ -77,14 +77,14 @@ static inline void convert_VkMemoryAllocateInfo_win_to_host(const VkMemoryAlloca
      out->memoryTypeIndex = in->memoryTypeIndex;
  }
  
@@ -410,7 +534,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -110,14 +110,7 @@ static inline VkCommandBufferInheritanceInfo_host *convert_VkCommandBufferInheri
+@@ -100,14 +100,7 @@ static inline VkCommandBufferInheritanceInfo_host *convert_VkCommandBufferInheri
      return out;
  }
  
@@ -426,7 +550,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -127,19 +120,14 @@ static inline void convert_VkCommandBufferBeginInfo_win_to_host(const VkCommandB
+@@ -117,19 +110,14 @@ static inline void convert_VkCommandBufferBeginInfo_win_to_host(const VkCommandB
      out->pInheritanceInfo = convert_VkCommandBufferInheritanceInfo_array_win_to_host(in->pInheritanceInfo, 1);
  }
  
@@ -472,7 +596,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -181,21 +162,14 @@ static inline VkBindBufferMemoryInfo_host *convert_VkBindBufferMemoryInfo_array_
+@@ -171,21 +152,14 @@ static inline VkBindBufferMemoryInfo_host *convert_VkBindBufferMemoryInfo_array_
      return out;
  }
  
@@ -496,7 +620,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -208,14 +182,7 @@ static inline VkBindImageMemoryInfo_host *convert_VkBindImageMemoryInfo_array_wi
+@@ -198,14 +172,7 @@ static inline VkBindImageMemoryInfo_host *convert_VkBindImageMemoryInfo_array_wi
      return out;
  }
  
@@ -512,7 +636,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -226,7 +193,7 @@ static inline void convert_VkConditionalRenderingBeginInfoEXT_win_to_host(const
+@@ -216,7 +183,7 @@ static inline void convert_VkConditionalRenderingBeginInfoEXT_win_to_host(const
      out->flags = in->flags;
  }
  
@@ -521,7 +645,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -239,7 +206,7 @@ static inline void convert_VkRenderPassBeginInfo_win_to_host(const VkRenderPassB
+@@ -229,7 +196,7 @@ static inline void convert_VkRenderPassBeginInfo_win_to_host(const VkRenderPassB
      out->pClearValues = in->pClearValues;
  }
  
@@ -530,7 +654,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -258,7 +225,7 @@ static inline void convert_VkGeometryTrianglesNV_win_to_host(const VkGeometryTri
+@@ -248,7 +215,7 @@ static inline void convert_VkGeometryTrianglesNV_win_to_host(const VkGeometryTri
      out->transformOffset = in->transformOffset;
  }
  
@@ -539,7 +663,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -270,7 +237,7 @@ static inline void convert_VkGeometryAABBNV_win_to_host(const VkGeometryAABBNV *
+@@ -260,7 +227,7 @@ static inline void convert_VkGeometryAABBNV_win_to_host(const VkGeometryAABBNV *
      out->offset = in->offset;
  }
  
@@ -548,7 +672,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -278,14 +245,14 @@ static inline void convert_VkGeometryDataNV_win_to_host(const VkGeometryDataNV *
+@@ -268,14 +235,14 @@ static inline void convert_VkGeometryDataNV_win_to_host(const VkGeometryDataNV *
      convert_VkGeometryAABBNV_win_to_host(&in->aabbs, &out->aabbs);
  }
  
@@ -565,7 +689,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -298,14 +265,7 @@ static inline VkGeometryNV_host *convert_VkGeometryNV_array_win_to_host(const Vk
+@@ -288,14 +255,7 @@ static inline VkGeometryNV_host *convert_VkGeometryNV_array_win_to_host(const Vk
      return out;
  }
  
@@ -581,7 +705,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -318,19 +278,14 @@ static inline void convert_VkAccelerationStructureInfoNV_win_to_host(const VkAcc
+@@ -308,19 +268,14 @@ static inline void convert_VkAccelerationStructureInfoNV_win_to_host(const VkAcc
      out->pGeometries = convert_VkGeometryNV_array_win_to_host(in->pGeometries, in->geometryCount);
  }
  
@@ -603,7 +727,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].srcOffset = in[i].srcOffset;
-@@ -341,21 +296,14 @@ static inline VkBufferCopy_host *convert_VkBufferCopy_array_win_to_host(const Vk
+@@ -331,21 +286,14 @@ static inline VkBufferCopy_host *convert_VkBufferCopy_array_win_to_host(const Vk
      return out;
  }
  
@@ -627,52 +751,47 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].bufferOffset = in[i].bufferOffset;
-@@ -359,13 +359,6 @@ static inline VkBufferImageCopy_host *convert_VkBufferImageCopy_array_win_to_hos
+@@ -299,11 +299,28 @@ static inline VkBufferImageCopy_host *convert_VkBufferImageCopy_array_win_to_hos
      return out;
  }
  
 -static inline void free_VkBufferImageCopy_array(VkBufferImageCopy_host *in, uint32_t count)
--{
--    if (!in) return;
--
--    heap_free(in);
--}
--
- static inline VkIndirectCommandsStreamNV_host *convert_VkIndirectCommandsStreamNV_array_win_to_host(const VkIndirectCommandsStreamNV *in, uint32_t count)
++static WINEVULKAN_FORCEINLINE VkBufferMemoryBarrier_host *convert_VkBufferMemoryBarrier_array_win_to_host(const VkBufferMemoryBarrier *in, uint32_t count)
  {
-     VkIndirectCommandsStreamNV_host *out;
-@@ -369,14 +369,14 @@ static inline VkBufferImageCopy_host *convert_VkBufferImageCopy_array_win_to_hos
+-    if (!in) return;
++    VkBufferMemoryBarrier_host *out;
++    unsigned int i;
++
++    if (!in) return NULL;
++
++    out = WINEVULKAN_ALLOCA(count * sizeof(*out));
++    for (i = 0; i < count; i++)
++    {
++        out[i].sType = in[i].sType;
++        out[i].pNext = in[i].pNext;
++        out[i].srcAccessMask = in[i].srcAccessMask;
++        out[i].dstAccessMask = in[i].dstAccessMask;
++        out[i].srcQueueFamilyIndex = in[i].srcQueueFamilyIndex;
++        out[i].dstQueueFamilyIndex = in[i].dstQueueFamilyIndex;
++        out[i].buffer = in[i].buffer;
++        out[i].offset = in[i].offset;
++        out[i].size = in[i].size;
++    }
+ 
+-    heap_free(in);
++    return out;
+ }
+ 
+ static inline VkIndirectCommandsStreamNV_host *convert_VkIndirectCommandsStreamNV_array_win_to_host(const VkIndirectCommandsStreamNV *in, uint32_t count)
+@@ -359,39 +359,57 @@ static inline VkBufferImageCopy_host *convert_VkBufferImageCopy_array_win_to_hos
      free_VkIndirectCommandsStreamNV_array((VkIndirectCommandsStreamNV_host *)in->pStreams, in->streamCount);
  }
  
--static inline VkBufferMemoryBarrier_host *convert_VkBufferMemoryBarrier_array_win_to_host(const VkBufferMemoryBarrier *in, uint32_t count)
-+static WINEVULKAN_FORCEINLINE VkBufferMemoryBarrier_host *convert_VkBufferMemoryBarrier_array_win_to_host(const VkBufferMemoryBarrier *in, uint32_t count)
- {
-     VkBufferMemoryBarrier_host *out;
-     unsigned int i;
- 
-     if (!in) return NULL;
- 
--    out = heap_alloc(count * sizeof(*out));
-+    out = WINEVULKAN_ALLOCA(count * sizeof(*out));
-     for (i = 0; i < count; i++)
-     {
-         out[i].sType = in[i].sType;
-@@ -400,21 +341,14 @@ static inline VkBufferMemoryBarrier_host *convert_VkBufferMemoryBarrier_array_wi
-     return out;
- }
- 
--static inline void free_VkBufferMemoryBarrier_array(VkBufferMemoryBarrier_host *in, uint32_t count)
--{
--    if (!in) return;
--
--    heap_free(in);
--}
--
--static inline VkImageMemoryBarrier_host *convert_VkImageMemoryBarrier_array_win_to_host(const VkImageMemoryBarrier *in, uint32_t count)
+-static inline VkDescriptorImageInfo_host *convert_VkDescriptorImageInfo_array_win_to_host(const VkDescriptorImageInfo *in, uint32_t count)
 +static WINEVULKAN_FORCEINLINE VkImageMemoryBarrier_host *convert_VkImageMemoryBarrier_array_win_to_host(const VkImageMemoryBarrier *in, uint32_t count)
  {
-     VkImageMemoryBarrier_host *out;
+-    VkDescriptorImageInfo_host *out;
++    VkImageMemoryBarrier_host *out;
      unsigned int i;
  
      if (!in) return NULL;
@@ -681,42 +800,45 @@ index fecf9ab502b..8953a0f0bdb 100644
 +    out = WINEVULKAN_ALLOCA(count * sizeof(*out));
      for (i = 0; i < count; i++)
      {
-         out[i].sType = in[i].sType;
-@@ -432,21 +366,14 @@ static inline VkImageMemoryBarrier_host *convert_VkImageMemoryBarrier_array_win_
-     return out;
- }
+-        out[i].sampler = in[i].sampler;
+-        out[i].imageView = in[i].imageView;
+-        out[i].imageLayout = in[i].imageLayout;
++        out[i].sType = in[i].sType;
++        out[i].pNext = in[i].pNext;
++        out[i].srcAccessMask = in[i].srcAccessMask;
++        out[i].dstAccessMask = in[i].dstAccessMask;
++        out[i].oldLayout = in[i].oldLayout;
++        out[i].newLayout = in[i].newLayout;
++        out[i].srcQueueFamilyIndex = in[i].srcQueueFamilyIndex;
++        out[i].dstQueueFamilyIndex = in[i].dstQueueFamilyIndex;
++        out[i].image = in[i].image;
++        out[i].subresourceRange = in[i].subresourceRange;
+     }
  
--static inline void free_VkImageMemoryBarrier_array(VkImageMemoryBarrier_host *in, uint32_t count)
--{
--    if (!in) return;
--
--    heap_free(in);
--}
--
--static inline VkDescriptorImageInfo_host *convert_VkDescriptorImageInfo_array_win_to_host(const VkDescriptorImageInfo *in, uint32_t count)
-+static WINEVULKAN_FORCEINLINE VkDescriptorImageInfo_host *convert_VkDescriptorImageInfo_array_win_to_host(const VkDescriptorImageInfo *in, uint32_t count)
- {
-     VkDescriptorImageInfo_host *out;
-     unsigned int i;
- 
-     if (!in) return NULL;
- 
--    out = heap_alloc(count * sizeof(*out));
-+    out = WINEVULKAN_ALLOCA(count * sizeof(*out));
-     for (i = 0; i < count; i++)
-     {
-         out[i].sampler = in[i].sampler;
-@@ -457,21 +384,14 @@ static inline VkDescriptorImageInfo_host *convert_VkDescriptorImageInfo_array_wi
      return out;
  }
  
 -static inline void free_VkDescriptorImageInfo_array(VkDescriptorImageInfo_host *in, uint32_t count)
--{
++static WINEVULKAN_FORCEINLINE VkDescriptorImageInfo_host *convert_VkDescriptorImageInfo_array_win_to_host(const VkDescriptorImageInfo *in, uint32_t count)
+ {
 -    if (!in) return;
--
++    VkDescriptorImageInfo_host *out;
++    unsigned int i;
+ 
 -    heap_free(in);
--}
--
++    if (!in) return NULL;
++
++    out = WINEVULKAN_ALLOCA(count * sizeof(*out));
++    for (i = 0; i < count; i++)
++    {
++        out[i].sampler = in[i].sampler;
++        out[i].imageView = in[i].imageView;
++        out[i].imageLayout = in[i].imageLayout;
++    }
++
++    return out;
+ }
+ 
 -static inline VkDescriptorBufferInfo_host *convert_VkDescriptorBufferInfo_array_win_to_host(const VkDescriptorBufferInfo *in, uint32_t count)
 +static WINEVULKAN_FORCEINLINE VkDescriptorBufferInfo_host *convert_VkDescriptorBufferInfo_array_win_to_host(const VkDescriptorBufferInfo *in, uint32_t count)
  {
@@ -730,7 +852,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].buffer = in[i].buffer;
-@@ -482,21 +402,14 @@ static inline VkDescriptorBufferInfo_host *convert_VkDescriptorBufferInfo_array_
+@@ -409,21 +392,14 @@ static inline VkDescriptorBufferInfo_host *convert_VkDescriptorBufferInfo_array_
      return out;
  }
  
@@ -754,7 +876,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -514,21 +427,7 @@ static inline VkWriteDescriptorSet_host *convert_VkWriteDescriptorSet_array_win_
+@@ -441,21 +417,7 @@ static inline VkWriteDescriptorSet_host *convert_VkWriteDescriptorSet_array_win_
      return out;
  }
  
@@ -777,7 +899,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -537,7 +436,7 @@ static inline void convert_VkPerformanceMarkerInfoINTEL_win_to_host(const VkPerf
+@@ -464,7 +426,7 @@ static inline void convert_VkPerformanceMarkerInfoINTEL_win_to_host(const VkPerf
      out->marker = in->marker;
  }
  
@@ -786,7 +908,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -548,7 +447,7 @@ static inline void convert_VkPerformanceOverrideInfoINTEL_win_to_host(const VkPe
+@@ -475,7 +437,7 @@ static inline void convert_VkPerformanceOverrideInfoINTEL_win_to_host(const VkPe
      out->parameter = in->parameter;
  }
  
@@ -795,7 +917,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -558,7 +457,7 @@ static inline void convert_VkAccelerationStructureCreateInfoNV_win_to_host(const
+@@ -485,7 +447,7 @@ static inline void convert_VkAccelerationStructureCreateInfoNV_win_to_host(const
      convert_VkAccelerationStructureInfoNV_win_to_host(&in->info, &out->info);
  }
  
@@ -804,7 +926,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -572,7 +471,7 @@ static inline void convert_VkBufferCreateInfo_win_to_host(const VkBufferCreateIn
+@@ -499,7 +461,7 @@ static inline void convert_VkBufferCreateInfo_win_to_host(const VkBufferCreateIn
      out->pQueueFamilyIndices = in->pQueueFamilyIndices;
  }
  
@@ -813,7 +935,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -585,7 +484,7 @@ static inline void convert_VkBufferViewCreateInfo_win_to_host(const VkBufferView
+@@ -512,7 +474,7 @@ static inline void convert_VkBufferViewCreateInfo_win_to_host(const VkBufferView
      out->range = in->range;
  }
  
@@ -822,7 +944,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -598,14 +497,14 @@ static inline void convert_VkPipelineShaderStageCreateInfo_win_to_host(const VkP
+@@ -525,14 +487,14 @@ static inline void convert_VkPipelineShaderStageCreateInfo_win_to_host(const VkP
      out->pSpecializationInfo = in->pSpecializationInfo;
  }
  
@@ -839,7 +961,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -620,14 +519,7 @@ static inline VkComputePipelineCreateInfo_host *convert_VkComputePipelineCreateI
+@@ -547,14 +509,7 @@ static inline VkComputePipelineCreateInfo_host *convert_VkComputePipelineCreateI
      return out;
  }
  
@@ -855,7 +977,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -643,7 +535,7 @@ static inline void convert_VkDescriptorUpdateTemplateCreateInfo_win_to_host(cons
+@@ -570,7 +525,7 @@ static inline void convert_VkDescriptorUpdateTemplateCreateInfo_win_to_host(cons
      out->set = in->set;
  }
  
@@ -864,7 +986,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -658,14 +550,14 @@ static inline void convert_VkFramebufferCreateInfo_win_to_host(const VkFramebuff
+@@ -585,14 +540,14 @@ static inline void convert_VkFramebufferCreateInfo_win_to_host(const VkFramebuff
      out->layers = in->layers;
  }
  
@@ -881,7 +1003,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -680,21 +572,14 @@ static inline VkPipelineShaderStageCreateInfo_host *convert_VkPipelineShaderStag
+@@ -607,21 +562,14 @@ static inline VkPipelineShaderStageCreateInfo_host *convert_VkPipelineShaderStag
      return out;
  }
  
@@ -905,7 +1027,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -721,20 +606,7 @@ static inline VkGraphicsPipelineCreateInfo_host *convert_VkGraphicsPipelineCreat
+@@ -648,20 +596,7 @@ static inline VkGraphicsPipelineCreateInfo_host *convert_VkGraphicsPipelineCreat
      return out;
  }
  
@@ -927,7 +1049,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -748,14 +620,14 @@ static inline void convert_VkImageViewCreateInfo_win_to_host(const VkImageViewCr
+@@ -675,14 +610,14 @@ static inline void convert_VkImageViewCreateInfo_win_to_host(const VkImageViewCr
      out->subresourceRange = in->subresourceRange;
  }
  
@@ -944,7 +1066,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -774,20 +646,7 @@ static inline VkRayTracingPipelineCreateInfoNV_host *convert_VkRayTracingPipelin
+@@ -701,27 +636,14 @@ static inline VkRayTracingPipelineCreateInfoNV_host *convert_VkRayTracingPipelin
      return out;
  }
  
@@ -961,15 +1083,6 @@ index fecf9ab502b..8953a0f0bdb 100644
 -    heap_free(in);
 -}
 -
--static inline void convert_VkSwapchainCreateInfoKHR_win_to_host(const VkSwapchainCreateInfoKHR *in, VkSwapchainCreateInfoKHR_host *out)
-+static WINEVULKAN_FORCEINLINE void convert_VkSwapchainCreateInfoKHR_win_to_host(const VkSwapchainCreateInfoKHR *in, VkSwapchainCreateInfoKHR_host *out)
- {
-     if (!in) return;
- 
-@@ -811,14 +670,14 @@ static inline void convert_VkSwapchainCreateInfoKHR_win_to_host(const VkSwapchai
-     out->oldSwapchain = in->oldSwapchain;
- }
- 
 -static inline VkMappedMemoryRange_host *convert_VkMappedMemoryRange_array_win_to_host(const VkMappedMemoryRange *in, uint32_t count)
 +static WINEVULKAN_FORCEINLINE VkMappedMemoryRange_host *convert_VkMappedMemoryRange_array_win_to_host(const VkMappedMemoryRange *in, uint32_t count)
  {
@@ -983,7 +1096,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -831,14 +690,7 @@ static inline VkMappedMemoryRange_host *convert_VkMappedMemoryRange_array_win_to
+@@ -734,14 +656,7 @@ static inline VkMappedMemoryRange_host *convert_VkMappedMemoryRange_array_win_to
      return out;
  }
  
@@ -999,7 +1112,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -848,7 +700,7 @@ static inline void convert_VkAccelerationStructureMemoryRequirementsInfoNV_win_t
+@@ -751,7 +666,7 @@ static inline void convert_VkAccelerationStructureMemoryRequirementsInfoNV_win_t
      out->accelerationStructure = in->accelerationStructure;
  }
  
@@ -1008,7 +1121,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -857,7 +709,7 @@ static inline void convert_VkMemoryRequirements_host_to_win(const VkMemoryRequir
+@@ -760,7 +675,7 @@ static inline void convert_VkMemoryRequirements_host_to_win(const VkMemoryRequir
      out->memoryTypeBits = in->memoryTypeBits;
  }
  
@@ -1017,7 +1130,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -865,7 +717,7 @@ static inline void convert_VkMemoryRequirements2KHR_win_to_host(const VkMemoryRe
+@@ -768,7 +683,7 @@ static inline void convert_VkMemoryRequirements2KHR_win_to_host(const VkMemoryRe
      out->sType = in->sType;
  }
  
@@ -1026,7 +1139,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -874,7 +726,7 @@ static inline void convert_VkMemoryRequirements2KHR_host_to_win(const VkMemoryRe
+@@ -777,7 +692,7 @@ static inline void convert_VkMemoryRequirements2KHR_host_to_win(const VkMemoryRe
      convert_VkMemoryRequirements_host_to_win(&in->memoryRequirements, &out->memoryRequirements);
  }
  
@@ -1035,7 +1148,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -883,7 +735,7 @@ static inline void convert_VkBufferDeviceAddressInfoKHR_win_to_host(const VkBuff
+@@ -786,7 +701,7 @@ static inline void convert_VkBufferDeviceAddressInfoKHR_win_to_host(const VkBuff
      out->buffer = in->buffer;
  }
  
@@ -1044,7 +1157,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -892,7 +744,7 @@ static inline void convert_VkBufferMemoryRequirementsInfo2_win_to_host(const VkB
+@@ -795,7 +710,7 @@ static inline void convert_VkBufferMemoryRequirementsInfo2_win_to_host(const VkB
      out->buffer = in->buffer;
  }
  
@@ -1053,7 +1166,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -900,7 +752,7 @@ static inline void convert_VkMemoryRequirements2_win_to_host(const VkMemoryRequi
+@@ -803,7 +718,7 @@ static inline void convert_VkMemoryRequirements2_win_to_host(const VkMemoryRequi
      out->sType = in->sType;
  }
  
@@ -1062,17 +1175,8 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -909,7 +761,7 @@ static inline void convert_VkMemoryRequirements2_host_to_win(const VkMemoryRequi
+@@ -812,7 +727,7 @@ static inline void convert_VkMemoryRequirements2_host_to_win(const VkMemoryRequi
      convert_VkMemoryRequirements_host_to_win(&in->memoryRequirements, &out->memoryRequirements);
- }
- 
--static inline void convert_VkDeviceMemoryOpaqueCaptureAddressInfo_win_to_host(const VkDeviceMemoryOpaqueCaptureAddressInfo *in, VkDeviceMemoryOpaqueCaptureAddressInfo_host *out)
-+static WINEVULKAN_FORCEINLINE void convert_VkDeviceMemoryOpaqueCaptureAddressInfo_win_to_host(const VkDeviceMemoryOpaqueCaptureAddressInfo *in, VkDeviceMemoryOpaqueCaptureAddressInfo_host *out)
- {
-     if (!in) return;
- 
-@@ -918,7 +770,7 @@ static inline void convert_VkDeviceMemoryOpaqueCaptureAddressInfoKHR_win_to_host
-     out->memory = in->memory;
  }
  
 -static inline void convert_VkImageMemoryRequirementsInfo2_win_to_host(const VkImageMemoryRequirementsInfo2 *in, VkImageMemoryRequirementsInfo2_host *out)
@@ -1080,7 +1184,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -927,7 +779,7 @@ static inline void convert_VkImageMemoryRequirementsInfo2_win_to_host(const VkIm
+@@ -821,7 +736,7 @@ static inline void convert_VkImageMemoryRequirementsInfo2_win_to_host(const VkIm
      out->image = in->image;
  }
  
@@ -1089,7 +1193,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -936,7 +788,7 @@ static inline void convert_VkImageSparseMemoryRequirementsInfo2_win_to_host(cons
+@@ -830,7 +745,7 @@ static inline void convert_VkImageSparseMemoryRequirementsInfo2_win_to_host(cons
      out->image = in->image;
  }
  
@@ -1098,7 +1202,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -947,7 +799,7 @@ static inline void convert_VkSubresourceLayout_host_to_win(const VkSubresourceLa
+@@ -841,7 +756,7 @@ static inline void convert_VkSubresourceLayout_host_to_win(const VkSubresourceLa
      out->depthPitch = in->depthPitch;
  }
  
@@ -1107,7 +1211,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -958,7 +810,7 @@ static inline void convert_VkImageFormatProperties_host_to_win(const VkImageForm
+@@ -852,7 +767,7 @@ static inline void convert_VkImageFormatProperties_host_to_win(const VkImageForm
      out->maxResourceSize = in->maxResourceSize;
  }
  
@@ -1116,7 +1220,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -966,7 +818,7 @@ static inline void convert_VkImageFormatProperties2_win_to_host(const VkImageFor
+@@ -860,7 +775,7 @@ static inline void convert_VkImageFormatProperties2_win_to_host(const VkImageFor
      out->sType = in->sType;
  }
  
@@ -1125,7 +1229,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -975,7 +827,7 @@ static inline void convert_VkImageFormatProperties2_host_to_win(const VkImageFor
+@@ -869,7 +784,7 @@ static inline void convert_VkImageFormatProperties2_host_to_win(const VkImageFor
      convert_VkImageFormatProperties_host_to_win(&in->imageFormatProperties, &out->imageFormatProperties);
  }
  
@@ -1134,7 +1238,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      unsigned int i;
  
-@@ -988,7 +840,7 @@ static inline void convert_VkMemoryHeap_static_array_host_to_win(const VkMemoryH
+@@ -882,7 +797,7 @@ static inline void convert_VkMemoryHeap_static_array_host_to_win(const VkMemoryH
      }
  }
  
@@ -1143,7 +1247,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -998,7 +850,7 @@ static inline void convert_VkPhysicalDeviceMemoryProperties_host_to_win(const Vk
+@@ -892,7 +807,7 @@ static inline void convert_VkPhysicalDeviceMemoryProperties_host_to_win(const Vk
      convert_VkMemoryHeap_static_array_host_to_win(in->memoryHeaps, out->memoryHeaps, VK_MAX_MEMORY_HEAPS);
  }
  
@@ -1152,7 +1256,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -1006,7 +858,7 @@ static inline void convert_VkPhysicalDeviceMemoryProperties2_win_to_host(const V
+@@ -900,7 +815,7 @@ static inline void convert_VkPhysicalDeviceMemoryProperties2_win_to_host(const V
      out->sType = in->sType;
  }
  
@@ -1161,7 +1265,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -1015,7 +867,7 @@ static inline void convert_VkPhysicalDeviceMemoryProperties2_host_to_win(const V
+@@ -909,7 +824,7 @@ static inline void convert_VkPhysicalDeviceMemoryProperties2_host_to_win(const V
      convert_VkPhysicalDeviceMemoryProperties_host_to_win(&in->memoryProperties, &out->memoryProperties);
  }
  
@@ -1170,7 +1274,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -1127,7 +979,7 @@ static inline void convert_VkPhysicalDeviceLimits_host_to_win(const VkPhysicalDe
+@@ -1021,7 +936,7 @@ static inline void convert_VkPhysicalDeviceLimits_host_to_win(const VkPhysicalDe
      out->nonCoherentAtomSize = in->nonCoherentAtomSize;
  }
  
@@ -1179,7 +1283,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -1142,7 +994,7 @@ static inline void convert_VkPhysicalDeviceProperties_host_to_win(const VkPhysic
+@@ -1036,7 +951,7 @@ static inline void convert_VkPhysicalDeviceProperties_host_to_win(const VkPhysic
      out->sparseProperties = in->sparseProperties;
  }
  
@@ -1188,7 +1292,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -1150,7 +1002,7 @@ static inline void convert_VkPhysicalDeviceProperties2_win_to_host(const VkPhysi
+@@ -1044,7 +959,7 @@ static inline void convert_VkPhysicalDeviceProperties2_win_to_host(const VkPhysi
      out->sType = in->sType;
  }
  
@@ -1197,7 +1301,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -1159,7 +1011,7 @@ static inline void convert_VkPhysicalDeviceProperties2_host_to_win(const VkPhysi
+@@ -1053,7 +968,7 @@ static inline void convert_VkPhysicalDeviceProperties2_host_to_win(const VkPhysi
      convert_VkPhysicalDeviceProperties_host_to_win(&in->properties, &out->properties);
  }
  
@@ -1206,7 +1310,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -1169,7 +1021,7 @@ static inline void convert_VkPipelineExecutableInfoKHR_win_to_host(const VkPipel
+@@ -1063,7 +978,7 @@ static inline void convert_VkPipelineExecutableInfoKHR_win_to_host(const VkPipel
      out->executableIndex = in->executableIndex;
  }
  
@@ -1215,7 +1319,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -1178,14 +1030,14 @@ static inline void convert_VkPipelineInfoKHR_win_to_host(const VkPipelineInfoKHR
+@@ -1072,14 +987,14 @@ static inline void convert_VkPipelineInfoKHR_win_to_host(const VkPipelineInfoKHR
      out->pipeline = in->pipeline;
  }
  
@@ -1232,7 +1336,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].resourceOffset = in[i].resourceOffset;
-@@ -1198,21 +1050,14 @@ static inline VkSparseMemoryBind_host *convert_VkSparseMemoryBind_array_win_to_h
+@@ -1092,21 +1007,14 @@ static inline VkSparseMemoryBind_host *convert_VkSparseMemoryBind_array_win_to_h
      return out;
  }
  
@@ -1256,7 +1360,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].buffer = in[i].buffer;
-@@ -1223,27 +1068,14 @@ static inline VkSparseBufferMemoryBindInfo_host *convert_VkSparseBufferMemoryBin
+@@ -1117,27 +1025,14 @@ static inline VkSparseBufferMemoryBindInfo_host *convert_VkSparseBufferMemoryBin
      return out;
  }
  
@@ -1286,7 +1390,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].image = in[i].image;
-@@ -1254,27 +1086,14 @@ static inline VkSparseImageOpaqueMemoryBindInfo_host *convert_VkSparseImageOpaqu
+@@ -1148,27 +1043,14 @@ static inline VkSparseImageOpaqueMemoryBindInfo_host *convert_VkSparseImageOpaqu
      return out;
  }
  
@@ -1316,7 +1420,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].subresource = in[i].subresource;
-@@ -1288,21 +1107,14 @@ static inline VkSparseImageMemoryBind_host *convert_VkSparseImageMemoryBind_arra
+@@ -1182,21 +1064,14 @@ static inline VkSparseImageMemoryBind_host *convert_VkSparseImageMemoryBind_arra
      return out;
  }
  
@@ -1340,7 +1444,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].image = in[i].image;
-@@ -1313,27 +1125,14 @@ static inline VkSparseImageMemoryBindInfo_host *convert_VkSparseImageMemoryBindI
+@@ -1207,27 +1082,14 @@ static inline VkSparseImageMemoryBindInfo_host *convert_VkSparseImageMemoryBindI
      return out;
  }
  
@@ -1370,7 +1474,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -1353,22 +1152,7 @@ static inline VkBindSparseInfo_host *convert_VkBindSparseInfo_array_win_to_host(
+@@ -1247,22 +1109,7 @@ static inline VkBindSparseInfo_host *convert_VkBindSparseInfo_array_win_to_host(
      return out;
  }
  
@@ -1394,7 +1498,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  {
      if (!in) return;
  
-@@ -1378,14 +1162,14 @@ static inline void convert_VkSemaphoreSignalInfoKHR_win_to_host(const VkSemaphor
+@@ -1272,14 +1119,14 @@ static inline void convert_VkSemaphoreSignalInfoKHR_win_to_host(const VkSemaphor
      out->value = in->value;
  }
  
@@ -1411,7 +1515,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      for (i = 0; i < count; i++)
      {
          out[i].sType = in[i].sType;
-@@ -1402,13 +1186,6 @@ static inline VkCopyDescriptorSet_host *convert_VkCopyDescriptorSet_array_win_to
+@@ -1296,13 +1143,6 @@ static inline VkCopyDescriptorSet_host *convert_VkCopyDescriptorSet_array_win_to
      return out;
  }
  
@@ -1425,7 +1529,77 @@ index fecf9ab502b..8953a0f0bdb 100644
  #endif /* USE_STRUCT_CONVERSION */
  
  VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCreateInfo *out_struct)
-@@ -2547,7 +2324,6 @@ VkResult WINAPI wine_vkBeginCommandBuffer(VkCommandBuffer commandBuffer, const V
+@@ -2300,69 +2140,6 @@ void free_VkInstanceCreateInfo_struct_chain(VkInstanceCreateInfo *s)
+     s->pNext = NULL;
+ }
+ 
+-VkBufferMemoryBarrier_host *convert_VkBufferMemoryBarrier_array_win_to_host(const VkBufferMemoryBarrier *in, uint32_t count)
+-{
+-    VkBufferMemoryBarrier_host *out;
+-    unsigned int i;
+-
+-    if (!in) return NULL;
+-
+-    out = heap_alloc(count * sizeof(*out));
+-    for (i = 0; i < count; i++)
+-    {
+-        out[i].sType = in[i].sType;
+-        out[i].pNext = in[i].pNext;
+-        out[i].srcAccessMask = in[i].srcAccessMask;
+-        out[i].dstAccessMask = in[i].dstAccessMask;
+-        out[i].srcQueueFamilyIndex = in[i].srcQueueFamilyIndex;
+-        out[i].dstQueueFamilyIndex = in[i].dstQueueFamilyIndex;
+-        out[i].buffer = in[i].buffer;
+-        out[i].offset = in[i].offset;
+-        out[i].size = in[i].size;
+-    }
+-
+-    return out;
+-}
+-
+-void free_VkBufferMemoryBarrier_array(VkBufferMemoryBarrier_host *in, uint32_t count)
+-{
+-    if (!in) return;
+-
+-    heap_free(in);
+-}
+-
+-VkImageMemoryBarrier_host *convert_VkImageMemoryBarrier_array_win_to_host(const VkImageMemoryBarrier *in, uint32_t count)
+-{
+-    VkImageMemoryBarrier_host *out;
+-    unsigned int i;
+-
+-    if (!in) return NULL;
+-
+-    out = heap_alloc(count * sizeof(*out));
+-    for (i = 0; i < count; i++)
+-    {
+-        out[i].sType = in[i].sType;
+-        out[i].pNext = in[i].pNext;
+-        out[i].srcAccessMask = in[i].srcAccessMask;
+-        out[i].dstAccessMask = in[i].dstAccessMask;
+-        out[i].oldLayout = in[i].oldLayout;
+-        out[i].newLayout = in[i].newLayout;
+-        out[i].srcQueueFamilyIndex = in[i].srcQueueFamilyIndex;
+-        out[i].dstQueueFamilyIndex = in[i].dstQueueFamilyIndex;
+-        out[i].image = in[i].image;
+-        out[i].subresourceRange = in[i].subresourceRange;
+-    }
+-
+-    return out;
+-}
+-
+-void free_VkImageMemoryBarrier_array(VkImageMemoryBarrier_host *in, uint32_t count)
+-{
+-    if (!in) return;
+-
+-    heap_free(in);
+-}
+-
+ VkResult WINAPI wine_vkAcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR *pAcquireInfo, uint32_t *pImageIndex)
+ {
+ #if defined(USE_STRUCT_CONVERSION)
+@@ -2430,7 +2207,6 @@ VkResult WINAPI wine_vkBeginCommandBuffer(VkCommandBuffer commandBuffer, const V
      convert_VkCommandBufferBeginInfo_win_to_host(pBeginInfo, &pBeginInfo_host);
      result = commandBuffer->device->funcs.p_vkBeginCommandBuffer(commandBuffer->command_buffer, &pBeginInfo_host);
  
@@ -1433,7 +1607,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, %p\n", commandBuffer, pBeginInfo);
-@@ -2565,7 +2341,6 @@ static VkResult WINAPI wine_vkBindAccelerationStructureMemoryNV(VkDevice device,
+@@ -2448,7 +2224,6 @@ static VkResult WINAPI wine_vkBindAccelerationStructureMemoryNV(VkDevice device,
      pBindInfos_host = convert_VkBindAccelerationStructureMemoryInfoNV_array_win_to_host(pBindInfos, bindInfoCount);
      result = device->funcs.p_vkBindAccelerationStructureMemoryNV(device->device, bindInfoCount, pBindInfos_host);
  
@@ -1441,7 +1615,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, %u, %p\n", device, bindInfoCount, pBindInfos);
-@@ -2589,7 +2364,6 @@ VkResult WINAPI wine_vkBindBufferMemory2(VkDevice device, uint32_t bindInfoCount
+@@ -2472,7 +2247,6 @@ VkResult WINAPI wine_vkBindBufferMemory2(VkDevice device, uint32_t bindInfoCount
      pBindInfos_host = convert_VkBindBufferMemoryInfo_array_win_to_host(pBindInfos, bindInfoCount);
      result = device->funcs.p_vkBindBufferMemory2(device->device, bindInfoCount, pBindInfos_host);
  
@@ -1449,7 +1623,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, %u, %p\n", device, bindInfoCount, pBindInfos);
-@@ -2607,7 +2381,6 @@ static VkResult WINAPI wine_vkBindBufferMemory2KHR(VkDevice device, uint32_t bin
+@@ -2490,7 +2264,6 @@ static VkResult WINAPI wine_vkBindBufferMemory2KHR(VkDevice device, uint32_t bin
      pBindInfos_host = convert_VkBindBufferMemoryInfo_array_win_to_host(pBindInfos, bindInfoCount);
      result = device->funcs.p_vkBindBufferMemory2KHR(device->device, bindInfoCount, pBindInfos_host);
  
@@ -1457,7 +1631,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, %u, %p\n", device, bindInfoCount, pBindInfos);
-@@ -2631,7 +2404,6 @@ VkResult WINAPI wine_vkBindImageMemory2(VkDevice device, uint32_t bindInfoCount,
+@@ -2514,7 +2287,6 @@ VkResult WINAPI wine_vkBindImageMemory2(VkDevice device, uint32_t bindInfoCount,
      pBindInfos_host = convert_VkBindImageMemoryInfo_array_win_to_host(pBindInfos, bindInfoCount);
      result = device->funcs.p_vkBindImageMemory2(device->device, bindInfoCount, pBindInfos_host);
  
@@ -1465,7 +1639,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, %u, %p\n", device, bindInfoCount, pBindInfos);
-@@ -2649,7 +2421,6 @@ static VkResult WINAPI wine_vkBindImageMemory2KHR(VkDevice device, uint32_t bind
+@@ -2532,7 +2304,6 @@ static VkResult WINAPI wine_vkBindImageMemory2KHR(VkDevice device, uint32_t bind
      pBindInfos_host = convert_VkBindImageMemoryInfo_array_win_to_host(pBindInfos, bindInfoCount);
      result = device->funcs.p_vkBindImageMemory2KHR(device->device, bindInfoCount, pBindInfos_host);
  
@@ -1473,7 +1647,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, %u, %p\n", device, bindInfoCount, pBindInfos);
-@@ -2771,7 +2542,6 @@ static void WINAPI wine_vkCmdBuildAccelerationStructureNV(VkCommandBuffer comman
+@@ -2654,7 +2425,6 @@ static void WINAPI wine_vkCmdBuildAccelerationStructureNV(VkCommandBuffer comman
      convert_VkAccelerationStructureInfoNV_win_to_host(pInfo, &pInfo_host);
      commandBuffer->device->funcs.p_vkCmdBuildAccelerationStructureNV(commandBuffer->command_buffer, &pInfo_host, instanceData, instanceOffset, update, dst, src, scratch, scratchOffset);
  
@@ -1481,7 +1655,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  #else
      TRACE("%p, %p, 0x%s, 0x%s, %u, 0x%s, 0x%s, 0x%s, 0x%s\n", commandBuffer, pInfo, wine_dbgstr_longlong(instanceData), wine_dbgstr_longlong(instanceOffset), update, wine_dbgstr_longlong(dst), wine_dbgstr_longlong(src), wine_dbgstr_longlong(scratch), wine_dbgstr_longlong(scratchOffset));
      commandBuffer->device->funcs.p_vkCmdBuildAccelerationStructureNV(commandBuffer->command_buffer, pInfo, instanceData, instanceOffset, update, dst, src, scratch, scratchOffset);
-@@ -2811,7 +2581,6 @@ void WINAPI wine_vkCmdCopyBuffer(VkCommandBuffer commandBuffer, VkBuffer srcBuff
+@@ -2694,7 +2464,6 @@ void WINAPI wine_vkCmdCopyBuffer(VkCommandBuffer commandBuffer, VkBuffer srcBuff
      pRegions_host = convert_VkBufferCopy_array_win_to_host(pRegions, regionCount);
      commandBuffer->device->funcs.p_vkCmdCopyBuffer(commandBuffer->command_buffer, srcBuffer, dstBuffer, regionCount, pRegions_host);
  
@@ -1489,7 +1663,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  #else
      TRACE("%p, 0x%s, 0x%s, %u, %p\n", commandBuffer, wine_dbgstr_longlong(srcBuffer), wine_dbgstr_longlong(dstBuffer), regionCount, pRegions);
      commandBuffer->device->funcs.p_vkCmdCopyBuffer(commandBuffer->command_buffer, srcBuffer, dstBuffer, regionCount, pRegions);
-@@ -2827,7 +2596,6 @@ void WINAPI wine_vkCmdCopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer
+@@ -2710,7 +2479,6 @@ void WINAPI wine_vkCmdCopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer
      pRegions_host = convert_VkBufferImageCopy_array_win_to_host(pRegions, regionCount);
      commandBuffer->device->funcs.p_vkCmdCopyBufferToImage(commandBuffer->command_buffer, srcBuffer, dstImage, dstImageLayout, regionCount, pRegions_host);
  
@@ -1497,7 +1671,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  #else
      TRACE("%p, 0x%s, 0x%s, %#x, %u, %p\n", commandBuffer, wine_dbgstr_longlong(srcBuffer), wine_dbgstr_longlong(dstImage), dstImageLayout, regionCount, pRegions);
      commandBuffer->device->funcs.p_vkCmdCopyBufferToImage(commandBuffer->command_buffer, srcBuffer, dstImage, dstImageLayout, regionCount, pRegions);
-@@ -2849,7 +2617,6 @@ void WINAPI wine_vkCmdCopyImageToBuffer(VkCommandBuffer commandBuffer, VkImage s
+@@ -2732,7 +2500,6 @@ void WINAPI wine_vkCmdCopyImageToBuffer(VkCommandBuffer commandBuffer, VkImage s
      pRegions_host = convert_VkBufferImageCopy_array_win_to_host(pRegions, regionCount);
      commandBuffer->device->funcs.p_vkCmdCopyImageToBuffer(commandBuffer->command_buffer, srcImage, srcImageLayout, dstBuffer, regionCount, pRegions_host);
  
@@ -1505,7 +1679,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  #else
      TRACE("%p, 0x%s, %#x, 0x%s, %u, %p\n", commandBuffer, wine_dbgstr_longlong(srcImage), srcImageLayout, wine_dbgstr_longlong(dstBuffer), regionCount, pRegions);
      commandBuffer->device->funcs.p_vkCmdCopyImageToBuffer(commandBuffer->command_buffer, srcImage, srcImageLayout, dstBuffer, regionCount, pRegions);
-@@ -3023,8 +2790,6 @@ void WINAPI wine_vkCmdPipelineBarrier(VkCommandBuffer commandBuffer, VkPipelineS
+@@ -2906,8 +2673,6 @@ void WINAPI wine_vkCmdPipelineBarrier(VkCommandBuffer commandBuffer, VkPipelineS
      pImageMemoryBarriers_host = convert_VkImageMemoryBarrier_array_win_to_host(pImageMemoryBarriers, imageMemoryBarrierCount);
      commandBuffer->device->funcs.p_vkCmdPipelineBarrier(commandBuffer->command_buffer, srcStageMask, dstStageMask, dependencyFlags, memoryBarrierCount, pMemoryBarriers, bufferMemoryBarrierCount, pBufferMemoryBarriers_host, imageMemoryBarrierCount, pImageMemoryBarriers_host);
  
@@ -1514,7 +1688,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  #else
      TRACE("%p, %#x, %#x, %#x, %u, %p, %u, %p, %u, %p\n", commandBuffer, srcStageMask, dstStageMask, dependencyFlags, memoryBarrierCount, pMemoryBarriers, bufferMemoryBarrierCount, pBufferMemoryBarriers, imageMemoryBarrierCount, pImageMemoryBarriers);
      commandBuffer->device->funcs.p_vkCmdPipelineBarrier(commandBuffer->command_buffer, srcStageMask, dstStageMask, dependencyFlags, memoryBarrierCount, pMemoryBarriers, bufferMemoryBarrierCount, pBufferMemoryBarriers, imageMemoryBarrierCount, pImageMemoryBarriers);
-@@ -3046,7 +2811,6 @@ static void WINAPI wine_vkCmdPushDescriptorSetKHR(VkCommandBuffer commandBuffer,
+@@ -2929,7 +2694,6 @@ static void WINAPI wine_vkCmdPushDescriptorSetKHR(VkCommandBuffer commandBuffer,
      pDescriptorWrites_host = convert_VkWriteDescriptorSet_array_win_to_host(pDescriptorWrites, descriptorWriteCount);
      commandBuffer->device->funcs.p_vkCmdPushDescriptorSetKHR(commandBuffer->command_buffer, pipelineBindPoint, layout, set, descriptorWriteCount, pDescriptorWrites_host);
  
@@ -1522,7 +1696,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  #else
      TRACE("%p, %#x, 0x%s, %u, %u, %p\n", commandBuffer, pipelineBindPoint, wine_dbgstr_longlong(layout), set, descriptorWriteCount, pDescriptorWrites);
      commandBuffer->device->funcs.p_vkCmdPushDescriptorSetKHR(commandBuffer->command_buffer, pipelineBindPoint, layout, set, descriptorWriteCount, pDescriptorWrites);
-@@ -3260,8 +3024,6 @@ void WINAPI wine_vkCmdWaitEvents(VkCommandBuffer commandBuffer, uint32_t eventCo
+@@ -3143,8 +2907,6 @@ void WINAPI wine_vkCmdWaitEvents(VkCommandBuffer commandBuffer, uint32_t eventCo
      pImageMemoryBarriers_host = convert_VkImageMemoryBarrier_array_win_to_host(pImageMemoryBarriers, imageMemoryBarrierCount);
      commandBuffer->device->funcs.p_vkCmdWaitEvents(commandBuffer->command_buffer, eventCount, pEvents, srcStageMask, dstStageMask, memoryBarrierCount, pMemoryBarriers, bufferMemoryBarrierCount, pBufferMemoryBarriers_host, imageMemoryBarrierCount, pImageMemoryBarriers_host);
  
@@ -1531,7 +1705,7 @@ index fecf9ab502b..8953a0f0bdb 100644
  #else
      TRACE("%p, %u, %p, %#x, %#x, %u, %p, %u, %p, %u, %p\n", commandBuffer, eventCount, pEvents, srcStageMask, dstStageMask, memoryBarrierCount, pMemoryBarriers, bufferMemoryBarrierCount, pBufferMemoryBarriers, imageMemoryBarrierCount, pImageMemoryBarriers);
      commandBuffer->device->funcs.p_vkCmdWaitEvents(commandBuffer->command_buffer, eventCount, pEvents, srcStageMask, dstStageMask, memoryBarrierCount, pMemoryBarriers, bufferMemoryBarrierCount, pBufferMemoryBarriers, imageMemoryBarrierCount, pImageMemoryBarriers);
-@@ -3353,7 +3115,6 @@ VkResult WINAPI wine_vkCreateComputePipelines(VkDevice device, VkPipelineCache p
+@@ -3236,7 +2998,6 @@ VkResult WINAPI wine_vkCreateComputePipelines(VkDevice device, VkPipelineCache p
      pCreateInfos_host = convert_VkComputePipelineCreateInfo_array_win_to_host(pCreateInfos, createInfoCount);
      result = device->funcs.p_vkCreateComputePipelines(device->device, pipelineCache, createInfoCount, pCreateInfos_host, NULL, pPipelines);
  
@@ -1539,7 +1713,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, 0x%s, %u, %p, %p, %p\n", device, wine_dbgstr_longlong(pipelineCache), createInfoCount, pCreateInfos, pAllocator, pPipelines);
-@@ -3446,7 +3207,6 @@ VkResult WINAPI wine_vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache
+@@ -3329,7 +3090,6 @@ VkResult WINAPI wine_vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache
      pCreateInfos_host = convert_VkGraphicsPipelineCreateInfo_array_win_to_host(pCreateInfos, createInfoCount);
      result = device->funcs.p_vkCreateGraphicsPipelines(device->device, pipelineCache, createInfoCount, pCreateInfos_host, NULL, pPipelines);
  
@@ -1547,7 +1721,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, 0x%s, %u, %p, %p, %p\n", device, wine_dbgstr_longlong(pipelineCache), createInfoCount, pCreateInfos, pAllocator, pPipelines);
-@@ -3511,7 +3271,6 @@ static VkResult WINAPI wine_vkCreateRayTracingPipelinesNV(VkDevice device, VkPip
+@@ -3394,7 +3154,6 @@ static VkResult WINAPI wine_vkCreateRayTracingPipelinesNV(VkDevice device, VkPip
      pCreateInfos_host = convert_VkRayTracingPipelineCreateInfoNV_array_win_to_host(pCreateInfos, createInfoCount);
      result = device->funcs.p_vkCreateRayTracingPipelinesNV(device->device, pipelineCache, createInfoCount, pCreateInfos_host, NULL, pPipelines);
  
@@ -1555,7 +1729,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, 0x%s, %u, %p, %p, %p\n", device, wine_dbgstr_longlong(pipelineCache), createInfoCount, pCreateInfos, pAllocator, pPipelines);
-@@ -3774,7 +3533,6 @@ VkResult WINAPI wine_vkFlushMappedMemoryRanges(VkDevice device, uint32_t memoryR
+@@ -3628,7 +3387,6 @@ VkResult WINAPI wine_vkFlushMappedMemoryRanges(VkDevice device, uint32_t memoryR
      pMemoryRanges_host = convert_VkMappedMemoryRange_array_win_to_host(pMemoryRanges, memoryRangeCount);
      result = device->funcs.p_vkFlushMappedMemoryRanges(device->device, memoryRangeCount, pMemoryRanges_host);
  
@@ -1563,7 +1737,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, %u, %p\n", device, memoryRangeCount, pMemoryRanges);
-@@ -4505,7 +4263,6 @@ VkResult WINAPI wine_vkInvalidateMappedMemoryRanges(VkDevice device, uint32_t me
+@@ -4289,7 +4047,6 @@ VkResult WINAPI wine_vkInvalidateMappedMemoryRanges(VkDevice device, uint32_t me
      pMemoryRanges_host = convert_VkMappedMemoryRange_array_win_to_host(pMemoryRanges, memoryRangeCount);
      result = device->funcs.p_vkInvalidateMappedMemoryRanges(device->device, memoryRangeCount, pMemoryRanges_host);
  
@@ -1571,7 +1745,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, %u, %p\n", device, memoryRangeCount, pMemoryRanges);
-@@ -4541,7 +4298,6 @@ VkResult WINAPI wine_vkQueueBindSparse(VkQueue queue, uint32_t bindInfoCount, co
+@@ -4325,7 +4082,6 @@ VkResult WINAPI wine_vkQueueBindSparse(VkQueue queue, uint32_t bindInfoCount, co
      pBindInfo_host = convert_VkBindSparseInfo_array_win_to_host(pBindInfo, bindInfoCount);
      result = queue->device->funcs.p_vkQueueBindSparse(queue->queue, bindInfoCount, pBindInfo_host, fence);
  
@@ -1579,7 +1753,7 @@ index fecf9ab502b..8953a0f0bdb 100644
      return result;
  #else
      TRACE("%p, %u, %p, 0x%s\n", queue, bindInfoCount, pBindInfo, wine_dbgstr_longlong(fence));
-@@ -4685,8 +4441,6 @@ void WINAPI wine_vkUpdateDescriptorSets(VkDevice device, uint32_t descriptorWrit
+@@ -4457,8 +4213,6 @@ void WINAPI wine_vkUpdateDescriptorSets(VkDevice device, uint32_t descriptorWrit
      pDescriptorCopies_host = convert_VkCopyDescriptorSet_array_win_to_host(pDescriptorCopies, descriptorCopyCount);
      device->funcs.p_vkUpdateDescriptorSets(device->device, descriptorWriteCount, pDescriptorWrites_host, descriptorCopyCount, pDescriptorCopies_host);
  
@@ -1588,6 +1762,282 @@ index fecf9ab502b..8953a0f0bdb 100644
  #else
      TRACE("%p, %u, %p, %u, %p\n", device, descriptorWriteCount, pDescriptorWrites, descriptorCopyCount, pDescriptorCopies);
      device->funcs.p_vkUpdateDescriptorSets(device->device, descriptorWriteCount, pDescriptorWrites, descriptorCopyCount, pDescriptorCopies);
+diff --git a/dlls/winevulkan/vulkan_thunks.h b/dlls/winevulkan/vulkan_thunks.h
+index 82d0c3a0a5e..57d64cd1215 100644
+--- a/dlls/winevulkan/vulkan_thunks.h
++++ b/dlls/winevulkan/vulkan_thunks.h
+@@ -816,10 +816,6 @@ void free_VkDeviceCreateInfo_struct_chain(VkDeviceCreateInfo *s) DECLSPEC_HIDDEN
+ VkResult convert_VkInstanceCreateInfo_struct_chain(const void *pNext, VkInstanceCreateInfo *out_struct) DECLSPEC_HIDDEN;
+ void free_VkInstanceCreateInfo_struct_chain(VkInstanceCreateInfo *s) DECLSPEC_HIDDEN;
+ 
+-VkBufferMemoryBarrier_host *convert_VkBufferMemoryBarrier_array_win_to_host(const VkBufferMemoryBarrier *in, uint32_t count);
+-void free_VkBufferMemoryBarrier_array(VkBufferMemoryBarrier_host *in, uint32_t count);
+-VkImageMemoryBarrier_host *convert_VkImageMemoryBarrier_array_win_to_host(const VkImageMemoryBarrier *in, uint32_t count);
+-void free_VkImageMemoryBarrier_array(VkImageMemoryBarrier_host *in, uint32_t count);
+ /* For use by vkDevice and children */
+ struct vulkan_device_funcs
+ {
+ 
+From d8388b630c69d58ffd8a8b7ac7f43cd343e77f8b Mon Sep 17 00:00:00 2001
+From: Georg Lehmann <dadschoorse@gmail.com>
+Date: Wed, 4 Mar 2020 21:49:16 +0100
+Subject: [PATCH] winevulkan: use swapchain format for fshack image + view
+
+---
+ dlls/winevulkan/vulkan.c         | 93 ++++++++++++++------------------
+ dlls/winevulkan/vulkan_private.h |  1 +
+ 2 files changed, 42 insertions(+), 52 deletions(-)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index b6ad2dc4b3d..920f203d830 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -1362,7 +1362,7 @@ static inline void convert_VkSwapchainCreateInfoKHR_win_to_host(const VkSwapchai
+ #version 450
+ 
+ layout(binding = 0) uniform sampler2D texSampler;
+-layout(binding = 1, rgba8) uniform writeonly image2D outImage;
++layout(binding = 1) uniform writeonly image2D outImage;
+ layout(push_constant) uniform pushConstants {
+     //both in real image coords
+     vec2 offset;
+@@ -1375,57 +1375,45 @@ void main()
+ {
+     vec2 texcoord = (vec2(gl_GlobalInvocationID.xy) - constants.offset) / constants.extents;
+     vec4 c = texture(texSampler, texcoord);
+-    imageStore(outImage, ivec2(gl_GlobalInvocationID.xy), c.bgra);
++    imageStore(outImage, ivec2(gl_GlobalInvocationID.xy), c);
+ }
+ */
+ const uint32_t blit_comp_spv[] = {
+-	0x07230203,0x00010000,0x00080006,0x00000037,0x00000000,0x00020011,0x00000001,0x0006000b,
+-	0x00000001,0x4c534c47,0x6474732e,0x3035342e,0x00000000,0x0003000e,0x00000000,0x00000001,
+-	0x0006000f,0x00000005,0x00000004,0x6e69616d,0x00000000,0x0000000d,0x00060010,0x00000004,
+-	0x00000011,0x00000008,0x00000008,0x00000001,0x00030003,0x00000002,0x000001c2,0x00040005,
+-	0x00000004,0x6e69616d,0x00000000,0x00050005,0x00000009,0x63786574,0x64726f6f,0x00000000,
+-	0x00080005,0x0000000d,0x475f6c67,0x61626f6c,0x766e496c,0x7461636f,0x496e6f69,0x00000044,
+-	0x00060005,0x00000012,0x68737570,0x736e6f43,0x746e6174,0x00000073,0x00050006,0x00000012,
+-	0x00000000,0x7366666f,0x00007465,0x00050006,0x00000012,0x00000001,0x65747865,0x0073746e,
+-	0x00050005,0x00000014,0x736e6f63,0x746e6174,0x00000073,0x00030005,0x00000021,0x00000063,
+-	0x00050005,0x00000025,0x53786574,0x6c706d61,0x00007265,0x00050005,0x0000002c,0x4974756f,
+-	0x6567616d,0x00000000,0x00040047,0x0000000d,0x0000000b,0x0000001c,0x00050048,0x00000012,
+-	0x00000000,0x00000023,0x00000000,0x00050048,0x00000012,0x00000001,0x00000023,0x00000008,
+-	0x00030047,0x00000012,0x00000002,0x00040047,0x00000025,0x00000022,0x00000000,0x00040047,
+-	0x00000025,0x00000021,0x00000000,0x00040047,0x0000002c,0x00000022,0x00000000,0x00040047,
+-	0x0000002c,0x00000021,0x00000001,0x00030047,0x0000002c,0x00000019,0x00040047,0x00000036,
+-	0x0000000b,0x00000019,0x00020013,0x00000002,0x00030021,0x00000003,0x00000002,0x00030016,
+-	0x00000006,0x00000020,0x00040017,0x00000007,0x00000006,0x00000002,0x00040020,0x00000008,
+-	0x00000007,0x00000007,0x00040015,0x0000000a,0x00000020,0x00000000,0x00040017,0x0000000b,
+-	0x0000000a,0x00000003,0x00040020,0x0000000c,0x00000001,0x0000000b,0x0004003b,0x0000000c,
+-	0x0000000d,0x00000001,0x00040017,0x0000000e,0x0000000a,0x00000002,0x0004001e,0x00000012,
+-	0x00000007,0x00000007,0x00040020,0x00000013,0x00000009,0x00000012,0x0004003b,0x00000013,
+-	0x00000014,0x00000009,0x00040015,0x00000015,0x00000020,0x00000001,0x0004002b,0x00000015,
+-	0x00000016,0x00000000,0x00040020,0x00000017,0x00000009,0x00000007,0x0004002b,0x00000015,
+-	0x0000001b,0x00000001,0x00040017,0x0000001f,0x00000006,0x00000004,0x00040020,0x00000020,
+-	0x00000007,0x0000001f,0x00090019,0x00000022,0x00000006,0x00000001,0x00000000,0x00000000,
+-	0x00000000,0x00000001,0x00000000,0x0003001b,0x00000023,0x00000022,0x00040020,0x00000024,
+-	0x00000000,0x00000023,0x0004003b,0x00000024,0x00000025,0x00000000,0x0004002b,0x00000006,
+-	0x00000028,0x00000000,0x00090019,0x0000002a,0x00000006,0x00000001,0x00000000,0x00000000,
+-	0x00000000,0x00000002,0x00000004,0x00040020,0x0000002b,0x00000000,0x0000002a,0x0004003b,
+-	0x0000002b,0x0000002c,0x00000000,0x00040017,0x00000030,0x00000015,0x00000002,0x0004002b,
+-	0x0000000a,0x00000034,0x00000008,0x0004002b,0x0000000a,0x00000035,0x00000001,0x0006002c,
+-	0x0000000b,0x00000036,0x00000034,0x00000034,0x00000035,0x00050036,0x00000002,0x00000004,
+-	0x00000000,0x00000003,0x000200f8,0x00000005,0x0004003b,0x00000008,0x00000009,0x00000007,
+-	0x0004003b,0x00000020,0x00000021,0x00000007,0x0004003d,0x0000000b,0x0000000f,0x0000000d,
+-	0x0007004f,0x0000000e,0x00000010,0x0000000f,0x0000000f,0x00000000,0x00000001,0x00040070,
+-	0x00000007,0x00000011,0x00000010,0x00050041,0x00000017,0x00000018,0x00000014,0x00000016,
+-	0x0004003d,0x00000007,0x00000019,0x00000018,0x00050083,0x00000007,0x0000001a,0x00000011,
+-	0x00000019,0x00050041,0x00000017,0x0000001c,0x00000014,0x0000001b,0x0004003d,0x00000007,
+-	0x0000001d,0x0000001c,0x00050088,0x00000007,0x0000001e,0x0000001a,0x0000001d,0x0003003e,
+-	0x00000009,0x0000001e,0x0004003d,0x00000023,0x00000026,0x00000025,0x0004003d,0x00000007,
+-	0x00000027,0x00000009,0x00070058,0x0000001f,0x00000029,0x00000026,0x00000027,0x00000002,
+-	0x00000028,0x0003003e,0x00000021,0x00000029,0x0004003d,0x0000002a,0x0000002d,0x0000002c,
+-	0x0004003d,0x0000000b,0x0000002e,0x0000000d,0x0007004f,0x0000000e,0x0000002f,0x0000002e,
+-	0x0000002e,0x00000000,0x00000001,0x0004007c,0x00000030,0x00000031,0x0000002f,0x0004003d,
+-	0x0000001f,0x00000032,0x00000021,0x0009004f,0x0000001f,0x00000033,0x00000032,0x00000032,
+-	0x00000002,0x00000001,0x00000000,0x00000003,0x00040063,0x0000002d,0x00000031,0x00000033,
+-	0x000100fd,0x00010038
++    0x07230203, 0x00010000, 0x00080008, 0x00000036, 0x00000000, 0x00020011, 0x00000001, 0x00020011, 0x00000038,
++    0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
++    0x0006000F, 0x00000005, 0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00060010, 0x00000004, 0x00000011,
++    0x00000008, 0x00000008, 0x00000001, 0x00030003, 0x00000002, 0x000001C2, 0x00040005, 0x00000004, 0x6E69616D,
++    0x00000000, 0x00080005, 0x0000000D, 0x475F6C67, 0x61626F6C, 0x766E496C, 0x7461636F, 0x496E6F69, 0x00000044,
++    0x00060005, 0x00000012, 0x68737570, 0x736E6F43, 0x746E6174, 0x00000073, 0x00050006, 0x00000012, 0x00000000,
++    0x7366666F, 0x00007465, 0x00050006, 0x00000012, 0x00000001, 0x65747865, 0x0073746E, 0x00050005, 0x00000014,
++    0x736E6F63, 0x746E6174, 0x00000073, 0x00050005, 0x00000025, 0x53786574, 0x6C706D61, 0x00007265, 0x00050005,
++    0x0000002C, 0x4974756F, 0x6567616D, 0x00000000, 0x00040047, 0x0000000D, 0x0000000B, 0x0000001C, 0x00050048,
++    0x00000012, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000012, 0x00000001, 0x00000023, 0x00000008,
++    0x00030047, 0x00000012, 0x00000002, 0x00040047, 0x00000025, 0x00000022, 0x00000000, 0x00040047, 0x00000025,
++    0x00000021, 0x00000000, 0x00040047, 0x0000002C, 0x00000022, 0x00000000, 0x00040047, 0x0000002C, 0x00000021,
++    0x00000001, 0x00030047, 0x0000002C, 0x00000019, 0x00040047, 0x00000035, 0x0000000B, 0x00000019, 0x00020013,
++    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007,
++    0x00000006, 0x00000002, 0x00040015, 0x0000000A, 0x00000020, 0x00000000, 0x00040017, 0x0000000B, 0x0000000A,
++    0x00000003, 0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D, 0x00000001,
++    0x00040017, 0x0000000E, 0x0000000A, 0x00000002, 0x0004001E, 0x00000012, 0x00000007, 0x00000007, 0x00040020,
++    0x00000013, 0x00000009, 0x00000012, 0x0004003B, 0x00000013, 0x00000014, 0x00000009, 0x00040015, 0x00000015,
++    0x00000020, 0x00000001, 0x0004002B, 0x00000015, 0x00000016, 0x00000000, 0x00040020, 0x00000017, 0x00000009,
++    0x00000007, 0x0004002B, 0x00000015, 0x0000001B, 0x00000001, 0x00040017, 0x0000001F, 0x00000006, 0x00000004,
++    0x00090019, 0x00000022, 0x00000006, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000,
++    0x0003001B, 0x00000023, 0x00000022, 0x00040020, 0x00000024, 0x00000000, 0x00000023, 0x0004003B, 0x00000024,
++    0x00000025, 0x00000000, 0x0004002B, 0x00000006, 0x00000028, 0x00000000, 0x00090019, 0x0000002A, 0x00000006,
++    0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002, 0x00000000, 0x00040020, 0x0000002B, 0x00000000,
++    0x0000002A, 0x0004003B, 0x0000002B, 0x0000002C, 0x00000000, 0x00040017, 0x00000030, 0x00000015, 0x00000002,
++    0x0004002B, 0x0000000A, 0x00000033, 0x00000008, 0x0004002B, 0x0000000A, 0x00000034, 0x00000001, 0x0006002C,
++    0x0000000B, 0x00000035, 0x00000033, 0x00000033, 0x00000034, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
++    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000F, 0x0000000D, 0x0007004F, 0x0000000E,
++    0x00000010, 0x0000000F, 0x0000000F, 0x00000000, 0x00000001, 0x00040070, 0x00000007, 0x00000011, 0x00000010,
++    0x00050041, 0x00000017, 0x00000018, 0x00000014, 0x00000016, 0x0004003D, 0x00000007, 0x00000019, 0x00000018,
++    0x00050083, 0x00000007, 0x0000001A, 0x00000011, 0x00000019, 0x00050041, 0x00000017, 0x0000001C, 0x00000014,
++    0x0000001B, 0x0004003D, 0x00000007, 0x0000001D, 0x0000001C, 0x00050088, 0x00000007, 0x0000001E, 0x0000001A,
++    0x0000001D, 0x0004003D, 0x00000023, 0x00000026, 0x00000025, 0x00070058, 0x0000001F, 0x00000029, 0x00000026,
++    0x0000001E, 0x00000002, 0x00000028, 0x0004003D, 0x0000002A, 0x0000002D, 0x0000002C, 0x0004007C, 0x00000030,
++    0x00000031, 0x00000010, 0x00040063, 0x0000002D, 0x00000031, 0x00000029, 0x000100FD, 0x00010038
+ };
+ 
+ static VkResult create_pipeline(VkDevice device, struct VkSwapchainKHR_T *swapchain, struct fs_hack_image *hack, VkShaderModule shaderModule)
+@@ -1739,12 +1727,13 @@ VkResult WINAPI wine_vkCreateSwapchainKHR(VkDevice device, const VkSwapchainCrea
+         TRACE("surface usage flags: 0x%x\n", object->surface_usage);
+ 
+         our_createinfo.imageExtent = object->real_extent;
+-        our_createinfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT; /* XXX: check if supported by surface */
++        our_createinfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | (object->surface_usage & VK_IMAGE_USAGE_STORAGE_BIT); /* XXX: check if supported by surface */
+ 
+         if(our_createinfo.imageFormat != VK_FORMAT_B8G8R8A8_UNORM &&
+                 our_createinfo.imageFormat != VK_FORMAT_B8G8R8A8_SRGB){
+             FIXME("swapchain image format is not BGRA8 UNORM/SRGB. Things may go badly. %d\n", our_createinfo.imageFormat);
+         }
++        object->imageFormat = our_createinfo.imageFormat;
+ 
+         object->fs_hack_enabled = TRUE;
+     }
+@@ -2035,7 +2024,7 @@ static VkResult init_blit_images(VkDevice device, struct VkSwapchainKHR_T *swapc
+             imageInfo.extent.depth = 1;
+             imageInfo.mipLevels = 1;
+             imageInfo.arrayLayers = 1;
+-            imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
++            imageInfo.format = swapchain->imageFormat;
+             imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+             imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+             imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+@@ -2123,7 +2112,7 @@ static VkResult init_blit_images(VkDevice device, struct VkSwapchainKHR_T *swapc
+         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+         viewInfo.image = hack->blit_image ? hack->blit_image : hack->swapchain_image;
+         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+-        viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
++        viewInfo.format = swapchain->imageFormat;
+         viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+         viewInfo.subresourceRange.baseMipLevel = 0;
+         viewInfo.subresourceRange.levelCount = 1;
+diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
+index ea2501ebc68..d5a0369608e 100644
+--- a/dlls/winevulkan/vulkan_private.h
++++ b/dlls/winevulkan/vulkan_private.h
+@@ -178,6 +178,7 @@ struct VkSwapchainKHR_T
+     uint32_t n_images;
+     struct fs_hack_image *fs_hack_images; /* struct fs_hack_image[n_images] */
+     VkFilter fs_hack_filter;
++    VkFormat imageFormat;
+     VkSampler sampler;
+     VkDescriptorPool descriptor_pool;
+     VkDescriptorSetLayout descriptor_set_layout;
+From 2478cd397f466ad3348f096a08c4c46b565497fe Mon Sep 17 00:00:00 2001
+From: Joshua Ashton <joshua@froggi.es>
+Date: Thu, 5 Mar 2020 15:53:05 +0000
+Subject: [PATCH] winevulkan: Use alloca for vkCmdExecuteCommands
+
+---
+ dlls/winevulkan/vulkan.c | 13 +------------
+ 1 file changed, 1 insertion(+), 12 deletions(-)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 920f203d830..f989388d7ce 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -511,23 +511,12 @@ void WINAPI wine_vkCmdExecuteCommands(VkCommandBuffer buffer, uint32_t count,
+     if (!buffers || !count)
+         return;
+ 
+-    /* Unfortunately we need a temporary buffer as our command buffers are wrapped.
+-     * This call is called often and if a performance concern, we may want to use
+-     * alloca as we shouldn't need much memory and it needs to be cleaned up after
+-     * the call anyway.
+-     */
+-    if (!(tmp_buffers = heap_alloc(count * sizeof(*tmp_buffers))))
+-    {
+-        ERR("Failed to allocate memory for temporary command buffers\n");
+-        return;
+-    }
++    tmp_buffers = WINEVULKAN_ALLOCA(count * sizeof(*tmp_buffers));
+ 
+     for (i = 0; i < count; i++)
+         tmp_buffers[i] = buffers[i]->command_buffer;
+ 
+     buffer->device->funcs.p_vkCmdExecuteCommands(buffer->command_buffer, count, tmp_buffers);
+-
+-    heap_free(tmp_buffers);
+ }
+ 
+ VkResult WINAPI wine_vkCreateDevice(VkPhysicalDevice phys_dev,
+From 1f350c3deec385bdec51f712748f144dd3219401 Mon Sep 17 00:00:00 2001
+From: Joshua Ashton <joshua@froggi.es>
+Date: Thu, 5 Mar 2020 15:54:25 +0000
+Subject: [PATCH] winevulkan: Remove unnecessary check for buffers and count in
+ vkCmdExecuteCommands
+
+The Vulkan spec states commandBufferCount must be greater than zero and pCommandBuffers must be a valid pointer.
+---
+ dlls/winevulkan/vulkan.c | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index f989388d7ce..508869e66b5 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -508,9 +508,6 @@ void WINAPI wine_vkCmdExecuteCommands(VkCommandBuffer buffer, uint32_t count,
+ 
+     TRACE("%p %u %p\n", buffer, count, buffers);
+ 
+-    if (!buffers || !count)
+-        return;
+-
+     tmp_buffers = WINEVULKAN_ALLOCA(count * sizeof(*tmp_buffers));
+ 
+     for (i = 0; i < count; i++)
+From 17203ba38d89d9c32d84eb40b50dd672939f6712 Mon Sep 17 00:00:00 2001
+From: Joshua Ashton <joshua@froggi.es>
+Date: Thu, 5 Mar 2020 16:01:19 +0000
+Subject: [PATCH] winevulkan: Use alloca for swapchain buffers
+
+---
+ dlls/winevulkan/vulkan.c | 8 +-------
+ 1 file changed, 1 insertion(+), 7 deletions(-)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 508869e66b5..22a819ed2b9 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -2649,11 +2649,7 @@ VkResult WINAPI wine_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *pP
+         our_presentInfo.pWaitSemaphores = &blit_sema;
+     }
+ 
+-    arr = heap_alloc(our_presentInfo.swapchainCount * sizeof(VkSwapchainKHR));
+-    if(!arr){
+-        ERR("Failed to allocate memory for swapchain array\n");
+-        return VK_ERROR_OUT_OF_HOST_MEMORY;
+-    }
++    arr = WINEVULKAN_ALLOCA(our_presentInfo.swapchainCount * sizeof(VkSwapchainKHR));
+ 
+     for(i = 0; i < our_presentInfo.swapchainCount; ++i)
+         arr[i] = ((struct VkSwapchainKHR_T *)(UINT_PTR)our_presentInfo.pSwapchains[i])->swapchain;
+@@ -2662,8 +2658,6 @@ VkResult WINAPI wine_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *pP
+ 
+     res = queue->device->funcs.p_vkQueuePresentKHR(queue->queue, &our_presentInfo);
+ 
+-    heap_free(arr);
+-
+     return res;
+ 
+ }
 From 378b72afd71a3d0ca2809d3b95ecf295946b84ab Mon Sep 17 00:00:00 2001
 From: Joshua Ashton <joshua@froggi.es>
 Date: Thu, 12 Mar 2020 23:40:38 +0000
@@ -1954,9 +2404,9 @@ index 82d0c3a0a5e..8da14348c18 100644
  
  /* Functions for which we have custom implementations outside of the thunks. */
 +VkResult WINAPI wine_vkAcquireFullScreenExclusiveModeEXT(VkDevice device, VkSwapchainKHR swapchain) DECLSPEC_HIDDEN;
+ VkResult WINAPI wine_vkAcquireNextImageKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t *pImageIndex);
  VkResult WINAPI wine_vkAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocateInfo *pAllocateInfo, VkCommandBuffer *pCommandBuffers);
  void WINAPI wine_vkCmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCount, const VkCommandBuffer *pCommandBuffers);
- VkResult WINAPI wine_vkCreateCommandPool(VkDevice device, const VkCommandPoolCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkCommandPool *pCommandPool);
 @@ -56,6 +57,8 @@ VkResult WINAPI wine_vkEnumeratePhysicalDeviceGroups(VkInstance instance, uint32
  VkResult WINAPI wine_vkEnumeratePhysicalDeviceGroupsKHR(VkInstance instance, uint32_t *pPhysicalDeviceGroupCount, VkPhysicalDeviceGroupProperties *pPhysicalDeviceGroupProperties) DECLSPEC_HIDDEN;
  VkResult WINAPI wine_vkEnumeratePhysicalDevices(VkInstance instance, uint32_t *pPhysicalDeviceCount, VkPhysicalDevice *pPhysicalDevices);
@@ -1966,12 +2416,14 @@ index 82d0c3a0a5e..8da14348c18 100644
  PFN_vkVoidFunction WINAPI wine_vkGetDeviceProcAddr(VkDevice device, const char *pName);
  void WINAPI wine_vkGetDeviceQueue(VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue *pQueue);
  void WINAPI wine_vkGetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2 *pQueueInfo, VkQueue *pQueue);
-@@ -67,11 +70,16 @@ void WINAPI wine_vkGetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice
- void WINAPI wine_vkGetPhysicalDeviceExternalSemaphorePropertiesKHR(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo *pExternalSemaphoreInfo, VkExternalSemaphoreProperties *pExternalSemaphoreProperties) DECLSPEC_HIDDEN;
+@@ -67,14 +70,19 @@ void WINAPI wine_vkGetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice
  VkResult WINAPI wine_vkGetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2 *pImageFormatInfo, VkImageFormatProperties2 *pImageFormatProperties);
  VkResult WINAPI wine_vkGetPhysicalDeviceImageFormatProperties2KHR(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2 *pImageFormatInfo, VkImageFormatProperties2 *pImageFormatProperties) DECLSPEC_HIDDEN;
+ VkResult WINAPI wine_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR *pSurfaceCapabilities);
 +VkResult WINAPI wine_vkGetPhysicalDeviceSurfacePresentModes2EXT(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR *pSurfaceInfo, uint32_t *pPresentModeCount, VkPresentModeKHR *pPresentModes) DECLSPEC_HIDDEN;
 +VkResult WINAPI wine_vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t *pPresentModeCount, VkPresentModeKHR *pPresentModes);
+ VkResult WINAPI wine_vkGetSwapchainImagesKHR(VkDevice device, VkSwapchainKHR swapchain, uint32_t *pSwapchainImageCount, VkImage *pSwapchainImages);
+ VkResult WINAPI wine_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *pPresentInfo);
  VkResult WINAPI wine_vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo *pSubmits, VkFence fence);
 +VkResult WINAPI wine_vkReleaseFullScreenExclusiveModeEXT(VkDevice device, VkSwapchainKHR swapchain) DECLSPEC_HIDDEN;
  
@@ -1979,6 +2431,7 @@ index 82d0c3a0a5e..8da14348c18 100644
 +VkResult thunk_vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device, VkSurfaceKHR surface, VkDeviceGroupPresentModeFlagsKHR *pModes) DECLSPEC_HIDDEN;
  VkResult thunk_vkGetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2 *pImageFormatInfo, VkImageFormatProperties2 *pImageFormatProperties) DECLSPEC_HIDDEN;
  VkResult thunk_vkGetPhysicalDeviceImageFormatProperties2KHR(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2 *pImageFormatInfo, VkImageFormatProperties2 *pImageFormatProperties) DECLSPEC_HIDDEN;
+ VkResult thunk_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR *pSurfaceCapabilities) DECLSPEC_HIDDEN;
 +VkResult thunk_vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t *pPresentModeCount, VkPresentModeKHR *pPresentModes) DECLSPEC_HIDDEN;
  
  typedef struct VkAcquireNextImageInfoKHR_host
@@ -2116,7 +2569,21 @@ index 7bf6a0a07f8..0f8de3d21c2 100644
      VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT = 1000256000,
      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES = 1000257000,
      VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO = 1000257002,
-@@ -4546,6 +4543,20 @@ typedef struct VkSubresourceLayout
+@@ -4546,6 +4543,13 @@ typedef struct VkVertexInputAttributeDescription
+     uint32_t offset;
+ } VkVertexInputAttributeDescription;
+ 
++typedef struct VkSurfaceFullScreenExclusiveInfoEXT
++{
++    VkStructureType sType;
++    void *pNext;
++    VkFullScreenExclusiveEXT fullScreenExclusive;
++} VkSurfaceFullScreenExclusiveInfoEXT;
++
+ typedef struct VkVertexInputBindingDivisorDescriptionEXT
+ {
+     uint32_t binding;
+@@ -5106,6 +5133,20 @@ typedef struct VkSubresourceLayout
      VkDeviceSize WINE_VK_ALIGN(8) depthPitch;
  } VkSubresourceLayout;
  
@@ -2134,23 +2601,9 @@ index 7bf6a0a07f8..0f8de3d21c2 100644
 +    HMONITOR hmonitor;
 +} VkSurfaceFullScreenExclusiveWin32InfoEXT;
 +
- typedef struct VkSurfaceFormatKHR
+ typedef struct VkSurfaceCapabilitiesKHR
  {
-     VkFormat format;
-@@ -5106,6 +5133,13 @@ typedef struct VkVertexInputAttributeDescription
-     uint32_t offset;
- } VkVertexInputAttributeDescription;
- 
-+typedef struct VkSurfaceFullScreenExclusiveInfoEXT
-+{
-+    VkStructureType sType;
-+    void *pNext;
-+    VkFullScreenExclusiveEXT fullScreenExclusive;
-+} VkSurfaceFullScreenExclusiveInfoEXT;
-+
- typedef struct VkVertexInputBindingDivisorDescriptionEXT
- {
-     uint32_t binding;
+     uint32_t minImageCount;
 @@ -7057,6 +7119,7 @@ typedef struct VkBindSparseInfo
      const VkSemaphore *pSignalSemaphores;
  } VkBindSparseInfo;
@@ -2321,3 +2774,155 @@ index 9bb33339af5..8f08ac19a2a 100644
  {
      X11DRV_vkCreateInstance,
      X11DRV_vkCreateSwapchainKHR,
+From 9c92a32fdd5c71e82e30fa3a85fd9f0c018915d3 Mon Sep 17 00:00:00 2001
+From: Joshua Ashton <joshua@froggi.es>
+Date: Tue, 24 Mar 2020 02:53:52 +0000
+Subject: [PATCH] winevulkan: Nuke unsupported pNexts from vkCreateSwapchainKHR
+
+Fixes RenderDoccing DXVK, and potential issues down the line in games using the fullscreen and other exts
+---
+ dlls/winevulkan/vulkan.c | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index f36315534b9..fdce58c9500 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -49,6 +49,15 @@ static void *wine_vk_find_struct_(void *s, VkStructureType t)
+     return NULL;
+ }
+ 
++#define wine_vk_exchange_pnext(a, b) wine_vk_exchange_pnext_((VkBaseOutStructure *)a, (VkBaseOutStructure *)b)
++static void wine_vk_exchange_pnext_(VkBaseOutStructure *a, VkBaseOutStructure *b)
++{
++    b->pNext = a->pNext;
++    a->pNext = b;
++}
++
++#define wine_vk_copy_pnext(a, ctype, stype, b) do { ctype* lookup = wine_vk_find_struct(a, stype); if (lookup) { b = *lookup; wine_vk_exchange_pnext(a, &b); } } while (0)
++
+ static void *wine_vk_get_global_proc_addr(const char *name);
+ 
+ static const struct vulkan_funcs *vk_funcs;
+@@ -1739,6 +1748,9 @@ VkResult WINAPI wine_vkCreateSwapchainKHR(VkDevice device, const VkSwapchainCrea
+ #else
+     VkSwapchainCreateInfoKHR our_createinfo;
+ #endif
++    VkDeviceGroupSwapchainCreateInfoKHR  our_device_group_swapchain_create_info;
++    VkImageFormatListCreateInfo       our_image_format_list_create_info;
++
+     VkExtent2D user_sz;
+     struct VkSwapchainKHR_T *object;
+     uint32_t i;
+@@ -1754,6 +1766,19 @@ VkResult WINAPI wine_vkCreateSwapchainKHR(VkDevice device, const VkSwapchainCrea
+ 
+     convert_VkSwapchainCreateInfoKHR_win_to_host(pCreateInfo, &our_createinfo);
+ 
++    our_createinfo.pNext = NULL;
++
++    wine_vk_copy_pnext(&our_createinfo, VkDeviceGroupSwapchainCreateInfoKHR, DEVICE_GROUP_SWAPCHAIN_CREATE_INFO_KHR, our_device_group_swapchain_create_info);
++
++    wine_vk_copy_pnext(&our_createinfo, VkImageFormatListCreateInfo, IMAGE_FORMAT_LIST_CREATE_INFO, our_image_format_list_create_info);
++
++    // VkSwapchainCounterCreateInfoEXT is not in our version of WineVulkan
++    // Come back to me when this gets into Proton Wine!
++
++    // Ignoring VkSurfaceFullScreenExclusiveInfoEXT and VkSurfaceFullScreenExclusiveWin32InfoEXT
++    // as we want to nuke those
++    // and VkSwapchainDisplayNativeHdrCreateInfoAMD (blacklisted for HDR for now)
++
+     if(our_createinfo.oldSwapchain)
+         our_createinfo.oldSwapchain = ((struct VkSwapchainKHR_T *)(UINT_PTR)our_createinfo.oldSwapchain)->swapchain;
+ 
+From: Philip Rebohle <philip.rebohle at tu-dortmund.de>
+Date: Mon, 4 May 2020 13:29:58 -0500
+Subject: [PATCH 1/3] winevulkan: Support struct forward-declarations as base types.
+
+Some types are basically forward-declared structs now, such
+as ANativeWindow.
+
+Signed-off-by: Philip Rebohle <philip.rebohle at tu-dortmund.de>
+---
+ dlls/winevulkan/make_vulkan | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index 5d9889620ed..e24dac99011 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -253,7 +253,10 @@ class VkBaseType(object):
+     def definition(self):
+         # Definition is similar for alias or non-alias as type
+         # is already set to alias.
+-        return "typedef {0} {1};\n".format(self.type, self.name)
++        if not self.type is None:
++            return "typedef {0} {1};\n".format(self.type, self.name)
++        else:
++            return "struct {0};\n".format(self.name)
+ 
+     def is_alias(self):
+         return bool(self.alias)
+@@ -2953,7 +2956,9 @@ class VkRegistry(object):
+ 
+             if type_info["category"] == "basetype":
+                 name = t.find("name").text
+-                _type = t.find("type").text
++                _type = None
++                if not t.find("type") is None:
++                    _type = t.find("type").text
+                 basetype = VkBaseType(name, _type)
+                 base_types.append(basetype)
+                 type_info["data"] = basetype
+
+From: Philip Rebohle <philip.rebohle at tu-dortmund.de>
+Date: Mon, 4 May 2020 15:12:10 -0500
+Subject: [PATCH 2/3] winevulkan: Avoid adding duplicate enum aliases.
+
+VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES_KHR is being
+defined multiple times by the current vk.xml.
+
+Signed-off-by: Philip Rebohle <philip.rebohle at tu-dortmund.de>
+---
+v2: Fix indentation.
+
+ dlls/winevulkan/make_vulkan | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index e24dac99011..ccc3f228b0f 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -395,7 +395,9 @@ class VkEnum(object):
+             if not value.is_alias() and v.value == value.value:
+                 LOGGER.debug("Adding duplicate enum value {0} to {1}".format(v, self.name))
+                 return
+-        self.values.append(value)
++        # Avoid adding duplicate aliases multiple times
++        if not any(x.name == value.name for x in self.values):
++            self.values.append(value)
+ 
+     def definition(self):
+         if self.is_alias():
+
+From: Philip Rebohle <philip.rebohle at tu-dortmund.de>
+Date: Mon, 4 May 2020 13:30:00 -0500
+Subject: [PATCH 3/3] winevulkan: Update to VK spec version spec 1.2.140.
+         
+Signed-off-by: Philip Rebohle <philip.rebohle at tu-dortmund.de>
+---
+ dlls/winevulkan/make_vulkan | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index 36181e101fc..60301fc1f1a 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -64,7 +64,7 @@ from enum import Enum
+ LOGGER = logging.Logger("vulkan")
+ LOGGER.addHandler(logging.StreamHandler())
+ 
+-VK_XML_VERSION = "1.2.139"
++VK_XML_VERSION = "1.2.140"
+ WINE_VK_VERSION = (1, 2)
+ 
+ # Filenames to create.
