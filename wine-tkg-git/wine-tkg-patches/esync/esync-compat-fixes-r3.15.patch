@@ -1,0 +1,249 @@
+From 477e570e669e90f6e137d686c9f254b085d6c1ab Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Tue, 5 Mai 2020 8:48:11 +0200
+Subject: esync fixup for wine 5.8+ (2633a5c)
+
+
+diff --git a/0004-ntdll-Store-esync-objects-locally.patch b/0004-ntdll-Store-esync-objects-locally.patch
+index 5b118d525..70f52e367 100644
+--- a/0004-ntdll-Store-esync-objects-locally.patch
++++ b/0004-ntdll-Store-esync-objects-locally.patch
+@@ -82,7 +82,7 @@ index da35bdf85..2bb85d910 100644
+ +        }
+ +    }
+ +
+-+    obj = interlocked_xchg_ptr((void **)&esync_list[entry][idx], obj);
+++    obj = InterlockedExchangePointer((void **)&esync_list[entry][idx], obj);
+ +    assert(!obj);
+ +    return TRUE;
+ +}
+diff --git a/0006-ntdll-Close-esync-objects.patch b/0006-ntdll-Close-esync-objects.patch
+index 524bf64d5..e80877207 100644
+--- a/0006-ntdll-Close-esync-objects.patch
++++ b/0006-ntdll-Close-esync-objects.patch
+@@ -26,7 +26,7 @@ index bca95b9b2d9..f7a427425b7 100644
+ +
+ +    if (entry < ESYNC_LIST_ENTRIES && esync_list[entry])
+ +    {
+-+        if ((obj = interlocked_xchg_ptr( (void **)&esync_list[entry][idx], 0 )))
+++        if ((obj = InterlockedExchangePointer( (void **)&esync_list[entry][idx], 0 )))
+ +        {
+ +            close( obj->fd );
+ +            RtlFreeHeap( GetProcessHeap(), 0, obj );
+diff --git a/0036-ntdll-Record-the-current-count-of-a-semaphore-locall.patch b/0036-ntdll-Record-the-current-count-of-a-semaphore-locall.patch
+index 3ea95afd8..e77f7c943 100644
+--- a/0036-ntdll-Record-the-current-count-of-a-semaphore-locall.patch
++++ b/0036-ntdll-Record-the-current-count-of-a-semaphore-locall.patch
+@@ -62,7 +62,7 @@ index 9da300853..25e049291 100644
+ +
+ +        if (count + current > semaphore->max)
+ +            return STATUS_SEMAPHORE_LIMIT_EXCEEDED;
+-+    } while (interlocked_cmpxchg( &semaphore->count, count + current, current ) != current);
+++    } while (InterlockedCompareExchange( &semaphore->count, count + current, current ) != current);
+ +
+ +    if (prev) *prev = current;
+ +
+@@ -83,7 +83,7 @@ index 9da300853..25e049291 100644
+ +                                     * the fact that we were able to grab it at all means the count
+ +                                     * is nonzero, and if someone else grabbed it then the count
+ +                                     * must have been >= 2, etc. */
+-+                                    interlocked_xchg_add( &semaphore->count, -1 );
+++                                    InterlockedDecrement( &semaphore->count );
+ +                                }
+                                  return i;
+                              }
+@@ -105,7 +105,7 @@ index 9da300853..25e049291 100644
+ +                    else if (objs[i]->type == ESYNC_SEMAPHORE)
+ +                    {
+ +                        struct semaphore *semaphore = (struct semaphore *)objs[i];
+-+                        interlocked_xchg_add( &semaphore->count, -1 );
+++                        InterlockedDecrement( &semaphore->count );
+ +                    }
+                  }
+                  TRACE("Wait successful.\n");
+diff --git a/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch b/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch
+index d0b2aedae..5bee62fc0 100644
+--- a/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch
++++ b/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch
+@@ -100,7 +100,7 @@ index c1d8882d817..ea71c960007 100644
+ +
+ +        TRACE("Mapping page %d at %p.\n", entry, addr);
+ +
+-+        if (interlocked_cmpxchg_ptr( &shm_addrs[entry], addr, 0 ))
+++        if (InterlockedCompareExchangePointer( &shm_addrs[entry], addr, 0 ))
+ +            munmap( addr, pagesize ); /* someone beat us to it */
+ +    }
+ +
+@@ -654,7 +654,7 @@ index c1d8882d817..ea71c960007 100644
+                      {
+ -                        struct semaphore *semaphore = (struct semaphore *)objs[i];
+ +                        struct semaphore *semaphore = objs[i]->shm;
+-                         interlocked_xchg_add( &semaphore->count, -1 );
++                         InterlockedDecrement( &semaphore->count );
+                      }
+                  }
+ diff --git a/dlls/ntdll/esync.h b/dlls/ntdll/esync.h
+diff --git a/0065-ntdll-Cache-the-esync-struct-itself-instead-of-a-poi.patch b/0065-ntdll-Cache-the-esync-struct-itself-instead-of-a-poi.patch
+index 35680c2bc..c3216b700 100644
+--- a/0065-ntdll-Cache-the-esync-struct-itself-instead-of-a-poi.patch
++++ b/0065-ntdll-Cache-the-esync-struct-itself-instead-of-a-poi.patch
+@@ -43,10 +43,10 @@ index 0a1999162..3d0c17fd1 100644
+          }
+      }
+  
+--    obj = interlocked_xchg_ptr((void **)&esync_list[entry][idx], obj);
++-    obj = InterlockedExchangePointer((void **)&esync_list[entry][idx], obj);
+ -    assert(!obj);
+ -    return TRUE;
+-+    if (!interlocked_cmpxchg((int *)&esync_list[entry][idx].type, type, 0))
+++    if (!InterlockedCompareExchange((int *)&esync_list[entry][idx].type, type, 0))
+ +    {
+ +        esync_list[entry][idx].fd = fd;
+ +        esync_list[entry][idx].shm = shm;
+@@ -129,8 +129,8 @@ index 0a1999162..3d0c17fd1 100644
+  
+      if (entry < ESYNC_LIST_ENTRIES && esync_list[entry])
+      {
+--        if ((obj = interlocked_xchg_ptr( (void **)&esync_list[entry][idx], 0 )))
+-+        if (interlocked_xchg((int *)&esync_list[entry][idx].type, 0))
++-        if ((obj = InterlockedExchangePointer( (void **)&esync_list[entry][idx], 0 )))
+++        if (InterlockedExchange((int *)&esync_list[entry][idx].type, 0))
+          {
+ -            close( obj->fd );
+ -            RtlFreeHeap( GetProcessHeap(), 0, obj );
+diff --git a/0069-ntdll-Try-to-avoid-poll-for-uncontended-objects.patch b/0069-ntdll-Try-to-avoid-poll-for-uncontended-objects.patch
+index 9c1c4f99d..b74f1cc64 100644
+--- a/0069-ntdll-Try-to-avoid-poll-for-uncontended-objects.patch
++++ b/0069-ntdll-Try-to-avoid-poll-for-uncontended-objects.patch
+@@ -68,7 +68,7 @@ index 506d1c99d..4e5fcef8e 100644
+ +                        if ((size = read( obj->fd, &value, sizeof(value) )) == sizeof(value))
+ +                        {
+ +                            TRACE("Woken up by handle %p [%d].\n", handles[i], i);
+-+                            interlocked_xchg_add( &semaphore->count, -1 );
+++                            InterlockedDecrement( &semaphore->count );
+ +                            return i;
+ +                        }
+ +                    }
+diff --git a/0070-ntdll-Store-an-event-s-signaled-state-internally.patch b/0070-ntdll-Store-an-event-s-signaled-state-internally.patch
+index b82254afc..cb0b85e3e 100644
+--- a/0070-ntdll-Store-an-event-s-signaled-state-internally.patch
++++ b/0070-ntdll-Store-an-event-s-signaled-state-internally.patch
+@@ -155,11 +155,11 @@ index 4e5fcef8e..663b3658b 100644
+ +    event = obj->shm;
+ +
+ +    /* Acquire the spinlock. */
+-+    while (interlocked_cmpxchg( &event->locked, 1, 0 ))
+++    while (InterlockedCompareExchange( &event->locked, 1, 0 ))
+ +        small_pause();
+ +
+ +    /* Only bother signaling the fd if we weren't already signaled. */
+-+    if (!interlocked_xchg( &event->signaled, 1 ))
+++    if (!InterlockedExchange( &event->signaled, 1 ))
+ +    {
+ +       if (write( obj->fd, &value, sizeof(value) ) == -1)
+ +           return FILE_GetNtStatus();
+@@ -192,11 +192,11 @@ index 4e5fcef8e..663b3658b 100644
+ +    event = obj->shm;
+ +
+ +    /* Acquire the spinlock. */
+-+    while (interlocked_cmpxchg( &event->locked, 1, 0 ))
+++    while (InterlockedCompareExchange( &event->locked, 1, 0 ))
+ +        small_pause();
+ +
+ +    /* Only bother signaling the fd if we weren't already signaled. */
+-+    if (interlocked_xchg( &event->signaled, 0 ))
+++    if (InterlockedExchange( &event->signaled, 0 ))
+ +    {
+ +        /* we don't care about the return value */
+ +        read( obj->fd, &value, sizeof(value) );
+@@ -273,7 +273,7 @@ index 4e5fcef8e..663b3658b 100644
+ +         * fact that we were able to grab it at all means the count is nonzero,
+ +         * and if someone else grabbed it then the count must have been >= 2,
+ +         * etc. */
+-+        interlocked_xchg_add( &semaphore->count, -1 );
+++        InterlockedDecrement( &semaphore->count );
+ +    }
+ +    else if (obj->type == ESYNC_AUTO_EVENT)
+ +    {
+@@ -340,7 +340,7 @@ index 4e5fcef8e..663b3658b 100644
+ -                                     * the fact that we were able to grab it at all means the count
+ -                                     * is nonzero, and if someone else grabbed it then the count
+ -                                     * must have been >= 2, etc. */
+--                                    interlocked_xchg_add( &semaphore->count, -1 );
++-                                    InterlockedDecrement( &semaphore->count );
+ -                                }
+ +                                update_grabbed_object( obj );
+                                  return i;
+@@ -360,7 +360,7 @@ index 4e5fcef8e..663b3658b 100644
+ -                    else if (objs[i]->type == ESYNC_SEMAPHORE)
+ -                    {
+ -                        struct semaphore *semaphore = objs[i]->shm;
+--                        interlocked_xchg_add( &semaphore->count, -1 );
++-                        InterlockedDecrement( &semaphore->count );
+ -                    }
+ -                }
+ +                    update_grabbed_object( objs[i] );
+diff --git a/0072-server-Update-the-shared-memory-state-when-re-settin.patch b/0072-server-Update-the-shared-memory-state-when-re-settin.patch
+index 1b6ee90a1..63385ae5d 100644
+--- a/0072-server-Update-the-shared-memory-state-when-re-settin.patch
++++ b/0072-server-Update-the-shared-memory-state-when-re-settin.patch
+@@ -78,7 +78,7 @@ index 847f1e974..1fc9316b1 100644
+ +        if (debug_level)
+ +            fprintf( stderr, "esync: Mapping page %d at %p.\n", entry, addr );
+ +
+-+        if (interlocked_cmpxchg_ptr( &shm_addrs[entry], addr, 0 ))
+++        if (InterlockedCompareExchangePointer( &shm_addrs[entry], addr, 0 ))
+ +            munmap( addr, pagesize ); /* someone beat us to it */
+ +    }
+ +
+@@ -116,10 +116,10 @@ index 847f1e974..1fc9316b1 100644
+ +        fprintf( stderr, "esync_set_event() fd=%d\n", esync->fd );
+ +
+ +    /* Acquire the spinlock. */
+-+    while (interlocked_cmpxchg( &event->locked, 1, 0 ))
+++    while (InterlockedCompareExchange( &event->locked, 1, 0 ))
+ +        small_pause();
+ +
+-+    if (!interlocked_xchg( &event->signaled, 1 ))
+++    if (!InterlockedExchange( &event->signaled, 1 ))
+ +    {
+ +        if (write( esync->fd, &value, sizeof(value) ) == -1)
+ +            perror( "esync: write" );
+@@ -143,11 +143,11 @@ index 847f1e974..1fc9316b1 100644
+ +        fprintf( stderr, "esync_reset_event() fd=%d\n", esync->fd );
+ +
+ +    /* Acquire the spinlock. */
+-+    while (interlocked_cmpxchg( &event->locked, 1, 0 ))
+++    while (InterlockedCompareExchange( &event->locked, 1, 0 ))
+ +        small_pause();
+ +
+ +    /* Only bother signaling the fd if we weren't already signaled. */
+-+    if (interlocked_xchg( &event->signaled, 0 ))
+++    if (InterlockedExchange( &event->signaled, 0 ))
+ +    {
+ +        /* we don't care about the return value */
+ +        read( esync->fd, &value, sizeof(value) );
+diff --git a/0078-ntdll-server-Initialize-the-shared-memory-portion-on.patch b/0078-ntdll-server-Initialize-the-shared-memory-portion-on.patch
+index dbcf49f97..4198ad1ea 100644
+--- a/0078-ntdll-server-Initialize-the-shared-memory-portion-on.patch
++++ b/0078-ntdll-server-Initialize-the-shared-memory-portion-on.patch
+@@ -234,7 +234,7 @@ index f5556e91c..19e614a89 100644
+ +        if (debug_level)
+ +            fprintf( stderr, "esync: Mapping page %d at %p.\n", entry, addr );
+ +
+-+        if (interlocked_cmpxchg_ptr( &shm_addrs[entry], addr, 0 ))
+++        if (InterlockedCompareExchangePointer( &shm_addrs[entry], addr, 0 ))
+ +            munmap( addr, pagesize ); /* someone beat us to it */
+ +    }
+ +
+@@ -340,7 +340,7 @@ index f5556e91c..19e614a89 100644
+ -        if (debug_level)
+ -            fprintf( stderr, "esync: Mapping page %d at %p.\n", entry, addr );
+ -
+--        if (interlocked_cmpxchg_ptr( &shm_addrs[entry], addr, 0 ))
++-        if (InterlockedCompareExchangePointer( &shm_addrs[entry], addr, 0 ))
+ -            munmap( addr, pagesize ); /* someone beat us to it */
+ -    }
+ -
+ -- 
+ 2.20.1

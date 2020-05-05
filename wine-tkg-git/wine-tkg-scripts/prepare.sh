@@ -901,6 +901,13 @@ _prepare() {
 	      _patchname='esync-compat-fixes-r3.14.patch' && _patchmsg="Using esync 5.8+(e5030a4) additional compat fixes" && nonuser_patcher
 	      cd "${srcdir}"/"${_winesrcdir}"
 	    fi
+
+	    # if using a wine version that includes 2633a5c, apply 5.8+ additional fixes
+	    if git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
+	      cd "${srcdir}"/"${_esyncsrcdir}"
+	      _patchname='esync-compat-fixes-r3.15.patch' && _patchmsg="Using esync 5.8+(2633a5c) additional compat fixes" && nonuser_patcher
+	      cd "${srcdir}"/"${_winesrcdir}"
+	    fi
 	  # if using a wine version that includes aec7bef, use 3.17+ fixes
 	  elif git merge-base --is-ancestor aec7befb5115d866724149bbc5576c7259fef820 HEAD; then # server: Avoid potential size overflow for empty object attributes
 	    if [ "$_use_staging" == "true" ]; then
@@ -1104,8 +1111,10 @@ EOM
 	# fsync - experimental replacement for esync introduced with Proton 4.11-1
 	if [ "$_use_fsync" == "true" ]; then
 	  if [ "$_staging_esync" == "true" ]; then
-	    if git merge-base --is-ancestor e5030a4ac0a303d6788ae79ffdcd88e66cf78bd2 HEAD; then
+	    if git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
 	      _patchname='fsync-staging.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging)" && nonuser_patcher
+	    elif git merge-base --is-ancestor e5030a4ac0a303d6788ae79ffdcd88e66cf78bd2 HEAD; then
+	      _patchname='fsync-staging-2633a5c.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging)" && nonuser_patcher
 	    elif git merge-base --is-ancestor 40e849ffa46ae3cd060e2db83305dda1c4d2648e HEAD; then
 	      _patchname='fsync-staging-e5030a4.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging)" && nonuser_patcher
 	    elif git merge-base --is-ancestor 87012607688f730755ee91de14620e6e3b78395c HEAD; then
@@ -1123,8 +1132,10 @@ EOM
 	      _patchname='fsync-staging-no_alloc_handle.patch' && _patchmsg="Added no_alloc_handle object method to fsync" && nonuser_patcher
 	    fi
 	  elif [ "$_use_esync" == "true" ]; then
-	    if git merge-base --is-ancestor e5030a4ac0a303d6788ae79ffdcd88e66cf78bd2 HEAD; then
+	    if git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
 	      _patchname='fsync-mainline.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
+	    elif git merge-base --is-ancestor e5030a4ac0a303d6788ae79ffdcd88e66cf78bd2 HEAD; then
+	      _patchname='fsync-mainline-2633a5c.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
 	    elif git merge-base --is-ancestor 40e849ffa46ae3cd060e2db83305dda1c4d2648e HEAD; then
 	      _patchname='fsync-mainline-e5030a4.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
 	    elif git merge-base --is-ancestor 87012607688f730755ee91de14620e6e3b78395c HEAD; then
@@ -1371,7 +1382,7 @@ EOM
 	echo -e "" >> "$_where"/last_build_config.log
 
 	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ] || ([ "$_protonify" == "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
-	  if $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor d33cdb84fd8fed24e3a9ce89954ad43213b86426 HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	  if git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
 	    if [ "$_use_staging" == "true" ]; then
 	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD; then
 	        _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/3" && nonuser_patcher
@@ -1411,7 +1422,11 @@ EOM
 	      fi
 	    fi
 	  else
-	    if git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD; then
+	    if $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor d33cdb84fd8fed24e3a9ce89954ad43213b86426 HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	      _lastcommit="2633a5c"
+	      _rpc="1"
+	      _stmbits="1"
+	    elif git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD; then
 	      _lastcommit="d33cdb8"
 	      _rpc="1"
 	      _stmbits="1"

@@ -1338,13 +1338,13 @@ index 9b065552f1..0b6a624d2c 100644
 --- a/dlls/ntdll/ntdll_misc.h
 +++ b/dlls/ntdll/ntdll_misc.h
 @@ -281,6 +281,7 @@ struct ntdll_thread_data
-     pthread_t          pthread_id;    /* pthread thread id */
+     struct debug_info *debug_info;    /* info for debugstr functions */
      int                esync_queue_fd;/* fd to wait on for driver events */
      int                esync_apc_fd;  /* fd to wait on for user APCs */
 +    unsigned int       fsync_apc_idx;
- };
- 
- C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
+     void              *start_stack;   /* stack for thread startup */
+     int                request_fd;    /* fd for sending server requests */
+     int                reply_fd;      /* fd for receiving server replies */
 diff --git a/dlls/ntdll/om.c b/dlls/ntdll/om.c
 index de39ee5553..d956a3d76a 100644
 --- a/dlls/ntdll/om.c
@@ -1757,7 +1757,7 @@ index 2be6a8360d..897fcd80b5 100644
 @@ -116,6 +116,7 @@ static const struct object_ops dir_ops =
      remove_queue,             /* remove_queue */
      default_fd_signaled,      /* signaled */
-     NULL,                     /* get_esync_fd */
+     default_fd_get_esync_fd,  /* get_esync_fd */
 +    default_fd_get_fsync_idx, /* get_fsync_idx */
      no_satisfied,             /* satisfied */
      no_signal,                /* signal */
@@ -1918,7 +1918,7 @@ index 588459aa49..d7418d085a 100644
 @@ -96,11 +98,13 @@ struct device_manager
      struct irp_call       *current_call;   /* call currently executed on client side */
      struct wine_rb_tree    kernel_objects; /* map of objects that have client side pointer associated */
-     int                    esync_fd;      /* esync file descriptor */
+     int                    esync_fd;       /* esync file descriptor */
 +    unsigned int           fsync_idx;
  };
  
@@ -2067,7 +2067,7 @@ index 510a42bf28..1aa6b47eaf 100644
  
  struct event
  {
-@@ -44,12 +45,14 @@ struct event
+@@ -44,13 +45,15 @@ struct event
      int            manual_reset;    /* is it a manual reset event? */
      int            signaled;        /* event has been signaled */
      int            esync_fd;        /* esync file descriptor */
@@ -2077,11 +2077,12 @@ index 510a42bf28..1aa6b47eaf 100644
  static void event_dump( struct object *obj, int verbose );
  static struct object_type *event_get_type( struct object *obj );
  static int event_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static void event_satisfied( struct object *obj, struct wait_queue_entry *entry );
  static int event_get_esync_fd( struct object *obj, enum esync_type *type );
 +static unsigned int event_get_fsync_idx( struct object *obj, enum fsync_type *type );
- static void event_satisfied( struct object *obj, struct wait_queue_entry *entry );
  static unsigned int event_map_access( struct object *obj, unsigned int access );
  static int event_signal( struct object *obj, unsigned int access);
+ static struct list *event_get_kernel_obj_list( struct object *obj );
 @@ -65,6 +68,7 @@ static const struct object_ops event_ops =
      remove_queue,              /* remove_queue */
      event_signaled,            /* signaled */
@@ -2533,7 +2534,7 @@ index 0000000000..822c4c07ff
 +        if (debug_level)
 +            fprintf( stderr, "fsync: Mapping page %d at %p.\n", entry, addr );
 +
-+        if (InterlockedCompareExchangePointer( &shm_addrs[entry], addr, 0 ))
++        if (interlocked_cmpxchg_ptr( &shm_addrs[entry], addr, 0 ))
 +            munmap( addr, pagesize ); /* someone beat us to it */
 +    }
 +
@@ -3154,14 +3155,14 @@ index 2125b3aa69..493b2d776a 100644
  #define WM_NCMOUSEFIRST WM_NCMOUSEMOVE
  #define WM_NCMOUSELAST  (WM_NCMOUSEFIRST+(WM_MOUSELAST-WM_MOUSEFIRST))
 @@ -143,6 +144,8 @@ struct msg_queue
-     timeout_t              last_get_msg;    /* time of last get message call */
+     struct fd             *fd;              /* optional file descriptor to poll */
      int                    esync_fd;        /* esync file descriptor (signalled on message) */
      int                    esync_in_msgwait; /* our thread is currently waiting on us */
 +    unsigned int           fsync_idx;
 +    int                    fsync_in_msgwait; /* our thread is currently waiting on us */
- };
- 
- struct hotkey
+     unsigned int           wake_bits;       /* wakeup bits */
+     unsigned int           wake_mask;       /* wakeup mask */
+     unsigned int           changed_bits;    /* changed wakeup bits */
 @@ -160,6 +163,7 @@ static int msg_queue_add_queue( struct object *obj, struct wait_queue_entry *ent
  static void msg_queue_remove_queue( struct object *obj, struct wait_queue_entry *entry );
  static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry );
@@ -3186,12 +3187,30 @@ index 2125b3aa69..493b2d776a 100644
      NULL,                         /* satisfied */
      no_signal,                    /* signal */
      no_get_fd,                    /* get_fd */
-@@ -307,12 +313,17 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         queue->hooks           = NULL;
-         queue->last_get_msg    = current_time;
+@@ -307,30 +313,35 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+     {
+         queue->fd              = NULL;
          queue->esync_fd        = -1;
 +        queue->fsync_idx       = 0;
 +        queue->fsync_in_msgwait = 0;
+         queue->thread          = thread;
+         queue->wake_bits       = 0;
+         queue->wake_mask       = 0;
+         queue->changed_bits    = 0;
+         queue->changed_mask    = 0;
+         queue->keystate_locked = 0;
+         queue->paint_count     = 0;
+         queue->hotkey_count    = 0;
+         queue->quit_message    = 0;
+         queue->cursor_count    = 0;
+         queue->recv_result     = NULL;
+         queue->next_timer_id   = 0x7fff;
+         queue->timeout         = NULL;
+         queue->input           = (struct thread_input *)grab_object( input );
+         list_add_tail( &input->queues, &queue->input_entry );
+         queue->hooks           = NULL;
+         queue->last_get_msg    = current_time;
+         queue->ignore_post_msg = 0;
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
          list_init( &queue->pending_timers );
@@ -3479,13 +3498,13 @@ index 6d51ca8774..88b5ce2792 100644
      no_signal,                  /* signal */
      no_get_fd,                  /* get_fd */
 @@ -209,6 +213,7 @@ static inline void init_thread_structure( struct thread *thread )
-     thread->token           = NULL;
+     thread->entry_point     = 0;
      thread->esync_fd        = -1;
      thread->esync_apc_fd    = -1;
 +    thread->fsync_idx       = 0;
- 
-     thread->creation_time = current_time;
-     thread->exit_time     = 0;
+     thread->debug_ctx       = NULL;
+     thread->debug_event     = NULL;
+     thread->system_regs     = 0;
 @@ -294,6 +299,12 @@ struct thread *create_thread( int fd, struct process *process, const struct secu
          return NULL;
      }
@@ -3538,7 +3557,7 @@ index 6d51ca8774..88b5ce2792 100644
 +        if (do_fsync())
 +            fsync_wake_futex( thread->fsync_apc_idx );
 +
-         if (do_esync())
+         if (do_esync() && queue == &thread->user_apc)
              esync_wake_fd( thread->esync_apc_fd );
      }
 @@ -1098,6 +1123,9 @@ static struct thread_apc *thread_dequeue_apc( struct thread *thread, int system_
@@ -3556,14 +3575,14 @@ index 23a98ba083..a8b839a867 100644
 --- a/server/thread.h
 +++ b/server/thread.h
 @@ -92,6 +92,8 @@ struct thread
-     struct list            kernel_object; /* list of kernel object pointers */
+     struct list            mutex_list;    /* list of currently owned mutexes */
      int                    esync_fd;      /* esync file descriptor (signalled on exit) */
      int                    esync_apc_fd;  /* esync apc fd (signalled when APCs are present) */
 +    unsigned int           fsync_idx;
 +    unsigned int           fsync_apc_idx;
- };
- 
- struct thread_snapshot
+     struct debug_ctx      *debug_ctx;     /* debugger context if this thread is a debugger */
+     struct debug_event    *debug_event;   /* debug event being sent to debugger */
+     unsigned int           system_regs;   /* which system regs have been set */
 diff --git a/server/timer.c b/server/timer.c
 index f2403fc9ba..c65e26becb 100644
 --- a/server/timer.c
@@ -3770,232 +3789,6 @@ index 845043b20d..57b70b43a7 100644
      no_signal,                    /* signal */
      no_get_fd,                    /* get_fd */
 
-From 119a1293c495cb1555fabf59dfe27285659ddd44 Mon Sep 17 00:00:00 2001
-From: Zebediah Figura <zfigura@codeweavers.com>
-Date: Mon, 10 Jun 2019 11:25:34 -0400
-Subject: ntdll: Get rid of the per-event spinlock for auto-reset events.
-
-It's not necessary. Much like semaphores, the shm state is just a hint.
-
-diff --git a/dlls/ntdll/esync.c b/dlls/ntdll/esync.c
-index 8ec7fb342e..87b97ad99b 100644
---- a/dlls/ntdll/esync.c
-+++ b/dlls/ntdll/esync.c
-@@ -562,6 +562,14 @@ static inline void small_pause(void)
-  * problem at all.
-  */
- 
-+/* Removing this spinlock is harder than it looks. esync_wait_objects() can
-+ * deal with inconsistent state well enough, and a race between SetEvent() and
-+ * ResetEvent() gives us license to yield either result as long as we act
-+ * consistently, but that's not enough. Notably, esync_wait_objects() should
-+ * probably act like a fence, so that the second half of esync_set_event() does
-+ * not seep past a subsequent reset. That's one problem, but no guarantee there
-+ * aren't others. */
-+
- NTSTATUS esync_set_event( HANDLE handle )
- {
-     static const uint64_t value = 1;
-@@ -574,19 +582,33 @@ NTSTATUS esync_set_event( HANDLE handle )
-     if ((ret = get_object( handle, &obj ))) return ret;
-     event = obj->shm;
- 
--    /* Acquire the spinlock. */
--    while (InterlockedCompareExchange( &event->locked, 1, 0 ))
--        small_pause();
-+    if (obj->type == ESYNC_MANUAL_EVENT)
-+    {
-+        /* Acquire the spinlock. */
-+        while (InterlockedCompareExchange( &event->locked, 1, 0 ))
-+            small_pause();
-+    }
-+
-+    /* For manual-reset events, as long as we're in a lock, we can take the
-+     * optimization of only calling write() if the event wasn't already
-+     * signaled.
-+     *
-+     * For auto-reset events, esync_wait_objects() must grab the kernel object.
-+     * Thus if we got into a race so that the shm state is signaled but the
-+     * eventfd is unsignaled (i.e. reset shm, set shm, set fd, reset fd), we
-+     * *must* signal the fd now, or any waiting threads will never wake up. */
- 
--    /* Only bother signaling the fd if we weren't already signaled. */
--    if (!InterlockedExchange( &event->signaled, 1 ))
-+    if (!InterlockedExchange( &event->signaled, 1 ) || obj->type == ESYNC_AUTO_EVENT)
-     {
-         if (write( obj->fd, &value, sizeof(value) ) == -1)
--            return FILE_GetNtStatus();
-+            ERR("write: %s\n", strerror(errno));
-     }
- 
--    /* Release the spinlock. */
--    event->locked = 0;
-+    if (obj->type == ESYNC_MANUAL_EVENT)
-+    {
-+        /* Release the spinlock. */
-+        event->locked = 0;
-+    }
- 
-     return STATUS_SUCCESS;
- }
-@@ -603,19 +625,32 @@ NTSTATUS esync_reset_event( HANDLE handle )
-     if ((ret = get_object( handle, &obj ))) return ret;
-     event = obj->shm;
- 
--    /* Acquire the spinlock. */
--    while (InterlockedCompareExchange( &event->locked, 1, 0 ))
--        small_pause();
-+    if (obj->type == ESYNC_MANUAL_EVENT)
-+    {
-+        /* Acquire the spinlock. */
-+        while (InterlockedCompareExchange( &event->locked, 1, 0 ))
-+            small_pause();
-+    }
- 
--    /* Only bother signaling the fd if we weren't already signaled. */
--    if (InterlockedExchange( &event->signaled, 0 ))
-+    /* For manual-reset events, as long as we're in a lock, we can take the
-+     * optimization of only calling read() if the event was already signaled.
-+     *
-+     * For auto-reset events, we have no guarantee that the previous "signaled"
-+     * state is actually correct. We need to leave both states unsignaled after
-+     * leaving this function, so we always have to read(). */
-+    if (InterlockedExchange( &event->signaled, 0 ) || obj->type == ESYNC_AUTO_EVENT)
-     {
--        /* we don't care about the return value */
--        read( obj->fd, &value, sizeof(value) );
-+        if (read( obj->fd, &value, sizeof(value) ) == -1 && errno != EWOULDBLOCK && errno != EAGAIN)
-+        {
-+            ERR("read: %s\n", strerror(errno));
-+        }
-     }
- 
--    /* Release the spinlock. */
--    event->locked = 0;
-+    if (obj->type == ESYNC_MANUAL_EVENT)
-+    {
-+        /* Release the spinlock. */
-+        event->locked = 0;
-+    }
- 
-     return STATUS_SUCCESS;
- }
-@@ -817,8 +852,9 @@ static void update_grabbed_object( struct esync *obj )
-     else if (obj->type == ESYNC_AUTO_EVENT)
-     {
-         struct event *event = obj->shm;
--        /* We don't have to worry about a race between this and read(), for
--         * reasons described near esync_set_event(). */
-+        /* We don't have to worry about a race between this and read(), since
-+         * this is just a hint, and the real state is in the kernel object.
-+         * This might already be 0, but that's okay! */
-         event->signaled = 0;
-     }
- }
-@@ -1058,6 +1094,7 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles,
-                         }
-                         else
-                         {
-+                            /* FIXME: Could we check the poll or shm state first? Should we? */
-                             if ((size = read( fds[i].fd, &value, sizeof(value) )) == sizeof(value))
-                             {
-                                 /* We found our object. */
-diff --git a/server/esync.c b/server/esync.c
-index 4e0f8818d1..3c6f84617a 100644
---- a/server/esync.c
-+++ b/server/esync.c
-@@ -399,9 +399,12 @@ void esync_set_event( struct esync *esync )
-     if (debug_level)
-         fprintf( stderr, "esync_set_event() fd=%d\n", esync->fd );
- 
--    /* Acquire the spinlock. */
--    while (InterlockedCompareExchange( &event->locked, 1, 0 ))
--        small_pause();
-+    if (esync->type == ESYNC_MANUAL_EVENT)
-+    {
-+        /* Acquire the spinlock. */
-+        while (InterlockedCompareExchange( &event->locked, 1, 0 ))
-+            small_pause();
-+    }
- 
-     if (!interlocked_xchg( &event->signaled, 1 ))
-     {
-@@ -409,8 +412,11 @@ void esync_set_event( struct esync *esync )
-             perror( "esync: write" );
-     }
- 
--    /* Release the spinlock. */
--    event->locked = 0;
-+    if (esync->type == ESYNC_MANUAL_EVENT)
-+    {
-+        /* Release the spinlock. */
-+        event->locked = 0;
-+    }
- }
- 
- void esync_reset_event( struct esync *esync )
-@@ -424,9 +430,12 @@ void esync_reset_event( struct esync *esync )
-     if (debug_level)
-         fprintf( stderr, "esync_reset_event() fd=%d\n", esync->fd );
- 
--    /* Acquire the spinlock. */
--    while (InterlockedCompareExchange( &event->locked, 1, 0 ))
--        small_pause();
-+    if (esync->type == ESYNC_MANUAL_EVENT)
-+    {
-+        /* Acquire the spinlock. */
-+        while (InterlockedCompareExchange( &event->locked, 1, 0 ))
-+            small_pause();
-+    }
- 
-     /* Only bother signaling the fd if we weren't already signaled. */
-     if (interlocked_xchg( &event->signaled, 0 ))
-@@ -435,8 +444,11 @@ void esync_reset_event( struct esync *esync )
-         read( esync->fd, &value, sizeof(value) );
-     }
- 
--    /* Release the spinlock. */
--    event->locked = 0;
-+    if (esync->type == ESYNC_MANUAL_EVENT)
-+    {
-+        /* Release the spinlock. */
-+        event->locked = 0;
-+    }
- }
- 
- DECL_HANDLER(create_esync)
-
-diff --git a/dlls/ntdll/esync.c b/dlls/ntdll/esync.c
-index 87b97ad99b..b6613bf0dc 100644
---- a/dlls/ntdll/esync.c
-+++ b/dlls/ntdll/esync.c
-@@ -1070,6 +1070,14 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles,
-             ret = do_poll( fds, pollcount, timeout ? &end : NULL );
-             if (ret > 0)
-             {
-+                /* We must check this first! The server may set an event that
-+                 * we're waiting on, but we need to return STATUS_USER_APC. */
-+                if (alertable)
-+                {
-+                    if (fds[pollcount - 1].revents & POLLIN)
-+                        goto userapc;
-+                }
-+
-                 /* Find out which object triggered the wait. */
-                 for (i = 0; i < count; i++)
-                 {
-@@ -1114,11 +1122,6 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles,
-                         return count - 1;
-                     }
-                 }
--                if (alertable)
--                {
--                    if (fds[i++].revents & POLLIN)
--                        goto userapc;
--                }
- 
-                 /* If we got here, someone else stole (or reset, etc.) whatever
-                  * we were waiting for. So keep waiting. */
 diff --git a/dlls/ntdll/fsync.c b/dlls/ntdll/fsync.c
 index 970316777a..dbc852987b 100644
 --- a/dlls/ntdll/fsync.c
@@ -4246,7 +4039,7 @@ diff --git a/server/thread.c b/server/thread.c
 index 88b5ce2792..e9474df707 100644
 --- a/server/thread.c
 +++ b/server/thread.c
-@@ -1069,10 +1069,10 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
+@@ -1069,6 +1069,6 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
      {
          wake_thread( thread );
  
@@ -4254,11 +4047,7 @@ index 88b5ce2792..e9474df707 100644
 +        if (do_fsync() && queue == &thread->user_apc)
              fsync_wake_futex( thread->fsync_apc_idx );
  
--        if (do_esync())
-+        if (do_esync() && queue == &thread->user_apc)
-             esync_wake_fd( thread->esync_apc_fd );
-     }
- 
+         if (do_esync() && queue == &thread->user_apc)
 From 22febac9c67150769a389cb97dbf904033f9046f Mon Sep 17 00:00:00 2001
 From: Zebediah Figura <zfigura@codeweavers.com>
 Date: Wed, 7 Aug 2019 17:07:15 -0500
@@ -4354,14 +4143,14 @@ index 0b6a624d2c9..bf5aa20d38d 100644
 --- a/dlls/ntdll/ntdll_misc.h
 +++ b/dlls/ntdll/ntdll_misc.h
 @@ -281,7 +281,7 @@ struct ntdll_thread_data
-     pthread_t          pthread_id;    /* pthread thread id */
+     struct debug_info *debug_info;    /* info for debugstr functions */
      int                esync_queue_fd;/* fd to wait on for driver events */
      int                esync_apc_fd;  /* fd to wait on for user APCs */
 -    unsigned int       fsync_apc_idx;
 +    int               *fsync_apc_futex;
- };
- 
- C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
+     void              *start_stack;   /* stack for thread startup */
+     int                request_fd;    /* fd for sending server requests */
+     int                reply_fd;      /* fd for receiving server replies */
 diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
 index c6e86c196bd..f73e141911b 100644
 --- a/dlls/ntdll/thread.c
@@ -4421,55 +4210,6 @@ index 5ae7a2d2e22..e209f21bf43 100644
      if (entry >= shm_addrs_size)
      {
 @@ -159,7 +171,11 @@ static void *get_shm( unsigned int idx )
-             munmap( addr, pagesize ); /* someone beat us to it */
-     }
- 
--    return (void *)((unsigned long)shm_addrs[entry] + offset);
-+    ret = (void *)((unsigned long)shm_addrs[entry] + offset);
-+
-+    RtlLeaveCriticalSection(&shm_addrs_section);
-+
-+    return ret;
- }
- 
- /* We'd like lookup to be fast. To that end, we use a static list indexed by handle.
-From 6d23707f60898e08b7df7738613aa233ba9951bf Mon Sep 17 00:00:00 2001
-From: Zebediah Figura <zfigura@codeweavers.com>
-Date: Wed, 7 Aug 2019 17:14:54 -0500
-Subject: [PATCH] ntdll/esync: Lock accessing the shm_addrs array.
-
----
- dlls/ntdll/esync.c | 18 +++++++++++++++++-
- 1 file changed, 17 insertions(+), 1 deletion(-)
-
-diff --git a/dlls/ntdll/esync.c b/dlls/ntdll/esync.c
-index b6613bf0dcf..8054f80a09f 100644
---- a/dlls/ntdll/esync.c
-+++ b/dlls/ntdll/esync.c
-@@ -156,10 +156,22 @@ void esync_init(void)
-     shm_addrs_size = 128;
- }
- 
-+static RTL_CRITICAL_SECTION shm_addrs_section;
-+static RTL_CRITICAL_SECTION_DEBUG shm_addrs_debug =
-+{
-+    0, 0, &shm_addrs_section,
-+    { &shm_addrs_debug.ProcessLocksList, &shm_addrs_debug.ProcessLocksList },
-+      0, 0, { (DWORD_PTR)(__FILE__ ": shm_addrs_section") }
-+};
-+static RTL_CRITICAL_SECTION shm_addrs_section = { &shm_addrs_debug, -1, 0, 0, 0, 0 };
-+
- static void *get_shm( unsigned int idx )
- {
-     int entry  = (idx * 8) / pagesize;
-     int offset = (idx * 8) % pagesize;
-+    void *ret;
-+
-+    RtlEnterCriticalSection(&shm_addrs_section);
- 
-     if (entry >= shm_addrs_size)
-     {
-@@ -181,7 +193,11 @@ static void *get_shm( unsigned int idx )
              munmap( addr, pagesize ); /* someone beat us to it */
      }
  
