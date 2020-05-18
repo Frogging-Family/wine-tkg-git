@@ -77,13 +77,14 @@ _build() {
 	  fi
 	fi
 
-	if [ "$_nomakepkg_midbuild_prompt" == "true" ]; then
-	  msg2 '64-bit side has been built, 32-bit will follow.'
-	  msg2 'This is the time to install the 32-bit devel packages you might need.'
-	  read -rp "    When ready, press enter to continue.."
-	fi
-
 	if [ "$_NOLIB32" != "true" ]; then
+	  # nomakepkg
+	  if [ "$_nomakepkg_midbuild_prompt" == "true" ]; then
+	    msg2 '64-bit side has been built, 32-bit will follow.'
+	    msg2 'This is the time to install the 32-bit devel packages you might need.'
+	    read -rp "    When ready, press enter to continue.."
+	  fi
+	  # /nomakepkg
 	  if [[ ! ${_makepkg_options[*]} =~ "ccache" ]] && [ -e /usr/bin/ccache ]; then
 	    export CC="ccache gcc"
 	    export CXX="ccache g++"
