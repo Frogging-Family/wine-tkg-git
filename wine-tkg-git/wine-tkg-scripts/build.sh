@@ -84,6 +84,9 @@ _build() {
 	    msg2 'This is the time to install the 32-bit devel packages you might need.'
 	    read -rp "    When ready, press enter to continue.."
 	  fi
+	  if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ]; then
+	    _debuntu_32
+	  fi
 	  # /nomakepkg
 	  if [[ ! ${_makepkg_options[*]} =~ "ccache" ]] && [ -e /usr/bin/ccache ]; then
 	    export CC="ccache gcc"

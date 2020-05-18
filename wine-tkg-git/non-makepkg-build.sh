@@ -63,6 +63,18 @@ pkgver() {
 # init step
   _init
 
+  # deps
+  if [ -n "$_nomakepkg_dep_resolution_distro" ]; then
+    source "$_where"/wine-tkg-scripts/deps
+    if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ]; then
+      _debuntu_64
+    elif [ "$_nomakepkg_dep_resolution_distro" = "fedora" ]; then
+      _fedora_6432
+    elif [ "$_nomakepkg_dep_resolution_distro" = "archlinux" ]; then
+      _archlinux_6432
+    fi
+  fi
+
   # this script makes external builds already and we don't want the specific pacman-related stuff to interfere, so enforce _EXTERNAL_INSTALL="false" when not building proton-tkg
   if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
     _EXTERNAL_INSTALL="false"
