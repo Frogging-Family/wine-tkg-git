@@ -1690,6 +1690,11 @@ EOM
 	  fi
 	fi
 
+	# Add HansKristian's d3d12/vkd3d fixes wwhen vkd3d is enabled - https://www.winehq.org/pipermail/wine-devel/2019-October/152356.html - https://www.winehq.org/pipermail/wine-devel/2019-October/152357.html
+	if [ "$_use_vkd3d" == "true" ]; then
+	  _patchname='d3d12-fixes.patch' && _patchmsg="Add HansKristian's d3d12 fixes" && nonuser_patcher
+	fi
+
 	# Proton-tkg needs to know if standard dlopen() is in use
 	if git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
 	  _standard_dlopen="true"
