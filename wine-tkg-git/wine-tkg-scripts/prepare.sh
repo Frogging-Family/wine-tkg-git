@@ -219,6 +219,11 @@ msg2 ''
     _update_winevulkan="false"
     _unfrog="true"
   fi
+
+  # If _use_vkd3d="true", redefine to "mainline"
+  if [ "$_use_vkd3d" == "true" ]; then
+    _use_vkd3d="mainline"
+  fi
 }
 
 _pkgnaming() {
@@ -255,7 +260,7 @@ _pkgnaming() {
       msg2 "Using gallium nine patchset (legacy)"
     fi
 
-    if [ "$_use_vkd3d" == "true" ]; then
+    if [ "$_use_vkd3d" == "mainline" ] || [ "$_use_vkd3d" == "fork" ]; then
       pkgname="${pkgname/%-git/-vkd3d-git}"
       msg2 "Using VKD3D for d3d12 translation"
     fi
@@ -461,7 +466,7 @@ _prepare() {
 	  echo "Using gallium nine patchset (legacy)" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_use_vkd3d" == "true" ]; then
+	if [ "$_use_vkd3d" == "mainline" ] || [ "$_use_vkd3d" == "fork" ]; then
 	  _configure_args+=(--with-vkd3d)
 	  echo "Using VKD3D for d3d12 translation" >> "$_where"/last_build_config.log
 	else
@@ -1682,7 +1687,7 @@ EOM
 	fi
 
 	# Add support for dxvk_config library to Wine's dxgi when vkd3d support is enabled
-	if [ "$_use_vkd3d" == "true" ] && [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
+	if [ "$_use_vkd3d" == "mainline" ] || [ "$_use_vkd3d" == "fork" ] && [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	  if git merge-base --is-ancestor 591068cec06257f3d5ed23e19ee4ad055ad978aa HEAD; then
 	    _patchname='dxvk_config_dxgi_support.patch' && _patchmsg="Add support for dxvk_config library to Wine's dxgi" && nonuser_patcher
 	  else
@@ -1691,7 +1696,7 @@ EOM
 	fi
 
 	# Add HansKristian's d3d12/vkd3d fixes wwhen vkd3d is enabled - https://www.winehq.org/pipermail/wine-devel/2019-October/152356.html - https://www.winehq.org/pipermail/wine-devel/2019-October/152357.html
-	if [ "$_use_vkd3d" == "true" ]; then
+	if [ "$_use_vkd3d" == "fork" ]; then
 	  _patchname='d3d12-fixes.patch' && _patchmsg="Add HansKristian's d3d12 fixes" && nonuser_patcher
 	fi
 
@@ -1752,7 +1757,7 @@ EOM
 	if [ "$_use_legacy_gallium_nine" == "true" ]; then
 	  _version_tags+=(Nine)
 	fi
-	if [ "$_use_vkd3d" == "true" ]; then
+	if [ "$_use_vkd3d" == "mainline" ] || [ "$_use_vkd3d" == "fork" ]; then
 	  if [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	    _version_tags+=(Vkd3d DXVK-Compatible)
 	  else
