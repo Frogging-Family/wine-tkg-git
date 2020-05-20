@@ -361,14 +361,14 @@ _prepare() {
 	# holds extra configure arguments, if applicable
 	_configure_args=()
 
+	source "$_where"/wine-tkg-patches/hotfixes/hotfixer
+
 	if [ "$_use_staging" == "true" ] && [ "$_staging_upstreamignore" != "true" ]; then
 	  cd "${srcdir}"/"${_winesrcdir}"
 	  # change back to the wine upstream commit that this version of wine-staging is based in
 	  msg2 'Changing wine HEAD to the wine-staging base commit...'
 	  git checkout "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)"
 	fi
-
-	source "$_where"/wine-tkg-patches/hotfixes/hotfixer
 
 	# Community patches
 	if [ -n "$_community_patches" ]; then
