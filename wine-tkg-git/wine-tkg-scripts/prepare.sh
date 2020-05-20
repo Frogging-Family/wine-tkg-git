@@ -1713,6 +1713,7 @@ EOM
 	if [ "$_user_patches" == "true" ]; then
 	  _userpatch_target="plain-wine"
 	  _userpatch_ext="my"
+	  cd "${srcdir}"/"${_winesrcdir}"
 	  hotfixer
 	  user_patcher
 	fi
