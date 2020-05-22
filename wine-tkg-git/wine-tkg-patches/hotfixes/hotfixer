@@ -1,5 +1,23 @@
 #!/bin/bash
 
+if [ "$_hotfixes_no_confirm" != "true" ]; then
+  msg2 ""
+  read -rp "HALP! We got quite a few hotfixes for your current tree. Do you want to apply them all with no further prompt?"$'\n> N/y : ' _hotfixansw;
+  if [ "$_hotfixansw" = "y" ]; then
+    _hotfixes_no_confirm="true"
+  fi
+fi
+
+if [ "$_hotfixes_no_confirm" != "true" ]; then
+  read -rp "Hotfix: Upstream commits cd215bb to ca13f48 are interacting badly with WINEDEBUG env var and break staging. Are you okay to revert them ?"$'\n> N/y : ' _hotfixansw;
+fi
+if [ "$_hotfixansw" = "y" ] || [ "$_hotfixes_no_confirm" = "true" ]; then
+  _hotfix_mainlinereverts=(cd215bb49bc240cdce5415c80264f8daa557636a 8ca9e0b1abba7640e288df7b55b60903bc52fc9d 6a1667fab428764eeaba38ac9b5cb1813c5cffda 9b12068c6c8ba656e8ca768227b1a970877d4730 cc5953048e570155deb791b9e9e738a0508c2032 0936606c383744daa8be046db72e8e888522ce21 ca13f489e18fb1f7944e3bdcfdfc4a810bf80994)
+
+  _hotfix_stagingreverts=()
+fi
+
+# Broken staging fbe1ba5
 if cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor fbe1ba5578fb7380e2b09a5aebf5aa488744a823 HEAD && ! git merge-base --is-ancestor 5246a035e9d8f978a7b49bb9a607dc1edbc0c53d HEAD && cd "${srcdir}"/"${_winesrcdir}"; then
   msg2 "Ignoring staging upstream commit on this SHA (hotfix)"
   _staging_upstreamignore="true"
@@ -7,6 +25,12 @@ fi
 
 if cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor fd7992972b252ed262d33ef604e9e1235d2108c5 HEAD; then
   hotfixer() {
+      # https://bugs.winehq.org/show_bug.cgi?id=48971
+      # https://bugs.winehq.org/show_bug.cgi?id=49007
+      # https://bugs.winehq.org/show_bug.cgi?id=49025
+      # https://bugs.winehq.org/show_bug.cgi?id=49098
+      # https://bugs.winehq.org/show_bug.cgi?id=49123
+      # https://bugs.winehq.org/show_bug.cgi?id=49041
       if git merge-base --is-ancestor b7b1ad09629a6678383a5ae791a9507c9eb87be3 HEAD >/dev/null 2>&1; then
         local _patches=("$_where"/wine-tkg-patches/hotfixes/fd7992972b252ed262d33ef604e9e1235d2108c5-6."${_userpatch_ext}revert")
       elif git merge-base --is-ancestor d2b70aa57a77103107a2e620999181c518d14bda HEAD >/dev/null 2>&1; then
@@ -20,22 +44,38 @@ if cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor fd7992972b252
       elif git merge-base --is-ancestor fd7992972b252ed262d33ef604e9e1235d2108c5 HEAD >/dev/null 2>&1; then
         local _patches=("$_where"/wine-tkg-patches/hotfixes/fd7992972b252ed262d33ef604e9e1235d2108c5."${_userpatch_ext}revert")
       fi
+      # WINEDEBUG crash
+      #if git merge-base --is-ancestor 0936606c383744daa8be046db72e8e888522ce21 HEAD >/dev/null 2>&1; then
+      #  _patches+=("$_where"/wine-tkg-patches/hotfixes/acd209d6039f2492bdc8aca3d15bb1b268b04f1a-2."${_userpatch_ext}revert")
       if git merge-base --is-ancestor acd209d6039f2492bdc8aca3d15bb1b268b04f1a HEAD >/dev/null 2>&1; then
         _patches+=("$_where"/wine-tkg-patches/hotfixes/acd209d6039f2492bdc8aca3d15bb1b268b04f1a."${_userpatch_ext}revert")
       fi
+      # Staging conflict
+      if git merge-base --is-ancestor 4501d49149e37b37edd61f8a1694930db7418a61 HEAD >/dev/null 2>&1; then
+        _patches+=("$_where"/wine-tkg-patches/hotfixes/4501d49149e37b37edd61f8a1694930db7418a61."${_userpatch_ext}revert")
+      fi
       if [ ${#_patches[@]} -ge 2 ] || [ -e "${_patches}" ]; then
-        if [ "$_user_patches_no_confirm" != "true" ]; then
+        if [ "$_hotfixes_no_confirm" != "true" ]; then
           msg2 "Found ${#_patches[@]} reverting hotfix:"
           printf '%s\n' "${_patches[@]}"
-          msg2 "An upstream patchset (starting with fd79929) breaks a large amount of games in various ways (ex: WoW, Overwatch, Star Citizen, Path of Exile etc.)."
-          msg2 "As a temporary fix, this patch reverts it on current HEAD."
-          msg2 " !! On the most recent trees, some of the games this used to fix are now broken again by another bad interaction"
-          msg2 "introduced since (seems to be limited to blizzard stuff so far) !!"
-          msg2 ""
-          msg2 "An upstream patch (acd209d) breaks setting WINEDBUG and leads to segfaults. As a temporary fix, this patch reverts it on current HEAD."
+          if [[ ${_patches[*]} =~ "fd7992972b252ed262d33ef604e9e1235d2108c5" ]]; then
+            msg2 "An upstream patchset (starting with fd79929) breaks a large amount of games in various ways (ex: WoW, Overwatch, Star Citizen, Path of Exile etc.)."
+            msg2 "As a temporary fix, this patch reverts it on current HEAD."
+            msg2 " !! On the most recent trees, some of the games this used to fix are now broken again by another bad interaction"
+            msg2 "introduced since (seems to be limited to blizzard stuff so far) !!"
+            msg2 ""
+          fi
+          if [[ ${_patches[*]} =~ "acd209d6039f2492bdc8aca3d15bb1b268b04f1a" ]]; then
+            msg2 "An upstream patch (acd209d) breaks setting WINEDBUG and leads to segfaults. As a temporary fix, this patch reverts it on current HEAD."
+            msg2 ""
+          fi
+          if [[ ${_patches[*]} =~ "4501d49149e37b37edd61f8a1694930db7418a61" ]]; then
+            msg2 "A staging patch interferes with upstream hotfixes. As a temporary fix for a fix of a fix that hasn't been fixed by other fixes, this patch fixes it."
+            msg2 ""
+          fi
           read -rp "Do you want to install it/them?"$'\n> N/y : ' _CONDITION;
         fi
-        if [ "$_CONDITION" = "y" ] || [ "$_user_patches_no_confirm" = "true" ]; then
+        if [ "$_CONDITION" = "y" ] || [ "$_hotfixes_no_confirm" = "true" ]; then
           for _f in "${_patches[@]}"; do
             if [ -e "${_f}" ]; then
               msg2 "######################################################"
@@ -52,12 +92,12 @@ if cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor fd7992972b252
 
       _patches=("$_where"/wine-tkg-patches/hotfixes/*."${_userpatch_ext}patch")
       if [ ${#_patches[@]} -ge 2 ] || [ -e "${_patches}" ]; then
-        if [ "$_user_patches_no_confirm" != "true" ]; then
+        if [ "$_hotfixes_no_confirm" != "true" ]; then
           msg2 "Found ${#_patches[@]} hotfix:"
           printf '%s\n' "${_patches[@]}"
           read -rp "Do you want to install it/them?"$'\n> N/y : ' _CONDITION;
         fi
-        if [ "$_CONDITION" = "y" ] || [ "$_user_patches_no_confirm" = "true" ]; then
+        if [ "$_CONDITION" = "y" ] || [ "$_hotfixes_no_confirm" = "true" ]; then
           for _f in "${_patches[@]}"; do
             if [ -e "${_f}" ]; then
               msg2 "######################################################"

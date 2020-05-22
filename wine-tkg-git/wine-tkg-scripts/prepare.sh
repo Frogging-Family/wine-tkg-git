@@ -355,13 +355,14 @@ _source_cleanup() {
 _prepare() {
 	# holds extra arguments to staging's patcher script, if applicable
 	local _staging_args=()
+
+	source "$_where"/wine-tkg-patches/hotfixes/hotfixer
+
 	# grabs userdefined staging args if any
 	_staging_args+=($_staging_userargs)
 
 	# holds extra configure arguments, if applicable
 	_configure_args=()
-
-	source "$_where"/wine-tkg-patches/hotfixes/hotfixer
 
 	if [ "$_use_staging" == "true" ] && [ "$_staging_upstreamignore" != "true" ]; then
 	  cd "${srcdir}"/"${_winesrcdir}"
@@ -489,9 +490,19 @@ _prepare() {
 	nonuser_reverter() {
 	  if git merge-base --is-ancestor $_committorevert HEAD; then
 	    git revert -n --no-edit $_committorevert || exit 1
-	    echo "$_committorevert reverted" >> "$_where"/last_build_config.log
+	    echo "$_committorevert reverted $_hotfixmsg" >> "$_where"/last_build_config.log
 	  fi
 	}
+
+	# Hotfixer
+	for _commit in ${_hotfix_mainlinereverts[@]}; do
+	  _committorevert=$_commit _hotfixmsg="(hotfix)" nonuser_reverter
+	done
+	for _commit in ${_hotfix_stagingreverts[@]}; do
+	  cd "${srcdir}"/"${_stgsrcdir}"
+	  _committorevert=$_commit _hotfixmsg="(staging hotfix)" nonuser_reverter
+	  cd "${srcdir}"/"${_winesrcdir}"
+	done
 
 	if [ "$_mtga_fix" == "true" ] && git merge-base --is-ancestor e5a9c256ce08868f65ed730c00cf016a97369ce3 HEAD; then
 	  _committorevert=341068aa61a71afecb712feda9aabb3dc1c3ab5f && nonuser_reverter

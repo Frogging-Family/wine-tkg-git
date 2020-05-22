@@ -1,0 +1,162 @@
+From 1f7dd0ee1202fb0a16386b7ca7d4e9fccb766a3c Mon Sep 17 00:00:00 2001
+From: Zebediah Figura <z.figura12@gmail.com>
+Date: Thu, 21 May 2020 21:48:11 -0500
+Subject: [PATCH] winebuild-Fake_Dlls: Correct rebase.
+
+---
+ ...ebuild-Add-syscall-thunks-for-64-bit.patch | 36 +++++++++----------
+ 1 file changed, 18 insertions(+), 18 deletions(-)
+
+diff --git a/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch b/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
+index d036cf969..9ac6ca85a 100644
+--- a/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
++++ b/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
+@@ -1,4 +1,4 @@
+-From 93f5d4ef07bc35fc672738fe804b829595c61eda Mon Sep 17 00:00:00 2001
++From 12ee1796b93e5f6556e0843c67fe7ef80ca751dc Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Michael=20M=C3=BCller?= <michael@fds-team.de>
+ Date: Thu, 7 Sep 2017 00:38:09 +0200
+ Subject: [PATCH] tools/winebuild: Add syscall thunks for 64 bit.
+@@ -60,7 +60,7 @@ index 31af1e98d3f..324a92b41a9 100644
+  }
+  
+ diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+-index 19e09c7e383..857d6a68cf1 100644
++index 19e09c7e383..76b9b009e23 100644
+ --- a/dlls/ntdll/thread.c
+ +++ b/dlls/ntdll/thread.c
+ @@ -54,6 +54,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(thread);
+@@ -72,7 +72,22 @@ index 19e09c7e383..857d6a68cf1 100644
+  void (WINAPI *kernel32_start_process)(LPTHREAD_START_ROUTINE,void*) = NULL;
+  
+  /* info passed to a starting thread */
+-@@ -312,7 +314,7 @@ TEB *thread_init(void)
++@@ -206,6 +208,14 @@ static void fill_user_shared_data( struct _KUSER_SHARED_DATA *data )
++     data->NumberOfPhysicalPages       = sbi.MmNumberOfPhysicalPages;
++     wcscpy( data->NtSystemRoot, windows_dir );
++ 
+++#if defined(__APPLE__) && defined(__x86_64__)
+++    *((DWORD*)((char*)data + 0x1000)) = __wine_syscall_dispatcher;
+++#endif
+++
+++    /* Pretend we don't support the SYSCALL instruction on x86-64. Needed for
+++     * Chromium; see output_syscall_thunks_x64() in winebuild. */
+++    data->SystemCallPad[0] = 1;
+++
++     switch (sci.Architecture)
++     {
++     case PROCESSOR_ARCHITECTURE_INTEL:
++@@ -312,7 +322,7 @@ TEB *thread_init(void)
+      /* reserve space for shared user data */
+  
+      addr = (void *)0x7ffe0000;
+@@ -81,21 +96,6 @@ index 19e09c7e383..857d6a68cf1 100644
+      status = NtAllocateVirtualMemory( NtCurrentProcess(), &addr, 0, &size,
+                                        MEM_RESERVE|MEM_COMMIT, PAGE_READONLY );
+      if (status)
+-@@ -349,6 +351,14 @@ TEB *thread_init(void)
+-     InitializeListHead( &ldr.InInitializationOrderModuleList );
+-     *(ULONG_PTR *)peb->Reserved = get_image_addr();
+- 
+-+#if defined(__APPLE__) && defined(__x86_64__)
+-+    *((DWORD*)((char*)user_shared_data + 0x1000)) = __wine_syscall_dispatcher;
+-+#endif
+-+
+-+    /* Pretend we don't support the SYSCALL instruction on x86-64. Needed for
+-+     * Chromium; see output_syscall_thunks_x64() in winebuild. */
+-+    user_shared_data->SystemCallPad[0] = 1;
+-+
+-     /*
+-      * Starting with Vista, the first user to log on has session id 1.
+-      * Session id 0 is for processes that don't interact with the user (like services).
+ diff --git a/libs/wine/loader.c b/libs/wine/loader.c
+ index 4597a6cb324..3d0d75e9c6d 100644
+ --- a/libs/wine/loader.c
+
+
+diff --git a/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch b/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
+index b585d0611..d036cf969 100644
+--- a/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
++++ b/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
+@@ -1,4 +1,4 @@
+-From cd9a767f1486be67feac18d7ea78a1ce6c1d0abc Mon Sep 17 00:00:00 2001
++From 93f5d4ef07bc35fc672738fe804b829595c61eda Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Michael=20M=C3=BCller?= <michael@fds-team.de>
+ Date: Thu, 7 Sep 2017 00:38:09 +0200
+ Subject: [PATCH] tools/winebuild: Add syscall thunks for 64 bit.
+@@ -6,17 +6,17 @@ Subject: [PATCH] tools/winebuild: Add syscall thunks for 64 bit.
+ ---
+  dlls/kernel32/tests/loader.c |   7 +-
+  dlls/ntdll/signal_x86_64.c   |   2 +
+- dlls/ntdll/thread.c          |  14 +-
++ dlls/ntdll/thread.c          |  12 +-
+  libs/wine/loader.c           |   4 +
+  tools/winebuild/parser.c     |   2 +-
+  tools/winebuild/spec32.c     | 285 ++++++++++++++++++++++++++++++++++-
+- 6 files changed, 304 insertions(+), 10 deletions(-)
++ 6 files changed, 303 insertions(+), 9 deletions(-)
+ 
+ diff --git a/dlls/kernel32/tests/loader.c b/dlls/kernel32/tests/loader.c
+-index 5373dc4efe1..67d04876bd6 100644
++index 95939ba6bde..ae5462f6e55 100644
+ --- a/dlls/kernel32/tests/loader.c
+ +++ b/dlls/kernel32/tests/loader.c
+-@@ -1537,7 +1537,7 @@ static void test_filenames(void)
++@@ -1573,7 +1573,7 @@ static void test_filenames(void)
+  
+  static void test_FakeDLL(void)
+  {
+@@ -25,7 +25,7 @@ index 5373dc4efe1..67d04876bd6 100644
+      NTSTATUS (WINAPI *pNtSetEvent)(HANDLE, ULONG *) = NULL;
+      IMAGE_EXPORT_DIRECTORY *dir;
+      HMODULE module = GetModuleHandleA("ntdll.dll");
+-@@ -1579,8 +1579,13 @@ static void test_FakeDLL(void)
++@@ -1615,8 +1615,13 @@ static void test_FakeDLL(void)
+  
+          dll_func = (BYTE *)GetProcAddress(module, func_name);
+          ok(dll_func != NULL, "%s: GetProcAddress returned NULL\n", func_name);
+@@ -60,37 +60,28 @@ index 31af1e98d3f..324a92b41a9 100644
+  }
+  
+ diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+-index 0fc8aa9e928..bae49792ce5 100644
++index 19e09c7e383..857d6a68cf1 100644
+ --- a/dlls/ntdll/thread.c
+ +++ b/dlls/ntdll/thread.c
+-@@ -59,6 +59,8 @@ struct _KUSER_SHARED_DATA *user_shared_data = NULL;
+- static size_t user_shared_data_size;
+- static const WCHAR default_windirW[] = {'C',':','\\','w','i','n','d','o','w','s',0};
++@@ -54,6 +54,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(thread);
++ 
++ struct _KUSER_SHARED_DATA *user_shared_data = NULL;
+  
+ +extern void DECLSPEC_NORETURN __wine_syscall_dispatcher( void );
+ +
+  void (WINAPI *kernel32_start_process)(LPTHREAD_START_ROUTINE,void*) = NULL;
+  
+  /* info passed to a starting thread */
+-@@ -294,7 +296,7 @@ TEB *thread_init(void)
++@@ -312,7 +314,7 @@ TEB *thread_init(void)
+      /* reserve space for shared user data */
+  
+      addr = (void *)0x7ffe0000;
+ -    size = 0x1000;
+ +    size = 0x2000;
+      status = NtAllocateVirtualMemory( NtCurrentProcess(), &addr, 0, &size,
+-                                       MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE );
++                                       MEM_RESERVE|MEM_COMMIT, PAGE_READONLY );
+      if (status)
+-@@ -303,7 +305,7 @@ TEB *thread_init(void)
+-         exit(1);
+-     }
+-     user_shared_data = addr;
+--    user_shared_data_size = size;
+-+    user_shared_data_size = 0x1000;
+-     memcpy( user_shared_data->NtSystemRoot, default_windirW, sizeof(default_windirW) );
+- 
+-     /* allocate and initialize the PEB and initial TEB */
+-@@ -333,6 +335,14 @@ TEB *thread_init(void)
++@@ -349,6 +351,14 @@ TEB *thread_init(void)
+      InitializeListHead( &ldr.InInitializationOrderModuleList );
+      *(ULONG_PTR *)peb->Reserved = get_image_addr();
+   
