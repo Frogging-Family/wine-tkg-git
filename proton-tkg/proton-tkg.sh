@@ -84,6 +84,8 @@ function build_vrclient {
     _cxx_addon+=" -ldl"
   fi
 
+  rm -rf build/vrclient.win64
+  rm -rf build/vrclient.win32
   mkdir -p build/vrclient.win64
   mkdir -p build/vrclient.win32
 
@@ -124,6 +126,8 @@ function build_lsteamclient {
     fi
   fi
 
+  rm -rf build/lsteamclient.win64
+  rm -rf build/lsteamclient.win32
   mkdir -p build/lsteamclient.win64
   mkdir -p build/lsteamclient.win32
 
@@ -147,6 +151,7 @@ function build_lsteamclient {
 
 function build_steamhelper {
   if [[ $_proton_branch != proton_3.* ]]; then
+    rm -rf Proton/build/steam.win32
     mkdir -p Proton/build/steam.win32
     cp -a Proton/steam_helper/* Proton/build/steam.win32
     cd Proton/build/steam.win32
