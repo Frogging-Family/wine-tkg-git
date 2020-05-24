@@ -278,6 +278,53 @@ function proton_tkg_uninstaller {
   fi
 }
 
+function setup_dxvk_version_url {
+  _dxvk_version_base_url="https://api.github.com/repos/doitsujin/dxvk/releases"
+  if [ "${_dxvk_version}" == "" ] || [ "${_dxvk_version}" == "latest" ]; then
+      _dxvk_version_url="${_dxvk_version_base_url}/latest"
+      # in case of default "" set it to "latest" too
+      _dxvk_version="latest"
+  else
+      _dxvk_version_url="${_dxvk_version_base_url}/tags/${_dxvk_version}"
+  fi
+}
+
+function download_dxvk_version {
+  while true ; do
+      setup_dxvk_version_url
+      # If anything goes wrong we get exit code 22 from "curl -f"
+      set +e
+      _dxvk_version_response=$(curl -s -f "$_dxvk_version_url")
+      _dxvk_version_response_status=$?
+      set -e
+      if [ $_dxvk_version_response_status -eq 0 ]; then
+        echo "#######################################################"
+        echo ""
+        echo " Downloading ${_dxvk_version} DXVK release from github for you..."
+        echo ""
+        echo "#######################################################"
+        echo ""
+        echo "$_dxvk_version_response" \
+        | grep "browser_download_url.*tar.gz" \
+        | cut -d : -f 2,3 \
+        | tr -d \" \
+        | wget -qi -
+        break
+      else
+        echo ""
+        echo "#######################################################"
+        echo ""
+        echo " Could not download specified DXVK version (${_dxvk_version})"
+        echo ""
+        echo "#######################################################"
+        echo ""
+        echo "Please select DXVK release version (ex: v1.6.1)"
+        read -rp "> [latest]: " _dxvk_version
+        echo ""
+      fi
+  done
+}
+
 if [ "$1" == "clean" ]; then
   proton_tkg_uninstaller
 elif [ "$1" == "build_vrclient" ]; then
@@ -385,17 +432,7 @@ else
     if [ "$_use_dxvk" != "false" ]; then
       if [ ! -d "$_nowhere"/dxvk ] || [ "$_use_dxvk" == "release" ]; then
         rm -rf "$_nowhere"/dxvk
-        echo "#######################################################"
-        echo ""
-        echo " Downloading latest DXVK release from github for you..."
-        echo ""
-        echo "#######################################################"
-        echo ""
-        curl -s https://api.github.com/repos/doitsujin/dxvk/releases/latest \
-        | grep "browser_download_url.*tar.gz" \
-        | cut -d : -f 2,3 \
-        | tr -d \" \
-        | wget -qi -
+        download_dxvk_version
         tar -xvf dxvk-*.tar.gz >/dev/null 2>&1
         rm -f dxvk-*.tar.*
         mv "$_nowhere"/dxvk-* "$_nowhere"/dxvk
