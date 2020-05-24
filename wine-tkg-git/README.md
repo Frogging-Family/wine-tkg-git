@@ -14,7 +14,7 @@ Wine-tkg is a build-system aiming at easier custom wine builds creation.
 
  * Clone the repo (allows you to use `git pull` to get updates) :
 ```
-https://github.com/Frogging-Family/wine-tkg-git.git
+git clone https://github.com/Frogging-Family/wine-tkg-git.git
 ```
 
  * To optionally make use of community patches, you'll want to clone its repo as well:
