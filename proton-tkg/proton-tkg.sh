@@ -444,13 +444,18 @@ else
       fi
       # Remove d3d10.dll and d3d10_1.dll when using a 5.3 base or newer - https://github.com/doitsujin/dxvk/releases/tag/v1.6
       if [ "$_dxvk_minimald3d10" == "true" ]; then
-        rm dxvk/x64/d3d10.dll || true
-        rm dxvk/x64/d3d10_1.dll || true
-        rm dxvk/x32/d3d10.dll || true
-        rm dxvk/x32/d3d10_1.dll || true
+        cp -v dxvk/x64/{d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} proton_dist_tmp/lib64/wine/dxvk/
+        cp -v dxvk/x32/{d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} proton_dist_tmp/lib/wine/dxvk/
+      else
+        cp -v dxvk/x64/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} proton_dist_tmp/lib64/wine/dxvk/
+        cp -v dxvk/x32/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} proton_dist_tmp/lib/wine/dxvk/
       fi
-      cp -v dxvk/x64/* proton_dist_tmp/lib64/wine/dxvk/
-      cp -v dxvk/x32/* proton_dist_tmp/lib/wine/dxvk/
+      if [ -e dxvk/x64/dxvk_config.dll ]; then
+        cp -v dxvk/x64/dxvk_config.dll proton_dist_tmp/lib64/wine/dxvk/
+      fi
+      if [ -e dxvk/x32/dxvk_config.dll ]; then
+        cp -v dxvk/x32/dxvk_config.dll proton_dist_tmp/lib/wine/dxvk/
+      fi
     fi
 
     echo ''
