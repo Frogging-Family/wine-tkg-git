@@ -974,9 +974,11 @@ _prepare() {
 	  fi
 
 	  # apply esync patches
+	  echo -e "\nEsync-mainline" >> "$_where"/prepare.log
 	  for _f in "${srcdir}"/"${_esyncsrcdir}"/*.patch; do
 	    msg2 "Applying ${_f}"
-	    git apply -C1 --verbose < "${_f}"
+	    echo -e "\nApplying ${_f}" >> "$_where"/prepare.log
+	    git apply -C1 --verbose < "${_f}" >> "$_where"/prepare.log 2>&1
 	  done
 
 	  if git merge-base --is-ancestor b2a546c92dabee8ab1c3d5b9fecc84d99caf0e76 HEAD; then #  server: Introduce kernel_object struct for generic association between server and kernel objects.
