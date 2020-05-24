@@ -160,7 +160,10 @@ nonuser_patcher() {
     if [ "$_nopatchmsg" != "true" ]; then
       _fullpatchmsg=" -- ( $_patchmsg )"
     fi
-    msg2 "Applying ${_patchname}" && patch -Np1 < "$_where"/"$_patchname" && echo -e "${_patchname}${_fullpatchmsg}" >> "$_where"/last_build_config.log
+    msg2 "Applying ${_patchname}"
+    echo -e "\n${_patchname}${_fullpatchmsg}" >> "$_where"/prepare.log
+    patch -Np1 < "$_where"/"$_patchname" >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+    echo -e "${_patchname}${_fullpatchmsg}" >> "$_where"/last_build_config.log
   fi
 }
 
@@ -181,7 +184,7 @@ build_wine_tkg() {
   if [ "$_SKIPBUILDING" != "true" ]; then
     _nomakepkgsrcinit
 
-    _source_cleanup
+    _source_cleanup > "$_where"/prepare.log
     _prepare
     ## prepare step end
 
