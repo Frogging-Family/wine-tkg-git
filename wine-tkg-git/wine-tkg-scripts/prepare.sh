@@ -1748,6 +1748,11 @@ EOM
 	  _patchname='wine-tkg.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Tk-Glitch/PKGBUILDS/issues instead." && nonuser_patcher
 	fi
 
+	# Get rid of temp patches
+	rm -rf "$_where"/*.patch
+	rm -rf "$_where"/*.my*
+	rm -rf "$_where"/*.orig
+
 	echo -e "\nRunning make_vulkan" >> "$_where"/prepare.log && dlls/winevulkan/make_vulkan >> "$_where"/prepare.log 2>&1
 	tools/make_requests
 	autoreconf -f
