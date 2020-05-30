@@ -507,6 +507,13 @@ _prepare() {
 	  _committorevert=$_commit _hotfixmsg="(staging hotfix)" nonuser_reverter
 	  cd "${srcdir}"/"${_winesrcdir}"
 	done
+	if [ "$_user_patches" == "true" ] && [ "$_use_staging" == "true" ]; then
+	  _userpatch_target="wine-staging-late"
+	  _userpatch_ext="mylatestaging"
+	  cd "${srcdir}"/"${_stgsrcdir}"
+	  hotfixer
+	  cd "${srcdir}"/"${_winesrcdir}"
+	fi
 
 	if [ "$_mtga_fix" == "true" ] && git merge-base --is-ancestor e5a9c256ce08868f65ed730c00cf016a97369ce3 HEAD; then
 	  _committorevert=341068aa61a71afecb712feda9aabb3dc1c3ab5f && nonuser_reverter
