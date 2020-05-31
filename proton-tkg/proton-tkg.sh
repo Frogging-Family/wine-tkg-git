@@ -16,6 +16,9 @@ _nowhere="$PWD"
 _nomakepkg="true"
 _no_steampath="false"
 
+# Build vkd3d - Requires Wine installed system-wide
+_build_vkd3d="false"
+
 # Enforce using makepkg when using --makepkg
 if [ "$1" == "--makepkg" ]; then
   _nomakepkg="false"
@@ -147,6 +150,41 @@ function build_lsteamclient {
   # Inject lsteamclient libs in our wine-tkg-git build
   cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/
   cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/
+}
+
+function build_vkd3d {
+  cd "$_nowhere"
+  mkdir -p vkd3d-fork-build && cd vkd3d-fork-build
+  git clone https://github.com/HansKristian-Work/vkd3d.git || true # It'll complain the path already exists on subsequent builds
+  cd vkd3d
+  git reset --hard HEAD
+  git clean -xdf
+  git pull origin master
+  ./autogen.sh
+  cd ..
+
+  export CFLAGS="-O2 -g -I$_wine_tkg_git_path/src/$_winesrcdir/include/"
+  export CXXFLAGS="-Wno-attributes -O2 -g -I$_wine_tkg_git_path/src/$_winesrcdir/include/"
+  export PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
+
+  rm -rf build/lib64-vkd3d
+  rm -rf build/lib32-vkd3d
+  mkdir -p build/lib64-vkd3d/out
+  mkdir -p build/lib32-vkd3d/out
+
+  export CC='gcc -m64'
+  export CXX='g++ -m64'
+  cd build/lib64-vkd3d
+  "$_nowhere"/vkd3d-fork-build/vkd3d/configure --prefix="$_nowhere/vkd3d-fork-build/build/lib64-vkd3d/out" --with-spirv-tools
+  make -j$(nproc) -C "$_nowhere/vkd3d-fork-build/build/lib64-vkd3d" && make install
+  cd ../..
+
+  export CC='gcc -m32'
+  export CXX='g++ -m32'
+  cd build/lib32-vkd3d
+  "$_nowhere"/vkd3d-fork-build/vkd3d/configure --prefix="$_nowhere/vkd3d-fork-build/build/lib32-vkd3d/out" --with-spirv-tools
+  make -j$(nproc) -C "$_nowhere/vkd3d-fork-build/build/lib32-vkd3d" && make install
+  cd $_nowhere
 }
 
 function build_steamhelper {
@@ -336,6 +374,8 @@ elif [ "$1" == "build_vrclient" ]; then
   build_vrclient
 elif [ "$1" == "build_lsteamclient" ]; then
   build_lsteamclient
+elif [ "$1" == "build_vkd3d" ]; then
+  build_vkd3d
 elif [ "$1" == "build_steamhelper" ]; then
   build_steamhelper
 else
@@ -350,6 +390,11 @@ else
   fi
 
   rm -rf "$_nowhere"/proton_dist_tmp
+
+  # Build vkd3d
+  if [ "$_build_vkd3d" = "true" ]; then
+    build_vkd3d
+  fi
 
   cd "$_nowhere"
 
@@ -432,6 +477,16 @@ else
 
     # Build steam helper
     build_steamhelper
+
+    # Inject vkd3d libs in our wine-tkg-git build
+    if [ "$_build_vkd3d" = "true" ]; then
+      for f in "$_nowhere"/vkd3d-fork-build/build/lib64-vkd3d/out/lib/libvkd3d*so*; do
+        strip "$f" && cp -v "$f" proton_dist_tmp/lib64/
+      done
+      for f in "$_nowhere"/vkd3d-fork-build/build/lib32-vkd3d/out/lib/libvkd3d*so*; do
+        strip "$f" && cp -v "$f" proton_dist_tmp/lib/
+      done
+    fi
 
     # dxvk
     if [ "$_use_dxvk" != "false" ]; then
