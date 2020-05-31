@@ -190,6 +190,15 @@ _package_nomakepkg() {
 	cp -v "$_where"/wine-tkg-scripts/wine-tkg "$_prefix"/bin/wine-tkg
 	cp -v "$_where"/wine-tkg-scripts/wine-tkg-interactive "$_prefix"/bin/wine-tkg-interactive
 
+	# strip
+	if [ "$_nomakepkg_strip" = "true" ]; then
+	  for _f in "$_prefix"/{bin,lib,lib32,lib64}/{wine/*,*}; do
+	    if [[ "$_f" = *.so ]] || [[ "$_f" = *.dll ]]; then
+	      strip --strip-unneeded "$_f"
+	    fi
+	  done
+	fi
+
 	cp -v "$_where"/last_build_config.log "$_prefix"/share/wine/wine-tkg-config.txt
 
 	# move our build to some subfolder
