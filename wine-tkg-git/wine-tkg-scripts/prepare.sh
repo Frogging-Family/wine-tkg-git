@@ -663,7 +663,7 @@ _prepare() {
 	    _staging_args+=(-W user32-rawinput-keyboard)
 	  fi
 	  cd "${srcdir}"/"${_stgsrcdir}"
-	  if [ "$_proton_fs_hack" == "false" ] && git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD; then
+	  if [ "$_proton_fs_hack" == "false" ] && git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD && [ "$_broken_staging_44d1a45_localreverts" != "true" ]; then
 	    if git merge-base --is-ancestor 437038604a09c7952a52b28c373cfbe706d8e78b HEAD; then
 	      sed -i 's/-@@ -3383,3 +3393,14 @@ DECL_HANDLER(get_rawinput_devices)/-@@ -3432,3 +3442,14 @@ DECL_HANDLER(get_rawinput_devices)/g' "$_where"/staging-44d1a45-localreverts.patch
 	    fi
