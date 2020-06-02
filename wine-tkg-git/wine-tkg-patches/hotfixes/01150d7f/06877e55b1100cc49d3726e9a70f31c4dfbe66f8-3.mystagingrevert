@@ -1,0 +1,2823 @@
+diff --git a/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch b/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
+index f38451b08..c94ae38cc 100644
+--- a/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
++++ b/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
+@@ -52,7 +52,16 @@ index d42438f88af..36bc2ef656a 100644
+  #define NONAMELESSUNION
+  #define NONAMELESSSTRUCT
+  #include "ntstatus.h"
+-@@ -3089,6 +3097,104 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *ucontext )
++@@ -77,6 +85,8 @@
++ WINE_DEFAULT_DEBUG_CHANNEL(seh);
++ WINE_DECLARE_DEBUG_CHANNEL(relay);
++ 
+++extern void DECLSPEC_NORETURN __wine_syscall_dispatcher( void );
+++
++ typedef struct _SCOPE_TABLE
++ {
++     ULONG Count;
++@@ -3113,6 +3123,104 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *ucontext )
+      restore_context( &context, ucontext );
+  }
+  
+@@ -157,7 +166,7 @@ index d42438f88af..36bc2ef656a 100644
+  
+  /***********************************************************************
+   *           __wine_set_signal_handler   (NTDLL.@)
+-@@ -3134,6 +3240,9 @@ void signal_init_process(void)
++@@ -3158,6 +3266,9 @@ void signal_init_process(void)
+      sig_act.sa_sigaction = trap_handler;
+      if (sigaction( SIGTRAP, &sig_act, NULL ) == -1) goto error;
+  #endif
+diff --git a/patches/ntdll-WRITECOPY/0006-ntdll-Support-WRITECOPY-on-x64.patch b/patches/ntdll-WRITECOPY/0006-ntdll-Support-WRITECOPY-on-x64.patch
+index b22edcfd7..183324746 100644
+--- a/patches/ntdll-WRITECOPY/0006-ntdll-Support-WRITECOPY-on-x64.patch
++++ b/patches/ntdll-WRITECOPY/0006-ntdll-Support-WRITECOPY-on-x64.patch
+@@ -35,7 +35,7 @@ index 29829bfb1c6..89a8e36410d 100644
+ +        /* fall-through */
+ +    default:
+ +        WINE_ERR( "Got unexpected trap %lld during process initialization\n", TRAP_sig(ucontext) );
+-+        abort_thread(1);
+++        unix_funcs->abort_thread(1);
+ +        break;
+ +    }
+ +}
+
+diff --git a/patches/ntdll-ApiSetMap/0001-ntdll-Add-dummy-apiset-to-PEB.patch b/patches/ntdll-ApiSetMap/0001-ntdll-Add-dummy-apiset-to-PEB.patch
+index b4a9bca1f..3987c7cdf 100644
+--- a/patches/ntdll-ApiSetMap/0001-ntdll-Add-dummy-apiset-to-PEB.patch
++++ b/patches/ntdll-ApiSetMap/0001-ntdll-Add-dummy-apiset-to-PEB.patch
+@@ -12,19 +12,19 @@ Subject: [PATCH] ntdll: Add dummy apiset to PEB.
+  create mode 100644 include/apiset.h
+ 
+ diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+-index ca8b5e2bf8a..565dea14b39 100644
++index 21e8b0c08f8..24254d4b43c 100644
+ --- a/dlls/ntdll/thread.c
+ +++ b/dlls/ntdll/thread.c
+-@@ -75,6 +75,7 @@ static PEB_LDR_DATA ldr;
++@@ -71,6 +71,7 @@ static PEB_LDR_DATA ldr;
+  static RTL_BITMAP tls_bitmap;
+  static RTL_BITMAP tls_expansion_bitmap;
+  static RTL_BITMAP fls_bitmap;
+ +static API_SET_NAMESPACE_ARRAY apiset_map;
+  static int nb_threads = 1;
+  
+- static RTL_CRITICAL_SECTION peb_lock;
++ struct ldt_copy *__wine_ldt_copy = NULL;
+ @@ -300,6 +301,7 @@ TEB *thread_init(void)
+-     teb = virtual_alloc_first_teb();
++ 
+      peb = teb->Peb;
+      peb->FastPebLock        = &peb_lock;
+ +    peb->ApiSetMap          = &apiset_map;
+
+diff --git a/patches/ntdll-Fix_Alignment/0001-ntdll-Move-NtProtectVirtualMemory-and-NtCreateSectio.patch b/patches/ntdll-Fix_Alignment/0001-ntdll-Move-NtProtectVirtualMemory-and-NtCreateSectio.patch
+index aa940f9de..270c82fdd 100644
+--- a/patches/ntdll-Fix_Alignment/0001-ntdll-Move-NtProtectVirtualMemory-and-NtCreateSectio.patch
++++ b/patches/ntdll-Fix_Alignment/0001-ntdll-Move-NtProtectVirtualMemory-and-NtCreateSectio.patch
+@@ -1,20 +1,20 @@
+-From 89a4ee827b74d8e4d63ca3e1354d89d75cc0fc19 Mon Sep 17 00:00:00 2001
++From 554f37a5ee79939ba9368e9bd7ea408860a32803 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Michael=20M=C3=BCller?= <michael@fds-team.de>
+ Date: Wed, 20 Aug 2014 19:21:18 +0200
+-Subject: ntdll: Move NtProtectVirtualMemory and NtCreateSection to separate
+- pages on x86. (try 2)
++Subject: [PATCH] ntdll: Move NtProtectVirtualMemory and NtCreateSection to
++ separate pages on x86. (try 2)
+ 
+ ---
+  dlls/ntdll/virtual.c | 8 ++++++++
+  1 file changed, 8 insertions(+)
+ 
+ diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
+-index ce2469829b0..eb2dbe8a2cd 100644
++index cfe30bbe710..6173846cfb4 100644
+ --- a/dlls/ntdll/virtual.c
+ +++ b/dlls/ntdll/virtual.c
+-@@ -168,6 +168,14 @@ static void *preload_reserve_end;
+- static BOOL use_locks;
+- static BOOL force_exec_prot;  /* whether to force PROT_EXEC on all PROT_READ mmaps */
++@@ -366,6 +366,14 @@ static void free_ranges_remove_view( struct file_view *view )
++ }
++ 
+  
+ +#if defined(__i386__)
+ +NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T *size_ptr,
+ 
+diff --git a/patches/ntdll-ForceBottomUpAlloc/definition b/patches/ntdll-ForceBottomUpAlloc/definition
+index fe758c9e4..c58d53a50 100644
+--- a/patches/ntdll-ForceBottomUpAlloc/definition
++++ b/patches/ntdll-ForceBottomUpAlloc/definition
+@@ -1,3 +1,3 @@
+ Fixes: [48175] AION (64 bit) - crashes in crysystem.dll.CryFree() due to high memory pointers allocated
+ Fixes: [46568] 64-bit msxml6.dll from Microsoft Core XML Services 6.0 redist package fails to load (Wine doesn't respect 44-bit user-mode VA limitation from Windows < 8.1)
+-
++Disabled: true
+diff --git a/patches/ntdll-NtQueryVirtualMemory/0008-ntdll-Resolve-drive-symlinks-before-returning-sectio.patch b/patches/ntdll-NtQueryVirtualMemory/0008-ntdll-Resolve-drive-symlinks-before-returning-sectio.patch
+index 28506cf85..b125f578e 100644
+--- a/patches/ntdll-NtQueryVirtualMemory/0008-ntdll-Resolve-drive-symlinks-before-returning-sectio.patch
++++ b/patches/ntdll-NtQueryVirtualMemory/0008-ntdll-Resolve-drive-symlinks-before-returning-sectio.patch
+@@ -24,19 +24,19 @@ index eb7f3bc3718..0412824c811 100644
+      OBJECT_ATTRIBUTES attr;
+      UNICODE_STRING targetW;
+ diff --git a/dlls/ntdll/ntdll_misc.h b/dlls/ntdll/ntdll_misc.h
+-index 76e8ec284e8..1defe6c807a 100644
++index 427cdaad441..f92adb0c0dc 100644
+ --- a/dlls/ntdll/ntdll_misc.h
+ +++ b/dlls/ntdll/ntdll_misc.h
+-@@ -194,6 +194,7 @@ extern NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_S
++@@ -177,6 +177,7 @@ extern NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_S
++                                            UINT disposition ) DECLSPEC_HIDDEN;
++ 
+  /* virtual memory */
+- extern NTSTATUS virtual_alloc( PVOID *ret, unsigned short zero_bits_64, SIZE_T *size_ptr,
+-                                ULONG type, ULONG protect ) DECLSPEC_HIDDEN;
+ +extern NTSTATUS read_nt_symlink( HANDLE root, UNICODE_STRING *name, WCHAR *target, size_t length ) DECLSPEC_HIDDEN;
+  extern NTSTATUS virtual_map_section( HANDLE handle, PVOID *addr_ptr, unsigned short zero_bits_64, SIZE_T commit_size,
+                                       const LARGE_INTEGER *offset_ptr, SIZE_T *size_ptr, ULONG alloc_type,
+                                       ULONG protect, pe_image_info_t *image_info ) DECLSPEC_HIDDEN;
+ diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
+-index 01ae8b06dac..ad5759884da 100644
++index fb9a1a57729..89ed3bb3f0b 100644
+ --- a/dlls/ntdll/virtual.c
+ +++ b/dlls/ntdll/virtual.c
+ @@ -188,6 +188,8 @@ static BYTE **pages_vprot;
+
+diff --git a/patches/ntdll-NtSetLdtEntries/0001-ntdll-Implement-NtSetLdtEntries.patch b/patches/ntdll-NtSetLdtEntries/0001-ntdll-Implement-NtSetLdtEntries.patch
+index 611b5ea6d..8b4edd8cf 100644
+--- a/patches/ntdll-NtSetLdtEntries/0001-ntdll-Implement-NtSetLdtEntries.patch
++++ b/patches/ntdll-NtSetLdtEntries/0001-ntdll-Implement-NtSetLdtEntries.patch
+@@ -119,11 +119,11 @@ index 2dd274e0c10..ae67a9aa0a0 100644
+  #endif
+     test_QueueUserWorkItem();
+     test_RegisterWaitForSingleObject();
+-diff --git a/dlls/ntdll/signal_i386.c b/dlls/ntdll/signal_i386.c
+-index 441ef579609..eb28d668279 100644
+---- a/dlls/ntdll/signal_i386.c
+-+++ b/dlls/ntdll/signal_i386.c
+-@@ -2533,7 +2533,7 @@ NTSTATUS get_thread_ldt_entry( HANDLE handle, void *data, ULONG len, ULONG *ret_
++diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
++index 320ffa68407..a52490a096b 100644
++--- a/dlls/ntdll/unix/signal_i386.c
+++++ b/dlls/ntdll/unix/signal_i386.c
++@@ -480,7 +480,7 @@ NTSTATUS CDECL get_thread_ldt_entry( HANDLE handle, void *data, ULONG len, ULONG
+                  if (reply->flags)
+                      info->Entry = ldt_make_entry( (void *)reply->base, reply->limit, reply->flags );
+                  else
+diff --git a/patches/ntdll-NtSetLdtEntries/0002-libs-wine-Allow-to-modify-reserved-LDT-entries.patch b/patches/ntdll-NtSetLdtEntries/0002-libs-wine-Allow-to-modify-reserved-LDT-entries.patch
+index 9a4adcb02..1b87d3de8 100644
+--- a/patches/ntdll-NtSetLdtEntries/0002-libs-wine-Allow-to-modify-reserved-LDT-entries.patch
++++ b/patches/ntdll-NtSetLdtEntries/0002-libs-wine-Allow-to-modify-reserved-LDT-entries.patch
+@@ -42,11 +42,11 @@ index ae67a9aa0a0..6149be8cf4a 100644
+          ok(!memcmp(&ds_entry, &sel.entry, sizeof(ds_entry)), "entries do not match\n");
+      }
+  }
+-diff --git a/dlls/ntdll/signal_i386.c b/dlls/ntdll/signal_i386.c
+-index 98ce76c8e27..e31c3d6b0b8 100644
+---- a/dlls/ntdll/signal_i386.c
+-+++ b/dlls/ntdll/signal_i386.c
+-@@ -2534,8 +2534,6 @@ NTSTATUS WINAPI NtSetLdtEntries( ULONG sel1, LDT_ENTRY entry1, ULONG sel2, LDT_E
++diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
++index a52490a096b..7b04be577ab 100644
++--- a/dlls/ntdll/unix/signal_i386.c
+++++ b/dlls/ntdll/unix/signal_i386.c
++@@ -502,8 +502,6 @@ NTSTATUS WINAPI NtSetLdtEntries( ULONG sel1, LDT_ENTRY entry1, ULONG sel2, LDT_E
+      sigset_t sigset;
+  
+      if (sel1 >> 16 || sel2 >> 16) return STATUS_INVALID_LDT_DESCRIPTOR;
+diff --git a/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch b/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
+index dbb40f85a..f38451b08 100644
+--- a/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
++++ b/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
+@@ -52,7 +52,7 @@ index 26d688c3abe..87c5a99a65e 100644
+  #define NONAMELESSUNION
+  #define NONAMELESSSTRUCT
+  #include "ntstatus.h"
+-@@ -3096,6 +3104,38 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *ucontext )
++@@ -3089,6 +3097,104 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *ucontext )
+      restore_context( &context, ucontext );
+  }
+  
+@@ -88,13 +88,7 @@ index 26d688c3abe..87c5a99a65e 100644
+ +    ctx->uc_mcontext.gregs[REG_RIP] = (ULONG64)__wine_syscall_dispatcher;
+ +}
+ +#endif
+- 
+- /***********************************************************************
+-  *           __wine_set_signal_handler   (NTDLL.@)
+-@@ -3266,6 +3306,72 @@ void signal_init_thread( TEB *teb )
+- #endif
+- }
+- 
+++
+ +#ifdef HAVE_SECCOMP
+ +static int sc_seccomp(unsigned int operation, unsigned int flags, void *args)
+ +{
+@@ -160,11 +154,10 @@ index 26d688c3abe..87c5a99a65e 100644
+ +    WARN("Built without seccomp.\n");
+ +#endif
+ +}
+-+
+- /**********************************************************************
+-  *		signal_init_process
+-  */
+-@@ -3298,6 +3404,9 @@ void signal_init_process(void)
++ 
++ /***********************************************************************
++  *           __wine_set_signal_handler   (NTDLL.@)
++@@ -3134,6 +3240,9 @@ void signal_init_process(void)
+      sig_act.sa_sigaction = trap_handler;
+      if (sigaction( SIGTRAP, &sig_act, NULL ) == -1) goto error;
+  #endif
+ 
+diff --git a/patches/ntdll-ThreadTime/0006-ntdll-Fill-process-virtual-memory-counters-in-NtQuer.patch b/patches/ntdll-ThreadTime/0006-ntdll-Fill-process-virtual-memory-counters-in-NtQuer.patch
+index f74a81b37..4656891e3 100644
+--- a/patches/ntdll-ThreadTime/0006-ntdll-Fill-process-virtual-memory-counters-in-NtQuer.patch
++++ b/patches/ntdll-ThreadTime/0006-ntdll-Fill-process-virtual-memory-counters-in-NtQuer.patch
+@@ -13,10 +13,10 @@ FIXME: fill_VM_COUNTERS now uses a different method ... which one is better?
+  4 files changed, 41 insertions(+), 1 deletion(-)
+ 
+ diff --git a/dlls/ntdll/nt.c b/dlls/ntdll/nt.c
+-index a21a8bcceee..608525347ca 100644
++index 7c2945f0a73..abb2d2176d6 100644
+ --- a/dlls/ntdll/nt.c
+ +++ b/dlls/ntdll/nt.c
+-@@ -2703,8 +2703,11 @@ NTSTATUS WINAPI NtQuerySystemInformation(
++@@ -2686,8 +2686,11 @@ NTSTATUS WINAPI NtQuerySystemInformation(
+                              /* spi->ti will be set later on */
+  
+                              if (reply->unix_pid != -1)
+@@ -29,10 +29,10 @@ index a21a8bcceee..608525347ca 100644
+                          }
+                          len += procstructlen;
+ diff --git a/dlls/ntdll/ntdll_misc.h b/dlls/ntdll/ntdll_misc.h
+-index b4e3c7d5c83..15f72631f55 100644
++index e85f3a3b900..b45b9a02bb1 100644
+ --- a/dlls/ntdll/ntdll_misc.h
+ +++ b/dlls/ntdll/ntdll_misc.h
+-@@ -297,6 +297,7 @@ void     WINAPI LdrInitializeThunk(CONTEXT*,void**,ULONG_PTR,ULONG_PTR);
++@@ -285,6 +285,7 @@ void     WINAPI LdrInitializeThunk(CONTEXT*,void**,ULONG_PTR,ULONG_PTR);
+  /* process / thread time */
+  extern BOOL read_process_time(int unix_pid, int unix_tid, unsigned long clk_tck,
+                                LARGE_INTEGER *kernel, LARGE_INTEGER *user) DECLSPEC_HIDDEN;
+@@ -41,10 +41,10 @@ index b4e3c7d5c83..15f72631f55 100644
+  /* string functions */
+  int    __cdecl NTDLL_tolower( int c );
+ diff --git a/dlls/ntdll/process.c b/dlls/ntdll/process.c
+-index e59c255e327..71233f92853 100644
++index c066610ebca..f2dddb18052 100644
+ --- a/dlls/ntdll/process.c
+ +++ b/dlls/ntdll/process.c
+-@@ -186,7 +186,7 @@ static void fill_VM_COUNTERS(VM_COUNTERS* pvmi)
++@@ -192,7 +192,7 @@ static void fill_VM_COUNTERS(VM_COUNTERS* pvmi)
+  
+  static void fill_VM_COUNTERS(VM_COUNTERS* pvmi)
+  {
+@@ -54,11 +54,11 @@ index e59c255e327..71233f92853 100644
+  
+  #endif
+ diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+-index a2a999f8996..f5f932ae703 100644
++index b7d4e399f62..21e8b0c08f8 100644
+ --- a/dlls/ntdll/thread.c
+ +++ b/dlls/ntdll/thread.c
+-@@ -366,6 +366,42 @@ TEB *thread_init(void)
+-     return teb;
++@@ -385,6 +385,42 @@ void WINAPI RtlExitUserThread( ULONG status )
++     for (;;) unix_funcs->exit_thread( status );
+  }
+  
+ +BOOL read_process_memory_stats(int unix_pid, VM_COUNTERS *pvmi)
+@@ -99,7 +99,7 @@ index a2a999f8996..f5f932ae703 100644
+ +}
+  
+  /***********************************************************************
+-  *           abort_thread
++  *           start_thread
+ -- 
+ 2.26.2
+ 
+diff --git a/patches/ntdll-Threading/0001-ntdll-Fix-race-condition-when-threads-are-killed-dur.patch b/patches/ntdll-Threading/0001-ntdll-Fix-race-condition-when-threads-are-killed-dur.patch
+index e463ba9e7..9f370c21d 100644
+--- a/patches/ntdll-Threading/0001-ntdll-Fix-race-condition-when-threads-are-killed-dur.patch
++++ b/patches/ntdll-Threading/0001-ntdll-Fix-race-condition-when-threads-are-killed-dur.patch
+@@ -1,4 +1,4 @@
+-From f8e12f51bebca8cda3be339bcc216ca8cc60a718 Mon Sep 17 00:00:00 2001
++From 5f34c6a4429025ee71616e677e0e59342bee17b0 Mon Sep 17 00:00:00 2001
+ From: Sebastian Lackner <sebastian@fds-team.de>
+ Date: Wed, 25 Feb 2015 22:45:42 +0100
+ Subject: [PATCH] ntdll: Fix race-condition when threads are killed during
+@@ -19,10 +19,10 @@ fix the most critical one (messed up refcounting of threads) for now.
+  1 file changed, 7 insertions(+), 1 deletion(-)
+ 
+ diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+-index b25f87e437..5fbd9e06c3 100644
++index bb11521cf69..fee26ccd21d 100644
+ --- a/dlls/ntdll/thread.c
+ +++ b/dlls/ntdll/thread.c
+-@@ -336,6 +336,7 @@ void exit_thread( int status )
++@@ -298,6 +298,7 @@ TEB *thread_init(void)
+  void WINAPI RtlExitUserThread( ULONG status )
+  {
+      static void *prev_teb;
+@@ -30,7 +30,7 @@ index b25f87e437..5fbd9e06c3 100644
+      TEB *teb;
+  
+      if (status)  /* send the exit code to the server (0 is already the default) */
+-@@ -349,7 +350,7 @@ void WINAPI RtlExitUserThread( ULONG status )
++@@ -311,7 +312,7 @@ void WINAPI RtlExitUserThread( ULONG status )
+          SERVER_END_REQ;
+      }
+  
+@@ -38,8 +38,8 @@ index b25f87e437..5fbd9e06c3 100644
+ +    if (InterlockedCompareExchange( &nb_threads, 0, 0 ) <= 0)
+      {
+          LdrShutdownProcess();
+-         pthread_sigmask( SIG_BLOCK, &server_block_set, NULL );
+-@@ -372,6 +373,11 @@ void WINAPI RtlExitUserThread( ULONG status )
++         unix_funcs->exit_process( status );
++@@ -333,6 +334,11 @@ void WINAPI RtlExitUserThread( ULONG status )
+          }
+      }
+  
+@@ -48,7 +48,7 @@ index b25f87e437..5fbd9e06c3 100644
+ +    pthread_sigmask( SIG_BLOCK, &sigset, NULL );
+ +    if (!InterlockedDecrement( &nb_threads )) _exit( status );
+ +
+-     signal_exit_thread( status );
++     for (;;) unix_funcs->exit_thread( status );
+  }
+  
+ -- 
+diff --git a/patches/ntdll-WRITECOPY/0003-ntdll-Setup-a-temporary-signal-handler-during-proces.patch b/patches/ntdll-WRITECOPY/0003-ntdll-Setup-a-temporary-signal-handler-during-proces.patch
+index 27278da60..c5f334858 100644
+--- a/patches/ntdll-WRITECOPY/0003-ntdll-Setup-a-temporary-signal-handler-during-proces.patch
++++ b/patches/ntdll-WRITECOPY/0003-ntdll-Setup-a-temporary-signal-handler-during-proces.patch
+@@ -15,22 +15,22 @@ Subject: [PATCH] ntdll: Setup a temporary signal handler during process
+  7 files changed, 79 insertions(+)
+ 
+ diff --git a/dlls/ntdll/ntdll_misc.h b/dlls/ntdll/ntdll_misc.h
+-index 58b688d06bd..f3ebfb72d32 100644
++index 427cdaad441..562f5ec8d4c 100644
+ --- a/dlls/ntdll/ntdll_misc.h
+ +++ b/dlls/ntdll/ntdll_misc.h
+-@@ -84,6 +84,7 @@ extern NTSTATUS signal_alloc_thread( TEB *teb ) DECLSPEC_HIDDEN;
+- extern void signal_free_thread( TEB *teb ) DECLSPEC_HIDDEN;
+- extern void signal_init_thread( TEB *teb ) DECLSPEC_HIDDEN;
++@@ -80,6 +80,7 @@ extern LPCSTR debugstr_ObjectAttributes(const OBJECT_ATTRIBUTES *oa) DECLSPEC_HI
++ extern SIZE_T signal_stack_size DECLSPEC_HIDDEN;
++ extern SIZE_T signal_stack_mask DECLSPEC_HIDDEN;
+  extern void signal_init_process(void) DECLSPEC_HIDDEN;
+ +extern void signal_init_early(void) DECLSPEC_HIDDEN;
+  extern void signal_start_thread( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend ) DECLSPEC_HIDDEN;
+  extern void signal_start_process( LPTHREAD_START_ROUTINE entry, BOOL suspend ) DECLSPEC_HIDDEN;
+- extern void DECLSPEC_NORETURN signal_exit_thread( int status ) DECLSPEC_HIDDEN;
++ extern void version_init(void) DECLSPEC_HIDDEN;
+ diff --git a/dlls/ntdll/signal_arm.c b/dlls/ntdll/signal_arm.c
+-index 31280edce47..f903eb93434 100644
++index e66cf922f91..dcfdeaa83ad 100644
+ --- a/dlls/ntdll/signal_arm.c
+ +++ b/dlls/ntdll/signal_arm.c
+-@@ -1031,6 +1031,12 @@ void signal_init_process(void)
++@@ -988,6 +988,12 @@ void signal_init_process(void)
+      exit(1);
+  }
+  
+@@ -44,11 +44,11 @@ index 31280edce47..f903eb93434 100644
+  /***********************************************************************
+   *            RtlUnwind  (NTDLL.@)
+ diff --git a/dlls/ntdll/signal_arm64.c b/dlls/ntdll/signal_arm64.c
+-index 9f84d3fbfd1..8ab83a1d142 100644
++index c87f99f0c4c..fed76574dbc 100644
+ --- a/dlls/ntdll/signal_arm64.c
+ +++ b/dlls/ntdll/signal_arm64.c
+-@@ -1293,6 +1293,12 @@ void signal_init_thread( TEB *teb )
+-     pthread_setspecific( teb_key, teb );
++@@ -1303,6 +1303,12 @@ int CDECL __wine_set_signal_handler(unsigned int sig, wine_signal_handler wsh)
++     return 0;
+  }
+  
+ +/**********************************************************************
+@@ -88,7 +88,7 @@ index 238d4eacf63..32c6eba0e51 100644
+ +        /* fall-through */
+ +    default:
+ +        WINE_ERR( "Got unexpected trap %d during process initialization\n", get_trap_code(context) );
+-+        abort_thread(1);
+++        unix_funcs->abort_thread(1);
+ +        break;
+ +    }
+ +}
+@@ -132,11 +132,11 @@ index 238d4eacf63..32c6eba0e51 100644
+  /*******************************************************************
+   *		RtlUnwind (NTDLL.@)
+ diff --git a/dlls/ntdll/signal_powerpc.c b/dlls/ntdll/signal_powerpc.c
+-index 9df6eff31f4..e79fca3abce 100644
++index a23f6b6e4d5..c3b4b6ffd42 100644
+ --- a/dlls/ntdll/signal_powerpc.c
+ +++ b/dlls/ntdll/signal_powerpc.c
+-@@ -1047,6 +1047,12 @@ void signal_init_thread( TEB *teb )
+-     pthread_setspecific( teb_key, teb );
++@@ -1009,6 +1009,12 @@ int CDECL __wine_set_signal_handler(unsigned int sig, wine_signal_handler wsh)
++     return 0;
+  }
+  
+ +/**********************************************************************
+
+diff --git a/patches/patchinstall.sh b/patches/patchinstall.sh
+index 82c5545db..6e38522a2 100755
+--- a/patches/patchinstall.sh
++++ b/patches/patchinstall.sh
+@@ -175,7 +175,6 @@ patch_enable_all ()
+ 	enable_ntdll_FileDispositionInformation="$1"
+ 	enable_ntdll_FileFsFullSizeInformation="$1"
+ 	enable_ntdll_Fix_Alignment="$1"
+-	enable_ntdll_ForceBottomUpAlloc="$1"
+ 	enable_ntdll_HashLinks="$1"
+ 	enable_ntdll_Heap_Improvements="$1"
+ 	enable_ntdll_Hide_Wine_Exports="$1"
+@@ -626,9 +625,6 @@ patch_enable ()
+ 		ntdll-Fix_Alignment)
+ 			enable_ntdll_Fix_Alignment="$2"
+ 			;;
+-		ntdll-ForceBottomUpAlloc)
+-			enable_ntdll_ForceBottomUpAlloc="$2"
+-			;;
+ 		ntdll-HashLinks)
+ 			enable_ntdll_HashLinks="$2"
+ 			;;
+@@ -3867,35 +3863,6 @@ if test "$enable_ntdll_Fix_Alignment" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
+-# Patchset ntdll-ForceBottomUpAlloc
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#48175] AION (64 bit) - crashes in crysystem.dll.CryFree() due to high memory pointers allocated
+-# |   *	[#46568] 64-bit msxml6.dll from Microsoft Core XML Services 6.0 redist package fails to load (Wine doesn't respect
+-# | 	44-bit user-mode VA limitation from Windows < 8.1)
+-# |
+-# | Modified files:
+-# |   *	dlls/ntdll/virtual.c, include/wine/library.h, libs/wine/mmap.c, libs/wine/wine.map
+-# |
+-if test "$enable_ntdll_ForceBottomUpAlloc" -eq 1; then
+-	patch_apply ntdll-ForceBottomUpAlloc/0001-ntdll-Stop-search-on-mmap-error-in-try_map_free_area.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0002-ntdll-Use-MAP_FIXED_NOREPLACE-flag-in-try_map_free_a.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0003-ntdll-Force-bottom-up-allocation-order-for-64-bit-ar.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0004-ntdll-Increase-step-after-failed-map-attempt-in-try_.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0005-libs-wine-Add-functions-for-managing-free-area-list.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0006-ntdll-Use-free-area-list-for-virtual-memory-allocati.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0007-ntdll-Permanently-exclude-natively-mapped-areas-from.patch
+-	(
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Stop search on mmap() error in try_map_free_area().", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Use MAP_FIXED_NOREPLACE flag in try_map_free_area() if available.", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Force bottom up allocation order for 64 bit arch unless top down is requested.", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Increase step after failed map attempt in try_map_free_area().", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "libs/wine: Add functions for managing free area list.", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Use free area list for virtual memory allocation.", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Permanently exclude natively mapped areas from free areas list.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+ # Patchset ntdll-HashLinks
+ # |
+ # | Modified files:
+@@ -4002,11 +3969,11 @@ fi
+ # | 	dlls/krnl386.exe16/kernel16_private.h, dlls/krnl386.exe16/ne_module.c, dlls/krnl386.exe16/ne_segment.c,
+ # | 	dlls/krnl386.exe16/task.c, dlls/krnl386.exe16/thunk.c, dlls/krnl386.exe16/wowthunk.c, dlls/ntdll/actctx.c,
+ # | 	dlls/ntdll/directory.c, dlls/ntdll/loader.c, dlls/ntdll/locale.c, dlls/ntdll/ntdll_misc.h, dlls/ntdll/path.c,
+-# | 	dlls/ntdll/process.c, dlls/ntdll/signal_i386.c, dlls/ntdll/signal_x86_64.c, dlls/ntdll/tests/exception.c,
+-# | 	dlls/ntdll/thread.c, dlls/system.drv16/system.c, dlls/toolhelp.dll16/toolhelp.c, dlls/user.exe16/message.c,
+-# | 	dlls/user.exe16/user.c, dlls/user.exe16/window.c, include/winternl.h, libs/wine/loader.c, server/mapping.c,
+-# | 	tools/winebuild/build.h, tools/winebuild/import.c, tools/winebuild/parser.c, tools/winebuild/relay.c,
+-# | 	tools/winebuild/res32.c, tools/winebuild/spec16.c, tools/winebuild/spec32.c, tools/winebuild/utils.c
++# | 	dlls/ntdll/process.c, dlls/ntdll/signal_i386.c, dlls/ntdll/tests/exception.c, dlls/ntdll/thread.c,
++# | 	dlls/system.drv16/system.c, dlls/toolhelp.dll16/toolhelp.c, dlls/user.exe16/message.c, dlls/user.exe16/user.c,
++# | 	dlls/user.exe16/window.c, include/winternl.h, libs/wine/loader.c, server/mapping.c, tools/winebuild/build.h,
++# | 	tools/winebuild/import.c, tools/winebuild/parser.c, tools/winebuild/relay.c, tools/winebuild/res32.c,
++# | 	tools/winebuild/spec16.c, tools/winebuild/spec32.c, tools/winebuild/utils.c
+ # |
+ if test "$enable_winebuild_Fake_Dlls" -eq 1; then
+ 	patch_apply winebuild-Fake_Dlls/0001-kernel32-tests-Add-basic-tests-for-fake-dlls.patch
+@@ -4149,7 +4116,7 @@ fi
+ # Patchset ntdll-NtSetLdtEntries
+ # |
+ # | Modified files:
+-# |   *	dlls/kernel32/tests/thread.c, dlls/ntdll/signal_i386.c, libs/wine/ldt.c
++# |   *	dlls/kernel32/tests/thread.c, dlls/ntdll/unix/signal_i386.c, libs/wine/ldt.c
+ # |
+ if test "$enable_ntdll_NtSetLdtEntries" -eq 1; then
+ 	patch_apply ntdll-NtSetLdtEntries/0001-ntdll-Implement-NtSetLdtEntries.patch
+
+diff --git a/patches/winebuild-Fake_Dlls/0003-winebuild-Generate-syscall-thunks-for-ntdll-exports.patch b/patches/winebuild-Fake_Dlls/0003-winebuild-Generate-syscall-thunks-for-ntdll-exports.patch
+index b7d57bffe..8203ef163 100644
+--- a/patches/winebuild-Fake_Dlls/0003-winebuild-Generate-syscall-thunks-for-ntdll-exports.patch
++++ b/patches/winebuild-Fake_Dlls/0003-winebuild-Generate-syscall-thunks-for-ntdll-exports.patch
+@@ -14,23 +15,22 @@ Based on a patch by Erich E. Hoover.
+  tools/winebuild/spec16.c     |  22 +-------
+  tools/winebuild/spec32.c     | 104 +++++++++++++++++++++++++++++++++++
+  tools/winebuild/utils.c      |  21 +++++++
+- 9 files changed, 207 insertions(+), 27 deletions(-)
++ 10 files changed, 208 insertions(+), 27 deletions(-)
+ 
+ diff --git a/dlls/ntdll/signal_i386.c b/dlls/ntdll/signal_i386.c
+-index 5353ab4df2ce..527ba01672e1 100644
++index 5fd54071ffd..950408cbc38 100644
+ --- a/dlls/ntdll/signal_i386.c
+ +++ b/dlls/ntdll/signal_i386.c
+-@@ -476,6 +476,9 @@ static ULONG first_ldt_entry = 32;
++@@ -449,6 +449,8 @@ static ULONG first_ldt_entry = 32;
+  
+  static wine_signal_handler handlers[256];
+  
+-+extern void DECLSPEC_NORETURN __wine_syscall_dispatcher( void );
+ +extern NTSTATUS WINAPI __syscall_NtGetContextThread( HANDLE handle, CONTEXT *context );
+ +
+  enum i386_trap_code
+  {
+      TRAP_x86_UNKNOWN    = -1,  /* Unknown fault (TRAP_sig not defined) */
+-@@ -1514,7 +1517,7 @@ NTSTATUS CDECL DECLSPEC_HIDDEN __regs_NtGetContextThread( DWORD edi, DWORD esi,
++@@ -1487,7 +1489,7 @@ NTSTATUS CDECL DECLSPEC_HIDDEN __regs_NtGetContextThread( DWORD edi, DWORD esi,
+          {
+              context->Ebp    = ebp;
+              context->Esp    = (DWORD)&retaddr;
+@@ -39,17 +39,8 @@ index 5353ab4df2ce..527ba01672e1 100644
+              context->SegCs  = get_cs();
+              context->SegSs  = get_ds();
+              context->EFlags = eflags;
+-@@ -2561,6 +2564,8 @@ NTSTATUS signal_alloc_thread( TEB *teb )
+-     }
+-     else thread_data->fs = gdt_fs_sel;
+- 
+-+    teb->WOW32Reserved = __wine_syscall_dispatcher;
+-+
+-     return STATUS_SUCCESS;
+- }
+- 
+ diff --git a/dlls/ntdll/tests/exception.c b/dlls/ntdll/tests/exception.c
+-index a5e6faa461a3..51938bf84cc1 100644
++index a5e6faa461a..51938bf84cc 100644
+ --- a/dlls/ntdll/tests/exception.c
+ +++ b/dlls/ntdll/tests/exception.c
+ @@ -1643,6 +1643,8 @@ static void test_thread_context(void)
+@@ -61,8 +52,37 @@ index a5e6faa461a3..51938bf84cc1 100644
+      /* segment registers clear the high word */
+      ok( context.SegCs == LOWORD(expect.SegCs), "wrong SegCs %08x/%08x\n", context.SegCs, expect.SegCs );
+      ok( context.SegDs == LOWORD(expect.SegDs), "wrong SegDs %08x/%08x\n", context.SegDs, expect.SegDs );
++diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
++index bb11521cf69..edd6c4dfa99 100644
++--- a/dlls/ntdll/thread.c
+++++ b/dlls/ntdll/thread.c
++@@ -212,6 +212,8 @@ void map_user_shared_data(void)
++     NtClose( section );
++ }
++ 
+++extern void DECLSPEC_NORETURN __wine_syscall_dispatcher( void );
+++
++ /***********************************************************************
++  *           thread_init
++  *
++@@ -248,6 +250,7 @@ TEB *thread_init(void)
++     unix_funcs->init_threading( &nb_threads, &__wine_ldt_copy );
++     unix_funcs->alloc_thread( teb );
++     unix_funcs->init_thread( teb );
+++    teb->WOW32Reserved = __wine_syscall_dispatcher;
++ 
++     peb = teb->Peb;
++     peb->FastPebLock        = &peb_lock;
++@@ -493,6 +496,7 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, SECURITY_DESCRIPTOR *descr,
++     teb->Tib.StackBase = stack.StackBase;
++     teb->Tib.StackLimit = stack.StackLimit;
++     teb->DeallocationStack = stack.DeallocationStack;
+++    teb->WOW32Reserved = __wine_syscall_dispatcher;
++ 
++     thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
++     thread_data->request_fd  = request_pipe[1];
+ diff --git a/include/winternl.h b/include/winternl.h
+-index 0f808d71dd33..d641ed1436ad 100644
++index 44a58cadc7a..065f3d24f52 100644
+ --- a/include/winternl.h
+ +++ b/include/winternl.h
+ @@ -359,7 +359,7 @@ typedef struct _TEB
+
+diff --git a/patches/winebuild-Fake_Dlls/0005-winebuild-Add-stub-functions-in-fake-dlls.patch b/patches/winebuild-Fake_Dlls/0005-winebuild-Add-stub-functions-in-fake-dlls.patch
+index 1575836a6..edbed0e5e 100644
+--- a/patches/winebuild-Fake_Dlls/0005-winebuild-Add-stub-functions-in-fake-dlls.patch
++++ b/patches/winebuild-Fake_Dlls/0005-winebuild-Add-stub-functions-in-fake-dlls.patch
+@@ -60,15 +60,15 @@ index 4e7a15970cb..ec173c94a8e 100644
+      UnmapViewOfFile(ptr);
+      CloseHandle(map);
+      CloseHandle(file);
+-diff --git a/dlls/ntdll/signal_i386.c b/dlls/ntdll/signal_i386.c
+-index 04fdaf564b3..1dcc54895dc 100644
+---- a/dlls/ntdll/signal_i386.c
+-+++ b/dlls/ntdll/signal_i386.c
+-@@ -479,6 +479,39 @@ static wine_signal_handler handlers[256];
++diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
++index edd6c4dfa99..678af513264 100644
++--- a/dlls/ntdll/thread.c
+++++ b/dlls/ntdll/thread.c
++@@ -214,6 +214,39 @@ void map_user_shared_data(void)
++ 
+  extern void DECLSPEC_NORETURN __wine_syscall_dispatcher( void );
+- extern NTSTATUS WINAPI __syscall_NtGetContextThread( HANDLE handle, CONTEXT *context );
+  
+-+static void* WINAPI __wine_fakedll_dispatcher( const char *module, ULONG ord )
+++static void *WINAPI __wine_fakedll_dispatcher( const char *module, ULONG ord )
+ +{
+ +    UNICODE_STRING name;
+ +    NTSTATUS status;
+@@ -101,19 +101,27 @@ index 04fdaf564b3..1dcc54895dc 100644
+ +    return proc;
+ +}
+ +
+- enum i386_trap_code
+- {
+-     TRAP_x86_UNKNOWN    = -1,  /* Unknown fault (TRAP_sig not defined) */
+-@@ -2565,6 +2598,7 @@ NTSTATUS signal_alloc_thread( TEB *teb )
+-     else thread_data->fs = gdt_fs_sel;
++ /***********************************************************************
++  *           thread_init
++  *
++@@ -251,6 +284,7 @@ TEB *thread_init(void)
++     unix_funcs->alloc_thread( teb );
++     unix_funcs->init_thread( teb );
++     teb->WOW32Reserved = __wine_syscall_dispatcher;
+++    teb->Spare2 = (ULONG_PTR)__wine_fakedll_dispatcher;
+  
++     peb = teb->Peb;
++     peb->FastPebLock        = &peb_lock;
++@@ -497,6 +531,7 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, SECURITY_DESCRIPTOR *descr,
++     teb->Tib.StackLimit = stack.StackLimit;
++     teb->DeallocationStack = stack.DeallocationStack;
+      teb->WOW32Reserved = __wine_syscall_dispatcher;
+-+    teb->Spare2 = __wine_fakedll_dispatcher;
+++    teb->Spare2 = (ULONG_PTR)__wine_fakedll_dispatcher;
+  
+-     return STATUS_SUCCESS;
+- }
++     thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
++     thread_data->request_fd  = request_pipe[1];
+ diff --git a/include/winternl.h b/include/winternl.h
+-index 26ee5b601fb..03f86dae253 100644
++index 065f3d24f52..199b8fc52f2 100644
+ --- a/include/winternl.h
+ +++ b/include/winternl.h
+ @@ -398,7 +398,7 @@ typedef struct _TEB
+
+diff --git a/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch b/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
+index 6ea842a8f..eac187915 100644
+--- a/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
++++ b/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
+@@ -40,31 +39,11 @@ index 1f525194ce7..21af7b4ce7a 100644
+          {
+              todo_wine ok(0, "%s: Export is a stub-function, skipping\n", func_name);
+              continue;
+-diff --git a/dlls/ntdll/signal_x86_64.c b/dlls/ntdll/signal_x86_64.c
+-index 5defcd6a7af..c2936045c5d 100644
+---- a/dlls/ntdll/signal_x86_64.c
+-+++ b/dlls/ntdll/signal_x86_64.c
+-@@ -354,6 +354,7 @@ static inline void set_sigcontext( const CONTEXT *context, ucontext_t *sigcontex
+- #endif
+- }
+- 
+-+extern void DECLSPEC_NORETURN __wine_syscall_dispatcher( void );
+- 
+- /***********************************************************************
+-  * Definitions for Win32 unwind tables
+-@@ -3142,6 +3143,7 @@ void signal_init_threading(void)
+-  */
+- NTSTATUS signal_alloc_thread( TEB *teb )
+- {
+-+    teb->WOW32Reserved = __wine_syscall_dispatcher;
+-     return STATUS_SUCCESS;
+- }
+- 
+ diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+-index e5ff24f34f1..ddaf41637d0 100644
++index 678af513264..297893d8898 100644
+ --- a/dlls/ntdll/thread.c
+ +++ b/dlls/ntdll/thread.c
+-@@ -56,6 +56,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(thread);
++@@ -54,6 +54,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(thread);
+  
+  struct _KUSER_SHARED_DATA *user_shared_data = NULL;
+  
+  
+diff --git a/patches/ws2_32-WSACleanup/0002-ws2_32-Invalidate-client-side-file-descriptor-cache-.patch b/patches/ws2_32-WSACleanup/0002-ws2_32-Invalidate-client-side-file-descriptor-cache-.patch
+index 384fc90af..8d92e3765 100644
+--- a/patches/ws2_32-WSACleanup/0002-ws2_32-Invalidate-client-side-file-descriptor-cache-.patch
++++ b/patches/ws2_32-WSACleanup/0002-ws2_32-Invalidate-client-side-file-descriptor-cache-.patch
+@@ -29,10 +29,10 @@ index 42532bd9f1c..ba46f170670 100644
+  @ cdecl wine_server_handle_to_fd(long long ptr ptr)
+  @ cdecl wine_server_release_fd(long long)
+ diff --git a/dlls/ntdll/server.c b/dlls/ntdll/server.c
+-index ed4e3f25531..ae1e41a485e 100644
++index c7788b99e2d..54291d0a909 100644
+ --- a/dlls/ntdll/server.c
+ +++ b/dlls/ntdll/server.c
+-@@ -687,6 +687,14 @@ void CDECL wine_server_release_fd( HANDLE handle, int unix_fd )
++@@ -239,6 +239,14 @@ void CDECL wine_server_release_fd( HANDLE handle, int unix_fd )
+      unix_funcs->server_release_fd( handle, unix_fd );
+  }
+  
+@@ -48,22 +48,22 @@ index ed4e3f25531..ae1e41a485e 100644
+  /***********************************************************************
+   *           server_init_process
+ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+-index 4a3f101d301..8b10964603e 100644
++index aa020845bb9..0ef08edc474 100644
+ --- a/dlls/ntdll/unix/loader.c
+ +++ b/dlls/ntdll/unix/loader.c
+-@@ -1000,6 +1000,7 @@ static struct unix_funcs unix_funcs =
+-     wine_server_call,
++@@ -1014,6 +1014,7 @@ static struct unix_funcs unix_funcs =
++     server_wait,
++     server_queue_process_apc,
+      server_send_fd,
+-     server_remove_fd_from_cache,
+ +    server_remove_fds_from_cache_by_type,
+      server_get_unix_fd,
+      server_fd_to_handle,
+      server_handle_to_fd,
+ diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+-index 8dc3f33bc80..dd2cb6cf5e2 100644
++index 8889c5d4b12..929ff354d65 100644
+ --- a/dlls/ntdll/unix/server.c
+ +++ b/dlls/ntdll/unix/server.c
+-@@ -559,6 +559,26 @@ int CDECL server_remove_fd_from_cache( HANDLE handle )
++@@ -983,6 +983,26 @@ static int remove_fd_from_cache( HANDLE handle )
+      return fd;
+  }
+  
+@@ -91,34 +91,34 @@ index 8dc3f33bc80..dd2cb6cf5e2 100644
+  /***********************************************************************
+   *           server_get_unix_fd
+ diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+-index 2bf39f85371..32c03fd8983 100644
++index 0694426dddb..5c13dce0b0a 100644
+ --- a/dlls/ntdll/unix/unix_private.h
+ +++ b/dlls/ntdll/unix/unix_private.h
+-@@ -63,6 +63,7 @@ extern void CDECL dbg_init(void) DECLSPEC_HIDDEN;
+- extern unsigned int CDECL server_call_unlocked( void *req_ptr ) DECLSPEC_HIDDEN;
++@@ -68,6 +68,7 @@ extern unsigned int CDECL server_wait( const select_op_t *select_op, data_size_t
++                                        const LARGE_INTEGER *timeout ) DECLSPEC_HIDDEN;
++ extern unsigned int CDECL server_queue_process_apc( HANDLE process, const apc_call_t *call, apc_result_t *result ) DECLSPEC_HIDDEN;
+  extern void CDECL server_send_fd( int fd ) DECLSPEC_HIDDEN;
+- extern int CDECL server_remove_fd_from_cache( HANDLE handle ) DECLSPEC_HIDDEN;
+ +extern void CDECL server_remove_fds_from_cache_by_type( enum server_fd_type type ) DECLSPEC_HIDDEN;
+  extern int CDECL server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
+                                       int *needs_close, enum server_fd_type *type,
+                                       unsigned int *options ) DECLSPEC_HIDDEN;
+ diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
+-index 142e8956e7e..452c725dfde 100644
++index 323141d3840..0189c247b7a 100644
+ --- a/dlls/ntdll/unixlib.h
+ +++ b/dlls/ntdll/unixlib.h
+-@@ -25,7 +25,7 @@
+- #include "wine/debug.h"
++@@ -27,7 +27,7 @@
++ struct ldt_copy;
+  
+  /* increment this when you change the function table */
+--#define NTDLL_UNIXLIB_VERSION 10
+-+#define NTDLL_UNIXLIB_VERSION 11
++-#define NTDLL_UNIXLIB_VERSION 13
+++#define NTDLL_UNIXLIB_VERSION 14
+  
+  struct unix_funcs
+  {
+-@@ -55,6 +55,7 @@ struct unix_funcs
+-     unsigned int  (CDECL *server_call)( void *req_ptr );
++@@ -80,6 +80,7 @@ struct unix_funcs
++                                         const LARGE_INTEGER *timeout );
++     unsigned int  (CDECL *server_queue_process_apc)( HANDLE process, const apc_call_t *call, apc_result_t *result );
+      void          (CDECL *server_send_fd)( int fd );
+-     int           (CDECL *server_remove_fd_from_cache)( HANDLE handle );
+ +    void          (CDECL *server_remove_fds_from_cache_by_type)( enum server_fd_type type );
+      int           (CDECL *server_get_unix_fd)( HANDLE handle, unsigned int wanted_access, int *unix_fd,
+                                                 int *needs_close, enum server_fd_type *type, unsigned int *options );
+
+diff --git a/patches/eventfd_synchronization/definition b/patches/eventfd_synchronization/definition
+index 9598a4c55..e21e14584 100644
+--- a/patches/eventfd_synchronization/definition
++++ b/patches/eventfd_synchronization/definition
+@@ -9,4 +9,6 @@ Depends: server-Realtime_Priority
+ Depends: advapi32-Token_Integrity_Level
+ Depends: ntdll-Junction_Points
+ Depends: kernel32-K32GetPerformanceInfo
+-Depends: user32-rawinput-mouse
+\ No newline at end of file
++Depends: user32-rawinput-mouse
++Depends: server-Desktop_Refcount
++Disabled: true
+\ No newline at end of file
+diff --git a/patches/ntdll-Junction_Points/0001-ntdll-Add-support-for-junction-point-creation.patch b/patches/ntdll-Junction_Points/0001-ntdll-Add-support-for-junction-point-creation.patch
+index baa163978..bf05ff102 100644
+--- a/patches/ntdll-Junction_Points/0001-ntdll-Add-support-for-junction-point-creation.patch
++++ b/patches/ntdll-Junction_Points/0001-ntdll-Add-support-for-junction-point-creation.patch
+@@ -72,7 +72,7 @@ index 1adc1e094ec..3e10703c5da 100644
+ +    NTSTATUS status;
+ +    int i;
+ +
+-+    if ((status = server_get_unix_fd( handle, FILE_SPECIAL_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
+++    if ((status = unix_funcs->server_get_unix_fd( handle, FILE_SPECIAL_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
+ +        return status;
+ +
+ +    if ((status = server_get_unix_name( handle, &unix_src )))
+ 
+diff --git a/patches/ntdll-Junction_Points/0002-ntdll-Add-support-for-reading-junction-points.patch b/patches/ntdll-Junction_Points/0002-ntdll-Add-support-for-reading-junction-points.patch
+index d4eeecb36..f8b80c693 100644
+--- a/patches/ntdll-Junction_Points/0002-ntdll-Add-support-for-reading-junction-points.patch
++++ b/patches/ntdll-Junction_Points/0002-ntdll-Add-support-for-reading-junction-points.patch
+@@ -35,7 +35,7 @@ index 693caecffa..b9087cbf4d 100644
+ +    char *p;
+ +    int i;
+ +
+-+    if ((status = server_get_unix_fd( handle, FILE_ANY_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
+++    if ((status = unix_funcs->server_get_unix_fd( handle, FILE_ANY_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
+ +        return status;
+ +
+ +    if ((status = server_get_unix_name( handle, &unix_src )))
+ 
+diff --git a/patches/ntdll-Junction_Points/0003-ntdll-Add-support-for-deleting-junction-points.patch b/patches/ntdll-Junction_Points/0003-ntdll-Add-support-for-deleting-junction-points.patch
+index 311bf5921..0ec1c91ee 100644
+--- a/patches/ntdll-Junction_Points/0003-ntdll-Add-support-for-deleting-junction-points.patch
++++ b/patches/ntdll-Junction_Points/0003-ntdll-Add-support-for-deleting-junction-points.patch
+@@ -31,7 +31,7 @@ index b9087cbf4d..dbbb54768b 100644
+ +    NTSTATUS status;
+ +    struct stat st;
+ +
+-+    if ((status = server_get_unix_fd( handle, FILE_SPECIAL_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
+++    if ((status = unix_funcs->server_get_unix_fd( handle, FILE_SPECIAL_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
+ +        return status;
+ +
+ +    if ((status = server_get_unix_name( handle, &unix_name )))
+ 
+diff --git a/patches/ntdll-Junction_Points/0007-ntdll-Add-support-for-absolute-symlink-creation.patch b/patches/ntdll-Junction_Points/0007-ntdll-Add-support-for-absolute-symlink-creation.patch
+index 9df396a71..a0e626059 100644
+--- a/patches/ntdll-Junction_Points/0007-ntdll-Add-support-for-absolute-symlink-creation.patch
++++ b/patches/ntdll-Junction_Points/0007-ntdll-Add-support-for-absolute-symlink-creation.patch
+@@ -48,10 +48,10 @@ index dbbb54768b..62941774ec 100644
+ +        return STATUS_NOT_IMPLEMENTED;
+ +    }
+ +
+-     if ((status = server_get_unix_fd( handle, FILE_SPECIAL_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
++     if ((status = unix_funcs->server_get_unix_fd( handle, FILE_SPECIAL_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
+          return status;
+  
+-@@ -1682,6 +1698,18 @@ NTSTATUS FILE_CreateSymlink(HANDLE handle, REPARSE_DATA_BUFFER *buffer)
++@@ -1706,6 +1722,18 @@ NTSTATUS FILE_CreateSymlink(HANDLE handle, REPARSE_DATA_BUFFER *buffer)
+              strcat( magic_dest, "." );
+          strcat( magic_dest, "/" );
+      }
+ 
+diff --git a/patches/ntdll-Junction_Points/0014-ntdll-Correctly-report-file-symbolic-links-as-files.patch b/patches/ntdll-Junction_Points/0014-ntdll-Correctly-report-file-symbolic-links-as-files.patch
+index 97cce7c05..63549fa60 100644
+--- a/patches/ntdll-Junction_Points/0014-ntdll-Correctly-report-file-symbolic-links-as-files.patch
++++ b/patches/ntdll-Junction_Points/0014-ntdll-Correctly-report-file-symbolic-links-as-files.patch
+@@ -73,7 +73,7 @@ index 29a928153b9..4902dff190a 100644
+ -    char *p;
+      int i;
+  
+--    if ((status = server_get_unix_fd( handle, FILE_ANY_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
++-    if ((status = unix_funcs->server_get_unix_fd( handle, FILE_ANY_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
+ -        return status;
+ -
+ -    if ((status = server_get_unix_name( handle, &unix_src )))
+@@ -174,7 +174,7 @@ index 29a928153b9..4902dff190a 100644
+ +    ULONG flags = 0;
+ +    INT prefix_len;
+ +
+-+    if ((status = server_get_unix_fd( handle, FILE_ANY_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
+++    if ((status = unix_funcs->server_get_unix_fd( handle, FILE_ANY_ACCESS, &dest_fd, &needs_close, NULL, NULL )))
+ +        return status;
+ +
+ +    if ((status = server_get_unix_name( handle, &unix_src )))
+ 
+diff --git a/patches/ntdll-NtQueryEaFile/0001-ntdll-Improve-stub-of-NtQueryEaFile.patch b/patches/ntdll-NtQueryEaFile/0001-ntdll-Improve-stub-of-NtQueryEaFile.patch
+index a50a4bec3..5c4d4fbfd 100644
+--- a/patches/ntdll-NtQueryEaFile/0001-ntdll-Improve-stub-of-NtQueryEaFile.patch
++++ b/patches/ntdll-NtQueryEaFile/0001-ntdll-Improve-stub-of-NtQueryEaFile.patch
+@@ -32,7 +32,7 @@ index 2269ae311a..bed55c6fe7 100644
+              ea_list_len, ea_index, restart);
+ -    return STATUS_ACCESS_DENIED;
+ +
+-+    if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )) != STATUS_SUCCESS)
+++    if ((status = unix_funcs->server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )) != STATUS_SUCCESS)
+ +        return status;
+ +
+ +    if (buffer && length)
+ 
+diff --git a/patches/ntdll-RtlCreateUserThread/0001-ntdll-Refactor-RtlCreateUserThread-into-NtCreateThre.patch b/patches/ntdll-RtlCreateUserThread/0001-ntdll-Refactor-RtlCreateUserThread-into-NtCreateThre.patch
+index 1dee3e617..568cfa9a4 100644
+--- a/patches/ntdll-RtlCreateUserThread/0001-ntdll-Refactor-RtlCreateUserThread-into-NtCreateThre.patch
++++ b/patches/ntdll-RtlCreateUserThread/0001-ntdll-Refactor-RtlCreateUserThread-into-NtCreateThre.patch
+@@ -114,9 +114,9 @@ index ceadcff1b2..2c4a9c4949 100644
+ -    }
+ +    if ((status = alloc_object_attributes( thread_attr, &objattr, &len ))) return status;
+  
+-     if (server_pipe( request_pipe ) == -1)
++     if (unix_funcs->server_pipe( request_pipe ) == -1)
+      {
+-@@ -493,7 +499,7 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, SECURITY_DESCRIPTOR *descr,
++@@ -470,7 +476,7 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, SECURITY_DESCRIPTOR *descr,
+      SERVER_START_REQ( new_thread )
+      {
+          req->process    = wine_server_obj_handle( process );
+
+diff --git a/patches/ntdll-WRITECOPY/0001-ntdll-Trigger-write-watches-before-passing-userdata-.patch b/patches/ntdll-WRITECOPY/0001-ntdll-Trigger-write-watches-before-passing-userdata-.patch
+index cb67b6c8d..1f72cb105 100644
+--- a/patches/ntdll-WRITECOPY/0001-ntdll-Trigger-write-watches-before-passing-userdata-.patch
++++ b/patches/ntdll-WRITECOPY/0001-ntdll-Trigger-write-watches-before-passing-userdata-.patch
+@@ -22,28 +22,25 @@ index 381062cceb1..e7c6ca63fe2 100644
+         "Access and/or AccessStatus were changed!\n");
+  
+ diff --git a/dlls/ntdll/server.c b/dlls/ntdll/server.c
+-index 046cf601ebf..3d88b47a744 100644
++index ed4e3f25531..921dec86c82 100644
+ --- a/dlls/ntdll/server.c
+ +++ b/dlls/ntdll/server.c
+-@@ -406,9 +406,18 @@ unsigned int server_call_unlocked( void *req_ptr )
++@@ -166,6 +166,15 @@ static DECLSPEC_NORETURN void server_protocol_perror( const char *err )
+   */
+  unsigned int CDECL wine_server_call( void *req_ptr )
+  {
+ +    struct __server_request_info * const req = req_ptr;
+-     sigset_t old_set;
+-     unsigned int ret;
+- 
+++
+ +    /* trigger write watches, otherwise read() might return EFAULT */
+ +    if (req->u.req.request_header.reply_size &&
+ +        !virtual_check_buffer_for_write( req->reply_data, req->u.req.request_header.reply_size ))
+ +    {
+-+        ret = STATUS_ACCESS_VIOLATION;
+-+        return ret;
+++        return STATUS_ACCESS_VIOLATION;
+ +    }
+ +
+-     pthread_sigmask( SIG_BLOCK, &server_block_set, &old_set );
+-     ret = server_call_unlocked( req_ptr );
+-     pthread_sigmask( SIG_SETMASK, &old_set, NULL );
++     return unix_funcs->server_call( req_ptr );
++ }
++ 
+ -- 
+ 2.26.2
+ 
+diff --git a/patches/ntdll-ext4-case-folder/0002-ntdll-server-Mark-drive_c-as-case-insensitive-when-c.patch b/patches/ntdll-ext4-case-folder/0002-ntdll-server-Mark-drive_c-as-case-insensitive-when-c.patch
+index 78dac2080..9711a7163 100644
+--- a/patches/ntdll-ext4-case-folder/0002-ntdll-server-Mark-drive_c-as-case-insensitive-when-c.patch
++++ b/patches/ntdll-ext4-case-folder/0002-ntdll-server-Mark-drive_c-as-case-insensitive-when-c.patch
+@@ -1,4 +1,4 @@
+-From acdd5aaf5d4f618a96f21710a8ee2f44a994194c Mon Sep 17 00:00:00 2001
++From 627618459891aa36fc9a9ac0c04b7035d2272fb1 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
+ Date: Fri, 24 May 2019 15:09:35 +0300
+ Subject: [PATCH] ntdll/server: Mark drive_c as case-insensitive when created
+@@ -9,14 +9,14 @@ Content-Transfer-Encoding: 8bit
+ Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=47099
+ Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
+ ---
+- dlls/ntdll/server.c | 45 +++++++++++++++++++++++++++++++++++++++++++++
++ dlls/ntdll/unix/server.c | 45 ++++++++++++++++++++++++++++++++++++++++
+  1 file changed, 45 insertions(+)
+ 
+-diff --git a/dlls/ntdll/server.c b/dlls/ntdll/server.c
+-index bc25e242a77..f2109dd1ef0 100644
+---- a/dlls/ntdll/server.c
+-+++ b/dlls/ntdll/server.c
+-@@ -54,6 +54,12 @@
++diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
++index 8dc3f33bc80..0e6c9d90281 100644
++--- a/dlls/ntdll/unix/server.c
+++++ b/dlls/ntdll/unix/server.c
++@@ -55,6 +55,12 @@
+  #ifdef HAVE_SYS_MMAN_H
+  #include <sys/mman.h>
+  #endif
+@@ -29,7 +29,7 @@ index bc25e242a77..f2109dd1ef0 100644
+  #ifdef HAVE_SYS_PRCTL_H
+  # include <sys/prctl.h>
+  #endif
+-@@ -87,6 +93,22 @@
++@@ -93,6 +99,22 @@
+  
+  WINE_DEFAULT_DEBUG_CHANNEL(server);
+  
+@@ -49,10 +49,10 @@ index bc25e242a77..f2109dd1ef0 100644
+ +
+ +#endif
+ +
+- /* Some versions of glibc don't define this */
+- #ifndef SCM_RIGHTS
+- #define SCM_RIGHTS 1
+-@@ -1380,6 +1402,28 @@ void init_paths(void)
++ #ifndef MSG_CMSG_CLOEXEC
++ #define MSG_CMSG_CLOEXEC 0
++ #endif
++@@ -729,6 +751,28 @@ static const char *init_server_dir( dev_t dev, ino_t ino )
+  }
+  
+  
+@@ -81,7 +81,7 @@ index bc25e242a77..f2109dd1ef0 100644
+  /***********************************************************************
+   *           setup_config_dir
+   *
+-@@ -1416,6 +1460,7 @@ static int setup_config_dir(void)
++@@ -765,6 +809,7 @@ static int setup_config_dir(void)
+      if (!mkdir( "dosdevices", 0777 ))
+      {
+          mkdir( "drive_c", 0777 );
+diff --git a/patches/patchinstall.sh b/patches/patchinstall.sh
+index 8fd37ebc5..e62f11999 100755
+--- a/patches/patchinstall.sh
++++ b/patches/patchinstall.sh
+@@ -133,7 +133,6 @@ patch_enable_all ()
+ 	enable_dxdiagn_Enumerate_DirectSound="$1"
+ 	enable_dxdiagn_GetChildContainer_Leaf_Nodes="$1"
+ 	enable_dxva2_Video_Decoder="$1"
+-	enable_eventfd_synchronization="$1"
+ 	enable_explorer_Video_Registry_Key="$1"
+ 	enable_fonts_Missing_Fonts="$1"
+ 	enable_fsutil_Stub_Program="$1"
+@@ -238,7 +237,6 @@ patch_enable_all ()
+ 	enable_server_PeekMessage="$1"
+ 	enable_server_Realtime_Priority="$1"
+ 	enable_server_Registry_Notifications="$1"
+-	enable_server_Shared_Memory="$1"
+ 	enable_server_Signal_Thread="$1"
+ 	enable_server_Stored_ACLs="$1"
+ 	enable_setupapi_DiskSpaceList="$1"
+@@ -502,9 +500,6 @@ patch_enable ()
+ 		dxva2-Video_Decoder)
+ 			enable_dxva2_Video_Decoder="$2"
+ 			;;
+-		eventfd_synchronization)
+-			enable_eventfd_synchronization="$2"
+-			;;
+ 		explorer-Video_Registry_Key)
+ 			enable_explorer_Video_Registry_Key="$2"
+ 			;;
+@@ -817,9 +812,6 @@ patch_enable ()
+ 		server-Registry_Notifications)
+ 			enable_server_Registry_Notifications="$2"
+ 			;;
+-		server-Shared_Memory)
+-			enable_server_Shared_Memory="$2"
+-			;;
+ 		server-Signal_Thread)
+ 			enable_server_Signal_Thread="$2"
+ 			;;
+@@ -1574,6 +1566,28 @@ if test "$enable_user32_rawinput_hid" -eq 1; then
+ 	enable_user32_rawinput_nolegacy=1
+ fi
+ 
++if test "$enable_user32_rawinput_nolegacy" -eq 1; then
++	if test "$enable_server_Key_State" -gt 1; then
++		abort "Patchset server-Key_State disabled, but user32-rawinput-nolegacy depends on that."
++	fi
++	if test "$enable_user32_rawinput_mouse" -gt 1; then
++		abort "Patchset user32-rawinput-mouse disabled, but user32-rawinput-nolegacy depends on that."
++	fi
++	enable_server_Key_State=1
++	enable_user32_rawinput_mouse=1
++fi
++
++if test "$enable_user32_rawinput_mouse" -eq 1; then
++	if test "$enable_loader_KeyboardLayouts" -gt 1; then
++		abort "Patchset loader-KeyboardLayouts disabled, but user32-rawinput-mouse depends on that."
++	fi
++	if test "$enable_winex11_drv_mouse_coorrds" -gt 1; then
++		abort "Patchset winex11.drv-mouse-coorrds disabled, but user32-rawinput-mouse depends on that."
++	fi
++	enable_loader_KeyboardLayouts=1
++	enable_winex11_drv_mouse_coorrds=1
++fi
++
+ if test "$enable_stdole32_tlb_SLTG_Typelib" -eq 1; then
+ 	if test "$enable_widl_SLTG_Typelib_Support" -gt 1; then
+ 		abort "Patchset widl-SLTG_Typelib_Support disabled, but stdole32.tlb-SLTG_Typelib depends on that."
+@@ -1599,11 +1613,11 @@ if test "$enable_shell32_Progress_Dialog" -eq 1; then
+ 	enable_shell32_SHFileOperation_Move=1
+ fi
+ 
+-if test "$enable_server_Object_Types" -eq 1; then
+-	if test "$enable_server_Shared_Memory" -gt 1; then
+-		abort "Patchset server-Shared_Memory disabled, but server-Object_Types depends on that."
++if test "$enable_server_Realtime_Priority" -eq 1; then
++	if test "$enable_ntdll_ThreadTime" -gt 1; then
++		abort "Patchset ntdll-ThreadTime disabled, but server-Realtime_Priority depends on that."
+ 	fi
+-	enable_server_Shared_Memory=1
++	enable_ntdll_ThreadTime=1
+ fi
+ 
+ if test "$enable_server_Inherited_ACLs" -eq 1; then
+@@ -1625,13 +1639,9 @@ if test "$enable_server_Stored_ACLs" -eq 1; then
+ fi
+ 
+ if test "$enable_server_Desktop_Refcount" -eq 1; then
+-	if test "$enable_eventfd_synchronization" -gt 1; then
+-		abort "Patchset eventfd_synchronization disabled, but server-Desktop_Refcount depends on that."
+-	fi
+ 	if test "$enable_ws2_32_WSACleanup" -gt 1; then
+ 		abort "Patchset ws2_32-WSACleanup disabled, but server-Desktop_Refcount depends on that."
+ 	fi
+-	enable_eventfd_synchronization=1
+ 	enable_ws2_32_WSACleanup=1
+ fi
+ 
+@@ -1670,6 +1680,13 @@ if test "$enable_ntdll_Syscall_Emulation" -eq 1; then
+ 	enable_winebuild_Fake_Dlls=1
+ fi
+ 
++if test "$enable_ntdll_RtlCreateUserThread" -eq 1; then
++	if test "$enable_winebuild_Fake_Dlls" -gt 1; then
++		abort "Patchset winebuild-Fake_Dlls disabled, but ntdll-RtlCreateUserThread depends on that."
++	fi
++	enable_winebuild_Fake_Dlls=1
++fi
++
+ if test "$enable_ntdll_NtQueryVirtualMemory" -eq 1; then
+ 	if test "$enable_ntdll_NtDevicePath" -gt 1; then
+ 		abort "Patchset ntdll-NtDevicePath disabled, but ntdll-NtQueryVirtualMemory depends on that."
+@@ -1758,108 +1775,6 @@ if test "$enable_server_File_Permissions" -eq 1; then
+ 	enable_ntdll_Junction_Points=1
+ fi
+ 
+-if test "$enable_eventfd_synchronization" -eq 1; then
+-	if test "$enable_advapi32_Token_Integrity_Level" -gt 1; then
+-		abort "Patchset advapi32-Token_Integrity_Level disabled, but eventfd_synchronization depends on that."
+-	fi
+-	if test "$enable_kernel32_K32GetPerformanceInfo" -gt 1; then
+-		abort "Patchset kernel32-K32GetPerformanceInfo disabled, but eventfd_synchronization depends on that."
+-	fi
+-	if test "$enable_ntdll_Junction_Points" -gt 1; then
+-		abort "Patchset ntdll-Junction_Points disabled, but eventfd_synchronization depends on that."
+-	fi
+-	if test "$enable_ntdll_RtlCreateUserThread" -gt 1; then
+-		abort "Patchset ntdll-RtlCreateUserThread disabled, but eventfd_synchronization depends on that."
+-	fi
+-	if test "$enable_ntdll_SystemRoot_Symlink" -gt 1; then
+-		abort "Patchset ntdll-SystemRoot_Symlink disabled, but eventfd_synchronization depends on that."
+-	fi
+-	if test "$enable_server_Realtime_Priority" -gt 1; then
+-		abort "Patchset server-Realtime_Priority disabled, but eventfd_synchronization depends on that."
+-	fi
+-	if test "$enable_server_Shared_Memory" -gt 1; then
+-		abort "Patchset server-Shared_Memory disabled, but eventfd_synchronization depends on that."
+-	fi
+-	if test "$enable_user32_rawinput_mouse" -gt 1; then
+-		abort "Patchset user32-rawinput-mouse disabled, but eventfd_synchronization depends on that."
+-	fi
+-	if test "$enable_ws2_32_WSACleanup" -gt 1; then
+-		abort "Patchset ws2_32-WSACleanup disabled, but eventfd_synchronization depends on that."
+-	fi
+-	enable_advapi32_Token_Integrity_Level=1
+-	enable_kernel32_K32GetPerformanceInfo=1
+-	enable_ntdll_Junction_Points=1
+-	enable_ntdll_RtlCreateUserThread=1
+-	enable_ntdll_SystemRoot_Symlink=1
+-	enable_server_Realtime_Priority=1
+-	enable_server_Shared_Memory=1
+-	enable_user32_rawinput_mouse=1
+-	enable_ws2_32_WSACleanup=1
+-fi
+-
+-if test "$enable_server_Shared_Memory" -eq 1; then
+-	if test "$enable_ntdll_Threading" -gt 1; then
+-		abort "Patchset ntdll-Threading disabled, but server-Shared_Memory depends on that."
+-	fi
+-	if test "$enable_ntdll_ext4_case_folder" -gt 1; then
+-		abort "Patchset ntdll-ext4-case-folder disabled, but server-Shared_Memory depends on that."
+-	fi
+-	if test "$enable_server_Key_State" -gt 1; then
+-		abort "Patchset server-Key_State disabled, but server-Shared_Memory depends on that."
+-	fi
+-	if test "$enable_server_PeekMessage" -gt 1; then
+-		abort "Patchset server-PeekMessage disabled, but server-Shared_Memory depends on that."
+-	fi
+-	if test "$enable_server_Signal_Thread" -gt 1; then
+-		abort "Patchset server-Signal_Thread disabled, but server-Shared_Memory depends on that."
+-	fi
+-	if test "$enable_user32_rawinput_nolegacy" -gt 1; then
+-		abort "Patchset user32-rawinput-nolegacy disabled, but server-Shared_Memory depends on that."
+-	fi
+-	enable_ntdll_Threading=1
+-	enable_ntdll_ext4_case_folder=1
+-	enable_server_Key_State=1
+-	enable_server_PeekMessage=1
+-	enable_server_Signal_Thread=1
+-	enable_user32_rawinput_nolegacy=1
+-fi
+-
+-if test "$enable_user32_rawinput_nolegacy" -eq 1; then
+-	if test "$enable_server_Key_State" -gt 1; then
+-		abort "Patchset server-Key_State disabled, but user32-rawinput-nolegacy depends on that."
+-	fi
+-	if test "$enable_user32_rawinput_mouse" -gt 1; then
+-		abort "Patchset user32-rawinput-mouse disabled, but user32-rawinput-nolegacy depends on that."
+-	fi
+-	enable_server_Key_State=1
+-	enable_user32_rawinput_mouse=1
+-fi
+-
+-if test "$enable_user32_rawinput_mouse" -eq 1; then
+-	if test "$enable_loader_KeyboardLayouts" -gt 1; then
+-		abort "Patchset loader-KeyboardLayouts disabled, but user32-rawinput-mouse depends on that."
+-	fi
+-	if test "$enable_winex11_drv_mouse_coorrds" -gt 1; then
+-		abort "Patchset winex11.drv-mouse-coorrds disabled, but user32-rawinput-mouse depends on that."
+-	fi
+-	enable_loader_KeyboardLayouts=1
+-	enable_winex11_drv_mouse_coorrds=1
+-fi
+-
+-if test "$enable_server_Realtime_Priority" -eq 1; then
+-	if test "$enable_ntdll_ThreadTime" -gt 1; then
+-		abort "Patchset ntdll-ThreadTime disabled, but server-Realtime_Priority depends on that."
+-	fi
+-	enable_ntdll_ThreadTime=1
+-fi
+-
+-if test "$enable_ntdll_RtlCreateUserThread" -eq 1; then
+-	if test "$enable_winebuild_Fake_Dlls" -gt 1; then
+-		abort "Patchset winebuild-Fake_Dlls disabled, but ntdll-RtlCreateUserThread depends on that."
+-	fi
+-	enable_winebuild_Fake_Dlls=1
+-fi
+-
+ if test "$enable_dxdiagn_GetChildContainer_Leaf_Nodes" -eq 1; then
+ 	if test "$enable_dxdiagn_Enumerate_DirectSound" -gt 1; then
+ 		abort "Patchset dxdiagn-Enumerate_DirectSound disabled, but dxdiagn-GetChildContainer_Leaf_Nodes depends on that."
+@@ -3132,710 +3047,91 @@ if test "$enable_dxva2_Video_Decoder" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
+-# Patchset kernel32-K32GetPerformanceInfo
++# Patchset explorer-Video_Registry_Key
+ # |
+ # | Modified files:
+-# |   *	dlls/kernelbase/debug.c, server/process.c, server/protocol.def
++# |   *	dlls/advapi32/tests/registry.c, programs/explorer/desktop.c
+ # |
+-if test "$enable_kernel32_K32GetPerformanceInfo" -eq 1; then
+-	patch_apply kernel32-K32GetPerformanceInfo/0001-kernel32-Make-K32GetPerformanceInfo-faster.patch
++if test "$enable_explorer_Video_Registry_Key" -eq 1; then
++	patch_apply explorer-Video_Registry_Key/0001-explorer-Create-CurrentControlSet-Control-Video-regi.patch
+ 	(
+-		printf '%s\n' '+    { "Michael Müller", "kernel32: Make K32GetPerformanceInfo faster.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "explorer: Create CurrentControlSet\\Control\\Video registry key as non-volatile.", 1 },';
+ 	) >> "$patchlist"
+ fi
+ 
+-# Patchset ntdll-Junction_Points
++# Patchset fonts-Missing_Fonts
+ # |
+ # | This patchset fixes the following Wine bugs:
+-# |   *	[#12401] NET Framework 2.0, 3.0, 4.0 installers and other apps that make use of GAC API for managed assembly
+-# | 	installation on NTFS filesystems need reparse point/junction API support
+-# | 	(FSCTL_SET_REPARSE_POINT/FSCTL_GET_REPARSE_POINT)
+-# |   *	[#44948] Multiple apps (Spine (Mod starter for Gothic), MS Office 365 installer) need CreateSymbolicLinkW implementation
++# |   *	[#32323] Implement an Arial replacement font
++# |   *	[#32342] Implement a Times New Roman replacement font
++# |   *	[#20456] Implement a Courier New replacement font
++# |   *	[#13829] Implement a Microsoft Yahei replacement font
+ # |
+ # | Modified files:
+-# |   *	configure.ac, dlls/kernel32/path.c, dlls/ntdll/directory.c, dlls/ntdll/file.c, dlls/ntdll/tests/file.c,
+-# | 	include/Makefile.in, include/ntifs.h, include/wine/port.h, include/winternl.h, libs/port/Makefile.in,
+-# | 	libs/port/renameat2.c, server/fd.c
++# |   *	COPYING.arial, COPYING.cour, COPYING.msyh, COPYING.times, LICENSE, fonts/Makefile.in, fonts/arial.sfd, fonts/arial.ttf,
++# | 	fonts/cour.sfd, fonts/cour.ttf, fonts/msyh.sfd, fonts/msyh.ttf, fonts/times.sfd, fonts/times.ttf
+ # |
+-if test "$enable_ntdll_Junction_Points" -eq 1; then
+-	patch_apply ntdll-Junction_Points/0001-ntdll-Add-support-for-junction-point-creation.patch
+-	patch_apply ntdll-Junction_Points/0002-ntdll-Add-support-for-reading-junction-points.patch
+-	patch_apply ntdll-Junction_Points/0003-ntdll-Add-support-for-deleting-junction-points.patch
+-	patch_apply ntdll-Junction_Points/0004-ntdll-Add-a-test-for-junction-point-advertisement.patch
+-	patch_apply ntdll-Junction_Points/0005-kernel32-ntdll-Add-support-for-deleting-junction-poi.patch
+-	patch_apply ntdll-Junction_Points/0007-ntdll-Add-support-for-absolute-symlink-creation.patch
+-	patch_apply ntdll-Junction_Points/0008-ntdll-Add-support-for-reading-absolute-symlinks.patch
+-	patch_apply ntdll-Junction_Points/0009-ntdll-Add-support-for-deleting-symlinks.patch
+-	patch_apply ntdll-Junction_Points/0010-ntdll-Add-support-for-relative-symlink-creation.patch
+-	patch_apply ntdll-Junction_Points/0011-ntdll-Add-support-for-reading-relative-symlinks.patch
+-	patch_apply ntdll-Junction_Points/0012-ntdll-Add-support-for-file-symlinks.patch
+-	patch_apply ntdll-Junction_Points/0013-ntdll-Allow-creation-of-dangling-reparse-points-to-n.patch
+-	patch_apply ntdll-Junction_Points/0014-ntdll-Correctly-report-file-symbolic-links-as-files.patch
+-	patch_apply ntdll-Junction_Points/0015-kernel32-Set-error-code-when-attempting-to-delete-fi.patch
+-	patch_apply ntdll-Junction_Points/0016-server-Properly-handle-file-symlink-deletion.patch
+-	patch_apply ntdll-Junction_Points/0017-ntdll-Always-report-symbolic-links-as-containing-zer.patch
+-	patch_apply ntdll-Junction_Points/0018-ntdll-Find-dangling-symlinks-quickly.patch
++if test "$enable_fonts_Missing_Fonts" -eq 1; then
++	patch_apply fonts-Missing_Fonts/0001-fonts-Add-Liberation-Sans-as-an-Arial-replacement.patch
++	patch_apply fonts-Missing_Fonts/0002-fonts-Add-Liberation-Serif-as-an-Times-New-Roman-rep.patch
++	patch_apply fonts-Missing_Fonts/0003-fonts-Add-Liberation-Mono-as-an-Courier-New-replacem.patch
++	patch_apply fonts-Missing_Fonts/0004-fonts-Add-WenQuanYi-Micro-Hei-as-a-Microsoft-Yahei-r.patch
++	patch_apply fonts-Missing_Fonts/0005-Add-licenses-for-fonts-as-separate-files.patch
+ 	(
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for junction point creation.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for reading junction points.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for deleting junction points.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add a test for junction point advertisement.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "kernel32,ntdll: Add support for deleting junction points with RemoveDirectory.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for absolute symlink creation.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for reading absolute symlinks.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for deleting symlinks.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for relative symlink creation.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for reading relative symlinks.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for file symlinks.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Allow creation of dangling reparse points to non-existent paths.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Correctly report file symbolic links as files.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "kernel32: Set error code when attempting to delete file symlinks as directories.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "server: Properly handle file symlink deletion.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Always report symbolic links as containing zero bytes.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Find dangling symlinks quickly.", 1 },';
++		printf '%s\n' '+    { "Torsten Kurbad", "fonts: Add Liberation Sans as an Arial replacement.", 2 },';
++		printf '%s\n' '+    { "Sebastian Lackner", "fonts: Add Liberation Serif as an Times New Roman replacement.", 1 },';
++		printf '%s\n' '+    { "Sebastian Lackner", "fonts: Add Liberation Mono as an Courier New replacement.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "fonts: Add WenQuanYi Micro Hei as a Microsoft Yahei replacement.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "Add licenses for fonts as separate files.", 1 },';
+ 	) >> "$patchlist"
+ fi
+ 
+-# Patchset winebuild-Fake_Dlls
++# Patchset fsutil-Stub_Program
+ # |
+ # | This patchset fixes the following Wine bugs:
+-# |   *	[#21232] Chromium-based browser engines (Chrome, Opera, Comodo Dragon, SRWare Iron) crash on startup unless '--no-
+-# | 	sandbox' is used (native API sandboxing/hooking scheme incompatible with Wine)
+-# |   *	[#42741] StarCraft I: 1.18 PTR fails to initialize ClientSdk.dll
+-# |   *	[#45349] Multiple applications and games crash due to missing support for 64-bit syscall thunks (StreetFighter V)
+-# |   *	[#45573] League of Legends 8.12+ fails to start a game (anticheat engine, hooking of syscall return instructions)
+-# |   *	[#45650] chromium 32-bit sandbox expects different syscall thunks depending on Windows version
++# |   *	[#22749] Add stub for fsutil.exe hardlink command
+ # |
+ # | Modified files:
+-# |   *	dlls/dbghelp/cpu_i386.c, dlls/kernel32/tests/loader.c, dlls/krnl386.exe16/kernel.c,
+-# | 	dlls/krnl386.exe16/kernel16_private.h, dlls/krnl386.exe16/ne_module.c, dlls/krnl386.exe16/ne_segment.c,
+-# | 	dlls/krnl386.exe16/task.c, dlls/krnl386.exe16/thunk.c, dlls/krnl386.exe16/wowthunk.c, dlls/ntdll/actctx.c,
+-# | 	dlls/ntdll/directory.c, dlls/ntdll/loader.c, dlls/ntdll/locale.c, dlls/ntdll/ntdll_misc.h, dlls/ntdll/path.c,
+-# | 	dlls/ntdll/process.c, dlls/ntdll/signal_i386.c, dlls/ntdll/signal_x86_64.c, dlls/ntdll/tests/exception.c,
+-# | 	dlls/ntdll/thread.c, dlls/system.drv16/system.c, dlls/toolhelp.dll16/toolhelp.c, dlls/user.exe16/message.c,
+-# | 	dlls/user.exe16/user.c, dlls/user.exe16/window.c, include/winternl.h, libs/wine/loader.c, tools/winebuild/build.h,
+-# | 	tools/winebuild/import.c, tools/winebuild/parser.c, tools/winebuild/relay.c, tools/winebuild/res32.c,
+-# | 	tools/winebuild/spec16.c, tools/winebuild/spec32.c, tools/winebuild/utils.c
++# |   *	programs/fsutil/Makefile.in, programs/fsutil/fsutil.rc, programs/fsutil/main.c, programs/fsutil/resources.h
+ # |
+-if test "$enable_winebuild_Fake_Dlls" -eq 1; then
+-	patch_apply winebuild-Fake_Dlls/0001-kernel32-tests-Add-basic-tests-for-fake-dlls.patch
+-	patch_apply winebuild-Fake_Dlls/0002-krnl386.exe16-Do-not-abuse-WOW32Reserved-field-for-1.patch
+-	patch_apply winebuild-Fake_Dlls/0003-winebuild-Generate-syscall-thunks-for-ntdll-exports.patch
+-	patch_apply winebuild-Fake_Dlls/0004-winebuild-Use-multipass-label-system-to-generate-fak.patch
+-	patch_apply winebuild-Fake_Dlls/0005-winebuild-Add-stub-functions-in-fake-dlls.patch
+-	patch_apply winebuild-Fake_Dlls/0006-winebuild-Add-syscall-thunks-in-fake-dlls.patch
+-	patch_apply winebuild-Fake_Dlls/0007-winebuild-Fix-size-of-relocation-information-in-fake.patch
+-	patch_apply winebuild-Fake_Dlls/0008-winebuild-Try-to-make-sure-RVA-matches-between-fake-.patch
+-	patch_apply winebuild-Fake_Dlls/0009-libs-wine-Use-same-file-alignment-for-fake-and-built.patch
+-	patch_apply winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
+-	patch_apply winebuild-Fake_Dlls/0011-ntdll-Call-NtOpenFile-through-syscall-thunk.patch
++if test "$enable_fsutil_Stub_Program" -eq 1; then
++	patch_apply fsutil-Stub_Program/0001-fsutil-Add-fsutil-program-with-support-for-creating-.patch
+ 	(
+-		printf '%s\n' '+    { "Michael Müller", "kernel32/tests: Add basic tests for fake dlls.", 1 },';
+-		printf '%s\n' '+    { "Sebastian Lackner", "krnl386.exe16: Do not abuse WOW32Reserved field for 16-bit stack address.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "winebuild: Generate syscall thunks for ntdll exports.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "winebuild: Use multipass label system to generate fake dlls.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "winebuild: Add stub functions in fake dlls.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "winebuild: Add syscall thunks in fake dlls.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "winebuild: Fix size of relocation information in fake dlls.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "winebuild: Try to make sure RVA matches between fake and builtin DLLs.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "libs/wine: Use same file alignment for fake and builtin DLLs.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "tools/winebuild: Add syscall thunks for 64 bit.", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Call NtOpenFile through syscall thunk.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "fsutil: Add fsutil program with support for creating hard links.", 1 },';
+ 	) >> "$patchlist"
+ fi
+ 
+-# Patchset ntdll-RtlCreateUserThread
+-# |
+-# | This patchset has the following (direct or indirect) dependencies:
+-# |   *	winebuild-Fake_Dlls
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#45571] League of Legends 8.12+ fails to start a game (anticheat engine, hooking of NtCreateThread/Ex)
++# Patchset gdi32-Lazy_Font_Initialization
+ # |
+ # | Modified files:
+-# |   *	dlls/ntdll/ntdll.spec, dlls/ntdll/thread.c, include/winternl.h
++# |   *	dlls/gdi32/dc.c, dlls/gdi32/freetype.c
+ # |
+-if test "$enable_ntdll_RtlCreateUserThread" -eq 1; then
+-	patch_apply ntdll-RtlCreateUserThread/0001-ntdll-Refactor-RtlCreateUserThread-into-NtCreateThre.patch
++if test "$enable_gdi32_Lazy_Font_Initialization" -eq 1; then
++	patch_apply gdi32-Lazy_Font_Initialization/0001-gdi32-Perform-lazy-initialization-of-fonts-to-improv.patch
+ 	(
+-		printf '%s\n' '+    { "Andrew Wesie", "ntdll: Refactor RtlCreateUserThread into NtCreateThreadEx.", 1 },';
++		printf '%s\n' '+    { "Sebastian Lackner", "gdi32: Perform lazy initialization of fonts to improve startup performance.", 1 },';
+ 	) >> "$patchlist"
+ fi
+ 
+-# Patchset ntdll-SystemRoot_Symlink
++# Patchset gdi32-rotation
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#34579] gdi32: fix for rotated Arc, ArcTo, Chord and Pie drawing problem
++# |   *	[#35331] gdi32: fix for rotated ellipse
+ # |
+ # | Modified files:
+-# |   *	dlls/ntdll/om.c
++# |   *	dlls/gdi32/dibdrv/graphics.c, dlls/gdi32/gdi_private.h
+ # |
+-if test "$enable_ntdll_SystemRoot_Symlink" -eq 1; then
+-	patch_apply ntdll-SystemRoot_Symlink/0001-ntdll-Add-special-handling-for-SystemRoot-to-satisfy.patch
++if test "$enable_gdi32_rotation" -eq 1; then
++	patch_apply gdi32-rotation/0001-gdi32-fix-for-rotated-Arc-ArcTo-Chord-and-Pie-drawin.patch
++	patch_apply gdi32-rotation/0002-gdi32-fix-for-rotated-ellipse.patch
+ 	(
+-		printf '%s\n' '+    { "Sebastian Lackner", "ntdll: Add special handling for \\SystemRoot to satisfy MSYS2 case-insensitive system check.", 1 },';
++		printf '%s\n' '+    { "Daniel Wendt", "gdi32: Fix for rotated Arc, ArcTo, Chord and Pie drawing problem.", 1 },';
++		printf '%s\n' '+    { "Daniel Wendt", "gdi32: Fix for rotated ellipse.", 1 },';
+ 	) >> "$patchlist"
+ fi
+ 
+-# Patchset ntdll-ThreadTime
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#20230] Return correct values for GetThreadTimes function
+-# |
+-# | Modified files:
+-# |   *	dlls/ntdll/nt.c, dlls/ntdll/ntdll_misc.h, dlls/ntdll/process.c, dlls/ntdll/thread.c, server/protocol.def,
+-# | 	server/snapshot.c, server/thread.c, server/thread.h
+-# |
+-if test "$enable_ntdll_ThreadTime" -eq 1; then
+-	patch_apply ntdll-ThreadTime/0001-ntdll-Return-correct-values-in-GetThreadTimes-for-al.patch
+-	patch_apply ntdll-ThreadTime/0002-ntdll-Set-correct-thread-creation-time-for-SystemPro.patch
+-	patch_apply ntdll-ThreadTime/0003-ntdll-Fill-process-kernel-and-user-time.patch
+-	patch_apply ntdll-ThreadTime/0004-ntdll-Set-process-start-time.patch
+-	patch_apply ntdll-ThreadTime/0005-ntdll-Fill-out-thread-times-in-process-enumeration.patch
+-	patch_apply ntdll-ThreadTime/0006-ntdll-Fill-process-virtual-memory-counters-in-NtQuer.patch
+-	(
+-		printf '%s\n' '+    { "Sebastian Lackner", "ntdll: Return correct values in GetThreadTimes() for all threads.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "ntdll: Set correct thread creation time for SystemProcessInformation in NtQuerySystemInformation.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "ntdll: Fill process kernel and user time.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "ntdll: Set process start time.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "ntdll: Fill out thread times in process enumeration.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "ntdll: Fill process virtual memory counters in NtQuerySystemInformation.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset server-Realtime_Priority
+-# |
+-# | This patchset has the following (direct or indirect) dependencies:
+-# |   *	ntdll-ThreadTime
+-# |
+-# | Modified files:
+-# |   *	server/Makefile.in, server/main.c, server/scheduler.c, server/thread.c, server/thread.h
+-# |
+-if test "$enable_server_Realtime_Priority" -eq 1; then
+-	patch_apply server-Realtime_Priority/0001-wineserver-Draft-to-implement-priority-levels-throug.patch
+-	(
+-		printf '%s\n' '+    { "Joakim Hernberg", "wineserver: Draft to implement priority levels through POSIX scheduling policies on linux.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset ntdll-Threading
+-# |
+-# | Modified files:
+-# |   *	dlls/ntdll/thread.c
+-# |
+-if test "$enable_ntdll_Threading" -eq 1; then
+-	patch_apply ntdll-Threading/0001-ntdll-Fix-race-condition-when-threads-are-killed-dur.patch
+-	(
+-		printf '%s\n' '+    { "Sebastian Lackner", "ntdll: Fix race-condition when threads are killed during shutdown.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset ntdll-ext4-case-folder
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#47099] Support for EXT4 case folding per directory.
+-# |
+-# | Modified files:
+-# |   *	dlls/ntdll/server.c
+-# |
+-if test "$enable_ntdll_ext4_case_folder" -eq 1; then
+-	patch_apply ntdll-ext4-case-folder/0002-ntdll-server-Mark-drive_c-as-case-insensitive-when-c.patch
+-	(
+-		printf '%s\n' '+    { "Gabriel Ivăncescu", "ntdll/server: Mark drive_c as case-insensitive when created.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset server-Key_State
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#31899] Implement locking and synchronization of key states
+-# |   *	[#35907] Fix caps lock state issues with multiple processes
+-# |
+-# | Modified files:
+-# |   *	server/queue.c
+-# |
+-if test "$enable_server_Key_State" -eq 1; then
+-	patch_apply server-Key_State/0001-server-Introduce-a-helper-function-to-update-the-thr.patch
+-	patch_apply server-Key_State/0002-server-Implement-locking-and-synchronization-of-keys.patch
+-	(
+-		printf '%s\n' '+    { "Sebastian Lackner", "server: Introduce a helper function to update the thread_input key state.", 1 },';
+-		printf '%s\n' '+    { "Sebastian Lackner", "server: Implement locking and synchronization of keystate buffer.", 3 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset server-PeekMessage
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#28884] GetMessage should remove already seen messages with higher priority
+-# |
+-# | Modified files:
+-# |   *	dlls/user32/tests/msg.c, server/queue.c
+-# |
+-if test "$enable_server_PeekMessage" -eq 1; then
+-	patch_apply server-PeekMessage/0001-server-Fix-handling-of-GetMessage-after-previous-Pee.patch
+-	(
+-		printf '%s\n' '+    { "Sebastian Lackner", "server: Fix handling of GetMessage after previous PeekMessage call.", 3 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset server-Signal_Thread
+-# |
+-# | Modified files:
+-# |   *	server/thread.c, server/thread.h
+-# |
+-if test "$enable_server_Signal_Thread" -eq 1; then
+-	patch_apply server-Signal_Thread/0001-server-Do-not-signal-thread-until-it-is-really-gone.patch
+-	(
+-		printf '%s\n' '+    { "Sebastian Lackner", "server: Do not signal violently terminated threads until they are really gone.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset loader-KeyboardLayouts
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#47439] loader: Add Keyboard Layouts registry enteries.
+-# |
+-# | Modified files:
+-# |   *	dlls/user32/driver.c, dlls/user32/tests/input.c, loader/wine.inf.in
+-# |
+-if test "$enable_loader_KeyboardLayouts" -eq 1; then
+-	patch_apply loader-KeyboardLayouts/0001-loader-Add-Keyboard-Layouts-registry-enteries.patch
+-	patch_apply loader-KeyboardLayouts/0002-user32-Improve-GetKeyboardLayoutList.patch
+-	(
+-		printf '%s\n' '+    { "Alistair Leslie-Hughes", "loader: Add Keyboard Layouts registry enteries.", 1 },';
+-		printf '%s\n' '+    { "Alistair Leslie-Hughes", "user32: Improve GetKeyboardLayoutList.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset winex11.drv-mouse-coorrds
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#46309] winex11.drv: Use root-relative coordinates for events, if possible.
+-# |
+-# | Modified files:
+-# |   *	dlls/winex11.drv/mouse.c
+-# |
+-if test "$enable_winex11_drv_mouse_coorrds" -eq 1; then
+-	patch_apply winex11.drv-mouse-coorrds/0001-winex11.drv-mouse-Use-root-relative-coordinates-for-ev.patch
+-	(
+-		printf '%s\n' '+    { "Gabriel Ivăncescu", "winex11.drv/mouse: Use root-relative coordinates for events, if possible.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset user32-rawinput-mouse
+-# |
+-# | This patchset has the following (direct or indirect) dependencies:
+-# |   *	loader-KeyboardLayouts, winex11.drv-mouse-coorrds
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#42631] Mouse drift, jump or don't react to small slow movements in Unity-engine games and Fallout 4 (partly fixed in
+-# | 	Unity games, have walkaround in Fallout4 )
+-# |   *	[#42675] Overwatch: Phantom mouse input / view pulled up to ceiling
+-# |
+-# | Modified files:
+-# |   *	dlls/dinput/device_private.h, dlls/dinput/dinput_main.c, dlls/dinput/mouse.c, dlls/dinput8/tests/device.c,
+-# | 	dlls/user32/input.c, dlls/user32/rawinput.c, dlls/user32/tests/input.c, dlls/user32/user32.spec,
+-# | 	dlls/wineandroid.drv/keyboard.c, dlls/wineandroid.drv/window.c, dlls/winemac.drv/ime.c, dlls/winemac.drv/keyboard.c,
+-# | 	dlls/winemac.drv/mouse.c, dlls/winex11.drv/event.c, dlls/winex11.drv/keyboard.c, dlls/winex11.drv/mouse.c,
+-# | 	dlls/winex11.drv/x11drv.h, dlls/winex11.drv/x11drv_main.c, include/winuser.h, server/protocol.def, server/queue.c
+-# |
+-if test "$enable_user32_rawinput_mouse" -eq 1; then
+-	patch_apply user32-rawinput-mouse/0001-user32-tests-Add-rawinput-test-for-ClipCursor-intera.patch
+-	patch_apply user32-rawinput-mouse/0002-user32-tests-Add-rawinput-test-for-cross-thread-inte.patch
+-	patch_apply user32-rawinput-mouse/0003-user32-tests-Add-rawinput-test-for-cross-process-int.patch
+-	patch_apply user32-rawinput-mouse/0004-server-Add-send_hardware_message-flags-for-rawinput-.patch
+-	patch_apply user32-rawinput-mouse/0005-server-Broadcast-rawinput-message-if-request-flag-is.patch
+-	patch_apply user32-rawinput-mouse/0006-user32-Add-__wine_send_input-flags-to-hint-raw-input.patch
+-	patch_apply user32-rawinput-mouse/0007-winex11.drv-Advertise-XInput2-version-2.1-support.patch
+-	patch_apply user32-rawinput-mouse/0008-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
+-	patch_apply user32-rawinput-mouse/0009-winex11.drv-Listen-to-RawMotion-and-RawButton-events.patch
+-	patch_apply user32-rawinput-mouse/0010-user32-Implement-GetRegisteredRawInputDevices.patch
+-	patch_apply user32-rawinput-mouse/0011-dinput8-Add-support-for-dinput-devices-that-use-raw-.patch
+-	patch_apply user32-rawinput-mouse/0012-dinput8-Use-raw-input-interface-for-dinput8-mouse-de.patch
+-	patch_apply user32-rawinput-mouse/0013-dinput-Fix-rawinput-events-sequence-number.patch
+-	(
+-		printf '%s\n' '+    { "Rémi Bernon", "user32/tests: Add rawinput test for ClipCursor interactions.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "user32/tests: Add rawinput test for cross-thread interactions.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "user32/tests: Add rawinput test for cross-process interactions.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "server: Add send_hardware_message flags for rawinput translation.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "server: Broadcast rawinput message if request flag is SEND_HWMSG_RAWINPUT.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "user32: Add __wine_send_input flags to hint raw input translation.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "winex11.drv: Advertise XInput2 version 2.1 support.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "winex11.drv: Keep track of pointer and device button mappings.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "winex11.drv: Listen to RawMotion and RawButton* events in the desktop thread.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "user32: Implement GetRegisteredRawInputDevices.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "dinput8: Add support for dinput devices that use raw input interface.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "dinput8: Use raw input interface for dinput8 mouse device.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "dinput: Fix rawinput events sequence number.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset user32-rawinput-nolegacy
+-# |
+-# | This patchset has the following (direct or indirect) dependencies:
+-# |   *	server-Key_State, loader-KeyboardLayouts, winex11.drv-mouse-coorrds, user32-rawinput-mouse
+-# |
+-# | Modified files:
+-# |   *	dlls/dinput/dinput_main.c, dlls/dinput8/tests/device.c, dlls/user32/rawinput.c, server/queue.c
+-# |
+-if test "$enable_user32_rawinput_nolegacy" -eq 1; then
+-	patch_apply user32-rawinput-nolegacy/0001-dinput8-tests-Add-test-for-DISCL_EXCLUSIVE-flag-inte.patch
+-	patch_apply user32-rawinput-nolegacy/0002-user32-Add-support-for-RIDEV_NOLEGACY-flag-in-Regist.patch
+-	patch_apply user32-rawinput-nolegacy/0003-dinput-Set-RIDEV_INPUTSINK-flag-only-when-DISCL_BACK.patch
+-	patch_apply user32-rawinput-nolegacy/0004-dinput-Set-correct-rawinput-flags-for-DISCL_EXCLUSIV.patch
+-	patch_apply user32-rawinput-nolegacy/0005-server-Update-desktop-cursor-pos-even-if-RIDEV_NOLEG.patch
+-	patch_apply user32-rawinput-nolegacy/0006-server-Also-update-the-key-state-if-RIDEV_NOLEGACY-i.patch
+-	(
+-		printf '%s\n' '+    { "Rémi Bernon", "dinput8/tests: Add test for DISCL_EXCLUSIVE flag interaction with rawinput.", 1 },';
+-		printf '%s\n' '+    { "Derek Lesho", "user32: Add support for RIDEV_NOLEGACY flag in RegisterRawInputDevices.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "dinput: Set RIDEV_INPUTSINK flag only when DISCL_BACKGROUND is requested.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "dinput: Set correct rawinput flags for DISCL_EXCLUSIVE.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "server: Update desktop cursor pos even if RIDEV_NOLEGACY flag is set.", 1 },';
+-		printf '%s\n' '+    { "Rémi Bernon", "server: Also update the key state if RIDEV_NOLEGACY is used.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset server-Shared_Memory
+-# |
+-# | This patchset has the following (direct or indirect) dependencies:
+-# |   *	ntdll-Threading, ntdll-ext4-case-folder, server-Key_State, server-PeekMessage, server-Signal_Thread, loader-
+-# | 	KeyboardLayouts, winex11.drv-mouse-coorrds, user32-rawinput-mouse, user32-rawinput-nolegacy
+-# |
+-# | Modified files:
+-# |   *	dlls/ntdll/ntdll_misc.h, dlls/ntdll/server.c, dlls/ntdll/thread.c, dlls/ntdll/virtual.c, dlls/user32/focus.c,
+-# | 	dlls/user32/input.c, dlls/user32/message.c, dlls/user32/user_private.h, include/wine/server.h, include/winternl.h,
+-# | 	server/fd.c, server/file.h, server/main.c, server/mapping.c, server/protocol.def, server/queue.c, server/thread.c,
+-# | 	server/thread.h
+-# |
+-if test "$enable_server_Shared_Memory" -eq 1; then
+-	patch_apply server-Shared_Memory/0001-ntdll-Implement-virtual_map_shared_memory.patch
+-	patch_apply server-Shared_Memory/0002-server-Implement-support-for-global-and-local-shared.patch
+-	patch_apply server-Shared_Memory/0003-user32-Get-rid-of-wineserver-call-for-GetInputState.patch
+-	patch_apply server-Shared_Memory/0004-user32-Avoid-unnecessary-wineserver-calls-in-PeekMes.patch
+-	patch_apply server-Shared_Memory/0005-user32-Get-rid-of-wineserver-call-for-GetLastInputIn.patch
+-	patch_apply server-Shared_Memory/0006-ntdll-Only-enable-wineserver-shared-memory-communica.patch
+-	patch_apply server-Shared_Memory/0007-server-Store-a-list-of-associated-queues-for-each-th.patch
+-	patch_apply server-Shared_Memory/0008-user32-Get-rid-of-wineserver-call-for-GetActiveWindo.patch
+-	(
+-		printf '%s\n' '+    { "Sebastian Lackner", "ntdll: Implement virtual_map_shared_memory.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "server: Implement support for global and local shared memory blocks based on memfd.", 1 },';
+-		printf '%s\n' '+    { "Sebastian Lackner", "user32: Get rid of wineserver call for GetInputState.", 1 },';
+-		printf '%s\n' '+    { "Sebastian Lackner", "user32: Avoid unnecessary wineserver calls in PeekMessage/GetMessage.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "user32: Get rid of wineserver call for GetLastInputInfo.", 1 },';
+-		printf '%s\n' '+    { "Sebastian Lackner", "ntdll: Only enable wineserver shared memory communication when a special environment variable is set.", 1 },';
+-		printf '%s\n' '+    { "Sebastian Lackner", "server: Store a list of associated queues for each thread input.", 1 },';
+-		printf '%s\n' '+    { "Sebastian Lackner", "user32: Get rid of wineserver call for GetActiveWindow, GetFocus, GetCapture.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset ws2_32-WSACleanup
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#18670] Properly close sockets when WSACleanup is called
+-# |
+-# | Modified files:
+-# |   *	dlls/ntdll/ntdll.spec, dlls/ntdll/server.c, dlls/ws2_32/socket.c, dlls/ws2_32/tests/sock.c, include/wine/server.h,
+-# | 	server/protocol.def, server/sock.c
+-# |
+-if test "$enable_ws2_32_WSACleanup" -eq 1; then
+-	patch_apply ws2_32-WSACleanup/0001-ws2_32-Proper-WSACleanup-implementation-using-winese.patch
+-	patch_apply ws2_32-WSACleanup/0002-ws2_32-Invalidate-client-side-file-descriptor-cache-.patch
+-	(
+-		printf '%s\n' '+    { "Matt Durgavich", "ws2_32: Proper WSACleanup implementation using wineserver function.", 2 },';
+-		printf '%s\n' '+    { "Sebastian Lackner", "ws2_32: Invalidate client-side file descriptor cache in WSACleanup.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset eventfd_synchronization
+-# |
+-# | This patchset has the following (direct or indirect) dependencies:
+-# |   *	Staging, advapi32-CreateRestrictedToken, advapi32-Token_Integrity_Level, kernel32-K32GetPerformanceInfo, ntdll-
+-# | 	Junction_Points, winebuild-Fake_Dlls, ntdll-RtlCreateUserThread, ntdll-SystemRoot_Symlink, ntdll-ThreadTime, server-
+-# | 	Realtime_Priority, ntdll-Threading, ntdll-ext4-case-folder, server-Key_State, server-PeekMessage, server-Signal_Thread,
+-# | 	loader-KeyboardLayouts, winex11.drv-mouse-coorrds, user32-rawinput-mouse, user32-rawinput-nolegacy, server-
+-# | 	Shared_Memory, ws2_32-WSACleanup
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#36692] Many multi-threaded applications have poor performance due to heavy use of synchronization primitives
+-# |
+-# | Modified files:
+-# |   *	README.esync, configure.ac, dlls/kernel32/tests/sync.c, dlls/ntdll/Makefile.in, dlls/ntdll/critsection.c,
+-# | 	dlls/ntdll/esync.c, dlls/ntdll/esync.h, dlls/ntdll/loader.c, dlls/ntdll/ntdll.spec, dlls/ntdll/ntdll_misc.h,
+-# | 	dlls/ntdll/om.c, dlls/ntdll/server.c, dlls/ntdll/sync.c, dlls/ntdll/thread.c, dlls/rpcrt4/rpc_server.c,
+-# | 	dlls/user32/hook.c, dlls/wineandroid.drv/window.c, dlls/winemac.drv/macdrv_main.c, dlls/winex11.drv/x11drv_main.c,
+-# | 	server/Makefile.in, server/async.c, server/atom.c, server/change.c, server/clipboard.c, server/completion.c,
+-# | 	server/console.c, server/debugger.c, server/device.c, server/directory.c, server/esync.c, server/esync.h,
+-# | 	server/event.c, server/fd.c, server/file.c, server/file.h, server/handle.c, server/hook.c, server/mailslot.c,
+-# | 	server/main.c, server/mapping.c, server/mutex.c, server/named_pipe.c, server/object.h, server/process.c,
+-# | 	server/process.h, server/protocol.def, server/queue.c, server/registry.c, server/request.c, server/semaphore.c,
+-# | 	server/serial.c, server/signal.c, server/snapshot.c, server/sock.c, server/symlink.c, server/thread.c, server/thread.h,
+-# | 	server/timer.c, server/token.c, server/winstation.c
+-# |
+-if test "$enable_eventfd_synchronization" -eq 1; then
+-	patch_apply eventfd_synchronization/0001-configure-Check-for-sys-eventfd.h-ppoll-and-shm_open.patch
+-	patch_apply eventfd_synchronization/0002-server-Create-server-objects-for-eventfd-based-synch.patch
+-	patch_apply eventfd_synchronization/0003-ntdll-Create-eventfd-based-objects-for-semaphores.patch
+-	patch_apply eventfd_synchronization/0004-ntdll-Store-esync-objects-locally.patch
+-	patch_apply eventfd_synchronization/0005-ntdll-Implement-NtReleaseSemaphore.patch
+-	patch_apply eventfd_synchronization/0006-ntdll-Close-esync-objects.patch
+-	patch_apply eventfd_synchronization/0007-ntdll-Implement-waiting-on-esync-objects.patch
+-	patch_apply eventfd_synchronization/0008-ntdll-Create-esync-objects-for-events.patch
+-	patch_apply eventfd_synchronization/0009-ntdll-Implement-NtSetEvent.patch
+-	patch_apply eventfd_synchronization/0010-ntdll-Implement-NtResetEvent.patch
+-	patch_apply eventfd_synchronization/0011-ntdll-Implement-NtPulseEvent.patch
+-	patch_apply eventfd_synchronization/0012-ntdll-Implement-waiting-on-events.patch
+-	patch_apply eventfd_synchronization/0013-server-Add-an-object-operation-to-grab-the-esync-fil.patch
+-	patch_apply eventfd_synchronization/0014-server-Add-a-request-to-get-the-eventfd-file-descrip.patch
+-	patch_apply eventfd_synchronization/0015-server-Create-eventfd-file-descriptors-for-process-o.patch
+-	patch_apply eventfd_synchronization/0016-ntdll-server-Implement-waiting-on-server-bound-objec.patch
+-	patch_apply eventfd_synchronization/0017-server-Create-eventfd-file-descriptors-for-event-obj.patch
+-	patch_apply eventfd_synchronization/0018-server-Allow-re-setting-esync-events-on-the-server-s.patch
+-	patch_apply eventfd_synchronization/0019-ntdll-Try-again-if-poll-returns-EINTR.patch
+-	patch_apply eventfd_synchronization/0020-server-Create-eventfd-file-descriptors-for-thread-ob.patch
+-	patch_apply eventfd_synchronization/0021-rpcrt4-Avoid-closing-the-server-thread-handle-while-.patch
+-	patch_apply eventfd_synchronization/0022-server-Create-eventfd-file-descriptors-for-message-q.patch
+-	patch_apply eventfd_synchronization/0023-ntdll-wineandroid.drv-winemac.drv-winex11.drv-Store-.patch
+-	patch_apply eventfd_synchronization/0024-server-ntdll-Also-wait-on-the-queue-fd-when-waiting-.patch
+-	patch_apply eventfd_synchronization/0025-server-Create-eventfd-descriptors-for-device-manager.patch
+-	patch_apply eventfd_synchronization/0026-ntdll-Create-esync-objects-for-mutexes.patch
+-	patch_apply eventfd_synchronization/0027-ntdll-Implement-NtReleaseMutant.patch
+-	patch_apply eventfd_synchronization/0028-ntdll-Implement-waiting-on-mutexes.patch
+-	patch_apply eventfd_synchronization/0029-ntdll-Implement-wait-all.patch
+-	patch_apply eventfd_synchronization/0030-esync-Add-a-README.patch
+-	patch_apply eventfd_synchronization/0031-ntdll-Implement-NtSignalAndWaitForSingleObject.patch
+-	patch_apply eventfd_synchronization/0032-server-ntdll-Also-store-the-esync-type-in-the-server.patch
+-	patch_apply eventfd_synchronization/0033-ntdll-server-Implement-NtOpenSemaphore.patch
+-	patch_apply eventfd_synchronization/0034-ntdll-Implement-NtOpenEvent.patch
+-	patch_apply eventfd_synchronization/0035-ntdll-Implement-NtOpenMutant.patch
+-	patch_apply eventfd_synchronization/0036-ntdll-Record-the-current-count-of-a-semaphore-locall.patch
+-	patch_apply eventfd_synchronization/0037-server-Implement-esync_map_access.patch
+-	patch_apply eventfd_synchronization/0038-server-Alter-conditions-in-is_queue_hung.patch
+-	patch_apply eventfd_synchronization/0039-ntdll-server-Allow-DuplicateHandle-to-succeed-by-imp.patch
+-	patch_apply eventfd_synchronization/0040-server-Create-eventfd-descriptors-for-timers.patch
+-	patch_apply eventfd_synchronization/0041-server-Allocate-shared-memory-segments-for-semaphore.patch
+-	patch_apply eventfd_synchronization/0042-ntdll-Use-shared-memory-segments-to-store-semaphore-.patch
+-	patch_apply eventfd_synchronization/0043-ntdll-Lock-creating-and-opening-objects-with-volatil.patch
+-	patch_apply eventfd_synchronization/0044-server-ntdll-Pass-the-shared-memory-index-back-from-.patch
+-	patch_apply eventfd_synchronization/0045-server-ntdll-Implement-alertable-waits.patch
+-	patch_apply eventfd_synchronization/0046-esync-Update-README.patch
+-	patch_apply eventfd_synchronization/0047-kernel32-tests-Mark-some-existing-tests-as-failing-u.patch
+-	patch_apply eventfd_synchronization/0048-kernel32-tests-Add-some-semaphore-tests.patch
+-	patch_apply eventfd_synchronization/0049-kernel32-tests-Add-some-event-tests.patch
+-	patch_apply eventfd_synchronization/0050-kernel32-tests-Add-some-mutex-tests.patch
+-	patch_apply eventfd_synchronization/0051-kernel32-tests-Add-some-tests-for-wait-timeouts.patch
+-	patch_apply eventfd_synchronization/0052-ntdll-Go-through-the-server-if-necessary-when-perfor.patch
+-	patch_apply eventfd_synchronization/0053-server-Create-eventfd-descriptors-for-console_input_.patch
+-	patch_apply eventfd_synchronization/0054-server-Alter-conditions-in-is_queue_hung-again.patch
+-	patch_apply eventfd_synchronization/0055-ntdll-Let-the-server-know-when-we-are-doing-a-messag.patch
+-	patch_apply eventfd_synchronization/0056-ntdll-Avoid-server_select-when-waiting-for-critical-.patch
+-	patch_apply eventfd_synchronization/0057-user32-Remove-hooks-that-time-out.patch
+-	patch_apply eventfd_synchronization/0058-server-Don-t-check-for-a-hung-queue-when-sending-low.patch
+-	patch_apply eventfd_synchronization/0059-kernel32-tests-Zigzag-test.patch
+-	patch_apply eventfd_synchronization/0060-server-Try-to-remove-a-pre-xisting-shm-file.patch
+-	patch_apply eventfd_synchronization/0061-ntdll-Implement-NtQuerySemaphore.patch
+-	patch_apply eventfd_synchronization/0062-ntdll-Implement-NtQueryEvent.patch
+-	patch_apply eventfd_synchronization/0063-ntdll-Implement-NtQueryMutant.patch
+-	patch_apply eventfd_synchronization/0064-server-Create-eventfd-descriptors-for-pseudo-fd-obje.patch
+-	patch_apply eventfd_synchronization/0065-ntdll-Cache-the-esync-struct-itself-instead-of-a-poi.patch
+-	patch_apply eventfd_synchronization/0066-esync-Update-README.patch
+-	patch_apply eventfd_synchronization/0067-esync-Add-note-about-file-limits-not-being-raised-wh.patch
+-	patch_apply eventfd_synchronization/0068-ntdll-Ignore-pseudo-handles.patch
+-	patch_apply eventfd_synchronization/0069-ntdll-Try-to-avoid-poll-for-uncontended-objects.patch
+-	patch_apply eventfd_synchronization/0070-ntdll-Store-an-event-s-signaled-state-internally.patch
+-	patch_apply eventfd_synchronization/0071-ntdll-Fix-growing-the-shm_addrs-array.patch
+-	patch_apply eventfd_synchronization/0072-server-Update-the-shared-memory-state-when-re-settin.patch
+-	patch_apply eventfd_synchronization/0073-ntdll-Fix-a-missing-break-statement.patch
+-	patch_apply eventfd_synchronization/0074-ntdll-server-Abort-if-esync-is-enabled-for-the-serve.patch
+-	patch_apply eventfd_synchronization/0075-esync-Update-README.patch
+-	patch_apply eventfd_synchronization/0076-ntdll-Correctly-allocate-the-esync-handle-cache.patch
+-	patch_apply eventfd_synchronization/0077-ntdll-server-Specify-EFD_SEMAPHORE-on-the-server-sid.patch
+-	patch_apply eventfd_synchronization/0078-ntdll-server-Initialize-the-shared-memory-portion-on.patch
+-	patch_apply eventfd_synchronization/0079-ntdll-server-Revert-to-old-implementation-of-hung-qu.patch
+-	patch_apply eventfd_synchronization/0080-ntdll-Fix-a-couple-of-misplaced-global-variables.patch
+-	patch_apply eventfd_synchronization/0081-ntdll-Yield-during-PulseEvent.patch
+-	patch_apply eventfd_synchronization/0082-ntdll-server-Check-the-value-of-WINEESYNC-instead-of.patch
+-	patch_apply eventfd_synchronization/0083-esync-Update-README.patch
+-	patch_apply eventfd_synchronization/0084-server-Use-default_fd_get_esync_fd-for-directory-cha.patch
+-	patch_apply eventfd_synchronization/0085-server-Only-signal-the-APC-fd-for-user-APCs.patch
+-	patch_apply eventfd_synchronization/0086-ntdll-Check-the-APC-fd-first.patch
+-	patch_apply eventfd_synchronization/0087-ntdll-esync-Lock-accessing-the-shm_addrs-array.patch
+-	patch_apply eventfd_synchronization/0088-ntdll-Get-rid-of-the-per-event-spinlock-for-auto-res.patch
+-	patch_apply eventfd_synchronization/0089-ntdll-server-Abandon-esync-mutexes-on-thread-exit.patch
+-	(
+-		printf '%s\n' '+    { "Zebediah Figura", "configure: Check for sys/eventfd.h, ppoll(), and shm_open().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Create server objects for eventfd-based synchronization objects.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Create eventfd-based objects for semaphores.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Store esync objects locally.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtReleaseSemaphore().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Close esync objects.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement waiting on esync objects.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Create esync objects for events.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtSetEvent().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtResetEvent().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtPulseEvent().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement waiting on events.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Add an object operation to grab the esync file descriptor.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Add a request to get the eventfd file descriptor associated with a waitable handle.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Create eventfd file descriptors for process objects.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll, server: Implement waiting on server-bound objects.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Create eventfd file descriptors for event objects.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Allow (re)setting esync events on the server side.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Try again if poll() returns EINTR.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Create eventfd file descriptors for thread objects.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "rpcrt4: Avoid closing the server thread handle while it is being waited on.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Create eventfd file descriptors for message queues.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll, wineandroid.drv, winemac.drv, winex11.drv: Store the thread'\''s queue fd in ntdll.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server, ntdll: Also wait on the queue fd when waiting for driver events.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Create eventfd descriptors for device manager objects.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Create esync objects for mutexes.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtReleaseMutant().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement waiting on mutexes.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement wait-all.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "esync: Add a README.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtSignalAndWaitForSingleObject().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server, ntdll: Also store the esync type in the server.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll, server: Implement NtOpenSemaphore().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtOpenEvent().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtOpenMutant().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Record the current count of a semaphore locally.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Implement esync_map_access().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Alter conditions in is_queue_hung().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll, server: Allow DuplicateHandle() to succeed by implementing esync_get_esync_fd().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Create eventfd descriptors for timers.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Allocate shared memory segments for semaphores and mutexes.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Use shared memory segments to store semaphore and mutex state.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Lock creating and opening objects with volatile state.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server, ntdll: Pass the shared memory index back from get_esync_fd.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server, ntdll: Implement alertable waits.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "esync: Update README.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "kernel32/tests: Mark some existing tests as failing under esync.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "kernel32/tests: Add some semaphore tests.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "kernel32/tests: Add some event tests.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "kernel32/tests: Add some mutex tests.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "kernel32/tests: Add some tests for wait timeouts.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Go through the server if necessary when performing event/semaphore/mutex ops.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Create eventfd descriptors for console_input_events objects.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Alter conditions in is_queue_hung(), again.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Let the server know when we are doing a message wait.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Avoid server_select() when waiting for critical sections.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "user32: Remove hooks that time out.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Don'\''t check for a hung queue when sending low-level hooks.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "kernel32/tests: Zigzag test.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "=?UTF-8?q?server:=20Try=20to=20remove=20a=20pre?= =?UTF-8?q?=C3=ABxisting=20shm=20file.?=.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtQuerySemaphore().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtQueryEvent().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Implement NtQueryMutant().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Create eventfd descriptors for pseudo-fd objects and use them for named pipes.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Cache the esync struct itself instead of a pointer to it.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "esync: Update README.", 1 },';
+-		printf '%s\n' '+    { "Mathieu Comandon", "esync: Add note about file limits not being raised when using systemd.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Ignore pseudo-handles.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Try to avoid poll() for uncontended objects.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Store an event'\''s signaled state internally.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Fix growing the shm_addrs array.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Update the shared memory state when (re)setting an event.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Fix a missing break statement.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll, server: Abort if esync is enabled for the server but not the client, and vice versa.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "esync: Update README.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Correctly allocate the esync handle cache.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll, server: Specify EFD_SEMAPHORE on the server side.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll, server: Initialize the shared memory portion on the server side.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll, server: Revert to old implementation of hung queue detection.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Fix a couple of misplaced global variables.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Yield during PulseEvent().", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll, server: Check the value of WINEESYNC instead of just the presence.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "esync: Update README.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Create esync file descriptors for true file objects and use them for directory change notifications.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "server: Only signal the APC fd for user APCs.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Check the APC fd first.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll/esync: Lock accessing the shm_addrs array.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Get rid of the per-event spinlock for auto-reset events.", 1 },';
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll, server: Abandon esync mutexes on thread exit.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset explorer-Video_Registry_Key
+-# |
+-# | Modified files:
+-# |   *	dlls/advapi32/tests/registry.c, programs/explorer/desktop.c
+-# |
+-if test "$enable_explorer_Video_Registry_Key" -eq 1; then
+-	patch_apply explorer-Video_Registry_Key/0001-explorer-Create-CurrentControlSet-Control-Video-regi.patch
+-	(
+-		printf '%s\n' '+    { "Michael Müller", "explorer: Create CurrentControlSet\\Control\\Video registry key as non-volatile.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset fonts-Missing_Fonts
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#32323] Implement an Arial replacement font
+-# |   *	[#32342] Implement a Times New Roman replacement font
+-# |   *	[#20456] Implement a Courier New replacement font
+-# |   *	[#13829] Implement a Microsoft Yahei replacement font
+-# |
+-# | Modified files:
+-# |   *	COPYING.arial, COPYING.cour, COPYING.msyh, COPYING.times, LICENSE, fonts/Makefile.in, fonts/arial.sfd, fonts/arial.ttf,
+-# | 	fonts/cour.sfd, fonts/cour.ttf, fonts/msyh.sfd, fonts/msyh.ttf, fonts/times.sfd, fonts/times.ttf
+-# |
+-if test "$enable_fonts_Missing_Fonts" -eq 1; then
+-	patch_apply fonts-Missing_Fonts/0001-fonts-Add-Liberation-Sans-as-an-Arial-replacement.patch
+-	patch_apply fonts-Missing_Fonts/0002-fonts-Add-Liberation-Serif-as-an-Times-New-Roman-rep.patch
+-	patch_apply fonts-Missing_Fonts/0003-fonts-Add-Liberation-Mono-as-an-Courier-New-replacem.patch
+-	patch_apply fonts-Missing_Fonts/0004-fonts-Add-WenQuanYi-Micro-Hei-as-a-Microsoft-Yahei-r.patch
+-	patch_apply fonts-Missing_Fonts/0005-Add-licenses-for-fonts-as-separate-files.patch
+-	(
+-		printf '%s\n' '+    { "Torsten Kurbad", "fonts: Add Liberation Sans as an Arial replacement.", 2 },';
+-		printf '%s\n' '+    { "Sebastian Lackner", "fonts: Add Liberation Serif as an Times New Roman replacement.", 1 },';
+-		printf '%s\n' '+    { "Sebastian Lackner", "fonts: Add Liberation Mono as an Courier New replacement.", 1 },';
+-		printf '%s\n' '+    { "Erich E. Hoover", "fonts: Add WenQuanYi Micro Hei as a Microsoft Yahei replacement.", 1 },';
+-		printf '%s\n' '+    { "Michael Müller", "Add licenses for fonts as separate files.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset fsutil-Stub_Program
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#22749] Add stub for fsutil.exe hardlink command
+-# |
+-# | Modified files:
+-# |   *	programs/fsutil/Makefile.in, programs/fsutil/fsutil.rc, programs/fsutil/main.c, programs/fsutil/resources.h
+-# |
+-if test "$enable_fsutil_Stub_Program" -eq 1; then
+-	patch_apply fsutil-Stub_Program/0001-fsutil-Add-fsutil-program-with-support-for-creating-.patch
+-	(
+-		printf '%s\n' '+    { "Michael Müller", "fsutil: Add fsutil program with support for creating hard links.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset gdi32-Lazy_Font_Initialization
+-# |
+-# | Modified files:
+-# |   *	dlls/gdi32/dc.c, dlls/gdi32/freetype.c
+-# |
+-if test "$enable_gdi32_Lazy_Font_Initialization" -eq 1; then
+-	patch_apply gdi32-Lazy_Font_Initialization/0001-gdi32-Perform-lazy-initialization-of-fonts-to-improv.patch
+-	(
+-		printf '%s\n' '+    { "Sebastian Lackner", "gdi32: Perform lazy initialization of fonts to improve startup performance.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset gdi32-rotation
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#34579] gdi32: fix for rotated Arc, ArcTo, Chord and Pie drawing problem
+-# |   *	[#35331] gdi32: fix for rotated ellipse
+-# |
+-# | Modified files:
+-# |   *	dlls/gdi32/dibdrv/graphics.c, dlls/gdi32/gdi_private.h
+-# |
+-if test "$enable_gdi32_rotation" -eq 1; then
+-	patch_apply gdi32-rotation/0001-gdi32-fix-for-rotated-Arc-ArcTo-Chord-and-Pie-drawin.patch
+-	patch_apply gdi32-rotation/0002-gdi32-fix-for-rotated-ellipse.patch
+-	(
+-		printf '%s\n' '+    { "Daniel Wendt", "gdi32: Fix for rotated Arc, ArcTo, Chord and Pie drawing problem.", 1 },';
+-		printf '%s\n' '+    { "Daniel Wendt", "gdi32: Fix for rotated ellipse.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+-# Patchset gdiplus-Performance-Improvements
++# Patchset gdiplus-Performance-Improvements
+ # |
+ # | Modified files:
+ # |   *	dlls/gdiplus/graphics.c
+@@ -3926,6 +3222,58 @@ if test "$enable_iphlpapi_System_Ping" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset ntdll-Junction_Points
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#12401] NET Framework 2.0, 3.0, 4.0 installers and other apps that make use of GAC API for managed assembly
++# | 	installation on NTFS filesystems need reparse point/junction API support
++# | 	(FSCTL_SET_REPARSE_POINT/FSCTL_GET_REPARSE_POINT)
++# |   *	[#44948] Multiple apps (Spine (Mod starter for Gothic), MS Office 365 installer) need CreateSymbolicLinkW implementation
++# |
++# | Modified files:
++# |   *	configure.ac, dlls/kernel32/path.c, dlls/ntdll/directory.c, dlls/ntdll/file.c, dlls/ntdll/tests/file.c,
++# | 	include/Makefile.in, include/ntifs.h, include/wine/port.h, include/winternl.h, libs/port/Makefile.in,
++# | 	libs/port/renameat2.c, server/fd.c
++# |
++if test "$enable_ntdll_Junction_Points" -eq 1; then
++	patch_apply ntdll-Junction_Points/0001-ntdll-Add-support-for-junction-point-creation.patch
++	patch_apply ntdll-Junction_Points/0002-ntdll-Add-support-for-reading-junction-points.patch
++	patch_apply ntdll-Junction_Points/0003-ntdll-Add-support-for-deleting-junction-points.patch
++	patch_apply ntdll-Junction_Points/0004-ntdll-Add-a-test-for-junction-point-advertisement.patch
++	patch_apply ntdll-Junction_Points/0005-kernel32-ntdll-Add-support-for-deleting-junction-poi.patch
++	patch_apply ntdll-Junction_Points/0007-ntdll-Add-support-for-absolute-symlink-creation.patch
++	patch_apply ntdll-Junction_Points/0008-ntdll-Add-support-for-reading-absolute-symlinks.patch
++	patch_apply ntdll-Junction_Points/0009-ntdll-Add-support-for-deleting-symlinks.patch
++	patch_apply ntdll-Junction_Points/0010-ntdll-Add-support-for-relative-symlink-creation.patch
++	patch_apply ntdll-Junction_Points/0011-ntdll-Add-support-for-reading-relative-symlinks.patch
++	patch_apply ntdll-Junction_Points/0012-ntdll-Add-support-for-file-symlinks.patch
++	patch_apply ntdll-Junction_Points/0013-ntdll-Allow-creation-of-dangling-reparse-points-to-n.patch
++	patch_apply ntdll-Junction_Points/0014-ntdll-Correctly-report-file-symbolic-links-as-files.patch
++	patch_apply ntdll-Junction_Points/0015-kernel32-Set-error-code-when-attempting-to-delete-fi.patch
++	patch_apply ntdll-Junction_Points/0016-server-Properly-handle-file-symlink-deletion.patch
++	patch_apply ntdll-Junction_Points/0017-ntdll-Always-report-symbolic-links-as-containing-zer.patch
++	patch_apply ntdll-Junction_Points/0018-ntdll-Find-dangling-symlinks-quickly.patch
++	(
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for junction point creation.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for reading junction points.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for deleting junction points.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add a test for junction point advertisement.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "kernel32,ntdll: Add support for deleting junction points with RemoveDirectory.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for absolute symlink creation.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for reading absolute symlinks.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for deleting symlinks.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for relative symlink creation.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for reading relative symlinks.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Add support for file symlinks.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Allow creation of dangling reparse points to non-existent paths.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Correctly report file symbolic links as files.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "kernel32: Set error code when attempting to delete file symlinks as directories.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "server: Properly handle file symlink deletion.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Always report symbolic links as containing zero bytes.", 1 },';
++		printf '%s\n' '+    { "Erich E. Hoover", "ntdll: Find dangling symlinks quickly.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset server-File_Permissions
+ # |
+ # | This patchset has the following (direct or indirect) dependencies:
+@@ -4035,6 +3383,18 @@ if test "$enable_kernel32_Job_Tests" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset kernel32-K32GetPerformanceInfo
++# |
++# | Modified files:
++# |   *	dlls/kernelbase/debug.c, server/process.c, server/protocol.def
++# |
++if test "$enable_kernel32_K32GetPerformanceInfo" -eq 1; then
++	patch_apply kernel32-K32GetPerformanceInfo/0001-kernel32-Make-K32GetPerformanceInfo-faster.patch
++	(
++		printf '%s\n' '+    { "Michael Müller", "kernel32: Make K32GetPerformanceInfo faster.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset kernel32-Processor_Group
+ # |
+ # | This patchset has the following (direct or indirect) dependencies:
+@@ -4103,6 +3463,23 @@ if test "$enable_krnl386_exe16_Invalid_Console_Handles" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset loader-KeyboardLayouts
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#47439] loader: Add Keyboard Layouts registry enteries.
++# |
++# | Modified files:
++# |   *	dlls/user32/driver.c, dlls/user32/tests/input.c, loader/wine.inf.in
++# |
++if test "$enable_loader_KeyboardLayouts" -eq 1; then
++	patch_apply loader-KeyboardLayouts/0001-loader-Add-Keyboard-Layouts-registry-enteries.patch
++	patch_apply loader-KeyboardLayouts/0002-user32-Improve-GetKeyboardLayoutList.patch
++	(
++		printf '%s\n' '+    { "Alistair Leslie-Hughes", "loader: Add Keyboard Layouts registry enteries.", 1 },';
++		printf '%s\n' '+    { "Alistair Leslie-Hughes", "user32: Improve GetKeyboardLayoutList.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset mmsystem.dll16-MIDIHDR_Refcount
+ # |
+ # | This patchset fixes the following Wine bugs:
+@@ -4246,6 +3623,32 @@ if test "$enable_ntdll_Activation_Context" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset ntdll-ThreadTime
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#20230] Return correct values for GetThreadTimes function
++# |
++# | Modified files:
++# |   *	dlls/ntdll/nt.c, dlls/ntdll/ntdll_misc.h, dlls/ntdll/process.c, dlls/ntdll/thread.c, server/protocol.def,
++# | 	server/snapshot.c, server/thread.c, server/thread.h
++# |
++if test "$enable_ntdll_ThreadTime" -eq 1; then
++	patch_apply ntdll-ThreadTime/0001-ntdll-Return-correct-values-in-GetThreadTimes-for-al.patch
++	patch_apply ntdll-ThreadTime/0002-ntdll-Set-correct-thread-creation-time-for-SystemPro.patch
++	patch_apply ntdll-ThreadTime/0003-ntdll-Fill-process-kernel-and-user-time.patch
++	patch_apply ntdll-ThreadTime/0004-ntdll-Set-process-start-time.patch
++	patch_apply ntdll-ThreadTime/0005-ntdll-Fill-out-thread-times-in-process-enumeration.patch
++	patch_apply ntdll-ThreadTime/0006-ntdll-Fill-process-virtual-memory-counters-in-NtQuer.patch
++	(
++		printf '%s\n' '+    { "Sebastian Lackner", "ntdll: Return correct values in GetThreadTimes() for all threads.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "ntdll: Set correct thread creation time for SystemProcessInformation in NtQuerySystemInformation.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "ntdll: Fill process kernel and user time.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "ntdll: Set process start time.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "ntdll: Fill out thread times in process enumeration.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "ntdll: Fill process virtual memory counters in NtQuerySystemInformation.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset ntdll-ApiSetMap
+ # |
+ # | This patchset has the following (direct or indirect) dependencies:
+@@ -4573,12 +3976,60 @@ fi
+ # Patchset ntdll-NtAccessCheck
+ # |
+ # | Modified files:
+-# |   *	dlls/advapi32/tests/security.c, dlls/ntdll/sec.c
++# |   *	dlls/advapi32/tests/security.c, dlls/ntdll/sec.c
++# |
++if test "$enable_ntdll_NtAccessCheck" -eq 1; then
++	patch_apply ntdll-NtAccessCheck/0001-ntdll-Improve-invalid-paramater-handling-in-NtAccess.patch
++	(
++		printf '%s\n' '+    { "Qian Hong", "ntdll: Improve invalid paramater handling in NtAccessCheck.", 1 },';
++	) >> "$patchlist"
++fi
++
++# Patchset winebuild-Fake_Dlls
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#21232] Chromium-based browser engines (Chrome, Opera, Comodo Dragon, SRWare Iron) crash on startup unless '--no-
++# | 	sandbox' is used (native API sandboxing/hooking scheme incompatible with Wine)
++# |   *	[#42741] StarCraft I: 1.18 PTR fails to initialize ClientSdk.dll
++# |   *	[#45349] Multiple applications and games crash due to missing support for 64-bit syscall thunks (StreetFighter V)
++# |   *	[#45573] League of Legends 8.12+ fails to start a game (anticheat engine, hooking of syscall return instructions)
++# |   *	[#45650] chromium 32-bit sandbox expects different syscall thunks depending on Windows version
++# |
++# | Modified files:
++# |   *	dlls/dbghelp/cpu_i386.c, dlls/kernel32/tests/loader.c, dlls/krnl386.exe16/kernel.c,
++# | 	dlls/krnl386.exe16/kernel16_private.h, dlls/krnl386.exe16/ne_module.c, dlls/krnl386.exe16/ne_segment.c,
++# | 	dlls/krnl386.exe16/task.c, dlls/krnl386.exe16/thunk.c, dlls/krnl386.exe16/wowthunk.c, dlls/ntdll/actctx.c,
++# | 	dlls/ntdll/directory.c, dlls/ntdll/loader.c, dlls/ntdll/locale.c, dlls/ntdll/ntdll_misc.h, dlls/ntdll/path.c,
++# | 	dlls/ntdll/process.c, dlls/ntdll/signal_i386.c, dlls/ntdll/signal_x86_64.c, dlls/ntdll/tests/exception.c,
++# | 	dlls/ntdll/thread.c, dlls/system.drv16/system.c, dlls/toolhelp.dll16/toolhelp.c, dlls/user.exe16/message.c,
++# | 	dlls/user.exe16/user.c, dlls/user.exe16/window.c, include/winternl.h, libs/wine/loader.c, server/mapping.c,
++# | 	tools/winebuild/build.h, tools/winebuild/import.c, tools/winebuild/parser.c, tools/winebuild/relay.c,
++# | 	tools/winebuild/res32.c, tools/winebuild/spec16.c, tools/winebuild/spec32.c, tools/winebuild/utils.c
+ # |
+-if test "$enable_ntdll_NtAccessCheck" -eq 1; then
+-	patch_apply ntdll-NtAccessCheck/0001-ntdll-Improve-invalid-paramater-handling-in-NtAccess.patch
++if test "$enable_winebuild_Fake_Dlls" -eq 1; then
++	patch_apply winebuild-Fake_Dlls/0001-kernel32-tests-Add-basic-tests-for-fake-dlls.patch
++	patch_apply winebuild-Fake_Dlls/0002-krnl386.exe16-Do-not-abuse-WOW32Reserved-field-for-1.patch
++	patch_apply winebuild-Fake_Dlls/0003-winebuild-Generate-syscall-thunks-for-ntdll-exports.patch
++	patch_apply winebuild-Fake_Dlls/0004-winebuild-Use-multipass-label-system-to-generate-fak.patch
++	patch_apply winebuild-Fake_Dlls/0005-winebuild-Add-stub-functions-in-fake-dlls.patch
++	patch_apply winebuild-Fake_Dlls/0006-winebuild-Add-syscall-thunks-in-fake-dlls.patch
++	patch_apply winebuild-Fake_Dlls/0007-winebuild-Fix-size-of-relocation-information-in-fake.patch
++	patch_apply winebuild-Fake_Dlls/0008-winebuild-Try-to-make-sure-RVA-matches-between-fake-.patch
++	patch_apply winebuild-Fake_Dlls/0009-libs-wine-Use-same-file-alignment-for-fake-and-built.patch
++	patch_apply winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
++	patch_apply winebuild-Fake_Dlls/0011-ntdll-Call-NtOpenFile-through-syscall-thunk.patch
+ 	(
+-		printf '%s\n' '+    { "Qian Hong", "ntdll: Improve invalid paramater handling in NtAccessCheck.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "kernel32/tests: Add basic tests for fake dlls.", 1 },';
++		printf '%s\n' '+    { "Sebastian Lackner", "krnl386.exe16: Do not abuse WOW32Reserved field for 16-bit stack address.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "winebuild: Generate syscall thunks for ntdll exports.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "winebuild: Use multipass label system to generate fake dlls.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "winebuild: Add stub functions in fake dlls.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "winebuild: Add syscall thunks in fake dlls.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "winebuild: Fix size of relocation information in fake dlls.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "winebuild: Try to make sure RVA matches between fake and builtin DLLs.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "libs/wine: Use same file alignment for fake and builtin DLLs.", 1 },';
++		printf '%s\n' '+    { "Michael Müller", "tools/winebuild: Add syscall thunks for 64 bit.", 1 },';
++		printf '%s\n' '+    { "Paul Gofman", "ntdll: Call NtOpenFile through syscall thunk.", 1 },';
+ 	) >> "$patchlist"
+ fi
+ 
+@@ -4723,6 +4174,24 @@ if test "$enable_ntdll_ProcessQuotaLimits" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset ntdll-RtlCreateUserThread
++# |
++# | This patchset has the following (direct or indirect) dependencies:
++# |   *	winebuild-Fake_Dlls
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#45571] League of Legends 8.12+ fails to start a game (anticheat engine, hooking of NtCreateThread/Ex)
++# |
++# | Modified files:
++# |   *	dlls/ntdll/ntdll.spec, dlls/ntdll/thread.c, include/winternl.h
++# |
++if test "$enable_ntdll_RtlCreateUserThread" -eq 1; then
++	patch_apply ntdll-RtlCreateUserThread/0001-ntdll-Refactor-RtlCreateUserThread-into-NtCreateThre.patch
++	(
++		printf '%s\n' '+    { "Andrew Wesie", "ntdll: Refactor RtlCreateUserThread into NtCreateThreadEx.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset ntdll-RtlQueryPackageIdentity
+ # |
+ # | Modified files:
+@@ -4866,6 +4335,18 @@ if test "$enable_ntdll_SystemModuleInformation" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset ntdll-SystemRoot_Symlink
++# |
++# | Modified files:
++# |   *	dlls/ntdll/om.c
++# |
++if test "$enable_ntdll_SystemRoot_Symlink" -eq 1; then
++	patch_apply ntdll-SystemRoot_Symlink/0001-ntdll-Add-special-handling-for-SystemRoot-to-satisfy.patch
++	(
++		printf '%s\n' '+    { "Sebastian Lackner", "ntdll: Add special handling for \\SystemRoot to satisfy MSYS2 case-insensitive system check.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset ntdll-ThreadHideFromDebugger
+ # |
+ # | This patchset fixes the following Wine bugs:
+@@ -4881,6 +4362,18 @@ if test "$enable_ntdll_ThreadHideFromDebugger" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset ntdll-Threading
++# |
++# | Modified files:
++# |   *	dlls/ntdll/thread.c
++# |
++if test "$enable_ntdll_Threading" -eq 1; then
++	patch_apply ntdll-Threading/0001-ntdll-Fix-race-condition-when-threads-are-killed-dur.patch
++	(
++		printf '%s\n' '+    { "Sebastian Lackner", "ntdll: Fix race-condition when threads are killed during shutdown.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset ntdll-Zero_mod_name
+ # |
+ # | Modified files:
+@@ -4910,6 +4403,21 @@ if test "$enable_ntdll_aarch_TEB" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset ntdll-ext4-case-folder
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#47099] Support for EXT4 case folding per directory.
++# |
++# | Modified files:
++# |   *	dlls/ntdll/unix/server.c
++# |
++if test "$enable_ntdll_ext4_case_folder" -eq 1; then
++	patch_apply ntdll-ext4-case-folder/0002-ntdll-server-Mark-drive_c-as-case-insensitive-when-c.patch
++	(
++		printf '%s\n' '+    { "Gabriel Ivăncescu", "ntdll/server: Mark drive_c as case-insensitive when created.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset ntdll-set_full_cpu_context
+ # |
+ # | Modified files:
+@@ -5192,14 +4700,29 @@ if test "$enable_riched20_IText_Interface" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset ws2_32-WSACleanup
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#18670] Properly close sockets when WSACleanup is called
++# |
++# | Modified files:
++# |   *	dlls/ntdll/ntdll.spec, dlls/ntdll/server.c, dlls/ntdll/unix/loader.c, dlls/ntdll/unix/server.c,
++# | 	dlls/ntdll/unix/unix_private.h, dlls/ntdll/unixlib.h, dlls/ws2_32/socket.c, dlls/ws2_32/tests/sock.c,
++# | 	include/wine/server.h, server/protocol.def, server/sock.c
++# |
++if test "$enable_ws2_32_WSACleanup" -eq 1; then
++	patch_apply ws2_32-WSACleanup/0001-ws2_32-Proper-WSACleanup-implementation-using-winese.patch
++	patch_apply ws2_32-WSACleanup/0002-ws2_32-Invalidate-client-side-file-descriptor-cache-.patch
++	(
++		printf '%s\n' '+    { "Matt Durgavich", "ws2_32: Proper WSACleanup implementation using wineserver function.", 2 },';
++		printf '%s\n' '+    { "Sebastian Lackner", "ws2_32: Invalidate client-side file descriptor cache in WSACleanup.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset server-Desktop_Refcount
+ # |
+ # | This patchset has the following (direct or indirect) dependencies:
+-# |   *	Staging, advapi32-CreateRestrictedToken, advapi32-Token_Integrity_Level, kernel32-K32GetPerformanceInfo, ntdll-
+-# | 	Junction_Points, winebuild-Fake_Dlls, ntdll-RtlCreateUserThread, ntdll-SystemRoot_Symlink, ntdll-ThreadTime, server-
+-# | 	Realtime_Priority, ntdll-Threading, ntdll-ext4-case-folder, server-Key_State, server-PeekMessage, server-Signal_Thread,
+-# | 	loader-KeyboardLayouts, winex11.drv-mouse-coorrds, user32-rawinput-mouse, user32-rawinput-nolegacy, server-
+-# | 	Shared_Memory, ws2_32-WSACleanup, eventfd_synchronization
++# |   *	ws2_32-WSACleanup
+ # |
+ # | This patchset fixes the following Wine bugs:
+ # |   *	[#46967] GOG Galaxy doesn't run in virtual desktop.
+@@ -5207,11 +4730,10 @@ fi
+ # | Modified files:
+ # |   *	dlls/user32/tests/winstation.c, programs/explorer/desktop.c, server/async.c, server/atom.c, server/change.c,
+ # | 	server/clipboard.c, server/completion.c, server/console.c, server/debugger.c, server/device.c, server/directory.c,
+-# | 	server/esync.c, server/event.c, server/fd.c, server/file.c, server/handle.c, server/handle.h, server/hook.c,
+-# | 	server/mailslot.c, server/mapping.c, server/mutex.c, server/named_pipe.c, server/object.c, server/object.h,
+-# | 	server/process.c, server/queue.c, server/registry.c, server/request.c, server/semaphore.c, server/serial.c,
+-# | 	server/signal.c, server/snapshot.c, server/sock.c, server/symlink.c, server/thread.c, server/timer.c, server/token.c,
+-# | 	server/winstation.c
++# | 	server/event.c, server/fd.c, server/file.c, server/handle.c, server/handle.h, server/hook.c, server/mailslot.c,
++# | 	server/mapping.c, server/mutex.c, server/named_pipe.c, server/object.c, server/object.h, server/process.c,
++# | 	server/queue.c, server/registry.c, server/request.c, server/semaphore.c, server/serial.c, server/signal.c,
++# | 	server/snapshot.c, server/sock.c, server/symlink.c, server/thread.c, server/timer.c, server/token.c, server/winstation.c
+ # |
+ if test "$enable_server_Desktop_Refcount" -eq 1; then
+ 	patch_apply server-Desktop_Refcount/0001-server-Introduce-a-new-alloc_handle-object-callback..patch
+@@ -5284,11 +4806,25 @@ if test "$enable_server_Inherited_ACLs" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
+-# Patchset server-Object_Types
++# Patchset server-Key_State
+ # |
+-# | This patchset has the following (direct or indirect) dependencies:
+-# |   *	ntdll-Threading, ntdll-ext4-case-folder, server-Key_State, server-PeekMessage, server-Signal_Thread, loader-
+-# | 	KeyboardLayouts, winex11.drv-mouse-coorrds, user32-rawinput-mouse, user32-rawinput-nolegacy, server-Shared_Memory
++# | This patchset fixes the following Wine bugs:
++# |   *	[#31899] Implement locking and synchronization of key states
++# |   *	[#35907] Fix caps lock state issues with multiple processes
++# |
++# | Modified files:
++# |   *	server/queue.c
++# |
++if test "$enable_server_Key_State" -eq 1; then
++	patch_apply server-Key_State/0001-server-Introduce-a-helper-function-to-update-the-thr.patch
++	patch_apply server-Key_State/0002-server-Implement-locking-and-synchronization-of-keys.patch
++	(
++		printf '%s\n' '+    { "Sebastian Lackner", "server: Introduce a helper function to update the thread_input key state.", 1 },';
++		printf '%s\n' '+    { "Sebastian Lackner", "server: Implement locking and synchronization of keystate buffer.", 3 },';
++	) >> "$patchlist"
++fi
++
++# Patchset server-Object_Types
+ # |
+ # | This patchset fixes the following Wine bugs:
+ # |   *	[#44629] Process Hacker can't enumerate handles
+@@ -5320,6 +4856,36 @@ if test "$enable_server_Object_Types" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset server-PeekMessage
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#28884] GetMessage should remove already seen messages with higher priority
++# |
++# | Modified files:
++# |   *	dlls/user32/tests/msg.c, server/queue.c
++# |
++if test "$enable_server_PeekMessage" -eq 1; then
++	patch_apply server-PeekMessage/0001-server-Fix-handling-of-GetMessage-after-previous-Pee.patch
++	(
++		printf '%s\n' '+    { "Sebastian Lackner", "server: Fix handling of GetMessage after previous PeekMessage call.", 3 },';
++	) >> "$patchlist"
++fi
++
++# Patchset server-Realtime_Priority
++# |
++# | This patchset has the following (direct or indirect) dependencies:
++# |   *	ntdll-ThreadTime
++# |
++# | Modified files:
++# |   *	server/Makefile.in, server/main.c, server/scheduler.c, server/thread.c, server/thread.h
++# |
++if test "$enable_server_Realtime_Priority" -eq 1; then
++	patch_apply server-Realtime_Priority/0001-wineserver-Draft-to-implement-priority-levels-throug.patch
++	(
++		printf '%s\n' '+    { "Joakim Hernberg", "wineserver: Draft to implement priority levels through POSIX scheduling policies on linux.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset server-Registry_Notifications
+ # |
+ # | Modified files:
+@@ -5334,6 +4900,18 @@ if test "$enable_server_Registry_Notifications" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset server-Signal_Thread
++# |
++# | Modified files:
++# |   *	server/thread.c, server/thread.h
++# |
++if test "$enable_server_Signal_Thread" -eq 1; then
++	patch_apply server-Signal_Thread/0001-server-Do-not-signal-thread-until-it-is-really-gone.patch
++	(
++		printf '%s\n' '+    { "Sebastian Lackner", "server: Do not signal violently terminated threads until they are really gone.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset setupapi-DiskSpaceList
+ # |
+ # | Modified files:
+@@ -6009,6 +5587,94 @@ if test "$enable_user32_msgbox_Support_WM_COPY_mesg" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
++# Patchset winex11.drv-mouse-coorrds
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#46309] winex11.drv: Use root-relative coordinates for events, if possible.
++# |
++# | Modified files:
++# |   *	dlls/winex11.drv/mouse.c
++# |
++if test "$enable_winex11_drv_mouse_coorrds" -eq 1; then
++	patch_apply winex11.drv-mouse-coorrds/0001-winex11.drv-mouse-Use-root-relative-coordinates-for-ev.patch
++	(
++		printf '%s\n' '+    { "Gabriel Ivăncescu", "winex11.drv/mouse: Use root-relative coordinates for events, if possible.", 1 },';
++	) >> "$patchlist"
++fi
++
++# Patchset user32-rawinput-mouse
++# |
++# | This patchset has the following (direct or indirect) dependencies:
++# |   *	loader-KeyboardLayouts, winex11.drv-mouse-coorrds
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#42631] Mouse drift, jump or don't react to small slow movements in Unity-engine games and Fallout 4 (partly fixed in
++# | 	Unity games, have walkaround in Fallout4 )
++# |   *	[#42675] Overwatch: Phantom mouse input / view pulled up to ceiling
++# |
++# | Modified files:
++# |   *	dlls/dinput/device_private.h, dlls/dinput/dinput_main.c, dlls/dinput/mouse.c, dlls/dinput8/tests/device.c,
++# | 	dlls/user32/input.c, dlls/user32/rawinput.c, dlls/user32/tests/input.c, dlls/user32/user32.spec,
++# | 	dlls/wineandroid.drv/keyboard.c, dlls/wineandroid.drv/window.c, dlls/winemac.drv/ime.c, dlls/winemac.drv/keyboard.c,
++# | 	dlls/winemac.drv/mouse.c, dlls/winex11.drv/event.c, dlls/winex11.drv/keyboard.c, dlls/winex11.drv/mouse.c,
++# | 	dlls/winex11.drv/x11drv.h, dlls/winex11.drv/x11drv_main.c, include/winuser.h, server/protocol.def, server/queue.c
++# |
++if test "$enable_user32_rawinput_mouse" -eq 1; then
++	patch_apply user32-rawinput-mouse/0001-user32-tests-Add-rawinput-test-for-ClipCursor-intera.patch
++	patch_apply user32-rawinput-mouse/0002-user32-tests-Add-rawinput-test-for-cross-thread-inte.patch
++	patch_apply user32-rawinput-mouse/0003-user32-tests-Add-rawinput-test-for-cross-process-int.patch
++	patch_apply user32-rawinput-mouse/0004-server-Add-send_hardware_message-flags-for-rawinput-.patch
++	patch_apply user32-rawinput-mouse/0005-server-Broadcast-rawinput-message-if-request-flag-is.patch
++	patch_apply user32-rawinput-mouse/0006-user32-Add-__wine_send_input-flags-to-hint-raw-input.patch
++	patch_apply user32-rawinput-mouse/0007-winex11.drv-Advertise-XInput2-version-2.1-support.patch
++	patch_apply user32-rawinput-mouse/0008-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
++	patch_apply user32-rawinput-mouse/0009-winex11.drv-Listen-to-RawMotion-and-RawButton-events.patch
++	patch_apply user32-rawinput-mouse/0010-user32-Implement-GetRegisteredRawInputDevices.patch
++	patch_apply user32-rawinput-mouse/0011-dinput8-Add-support-for-dinput-devices-that-use-raw-.patch
++	patch_apply user32-rawinput-mouse/0012-dinput8-Use-raw-input-interface-for-dinput8-mouse-de.patch
++	patch_apply user32-rawinput-mouse/0013-dinput-Fix-rawinput-events-sequence-number.patch
++	(
++		printf '%s\n' '+    { "Rémi Bernon", "user32/tests: Add rawinput test for ClipCursor interactions.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "user32/tests: Add rawinput test for cross-thread interactions.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "user32/tests: Add rawinput test for cross-process interactions.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "server: Add send_hardware_message flags for rawinput translation.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "server: Broadcast rawinput message if request flag is SEND_HWMSG_RAWINPUT.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "user32: Add __wine_send_input flags to hint raw input translation.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "winex11.drv: Advertise XInput2 version 2.1 support.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "winex11.drv: Keep track of pointer and device button mappings.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "winex11.drv: Listen to RawMotion and RawButton* events in the desktop thread.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "user32: Implement GetRegisteredRawInputDevices.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "dinput8: Add support for dinput devices that use raw input interface.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "dinput8: Use raw input interface for dinput8 mouse device.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "dinput: Fix rawinput events sequence number.", 1 },';
++	) >> "$patchlist"
++fi
++
++# Patchset user32-rawinput-nolegacy
++# |
++# | This patchset has the following (direct or indirect) dependencies:
++# |   *	server-Key_State, loader-KeyboardLayouts, winex11.drv-mouse-coorrds, user32-rawinput-mouse
++# |
++# | Modified files:
++# |   *	dlls/dinput/dinput_main.c, dlls/dinput8/tests/device.c, dlls/user32/rawinput.c, server/queue.c
++# |
++if test "$enable_user32_rawinput_nolegacy" -eq 1; then
++	patch_apply user32-rawinput-nolegacy/0001-dinput8-tests-Add-test-for-DISCL_EXCLUSIVE-flag-inte.patch
++	patch_apply user32-rawinput-nolegacy/0002-user32-Add-support-for-RIDEV_NOLEGACY-flag-in-Regist.patch
++	patch_apply user32-rawinput-nolegacy/0003-dinput-Set-RIDEV_INPUTSINK-flag-only-when-DISCL_BACK.patch
++	patch_apply user32-rawinput-nolegacy/0004-dinput-Set-correct-rawinput-flags-for-DISCL_EXCLUSIV.patch
++	patch_apply user32-rawinput-nolegacy/0005-server-Update-desktop-cursor-pos-even-if-RIDEV_NOLEG.patch
++	patch_apply user32-rawinput-nolegacy/0006-server-Also-update-the-key-state-if-RIDEV_NOLEGACY-i.patch
++	(
++		printf '%s\n' '+    { "Rémi Bernon", "dinput8/tests: Add test for DISCL_EXCLUSIVE flag interaction with rawinput.", 1 },';
++		printf '%s\n' '+    { "Derek Lesho", "user32: Add support for RIDEV_NOLEGACY flag in RegisterRawInputDevices.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "dinput: Set RIDEV_INPUTSINK flag only when DISCL_BACKGROUND is requested.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "dinput: Set correct rawinput flags for DISCL_EXCLUSIVE.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "server: Update desktop cursor pos even if RIDEV_NOLEGACY flag is set.", 1 },';
++		printf '%s\n' '+    { "Rémi Bernon", "server: Also update the key state if RIDEV_NOLEGACY is used.", 1 },';
++	) >> "$patchlist"
++fi
++
+ # Patchset user32-rawinput-hid
+ # |
+ # | This patchset has the following (direct or indirect) dependencies:
+@@ -6969,11 +6635,7 @@ fi
+ # Patchset ws2_32-TransmitFile
+ # |
+ # | This patchset has the following (direct or indirect) dependencies:
+-# |   *	Staging, advapi32-CreateRestrictedToken, advapi32-Token_Integrity_Level, kernel32-K32GetPerformanceInfo, ntdll-
+-# | 	Junction_Points, winebuild-Fake_Dlls, ntdll-RtlCreateUserThread, ntdll-SystemRoot_Symlink, ntdll-ThreadTime, server-
+-# | 	Realtime_Priority, ntdll-Threading, ntdll-ext4-case-folder, server-Key_State, server-PeekMessage, server-Signal_Thread,
+-# | 	loader-KeyboardLayouts, winex11.drv-mouse-coorrds, user32-rawinput-mouse, user32-rawinput-nolegacy, server-
+-# | 	Shared_Memory, ws2_32-WSACleanup, eventfd_synchronization, server-Desktop_Refcount
++# |   *	ws2_32-WSACleanup, server-Desktop_Refcount
+ # |
+ # | Modified files:
+ # |   *	dlls/ws2_32/socket.c, dlls/ws2_32/tests/sock.c, include/winsock.h, server/protocol.def, server/sock.c
+diff --git a/patches/server-Desktop_Refcount/0001-server-Introduce-a-new-alloc_handle-object-callback..patch b/patches/server-Desktop_Refcount/0001-server-Introduce-a-new-alloc_handle-object-callback..patch
+index 69c400d52..645514f53 100644
+--- a/patches/server-Desktop_Refcount/0001-server-Introduce-a-new-alloc_handle-object-callback..patch
++++ b/patches/server-Desktop_Refcount/0001-server-Introduce-a-new-alloc_handle-object-callback..patch
+@@ -214,31 +213,19 @@ index 8083c686e11..a1e631d435f 100644
+      no_close_handle,              /* close_handle */
+      directory_destroy             /* destroy */
+  };
+-diff --git a/server/esync.c b/server/esync.c
+-index 1b035bdb066..4563b97573a 100644
+---- a/server/esync.c
+-+++ b/server/esync.c
+-@@ -140,6 +140,7 @@ const struct object_ops esync_ops =
+-     default_unlink_name,       /* unlink_name */
+-     no_open_file,              /* open_file */
+-     no_kernel_obj_list,        /* get_kernel_obj_list */
+-+    no_alloc_handle,           /* alloc_handle */
+-     no_close_handle,           /* close_handle */
+-     esync_destroy              /* destroy */
+- };
+ diff --git a/server/event.c b/server/event.c
+-index 79287e7edc0..ad8fddbfade 100644
++index d339d85aa45..a78d73d9e78 100644
+ --- a/server/event.c
+ +++ b/server/event.c
+-@@ -76,6 +76,7 @@ static const struct object_ops event_ops =
++@@ -71,6 +71,7 @@ static const struct object_ops event_ops =
+      default_unlink_name,       /* unlink_name */
+      no_open_file,              /* open_file */
+      event_get_kernel_obj_list, /* get_kernel_obj_list */
+ +    no_alloc_handle,           /* alloc_handle */
+      no_close_handle,           /* close_handle */
+-     event_destroy              /* destroy */
++     no_destroy                 /* destroy */
+  };
+-@@ -111,6 +112,7 @@ static const struct object_ops keyed_event_ops =
++@@ -105,6 +106,7 @@ static const struct object_ops keyed_event_ops =
+      default_unlink_name,         /* unlink_name */
+      no_open_file,                /* open_file */
+      no_kernel_obj_list,          /* get_kernel_obj_list */
+ 
+diff --git a/patches/server-Desktop_Refcount/definition b/patches/server-Desktop_Refcount/definition
+index c56a7052a..413dc31ad 100644
+--- a/patches/server-Desktop_Refcount/definition
++++ b/patches/server-Desktop_Refcount/definition
+@@ -1,5 +1,4 @@
+ Fixes: Fix possible leak of explorer.exe processes and implement proper desktop refcounting
+ Fixes: Assign random name when trying to create Window Station without name
+ Fixes: [46967] GOG Galaxy doesn't run in virtual desktop.
+-Depends: eventfd_synchronization
+ Depends: ws2_32-WSACleanup
+diff --git a/patches/server-FileEndOfFileInformation/0001-ntdll-Set-EOF-on-file-which-has-a-memory-mapping-sho.patch b/patches/server-FileEndOfFileInformation/0001-ntdll-Set-EOF-on-file-which-has-a-memory-mapping-sho.patch
+index a243e0342..229655b27 100644
+--- a/patches/server-FileEndOfFileInformation/0001-ntdll-Set-EOF-on-file-which-has-a-memory-mapping-sho.patch
++++ b/patches/server-FileEndOfFileInformation/0001-ntdll-Set-EOF-on-file-which-has-a-memory-mapping-sho.patch
+@@ -1,26 +1,27 @@
+-From 3b5ea5ff15907d1d8f1902a08451b0a03eb11dc9 Mon Sep 17 00:00:00 2001
++From ed63a76dc481da8af510fb8f9ae6c399ca0ca0ac Mon Sep 17 00:00:00 2001
+ From: Qian Hong <qhong@codeweavers.com>
+ Date: Fri, 21 Aug 2015 21:58:51 +0800
+-Subject: ntdll: Set EOF on file which has a memory mapping should fail.
++Subject: [PATCH] ntdll: Set EOF on file which has a memory mapping should
++ fail.
+ 
+ ---
+- dlls/ntdll/file.c   | 27 +++++++-------------------
+- server/fd.c         | 55 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+- server/protocol.def |  7 +++++++
++ dlls/ntdll/file.c   | 27 ++++++----------------
++ server/fd.c         | 55 +++++++++++++++++++++++++++++++++++++++++++++
++ server/protocol.def |  7 ++++++
+  3 files changed, 69 insertions(+), 20 deletions(-)
+ 
+ diff --git a/dlls/ntdll/file.c b/dlls/ntdll/file.c
+-index be6b591..8c9b076 100644
++index 013706889bb..a28ae265687 100644
+ --- a/dlls/ntdll/file.c
+ +++ b/dlls/ntdll/file.c
+-@@ -2650,30 +2650,17 @@ NTSTATUS WINAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK io,
++@@ -2747,30 +2747,17 @@ NTSTATUS WINAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK io,
+      case FileEndOfFileInformation:
+          if (len >= sizeof(FILE_END_OF_FILE_INFORMATION))
+          {
+ -            struct stat st;
+              const FILE_END_OF_FILE_INFORMATION *info = ptr;
+  
+--            if ((io->u.Status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
++-            if ((io->u.Status = unix_funcs->server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
+ -                return io->u.Status;
+ -
+ -            /* first try normal truncate */
+ 
+diff --git a/patches/server-Object_Types/0003-server-Register-types-during-startup.patch b/patches/server-Object_Types/0003-server-Register-types-during-startup.patch
+index 1905f8f18..769f1f3c4 100644
+--- a/patches/server-Object_Types/0003-server-Register-types-during-startup.patch
++++ b/patches/server-Object_Types/0003-server-Register-types-during-startup.patch
+@@ -116,22 +116,22 @@ index 781e6f3141a..42350048877 100644
+  }
+  
+ diff --git a/server/main.c b/server/main.c
+-index 43297a3e93d..0a628c30e2d 100644
++index efb205f5292..fee10ea3d37 100644
+ --- a/server/main.c
+ +++ b/server/main.c
+-@@ -146,6 +146,7 @@ int main( int argc, char *argv[] )
++@@ -145,6 +145,7 @@ int main( int argc, char *argv[] )
++     init_signals();
+      init_directories();
+      init_registry();
+-     init_shared_memory();
+ +    init_types();
+      main_loop();
+      return 0;
+  }
+ diff --git a/server/mapping.c b/server/mapping.c
+-index 2a2803404cc..24ab0f63e48 100644
++index 0941dd87c05..88894661025 100644
+ --- a/server/mapping.c
+ +++ b/server/mapping.c
+-@@ -979,8 +979,7 @@ static void mapping_dump( struct object *obj, int verbose )
++@@ -915,8 +915,7 @@ static void mapping_dump( struct object *obj, int verbose )
+  
+  static struct object_type *mapping_get_type( struct object *obj )
+  {
+
+diff --git a/patches/server-Object_Types/definition b/patches/server-Object_Types/definition
+index 9f2708c1a..724bb014f 100644
+--- a/patches/server-Object_Types/definition
++++ b/patches/server-Object_Types/definition
+@@ -1,3 +1,3 @@
+ Fixes: [44629] Process Hacker can't enumerate handles
+ Fixes: [45374] Yet Another Process Monitor (.NET 2.0 app) reports System.AccessViolationException
+-Depends: server-Shared_Memory
++#Depends: server-Shared_Memory
+diff --git a/patches/server-Shared_Memory/definition b/patches/server-Shared_Memory/definition
+index 644589e66..316338467 100644
+--- a/patches/server-Shared_Memory/definition
++++ b/patches/server-Shared_Memory/definition
+@@ -7,3 +7,5 @@ Depends: server-PeekMessage
+ Depends: server-Signal_Thread
+ Depends: user32-rawinput-nolegacy
+ Depends: ntdll-ext4-case-folder
++# This is not worth rebasing right now.
++Disabled: true
+diff --git a/patches/wineboot-DriveSerial/0001-wineboot-Assign-a-drive-serial-number-during-prefix-.patch b/patches/wineboot-DriveSerial/0001-wineboot-Assign-a-drive-serial-number-during-prefix-.patch
+index 427455553..093120d00 100644
+--- a/patches/wineboot-DriveSerial/0001-wineboot-Assign-a-drive-serial-number-during-prefix-.patch
++++ b/patches/wineboot-DriveSerial/0001-wineboot-Assign-a-drive-serial-number-during-prefix-.patch
+@@ -57,14 +57,14 @@ index e1dbe6630..f8b0c4d74 100644
+  /* create the volatile hardware registry keys */
+  static void create_hardware_registry_keys(void)
+  {
+-@@ -1694,6 +1725,7 @@ int __cdecl main( int argc, char *argv[] )
+- 
++@@ -1590,6 +1621,7 @@ int __cdecl main( int argc, char *argv[] )
+      ResetEvent( event );  /* in case this is a restart */
+  
++     create_user_shared_data();
+ +    create_disk_serial_number();
+      create_hardware_registry_keys();
+      create_dynamic_registry_keys();
+      create_environment_registry_keys();
+ -- 
+-2.25.0
++2.26.2
+ 
+diff --git a/patches/ws2_32-WSACleanup/0002-ws2_32-Invalidate-client-side-file-descriptor-cache-.patch b/patches/ws2_32-WSACleanup/0002-ws2_32-Invalidate-client-side-file-descriptor-cache-.patch
+index 7c65d3baa..384fc90af 100644
+--- a/patches/ws2_32-WSACleanup/0002-ws2_32-Invalidate-client-side-file-descriptor-cache-.patch
++++ b/patches/ws2_32-WSACleanup/0002-ws2_32-Invalidate-client-side-file-descriptor-cache-.patch
+@@ -24,19 +29,49 @@ index c3b6bf0..2b52562 100644
+  @ cdecl wine_server_handle_to_fd(long long ptr ptr)
+  @ cdecl wine_server_release_fd(long long)
+ diff --git a/dlls/ntdll/server.c b/dlls/ntdll/server.c
+-index 356d631..381d5aa 100644
++index ed4e3f25531..ae1e41a485e 100644
+ --- a/dlls/ntdll/server.c
+ +++ b/dlls/ntdll/server.c
+-@@ -915,6 +915,30 @@ int server_remove_fd_from_cache( HANDLE handle )
++@@ -687,6 +687,14 @@ void CDECL wine_server_release_fd( HANDLE handle, int unix_fd )
++     unix_funcs->server_release_fd( handle, unix_fd );
++ }
+  
+- 
+- /***********************************************************************
+++ /***********************************************************************
+ + *           wine_server_close_fds_by_type
+-+ *
+-+ * Needed for a proper implementation of WSACleanup.
+ + */
+ +void CDECL wine_server_close_fds_by_type( enum server_fd_type type )
+ +{
+++    unix_funcs->server_remove_fds_from_cache_by_type( type );
+++}
+++
++ 
++ /***********************************************************************
++  *           server_init_process
++diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
++index 4a3f101d301..8b10964603e 100644
++--- a/dlls/ntdll/unix/loader.c
+++++ b/dlls/ntdll/unix/loader.c
++@@ -1000,6 +1000,7 @@ static struct unix_funcs unix_funcs =
++     wine_server_call,
++     server_send_fd,
++     server_remove_fd_from_cache,
+++    server_remove_fds_from_cache_by_type,
++     server_get_unix_fd,
++     server_fd_to_handle,
++     server_handle_to_fd,
++diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
++index 8dc3f33bc80..dd2cb6cf5e2 100644
++--- a/dlls/ntdll/unix/server.c
+++++ b/dlls/ntdll/unix/server.c
++@@ -559,6 +559,26 @@ int CDECL server_remove_fd_from_cache( HANDLE handle )
++     return fd;
++ }
++ 
+++/***********************************************************************
+++ *           server_remove_fds_from_cache_by_type
+++ */
+++void CDECL server_remove_fds_from_cache_by_type( enum server_fd_type type )
+++{
+ +    union fd_cache_entry cache;
+ +    unsigned int entry, idx;
+ +
+@@ -52,17 +87,47 @@ index 356d631..381d5aa 100644
+ +        }
+ +    }
+ +}
+-+
+-+
+-+/***********************************************************************
++ 
++ /***********************************************************************
+   *           server_get_unix_fd
+-  *
+-  * The returned unix_fd should be closed iff needs_close is non-zero.
++diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
++index 2bf39f85371..32c03fd8983 100644
++--- a/dlls/ntdll/unix/unix_private.h
+++++ b/dlls/ntdll/unix/unix_private.h
++@@ -63,6 +63,7 @@ extern void CDECL dbg_init(void) DECLSPEC_HIDDEN;
++ extern unsigned int CDECL server_call_unlocked( void *req_ptr ) DECLSPEC_HIDDEN;
++ extern void CDECL server_send_fd( int fd ) DECLSPEC_HIDDEN;
++ extern int CDECL server_remove_fd_from_cache( HANDLE handle ) DECLSPEC_HIDDEN;
+++extern void CDECL server_remove_fds_from_cache_by_type( enum server_fd_type type ) DECLSPEC_HIDDEN;
++ extern int CDECL server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
++                                      int *needs_close, enum server_fd_type *type,
++                                      unsigned int *options ) DECLSPEC_HIDDEN;
++diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
++index 142e8956e7e..452c725dfde 100644
++--- a/dlls/ntdll/unixlib.h
+++++ b/dlls/ntdll/unixlib.h
++@@ -25,7 +25,7 @@
++ #include "wine/debug.h"
++ 
++ /* increment this when you change the function table */
++-#define NTDLL_UNIXLIB_VERSION 10
+++#define NTDLL_UNIXLIB_VERSION 11
++ 
++ struct unix_funcs
++ {
++@@ -55,6 +55,7 @@ struct unix_funcs
++     unsigned int  (CDECL *server_call)( void *req_ptr );
++     void          (CDECL *server_send_fd)( int fd );
++     int           (CDECL *server_remove_fd_from_cache)( HANDLE handle );
+++    void          (CDECL *server_remove_fds_from_cache_by_type)( enum server_fd_type type );
++     int           (CDECL *server_get_unix_fd)( HANDLE handle, unsigned int wanted_access, int *unix_fd,
++                                                int *needs_close, enum server_fd_type *type, unsigned int *options );
++     NTSTATUS      (CDECL *server_fd_to_handle)( int fd, unsigned int access, unsigned int attributes,
+ diff --git a/dlls/ws2_32/socket.c b/dlls/ws2_32/socket.c
+-index ea45397..c50d2b6 100644
++index bbc44ca2c20..37d110d216f 100644
+ --- a/dlls/ws2_32/socket.c
+ +++ b/dlls/ws2_32/socket.c
+-@@ -1495,6 +1495,7 @@ INT WINAPI WSACleanup(void)
++@@ -1729,6 +1729,7 @@ INT WINAPI WSACleanup(void)
+  
+      if (!--num_startup)
+      {
+ 
