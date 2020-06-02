@@ -18,7 +18,7 @@ _prebuild_common() {
 	echo "" >> "$_where"/last_build_config.log
 
 	# compiler flags
-	if [ "$_LOCAL_OPTIMIZED" == "true" ]; then
+	if [ "$_LOCAL_OPTIMIZED" = "true" ]; then
 	  export CFLAGS="${_GCC_FLAGS}"
 	  export CXXFLAGS="${_GCC_FLAGS}"
 	  export LDFLAGS="${_LD_FLAGS}"
@@ -61,14 +61,14 @@ _build() {
 	  fi
 	  msg2 'Building Wine-64...'
 	  cd  "${srcdir}"/"${pkgname}"-64-build
-	  if [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW3" == "y" ]; then
+	  if [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW3" = "y" ]; then
 	    ../${_winesrcdir}/configure \
 		    --prefix="$_prefix" \
 			--enable-win64 \
 			"${_configure_args64[@]}" \
 			"${_configure_args[@]}"
 	  fi
-	  if [ "$_LOCAL_OPTIMIZED" == 'true' ]; then
+	  if [ "$_LOCAL_OPTIMIZED" = 'true' ]; then
 	    # make using all available threads
 	    _buildtime64=$( time ( schedtool -B -n 1 -e ionice -n 1 make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime64=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 )
 	  else
@@ -79,7 +79,7 @@ _build() {
 
 	if [ "$_NOLIB32" != "true" ]; then
 	  # nomakepkg
-	  if [ "$_nomakepkg_midbuild_prompt" == "true" ]; then
+	  if [ "$_nomakepkg_midbuild_prompt" = "true" ]; then
 	    msg2 '64-bit side has been built, 32-bit will follow.'
 	    msg2 'This is the time to install the 32-bit devel packages you might need.'
 	    read -rp "    When ready, press enter to continue.."
@@ -105,8 +105,8 @@ _build() {
 	  fi
 	  msg2 'Building Wine-32...'
 	  cd "${srcdir}/${pkgname}"-32-build
-	  if [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW3" == "y" ]; then
-		 if [ "$_NOLIB64" == "true" ]; then
+	  if [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW3" = "y" ]; then
+		 if [ "$_NOLIB64" = "true" ]; then
 	       ../${_winesrcdir}/configure \
 		      --prefix="$_prefix" \
 		      "${_configure_args32[@]}" \
@@ -119,7 +119,7 @@ _build() {
 		      --with-wine64="${srcdir}/${pkgname}"-64-build
 		 fi
 	  fi
-	  if [ "$_LOCAL_OPTIMIZED" == 'true' ]; then
+	  if [ "$_LOCAL_OPTIMIZED" = 'true' ]; then
 	    # make using all available threads
 	    _buildtime32=$( time ( schedtool -B -n 1 -e ionice -n 1 make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime32=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 )
 	  else
@@ -130,7 +130,7 @@ _build() {
 }
 
 _package_nomakepkg() {
-	if [ "$_nomakepkg_nover" == "true" ] ; then
+	if [ "$_nomakepkg_nover" = "true" ] ; then
 	  _nomakepkg_pkgname="${pkgname}"
 	else
 	  _nomakepkg_pkgname="${pkgname}-${pkgver}"
@@ -144,14 +144,14 @@ _package_nomakepkg() {
 	local _lib64name="lib"
 
 	# External install
-	if [ "$_EXTERNAL_INSTALL" == "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
 	  _lib32name="lib" && _lib64name="lib64"
 	  if [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
-	    if [ "$_EXTERNAL_NOVER" == "true" ]; then
+	    if [ "$_EXTERNAL_NOVER" = "true" ]; then
 	      _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
 	    else
 	      # $_realwineversion doesn't carry over into the fakeroot environment
-	      if [ "$_use_staging" == "true" ]; then
+	      if [ "$_use_staging" = "true" ]; then
 	        cd "$srcdir/$_stgsrcdir"
 	      else
 	        cd "$srcdir/$_winesrcdir"
@@ -177,11 +177,11 @@ _package_nomakepkg() {
 	  make install
 	fi
 
-	if [ "$_MIME_NOPE" == "true" ]; then
+	if [ "$_MIME_NOPE" = "true" ]; then
 	    sed 's/winemenubuilder.exe -a -r/winemenubuilder.exe -r/g' "$_prefix"/share/wine/wine.inf -i
 	    msg2 'winemenubuilder.exe disabled'
 	fi
-	if [ "$_FOAS_NOPE" == "true" ]; then
+	if [ "$_FOAS_NOPE" = "true" ]; then
 	    sed 's|    LicenseInformation|    LicenseInformation,\\\n    FileOpenAssociations|g;$a \\n[FileOpenAssociations]\nHKCU,Software\\Wine\\FileOpenAssociations,"Enable",,"N"' "$_prefix"/share/wine/wine.inf -i
 	    msg2 'FileOpenAssociations disabled'
 	fi
@@ -213,7 +213,7 @@ _package_nomakepkg() {
 	  pkgdir="${_nomakepkg_prefix_path}/${_nomakepkg_pkgname}"
 	fi
 
-	if [ "$_use_esync" == "true" ] || [ "$_staging_esync" == "true" ]; then
+	if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ]; then
 	  msg2 '##########################################################################################################################'
 	  msg2 ''
 	  msg2 'To enable esync, export WINEESYNC=1 and increase file descriptors limits in /etc/security/limits.conf to use ESYNC goodness ;)'
@@ -221,7 +221,7 @@ _package_nomakepkg() {
 	  msg2 'https://raw.githubusercontent.com/zfigura/wine/esync/README.esync'
 	  msg2 ''
 	  msg2 '##########################################################################################################################'
-	  if [ "$_use_fsync" == "true" ]; then
+	  if [ "$_use_fsync" = "true" ]; then
 	    msg2 '##########################################################################################################################'
 	    msg2 ''
 	    msg2 'To enable fsync, export WINEFSYNC=1 and use a Fsync patched kernel (such as linux52-tkg or newer). If no compatible kernel'
@@ -234,10 +234,10 @@ _package_nomakepkg() {
 	fi
 
 	# External install
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
 	  msg2 "### This wine will be installed to: $_prefix"
 	  msg2 "### Remember to use $_prefix/bin/wine instead of just wine (same for winecfg etc.)"
-	elif [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ]; then
+	elif [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
 	  touch "${pkgdir}"/../HL3_confirmed
 	fi
 }
@@ -248,14 +248,14 @@ _package_makepkg() {
 	local _lib64name="lib"
 
 	# External install
-	if [ "$_EXTERNAL_INSTALL" == "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
 	  _lib32name="lib" && _lib64name="lib64"
 	  if [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
-	    if [ "$_EXTERNAL_NOVER" == "true" ]; then
+	    if [ "$_EXTERNAL_NOVER" = "true" ]; then
 	      _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
 	    else
 	      # $_realwineversion doesn't carry over into the fakeroot environment
-	      if [ "$_use_staging" == "true" ]; then
+	      if [ "$_use_staging" = "true" ]; then
 	        cd "$srcdir/$_stgsrcdir"
 	      else
 	        cd "$srcdir/$_winesrcdir"
@@ -263,7 +263,7 @@ _package_makepkg() {
 	      _realwineversion=$(_describe_wine)
 	      _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion"
 	    fi
-	  elif [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ]; then
+	  elif [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
 	    _prefix=""
 	  fi
 	fi
@@ -287,7 +287,7 @@ _package_makepkg() {
 			  dlldir="${pkgdir}$_prefix/$_lib64name/wine" install
 	fi
 
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ] || [ "$_EXTERNAL_INSTALL" != "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ] || [ "$_EXTERNAL_INSTALL" != "true" ]; then
 	  # freetype font smoothing for win32 applications
 	  install -d "$pkgdir"/etc/fonts/conf.{avail,d}
 	  install -m644 "${srcdir}/30-win32-aliases.conf" "${pkgdir}/etc/fonts/conf.avail/30-$pkgname-win32-aliases.conf"
@@ -295,23 +295,23 @@ _package_makepkg() {
 	fi
 
 	# wine binfmt
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
 	  mkdir -p "${pkgdir}/usr/lib/binfmt.d"
 	  # change binfmt.conf to actual installed path
 	  sed -e "s|/usr/bin/wine|$_prefix/bin/wine|g" < "${srcdir}/wine-binfmt.conf" > "${pkgdir}/usr/lib/binfmt.d/$pkgname.conf"
-	  if [ "$_MIME_NOPE" == "true" ]; then
+	  if [ "$_MIME_NOPE" = "true" ]; then
 	    sed 's/winemenubuilder.exe -a -r/winemenubuilder.exe -r/g' "${pkgdir}$_prefix"/share/wine/wine.inf -i
 	  fi
-	  if [ "$_FOAS_NOPE" == "true" ]; then
+	  if [ "$_FOAS_NOPE" = "true" ]; then
 	    sed 's|    LicenseInformation|    LicenseInformation,\\\n    FileOpenAssociations|g;$a \\n[FileOpenAssociations]\nHKCU,Software\\Wine\\FileOpenAssociations,"Enable",,"N"' "${pkgdir}$_prefix"/share/wine/wine.inf -i
 	  fi
 	elif [ "$_EXTERNAL_INSTALL" != "true" ]; then
 	  install -Dm 644 "${srcdir}/wine-binfmt.conf" "${pkgdir}/usr/lib/binfmt.d/wine.conf"
 	  # disable mime-types registering
-	  if [ "$_MIME_NOPE" == "true" ]; then
+	  if [ "$_MIME_NOPE" = "true" ]; then
 	    sed 's/winemenubuilder.exe -a -r/winemenubuilder.exe -r/g' "${pkgdir}"/usr/share/wine/wine.inf -i
 	  fi
-	  if [ "$_FOAS_NOPE" == "true" ]; then
+	  if [ "$_FOAS_NOPE" = "true" ]; then
 	    sed 's|    LicenseInformation|    LicenseInformation,\\\n    FileOpenAssociations|g;$a \\n[FileOpenAssociations]\nHKCU,Software\\Wine\\FileOpenAssociations,"Enable",,"N"' "${pkgdir}"/usr/share/wine/wine.inf -i
 	  fi
 	fi
@@ -322,7 +322,7 @@ _package_makepkg() {
 
 	cp "$_where"/last_build_config.log "${pkgdir}$_prefix"/share/wine/wine-tkg-config.txt
 
-	if [ "$_use_esync" == "true" ] || [ "$_staging_esync" == "true" ]; then
+	if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ]; then
 	  msg2 '##########################################################################################################################'
 	  msg2 ''
 	  msg2 'To enable esync, export WINEESYNC=1 and increase file descriptors limits in /etc/security/limits.conf to use ESYNC goodness ;)'
@@ -330,7 +330,7 @@ _package_makepkg() {
 	  msg2 'https://raw.githubusercontent.com/zfigura/wine/esync/README.esync'
 	  msg2 ''
 	  msg2 '##########################################################################################################################'
-	  if [ "$_use_fsync" == "true" ]; then
+	  if [ "$_use_fsync" = "true" ]; then
 	    msg2 '##########################################################################################################################'
 	    msg2 ''
 	    msg2 'To enable fsync, export WINEFSYNC=1 and use a Fsync patched kernel (such as linux52-tkg or newer). If no compatible kernel'
@@ -343,10 +343,10 @@ _package_makepkg() {
 	fi
 
 	# External install
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
 	  msg2 "### This wine will be installed to: $_prefix"
 	  msg2 "### Remember to use $_prefix/bin/wine instead of just wine (same for winecfg etc.)"
-	elif [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ]; then
+	elif [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
 	  touch "${pkgdir}"/../HL3_confirmed
 	  msg2 'Use Gandalf to prevent packaging we do not need for proton'
 	  YOU_SHALL_NOT_PASS

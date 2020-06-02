@@ -2,15 +2,15 @@
 
 _exit_cleanup() {
   # Proton-tkg specifics to send to token
-  if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ -n "$_proton_tkg_path" ]; then
+  if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ -n "$_proton_tkg_path" ]; then
     if [ -n "$_PROTON_NAME_ADDON" ]; then
-      if [ "$_ispkgbuild" == "true" ]; then
+      if [ "$_ispkgbuild" = "true" ]; then
         echo "_protontkg_version=makepkg.${_PROTON_NAME_ADDON}" >> "$_proton_tkg_path"/proton_tkg_token
       else
         echo "_protontkg_version=${pkgver}.${_PROTON_NAME_ADDON}" >> "$_proton_tkg_path"/proton_tkg_token
       fi
     else
-      if [ "$_ispkgbuild" == "true" ]; then
+      if [ "$_ispkgbuild" = "true" ]; then
         echo "_protontkg_version=makepkg" >> "$_proton_tkg_path"/proton_tkg_token
       else
         echo "_protontkg_version=${pkgver}" >> "$_proton_tkg_path"/proton_tkg_token
@@ -55,7 +55,7 @@ _exit_cleanup() {
   rm -f "$_where"/BIG_UGLY_FROGMINER && msg2 'Removed BIG_UGLY_FROGMINER - Ribbit' # state tracker end
   rm -f "$_where"/proton_tkg_token && msg2 'Removed Proton-tkg token - Valve Ribbit' # state tracker end
 
-  if [ "$_NUKR" == "true" ]; then
+  if [ "$_NUKR" = "true" ]; then
     # Sanitization
     rm -rf "$srcdir"/"$_esyncsrcdir"
     rm -rf "$srcdir"/*.patch
@@ -128,7 +128,7 @@ msg2 ''
     source "$_EXT_CONFIG_PATH" && msg2 "External configuration file $_EXT_CONFIG_PATH will be used to override customization.cfg values." && msg2 ""
   fi
 
-  if [ "$_NOINITIALPROMPT" == "true" ] || [ -n "$_LOCAL_PRESET" ] || [ -n "$_DEPSHELPER" ]; then
+  if [ "$_NOINITIALPROMPT" = "true" ] || [ -n "$_LOCAL_PRESET" ] || [ -n "$_DEPSHELPER" ]; then
     msg2 'Initial prompt skipped. Do you remember what it said? 8)'
   else
     # If the state tracker isn't found, prompt the user with useful stuff.
@@ -194,21 +194,21 @@ msg2 ''
     _use_faudio="true"
     _highcorecount_fix="true"
     _use_mono="true"
-    if [ "$_use_dxvk" == "true" ] || [ "$_use_dxvk" == "release" ]; then
+    if [ "$_use_dxvk" = "true" ] || [ "$_use_dxvk" = "release" ]; then
       _use_dxvk="release"
       _dxvk_dxgi="true"
     fi
-    if [ "$_ispkgbuild" == "true" ]; then
+    if [ "$_ispkgbuild" = "true" ]; then
       _steamvr_support="false"
     fi
-  elif [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ]; then
+  elif [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
     error "It looks like you're attempting to build a Proton version of wine-tkg-git."
     error "This special option doesn't use pacman and requires you to run 'proton-tkg.sh' script from proton-tkg dir."
     _exit_cleanup
     exit
   fi
   # Disable undesirable patchsets when using official proton wine source
-  if [ "$_custom_wine_source" == "https://github.com/ValveSoftware/wine" ]; then
+  if [ "$_custom_wine_source" = "https://github.com/ValveSoftware/wine" ]; then
     _clock_monotonic="false"
     _FS_bypass_compositor="false"
     _use_esync="false"
@@ -222,27 +222,27 @@ msg2 ''
   fi
 
   # If _use_vkd3d="true", redefine to "mainline"
-  if [ "$_use_vkd3d" == "true" ]; then
+  if [ "$_use_vkd3d" = "true" ]; then
     _use_vkd3d="mainline"
   fi
 }
 
 _pkgnaming() {
   if [ -n "$_PKGNAME_OVERRIDE" ]; then
-    if [ "$_PKGNAME_OVERRIDE" == "none" ]; then
+    if [ "$_PKGNAME_OVERRIDE" = "none" ]; then
       pkgname="${pkgname}"
     else
       pkgname="${pkgname}-${_PKGNAME_OVERRIDE}"
     fi
     msg2 "Overriding default pkgname. New pkgname: ${pkgname}"
   else
-    if [ "$_use_staging" == "true" ]; then
+    if [ "$_use_staging" = "true" ]; then
       pkgname="${pkgname/%-git/-staging-git}"
       msg2 "Using staging patchset"
     fi
 
-    if [ "$_use_esync" == "true" ]; then
-      if [ "$_use_fsync" == "true" ]; then
+    if [ "$_use_esync" = "true" ]; then
+      if [ "$_use_fsync" = "true" ]; then
         pkgname="${pkgname/%-git/-fsync-git}"
         msg2 "Using fsync patchset"
       else
@@ -251,27 +251,27 @@ _pkgnaming() {
       fi
     fi
 
-    if [ "$_use_pba" == "true" ]; then
+    if [ "$_use_pba" = "true" ]; then
 #      pkgname="${pkgname/%-git/-pba-git}"
       msg2 "Using pba patchset"
     fi
 
-    if [ "$_use_legacy_gallium_nine" == "true" ]; then
+    if [ "$_use_legacy_gallium_nine" = "true" ]; then
       pkgname="${pkgname/%-git/-nine-git}"
       msg2 "Using gallium nine patchset (legacy)"
     fi
 
-    if [ "$_use_vkd3d" == "mainline" ] || [ "$_use_vkd3d" == "fork" ]; then
+    if [ "$_use_vkd3d" = "mainline" ] || [ "$_use_vkd3d" = "fork" ]; then
       pkgname="${pkgname/%-git/-vkd3d-git}"
       msg2 "Using VKD3D for d3d12 translation"
     fi
   fi
 
   # External install
-  if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+  if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
     pkgname="${pkgname/%-git/-$_EXTERNAL_INSTALL_TYPE-git}"
     msg2 "Installing to $_DEFAULT_EXTERNAL_PATH/$pkgname"
-  elif [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ]; then
+  elif [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
     pkgname="proton_dist"
     _DEFAULT_EXTERNAL_PATH="$HOME/.steam/root/compatibilitytools.d"
     msg2 "Installing to $_DEFAULT_EXTERNAL_PATH/proton_tkg"
@@ -287,7 +287,7 @@ user_patcher() {
 	    printf '%s\n' "${_patches[@]}"
 	    read -rp "Do you want to install it/them? - Be careful with that ;)"$'\n> N/y : ' _CONDITION;
 	  fi
-	  if [ "$_CONDITION" == "y" ] || [ "$_user_patches_no_confirm" == "true" ]; then
+	  if [ "$_CONDITION" = "y" ] || [ "$_user_patches_no_confirm" = "true" ]; then
 	    for _f in "${_patches[@]}"; do
 	      if [ -e "${_f}" ]; then
 	        msg2 "######################################################"
@@ -310,7 +310,7 @@ user_patcher() {
 	    printf '%s\n' "${_patches[@]}"
 	    read -rp "Do you want to install it/them? - Be careful with that ;)"$'\n> N/y : ' _CONDITION;
 	  fi
-	  if [ "$_CONDITION" == "y" ] || [ "$_user_patches_no_confirm" == "true" ]; then
+	  if [ "$_CONDITION" = "y" ] || [ "$_user_patches_no_confirm" = "true" ]; then
 	    for _f in "${_patches[@]}"; do
 	      if [ -e "${_f}" ]; then
 	        msg2 "######################################################"
@@ -337,7 +337,7 @@ _describe_other() {
 
 _source_cleanup() {
 	if [ "$_NUKR" != "debug" ]; then
-	  if [ "$_use_staging" == "true" ]; then
+	  if [ "$_use_staging" = "true" ]; then
 	    cd "${srcdir}"/"${_stgsrcdir}"
 
 	    # restore the targetted trees to their git origin state
@@ -367,7 +367,7 @@ _prepare() {
 	# holds extra configure arguments, if applicable
 	_configure_args=()
 
-	if [ "$_use_staging" == "true" ] && [ "$_staging_upstreamignore" != "true" ]; then
+	if [ "$_use_staging" = "true" ] && [ "$_staging_upstreamignore" != "true" ]; then
 	  cd "${srcdir}"/"${_winesrcdir}"
 	  # change back to the wine upstream commit that this version of wine-staging is based in
 	  msg2 'Changing wine HEAD to the wine-staging base commit...'
@@ -387,7 +387,7 @@ _prepare() {
 	fi
 
 	# wine-staging user patches
-	if [ "$_user_patches" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_user_patches" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  _userpatch_target="wine-staging-early"
 	  _userpatch_ext="myearlystaging"
 	  cd "${srcdir}"/"${_stgsrcdir}"
@@ -409,7 +409,7 @@ _prepare() {
 	  echo "Local cfg files used" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_nomakepkg_midbuild_prompt" == "true" ]; then
+	if [ "$_nomakepkg_midbuild_prompt" = "true" ]; then
 	  echo "You will be prompted after the 64-bit side is built (compat workaround)" >> "$_where"/last_build_config.log
 	fi
 
@@ -417,7 +417,7 @@ _prepare() {
 	echo "" >> "$_where"/last_build_config.log
 	echo "Wine (plain) version: $_realwineversion" >> "$_where"/last_build_config.log
 
-	if [ "$_use_staging" == "true" ]; then
+	if [ "$_use_staging" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  _realwineversion=$(_describe_wine)
 	  echo "Using wine-staging patchset (version $_realwineversion)" >> "$_where"/last_build_config.log
@@ -427,7 +427,7 @@ _prepare() {
 	echo "" >> "$_where"/last_build_config.log
 
 	# Disable local Esync on 553986f
-	if [ "$_use_staging" == "true" ]; then
+	if [ "$_use_staging" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  if git merge-base --is-ancestor 553986fdfb111914f793ff1487d53af022e4be19 HEAD; then # eventfd_synchronization: Add patch set.
 	    _use_esync="false"
@@ -437,7 +437,7 @@ _prepare() {
 	  cd "${srcdir}"/"${_winesrcdir}"
 	fi
 
-	if [ "$_use_esync" == "true" ]; then
+	if [ "$_use_esync" = "true" ]; then
 	  if [ -z "$_esync_version" ]; then
 	    if git merge-base --is-ancestor 2600ecd4edfdb71097105c74312f83845305a4f2 HEAD; then # 3.20+
 	      _esync_version="ce79346"
@@ -451,7 +451,7 @@ _prepare() {
 	  wget -O "$_where"/esync${_esync_version}.tgz https://github.com/zfigura/wine/releases/download/esync${_esync_version}/esync.tgz && tar zxf "$_where"/esync${_esync_version}.tgz -C "${srcdir}"
 	fi
 
-	if [ "$_use_pba" == "true" ]; then
+	if [ "$_use_pba" = "true" ]; then
 	  # If using a wine version that includes 944e92b, disable PBA
 	  if git merge-base --is-ancestor 944e92ba06ecadeb933d95e30035323483dfe7c7 HEAD; then # wined3d: Pass the wined3d_buffer_desc structure directly to buffer_init()
 	    _pba_version="none"
@@ -466,11 +466,11 @@ _prepare() {
 	  fi
 	fi
 
-	if [ "$_use_legacy_gallium_nine" == "true" ]; then
+	if [ "$_use_legacy_gallium_nine" = "true" ]; then
 	  echo "Using gallium nine patchset (legacy)" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_use_vkd3d" == "mainline" ] || [ "$_use_vkd3d" == "fork" ]; then
+	if [ "$_use_vkd3d" = "mainline" ] || [ "$_use_vkd3d" = "fork" ]; then
 	  _configure_args+=(--with-vkd3d)
 	  echo "Using VKD3D for d3d12 translation" >> "$_where"/last_build_config.log
 	else
@@ -480,10 +480,10 @@ _prepare() {
 
 	echo "" >> "$_where"/last_build_config.log
 
-	if [ "$_NUKR" == "debug" ]; then
+	if [ "$_NUKR" = "debug" ]; then
 	  msg2 "You are currently in debug/dev mode. By default, patches aren't applied in this mode as the source won't be cleaned up/reset between compilations. You can however choose to patch your tree to get your initial source as you desire:"
 	  read -rp "Do you want to patch the current wine source with the builtin patches (respecting your .cfg settings)? Do it only once or patches will fail!"$'\n> N/y : ' _DEBUGANSW1;
-	  if [ "$_use_staging" == "true" ]; then
+	  if [ "$_use_staging" = "true" ]; then
 	    read -rp "Do you want to patch the current wine source with staging patches (respecting your .cfg settings)? Do it only once or patches will fail!"$'\n> N/y : ' _DEBUGANSW2;
 	  fi
 	  read -rp "Do you want to run configure? You need to run it at least once to populate your build dirs!"$'\n> N/y : ' _DEBUGANSW3;
@@ -507,7 +507,7 @@ _prepare() {
 	  _committorevert=$_commit _hotfixmsg="(staging hotfix)" nonuser_reverter
 	  cd "${srcdir}"/"${_winesrcdir}"
 	done
-	if [ "$_user_patches" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_user_patches" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  _userpatch_target="wine-staging"
 	  _userpatch_ext="mystaging"
 	  cd "${srcdir}"/"${_stgsrcdir}"
@@ -515,24 +515,24 @@ _prepare() {
 	  cd "${srcdir}"/"${_winesrcdir}"
 	fi
 
-	if [ "$_mtga_fix" == "true" ] && git merge-base --is-ancestor e5a9c256ce08868f65ed730c00cf016a97369ce3 HEAD; then
+	if [ "$_mtga_fix" = "true" ] && git merge-base --is-ancestor e5a9c256ce08868f65ed730c00cf016a97369ce3 HEAD; then
 	  _committorevert=341068aa61a71afecb712feda9aabb3dc1c3ab5f && nonuser_reverter
 	  _committorevert=e5a9c256ce08868f65ed730c00cf016a97369ce3 && nonuser_reverter
 	  echo -e "( MTGA bandaid reverts applied )\n" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_gamepad_additions" == "true" ] && [ "$_use_staging" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && git merge-base --is-ancestor da7d60bf97fb8726828e57f852e8963aacde21e9 HEAD; then
+	if [ "$_gamepad_additions" = "true" ] && [ "$_use_staging" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && git merge-base --is-ancestor da7d60bf97fb8726828e57f852e8963aacde21e9 HEAD; then
 	  _committorevert=da7d60bf97fb8726828e57f852e8963aacde21e9 && nonuser_reverter
 	  echo -e "( Proton gamepad additions unbreak revert applied )\n" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_warframelauncher_fix" == "true" ] && git merge-base --is-ancestor 5e218fe758fe6beed5c7ad73405eccf33c307e6d HEAD && ! git merge-base --is-ancestor adfb042819472a23f4d07f7aeea194e463855806 HEAD; then
+	if [ "$_warframelauncher_fix" = "true" ] && git merge-base --is-ancestor 5e218fe758fe6beed5c7ad73405eccf33c307e6d HEAD && ! git merge-base --is-ancestor adfb042819472a23f4d07f7aeea194e463855806 HEAD; then
 	  _committorevert=bae4776c571cf975be1689594f4caf93ad23e0ca && nonuser_reverter
 	  _committorevert=5e218fe758fe6beed5c7ad73405eccf33c307e6d && nonuser_reverter
 	  echo -e "( Warframe Launcher unbreak reverts applied )\n" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_proton_fs_hack" == "true" ]; then
+	if [ "$_proton_fs_hack" = "true" ]; then
 	  if ! git merge-base --is-ancestor aee91dc4ac08428e74fbd21f97438db38f84dbe5 HEAD; then
 	    _committorevert=427152ec7b4ee85631617b693dbf1deea763c0ba && nonuser_reverter
 	    _committorevert=b7b4bacaf99661e07c2f07a0260680b4e8bed4f8 && nonuser_reverter
@@ -556,7 +556,7 @@ _prepare() {
 	fi
 
 	# Kernelbase reverts patchset - cleanly reverting part
-	if [ "$_kernelbase_reverts" == "true" ] || [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
+	if [ "$_kernelbase_reverts" = "true" ] || [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
 	  _committorevert=b0199ea2fe8f9b77aee7ab4f68c9ae1755442586 && nonuser_reverter
 	  _committorevert=608d086f1b1bb7168e9322c65224c23f34e75f29 && nonuser_reverter
 	  _committorevert=b7db0b52cee65a008f503ce727befcad3ba8d28a && nonuser_reverter
@@ -571,12 +571,12 @@ _prepare() {
 	fi
 
 	# Update winevulkan
-	if [ "$_update_winevulkan" == "true" ] && ! git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && git merge-base --is-ancestor eb39d3dbcac7a8d9c17211ab358cda4b7e07708a HEAD; then
+	if [ "$_update_winevulkan" = "true" ] && ! git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && git merge-base --is-ancestor eb39d3dbcac7a8d9c17211ab358cda4b7e07708a HEAD; then
 	  _patchname='winevulkan-1.1.103.patch' && _patchmsg="Applied winevulkan 1.1.103 patch" && nonuser_patcher
 	fi
 
 	# use CLOCK_MONOTONIC instead of CLOCK_MONOTONIC_RAW in ntdll/server - lowers overhead
-	if [ "$_clock_monotonic" == "true" ]; then
+	if [ "$_clock_monotonic" = "true" ]; then
 	  _patchname='use_clock_monotonic.patch' && _patchmsg="Applied clock_monotonic patch" && nonuser_patcher
 	  if git merge-base --is-ancestor 13e11d3fcbcf8790e031c4bc52f5f550b1377b3b HEAD && ! git merge-base --is-ancestor cd215bb49bc240cdce5415c80264f8daa557636a HEAD; then
 	    _patchname='use_clock_monotonic-2.patch' && _patchmsg="Applied clock_monotonic addon patch for 13e11d3" && nonuser_patcher
@@ -584,7 +584,7 @@ _prepare() {
 	fi
 
 	# Fixes (partially) systray on plasma 5 - https://bugs.winehq.org/show_bug.cgi?id=38409
-	if [ "$_plasma_systray_fix" == "true" ]; then
+	if [ "$_plasma_systray_fix" = "true" ]; then
 	  if git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
 	    _patchname='plasma_systray_fix.patch' && _patchmsg="Applied plasma 5 systray fix" && nonuser_patcher
 	  elif git merge-base --is-ancestor 473914f6a5943c4abfc8d0e394c71f395063d89f HEAD; then
@@ -595,7 +595,7 @@ _prepare() {
 	fi
 
 	# Bypass compositor in fullscreen mode - Reduces stuttering and improves performance
-	if [ "$_FS_bypass_compositor" == "true" ]; then
+	if [ "$_FS_bypass_compositor" = "true" ]; then
 	  _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	fi
 
@@ -603,7 +603,7 @@ _prepare() {
 	if git merge-base --is-ancestor d5a372abbba2e174de78855bdd4a004b56cdc006 HEAD; then # include: Move inline assembly definitions to a new wine/asm.h header.
 	  _use_faudio="true"
 	fi
-	if [ "$_use_faudio" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_use_faudio" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  if ! git merge-base --is-ancestor b95b9109b824d21d98329c76387c3983d6e27cc2 HEAD; then
 	    cd "${srcdir}"/"${_winesrcdir}"
@@ -628,12 +628,12 @@ _prepare() {
 	fi
 
 	# Disable winex11-WM_WINDOWPOSCHANGING and winex11-_NET_ACTIVE_WINDOW patchsets on proton-tkg staging
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_use_staging" == "true" ] || [ "$_proton_fs_hack" == "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] || [ "$_proton_fs_hack" = "true" ]; then
 	  _staging_args+=(-W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW)
 	fi
 
 	# Disable winex11.drv-mouse-coorrds and winex11-MWM_Decorations patchsets on staging for proton FS hack
-	if [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  if git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD && [ "$_broken_staging_44d1a45_localreverts" != "true" ]; then
 	    if git merge-base --is-ancestor 437038604a09c7952a52b28c373cfbe706d8e78b HEAD; then
@@ -657,13 +657,13 @@ _prepare() {
 	fi
 
 	# Specifically for proton-tkg, our meta patchset breaks with stock staging rawinput patchset, so disable for now, and apply a corresponding fixed winex11-key_translation patchset at a later stage
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_use_staging" == "true" ] && [ "$_proton_fs_hack" != "true" ] && $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_fs_hack" != "true" ] && $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
 	  _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-nolegacy -W user32-rawinput-mouse-experimental -W user32-rawinput-hid -W winex11-key_translation)
 	  if $(cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor d8496cacd170347bbde755ead066be8394fbb82b HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
 	    _staging_args+=(-W user32-rawinput-keyboard)
 	  fi
 	  cd "${srcdir}"/"${_stgsrcdir}"
-	  if [ "$_proton_fs_hack" == "false" ] && git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD && [ "$_broken_staging_44d1a45_localreverts" != "true" ]; then
+	  if [ "$_proton_fs_hack" = "false" ] && git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD && [ "$_broken_staging_44d1a45_localreverts" != "true" ]; then
 	    if git merge-base --is-ancestor 437038604a09c7952a52b28c373cfbe706d8e78b HEAD; then
 	      sed -i 's/-@@ -3383,3 +3393,14 @@ DECL_HANDLER(get_rawinput_devices)/-@@ -3432,3 +3442,14 @@ DECL_HANDLER(get_rawinput_devices)/g' "$_where"/staging-44d1a45-localreverts.patch
 	    fi
@@ -673,11 +673,11 @@ _prepare() {
 	fi
 
 	# Disable some staging patchsets to prevent bad interactions with proton gamepad additions
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_use_staging" == "true" ] && [ "$_gamepad_additions" == "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_gamepad_additions" = "true" ]; then
 	  _staging_args+=(-W dinput-SetActionMap-genre -W dinput-axis-recalc -W dinput-joy-mappings -W dinput-reconnect-joystick -W dinput-remap-joystick)
 	fi
 
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_use_staging" == "true" ] && [ "$_proton_use_steamhelper" == "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_use_steamhelper" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  if git merge-base --is-ancestor 4e7071e4f14f6ce85b0eb4b88accfb0267d6545b HEAD; then
 	    _staging_args+=(-W server-Desktop_Refcount -W ws2_32-TransmitFile)
@@ -687,27 +687,27 @@ _prepare() {
 
 	# Disable broken rawinput patchset that was enabled between e09468e and 5b066d6
 	cd "${srcdir}"/"${_stgsrcdir}"
-	if [ "$_use_staging" == "true" ] && git merge-base --is-ancestor e09468ec178930ac7b1ee33482cd03f0cc136685 HEAD && ! git merge-base --is-ancestor 5b066d6aed7fd90c0be0a2a156b0e5c6cbb44bba HEAD; then
+	if [ "$_use_staging" = "true" ] && git merge-base --is-ancestor e09468ec178930ac7b1ee33482cd03f0cc136685 HEAD && ! git merge-base --is-ancestor 5b066d6aed7fd90c0be0a2a156b0e5c6cbb44bba HEAD; then
 	  _staging_args+=(-W user32-rawinput)
     fi
 	cd "${srcdir}"/"${_winesrcdir}"
 
 	# Patch to allow Path of Exile to run with DirectX11
 	# https://bugs.winehq.org/show_bug.cgi?id=42695
-	if [ "$_poe_fix" == "true" ]; then
+	if [ "$_poe_fix" = "true" ]; then
 	  _patchname='poe-fix.patch' && _patchmsg="Applied Path of Exile DX11 fix" && nonuser_patcher
 	fi
 
 	# Fix for Warframe Launcher failing to update itself - https://bugs.winehq.org/show_bug.cgi?id=33845 https://bugs.winehq.org/show_bug.cgi?id=45701 - Merged in staging 8b930ae and mainline 04ccd99
-	if [ "$_warframelauncher_fix" == "true" ]; then
-	  if [ "$_use_staging" == "true" ] && ! git merge-base --is-ancestor 33c35baa6761b00c8cef236c06cb1655f3f228d9 HEAD || [ "$_use_staging" != "true" ] && ! git merge-base --is-ancestor 04ccd995b1aec5eac5874454a320b37676b69c42 HEAD; then
+	if [ "$_warframelauncher_fix" = "true" ]; then
+	  if [ "$_use_staging" = "true" ] && ! git merge-base --is-ancestor 33c35baa6761b00c8cef236c06cb1655f3f228d9 HEAD || [ "$_use_staging" != "true" ] && ! git merge-base --is-ancestor 04ccd995b1aec5eac5874454a320b37676b69c42 HEAD; then
 	    _patchname='warframe-launcher.patch' && _patchmsg="Applied Warframe Launcher fix" && nonuser_patcher
 	  fi
 	fi
 
 	# Workaround for F4SE/SkyrimSE Script Extender
 	# https://github.com/hdmap/wine-hackery/tree/master/f4se
-	if [ "$_f4skyrimse_fix" == "true" ]; then
+	if [ "$_f4skyrimse_fix" = "true" ]; then
 	  if ! git merge-base --is-ancestor 12be24af8cab0e5f78795b164ec8847bafc30852 HEAD; then
 	    _patchname='f4skyrimse-fix-1.patch' && _patchmsg="Applied F4/SkyrimSE Script Extender fix (1)" && nonuser_patcher
 	  fi
@@ -725,7 +725,7 @@ _prepare() {
 	fi
 
 	# Magic The Gathering: Arena crash fix - (<aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6)
-	if [ "$_mtga_fix" == "true" ] && ! git merge-base --is-ancestor aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6 HEAD; then
+	if [ "$_mtga_fix" = "true" ] && ! git merge-base --is-ancestor aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6 HEAD; then
 	  if ! git merge-base --is-ancestor ce7e10868a1279573acc5be5a9659d254e936b27 HEAD; then
 	    _patchname='mtga-legacy-addition.patch' && _patchmsg="Applied MTGA msi installers hack" && nonuser_patcher
 	  fi
@@ -733,29 +733,29 @@ _prepare() {
 	fi
 
 	# The Sims 2 fix - disable wined3d-WINED3D_RS_COLORWRITEENABLE and wined3d-Indexed_Vertex_Blending staging patchsets for 4.2+devel and lower - The actual patch is applied after staging
-	if [ "$_sims2_fix" == "true" ] && ! git merge-base --is-ancestor d88f12950761e9ff8d125a579de6e743979f4945 HEAD; then
+	if [ "$_sims2_fix" = "true" ] && ! git merge-base --is-ancestor d88f12950761e9ff8d125a579de6e743979f4945 HEAD; then
 	  _staging_args+=(-W wined3d-WINED3D_RS_COLORWRITEENABLE -W wined3d-Indexed_Vertex_Blending)
 	fi
 
 	# The Sims 3 fix - reverts 6823abd521c0c12d20d9171fb5ae8b300009d082 to fix Sims 3 on older than 415.xx nvidia drivers - https://bugs.winehq.org/show_bug.cgi?id=45361
-	if [ "$_sims3_fix" == "true" ] && git merge-base --is-ancestor 6823abd521c0c12d20d9171fb5ae8b300009d082 HEAD; then
+	if [ "$_sims3_fix" = "true" ] && git merge-base --is-ancestor 6823abd521c0c12d20d9171fb5ae8b300009d082 HEAD; then
 	  _patchname='sims_3-oldnvidia.patch' && _patchmsg="Applied The Sims 3 Debian&co nvidia fix" && nonuser_patcher
 	fi
 
 	# Python fix for <=3.18 (backported from zzhiyi's patches) - fix for python and needed for "The Sims 4" to work - replaces staging partial implementation - https://bugs.winehq.org/show_bug.cgi?id=44999 - The actual patch is applied after staging
-	if [ "$_318python_fix" == "true" ] && ! git merge-base --is-ancestor 3ebd2f0be30611e6cf00468c2980c5092f91b5b5 HEAD; then
+	if [ "$_318python_fix" = "true" ] && ! git merge-base --is-ancestor 3ebd2f0be30611e6cf00468c2980c5092f91b5b5 HEAD; then
 	  _staging_args+=(-W kernelbase-PathCchCombineEx)
 	fi
 
 	# Mechwarrior Online fix - https://mwomercs.com/forums/topic/268847-running-the-game-on-ubuntu-steam-play/page__st__20__p__6195387#entry6195387
-	if [ "$_mwo_fix" == "true" ]; then
+	if [ "$_mwo_fix" = "true" ]; then
 	  _patchname='mwo.patch' && _patchmsg="Applied Mechwarrior Online fix" && nonuser_patcher
 	fi
 
 	# Resident Evil 4 hack - https://bugs.winehq.org/show_bug.cgi?id=46336
-	if [ "$_re4_fix" == "true" ] && [ "$_wined3d_additions" == "false" ]; then
+	if [ "$_re4_fix" = "true" ] && [ "$_wined3d_additions" = "false" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
-	  if [ "$_use_staging" == "true" ] && git merge-base --is-ancestor 2e4d0f472736529f59bd92dd3863731cd6bab875 HEAD; then
+	  if [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 2e4d0f472736529f59bd92dd3863731cd6bab875 HEAD; then
 	    cd "${srcdir}"/"${_winesrcdir}" && echo "RE4 fix disabled for the selected Wine-staging version" >> "$_where"/last_build_config.log
 	  else
 	    cd "${srcdir}"/"${_winesrcdir}" && _patchname='resident_evil_4_hack.patch' && _patchmsg="Applied Resident Evil 4 hack" && nonuser_patcher
@@ -763,28 +763,28 @@ _prepare() {
 	fi
 
 	# Child window support for vk - Fixes World of Final Fantasy and others - https://bugs.winehq.org/show_bug.cgi?id=45277
-	if [ "$_childwindow_fix" == "true" ]; then
+	if [ "$_childwindow_fix" = "true" ]; then
 	  _patchname='childwindow.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
 	fi
 
 	# Workaround for https://bugs.winehq.org/show_bug.cgi?id=47633
-	if [ "$_nativedotnet_fix" == "true" ] && git merge-base --is-ancestor 0116660dd80b38da8201e2156adade67fc2ae823 HEAD && ! git merge-base --is-ancestor 505be3a0a2afeae3cebeaad48fc5f32e0b0336b7 HEAD; then
+	if [ "$_nativedotnet_fix" = "true" ] && git merge-base --is-ancestor 0116660dd80b38da8201e2156adade67fc2ae823 HEAD && ! git merge-base --is-ancestor 505be3a0a2afeae3cebeaad48fc5f32e0b0336b7 HEAD; then
 	  _patchname='0001-kernelbase-Remove-DECLSPEC_HOTPATCH-from-SetThreadSt.patch' && _patchmsg="Applied native dotnet workaround (https://bugs.winehq.org/show_bug.cgi?id=47633)" && nonuser_patcher
 	fi
 
 	# USVFS (Mod Organizer 2's virtual filesystem) patch
-	if [ "$_usvfs_fix" == "true" ] && ! git merge-base --is-ancestor ee266aba74809b0fb4833f2d2762d3c687be4dd0 HEAD; then
+	if [ "$_usvfs_fix" = "true" ] && ! git merge-base --is-ancestor ee266aba74809b0fb4833f2d2762d3c687be4dd0 HEAD; then
 	  _patchname='usvfs.patch' && _patchmsg="Applied USVFS (Mod Organizer 2's virtual filesystem) patch" && nonuser_patcher
 	fi
 
 	# Reverts c6b6935 due to https://bugs.winehq.org/show_bug.cgi?id=47752
-	if [ "$_c6b6935_revert" == "true" ] && ! git merge-base --is-ancestor cb703739e5c138e3beffab321b84edb129156000 HEAD; then
+	if [ "$_c6b6935_revert" = "true" ] && ! git merge-base --is-ancestor cb703739e5c138e3beffab321b84edb129156000 HEAD; then
 	  _patchname='revert-c6b6935.patch' && _patchmsg="Reverted c6b6935 to fix regression affecting performance negatively" && nonuser_patcher
 	fi
 
 	# steam crossover hack for store/web functionality
 	# https://bugs.winehq.org/show_bug.cgi?id=39403
-	if [ "$_steam_fix" == "true" ]; then
+	if [ "$_steam_fix" = "true" ]; then
 	  if git merge-base --is-ancestor 712ae337fe02c2e222e7c3067e5f624160bb84a1 HEAD; then
 	    _patchname='steam.patch' && _patchmsg="Applied steam crossover hack" && nonuser_patcher
 	  else
@@ -793,7 +793,7 @@ _prepare() {
 	fi
 
 	# Disable server-send_hardware_message staging patchset if found - Fixes FFXIV/Warframe/Crysis 3 (...) mouse jittering issues on 3.19 staging and lower.
-	if [ "$_server_send_hwmsg_disable" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_server_send_hwmsg_disable" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  if [ -d "${srcdir}"/"${_stgsrcdir}"/patches/server-send_hardware_message ]; then # ghetto check for server-send_hardware_message staging patchset presence
 	    _staging_args+=(-W server-send_hardware_message)
 	    echo "server-send_hardware_message staging patchset disabled (mouse jittering fix)" >> "$_where"/last_build_config.log
@@ -801,19 +801,19 @@ _prepare() {
 	fi
 
 	# Disable winepulse pulseaudio patchset
-	if [ "$_staging_pulse_disable" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_staging_pulse_disable" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  _staging_args+=(-W winepulse-PulseAudio_Support)
 	  echo "Disabled the staging winepulse patchset" >> "$_where"/last_build_config.log
 	fi
 
 	# CSMT toggle patch - Corrects the CSMT toggle to be more logical
-	if [ "$_CSMT_toggle" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_CSMT_toggle" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  _patchname='CSMT-toggle.patch' && _patchmsg="Applied CSMT toggle logic patch" && nonuser_patcher
 	  cd "${srcdir}"/"${_winesrcdir}"
 	fi
 
-	if [ "$_use_staging" == "true" ] && [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW2" == "y" ]; then
+	if [ "$_use_staging" = "true" ] && [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW2" = "y" ]; then
 	  msg2 "Applying wine-staging patches..." && echo -e "\nStaging overrides, if any: ${_staging_args[@]}\n" >> "$_where"/last_build_config.log && echo -e "\nApplying wine-staging patches..." >> "$_where"/prepare.log
 	  "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh DESTDIR="${srcdir}/${_winesrcdir}" --all "${_staging_args[@]}" >> "$_where"/prepare.log 2>&1 || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
 
@@ -822,9 +822,9 @@ _prepare() {
 	fi
 
 	# esync
-	if [ "$_use_esync" == "true" ]; then
+	if [ "$_use_esync" = "true" ]; then
 	  if git merge-base --is-ancestor 2600ecd4edfdb71097105c74312f83845305a4f2 HEAD; then # Esync ce79346
-	    if [ "$_use_staging" == "true" ]; then
+	    if [ "$_use_staging" = "true" ]; then
 	      # fixes for esync patches to apply to staging
 	      cd "${srcdir}"/"${_esyncsrcdir}"
 	      _patchname='esync-staging-fixes-r3.patch' && _patchmsg="Using esync staging 3.20+ compat fixes" && nonuser_patcher
@@ -948,7 +948,7 @@ _prepare() {
 	    fi
 	  # if using a wine version that includes aec7bef, use 3.17+ fixes
 	  elif git merge-base --is-ancestor aec7befb5115d866724149bbc5576c7259fef820 HEAD; then # server: Avoid potential size overflow for empty object attributes
-	    if [ "$_use_staging" == "true" ]; then
+	    if [ "$_use_staging" = "true" ]; then
 	      # fixes for esync patches to apply to staging
 	      cd "${srcdir}"/"${_esyncsrcdir}"
 	      _patchname='esync-staging-fixes-r2.patch' && _patchmsg="Using esync staging 3.17+ compat fixes" && nonuser_patcher
@@ -965,7 +965,7 @@ _prepare() {
 	    cd "${srcdir}"/"${_winesrcdir}"
 	  else
 	    # 3.10 - 3.16
-	    if [ "$_use_staging" == "true" ]; then
+	    if [ "$_use_staging" = "true" ]; then
 	      cd "${srcdir}"/"${_esyncsrcdir}"
 	      _patchname='esync-staging-fixes-r1.patch' && _patchmsg="Using esync staging 3.16- compat fixes" && nonuser_patcher
 	      cd "${srcdir}"/"${_winesrcdir}"
@@ -996,7 +996,7 @@ _prepare() {
 	  fi
 
 	  # Fix for server-Desktop_Refcount and patchsets depending on it (ws2_32-WSACleanup, ws2_32-TransmitFile, server-Pipe_ObjectName)
-	  if [ "$_use_staging" == "true" ]; then
+	  if [ "$_use_staging" = "true" ]; then
 	    if ! git merge-base --is-ancestor b2a546c92dabee8ab1c3d5b9fecc84d99caf0e76 HEAD; then #  server: Introduce kernel_object struct for generic association between server and kernel objects.
 	      _patchname='esync-no_alloc_handle.patch' && _patchmsg="Using esync-no_alloc_handle patch to fix server-Desktop_Refcount ws2_32-WSACleanup ws2_32-TransmitFile server-Pipe_ObjectName with Esync enabled" && nonuser_patcher
 	    fi
@@ -1005,17 +1005,17 @@ _prepare() {
 	# /esync
 
 	# Launch with dedicated gpu desktop entry patch
-	if [ "$_launch_with_dedicated_gpu" == "true" ]; then
+	if [ "$_launch_with_dedicated_gpu" = "true" ]; then
 	  _patchname='launch-with-dedicated-gpu-desktop-entry.patch' && _patchmsg="Applied launch with dedicated gpu desktop entry patch" && nonuser_patcher
 	fi
 
 	# Low latency alsa audio - https://blog.thepoon.fr/osuLinuxAudioLatency/
-	if [ "$_lowlatency_audio" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_lowlatency_audio" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  _patchname='lowlatency_audio.patch' && _patchmsg="Applied low latency alsa audio patch" && nonuser_patcher
 	fi
 
 	# The Sims 2 fix - https://bugs.winehq.org/show_bug.cgi?id=8051
-	if [ "$_sims2_fix" == "true" ]; then
+	if [ "$_sims2_fix" = "true" ]; then
 	  if git merge-base --is-ancestor d88f12950761e9ff8d125a579de6e743979f4945 HEAD; then
 	    _patchname='sims_2-fix.patch' && _patchmsg="Applied The Sims 2 fix" && nonuser_patcher
 	  elif git merge-base --is-ancestor 4de2da1d146248ed872ae45c30b8d485832f4ac8 HEAD; then
@@ -1026,17 +1026,17 @@ _prepare() {
 	fi
 
 	# Python fix for <=3.18 (backported from zzhiyi's patches) - fix for python and needed for "The Sims 4" to work - replaces staging partial implementation - https://bugs.winehq.org/show_bug.cgi?id=44999
-	if [ "$_318python_fix" == "true" ] && ! git merge-base --is-ancestor 3ebd2f0be30611e6cf00468c2980c5092f91b5b5 HEAD; then
+	if [ "$_318python_fix" = "true" ] && ! git merge-base --is-ancestor 3ebd2f0be30611e6cf00468c2980c5092f91b5b5 HEAD; then
 	  _patchname='pythonfix.patch' && _patchmsg="Applied Python/The Sims 4 fix" && nonuser_patcher
 	fi
 
 	# Fix crashes or perf issues related to high core count setups - Fixed in 4.0 - https://bugs.winehq.org/show_bug.cgi?id=45453
-	if [ "$_highcorecount_fix" == "true" ] && ! git merge-base --is-ancestor ed75a7b3443e79f9d63e97eeebcce2d2f40c507b HEAD; then
+	if [ "$_highcorecount_fix" = "true" ] && ! git merge-base --is-ancestor ed75a7b3443e79f9d63e97eeebcce2d2f40c507b HEAD; then
 	  _patchname='high-core-count-fix.patch' && _patchmsg="Applied high core count fix" && nonuser_patcher
 	fi
 
 	# Workaround for Final Fantasy XIV Launcher 404 error - Thanks @varris1 ! - Fixed by d535df42f665a097ec721b10fb49d7b18f899be9 (4.10)
-	if [ "$_ffxivlauncher_fix" == "true" ]; then
+	if [ "$_ffxivlauncher_fix" = "true" ]; then
 	  if $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 4e6a477acd32651dd571205786132666505aeb5b HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
 	    _patchname='ffxiv-launcher-workaround.patch' && _patchmsg="Applied Final Fantasy XIV Launcher fix" && nonuser_patcher
 	  else
@@ -1045,7 +1045,7 @@ _prepare() {
 	fi
 
 	# Fix for LoL 9.20+ crashing - https://bugs.winehq.org/show_bug.cgi?id=47198
-	if [ "$_lol920_fix" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_lol920_fix" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  if git merge-base --is-ancestor bd9a1e23f2a1eb97492ff977dcb0d96fde8ab2ad HEAD; then
 	    _patchname='leagueoflolfix.patch' && _patchmsg="Applied LoL 9.20+ fix - Requires vdso32 disabled (echo 0 > /proc/sys/abi/vsyscall32)" && nonuser_patcher
 	  elif git merge-base --is-ancestor 98682cfd01aca9be2755e4279db87d54e3642f0b HEAD; then
@@ -1068,18 +1068,18 @@ _prepare() {
 	fi
 
 	# Fix for Assetto Corsa performance drop when HUD elements are displayed - https://bugs.winehq.org/show_bug.cgi?id=46955
-	if [ "$_assettocorsa_hudperf_fix" == "true" ] && git merge-base --is-ancestor d19e34d8f072514cb903bda89767996ba078bae4 HEAD; then
+	if [ "$_assettocorsa_hudperf_fix" = "true" ] && git merge-base --is-ancestor d19e34d8f072514cb903bda89767996ba078bae4 HEAD; then
 	  _patchname='assettocorsa_hud_perf.patch' && _patchmsg="Applied Assetto Corsa HUD performance fix" && nonuser_patcher
 	fi
 
 	# Fix for Mortal Kombat 11 - Requires staging, native mfplat (win7) and a different GPU driver than RADV
-	if [ "$_mk11_fix" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_mk11_fix" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  if git merge-base --is-ancestor 78e9b02cebf4b107aba69aa9a845ab661a7daf10 HEAD; then
 	    _patchname='mk11.patch' && _patchmsg="Applied Mortal Kombat 11 fix" && nonuser_patcher
 	  elif git merge-base --is-ancestor b1c748c85205970b97cd31b4347a751c58b2d72e HEAD; then
 	    _patchname='mk11-78e9b02.patch' && _patchmsg="Applied Mortal Kombat 11 fix" && nonuser_patcher
 	  else
-	    if [ "$_large_address_aware" == "true" ]; then
+	    if [ "$_large_address_aware" = "true" ]; then
 	      for _f in "$_where"/LAA-stagin*.patch ; do
 	        patch ${_f} << 'EOM'
 @@ -220,15 +220,16 @@ diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
@@ -1112,33 +1112,33 @@ EOM
 	fi
 
 	# apply wine-pba patchset
-	if [ "$_use_pba" == "true" ]; then
+	if [ "$_use_pba" = "true" ]; then
 	  if [ "$_pba_version" != "none" ]; then
 	    _patchname="PBA${_pba_version}.patch" && _patchmsg="Using pba (${_pba_version}) patchset" && nonuser_patcher
 	  fi
 	fi
 
 	# d3d9 patches
-	if [ "$_use_legacy_gallium_nine" == "true" ] && [ "$_use_staging" == "true" ] && ! git merge-base --is-ancestor e24b16247d156542b209ae1d08e2c366eee3071a HEAD; then
+	if [ "$_use_legacy_gallium_nine" = "true" ] && [ "$_use_staging" = "true" ] && ! git merge-base --is-ancestor e24b16247d156542b209ae1d08e2c366eee3071a HEAD; then
 	  wget -O "$_where"/wine-d3d9.patch https://raw.githubusercontent.com/sarnex/wine-d3d9-patches/master/wine-d3d9.patch
 	  wget -O "$_where"/staging-helper.patch https://raw.githubusercontent.com/sarnex/wine-d3d9-patches/master/staging-helper.patch
 	  patch -Np1 < "$_where"/staging-helper.patch
 	  patch -Np1 < "$_where"/wine-d3d9.patch
 	  autoreconf -f
 	  _configure_args+=(--with-d3d9-nine)
-	elif [ "$_use_legacy_gallium_nine" == "true" ] && [ "$_use_staging" != "true" ] && ! git merge-base --is-ancestor e24b16247d156542b209ae1d08e2c366eee3071a HEAD; then
+	elif [ "$_use_legacy_gallium_nine" = "true" ] && [ "$_use_staging" != "true" ] && ! git merge-base --is-ancestor e24b16247d156542b209ae1d08e2c366eee3071a HEAD; then
 	  wget -O "$_where"/wine-d3d9.patch https://raw.githubusercontent.com/sarnex/wine-d3d9-patches/master/wine-d3d9.patch
 	  wget -O "$_where"/d3d9-helper.patch https://raw.githubusercontent.com/sarnex/wine-d3d9-patches/master/d3d9-helper.patch
 	  patch -Np1 < "$_where"/d3d9-helper.patch
 	  patch -Np1 < "$_where"/wine-d3d9.patch
 	  autoreconf -f
 	  _configure_args+=(--with-d3d9-nine)
-	elif [ "$_use_legacy_gallium_nine" == "true" ] && git merge-base --is-ancestor e24b16247d156542b209ae1d08e2c366eee3071a HEAD; then
+	elif [ "$_use_legacy_gallium_nine" = "true" ] && git merge-base --is-ancestor e24b16247d156542b209ae1d08e2c366eee3071a HEAD; then
 	  echo "Legacy Gallium Nine disabled due to known issues with selected Wine version" >> "$_where"/last_build_config.log
 	fi
 
 	# GLSL toggle patch - Allows for use of ARB instead of GLSL
-	if [ "$_GLSL_toggle" == "true" ] && [ "$_use_staging" == "true" ] && [ "$_use_legacy_gallium_nine" != "true" ]; then
+	if [ "$_GLSL_toggle" = "true" ] && [ "$_use_staging" = "true" ] && [ "$_use_legacy_gallium_nine" != "true" ]; then
 	  _patchname='GLSL-toggle.patch' && _patchmsg="Applied GLSL toggle patch" && nonuser_patcher
 	fi
 
@@ -1149,8 +1149,8 @@ EOM
 	fi
 
 	# fsync - experimental replacement for esync introduced with Proton 4.11-1
-	if [ "$_use_fsync" == "true" ]; then
-	  if [ "$_staging_esync" == "true" ]; then
+	if [ "$_use_fsync" = "true" ]; then
+	  if [ "$_staging_esync" = "true" ]; then
 	    if git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
 	      _patchname='fsync-staging.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging)" && nonuser_patcher
 	    elif git merge-base --is-ancestor e5030a4ac0a303d6788ae79ffdcd88e66cf78bd2 HEAD; then
@@ -1171,7 +1171,7 @@ EOM
 	    if [ "$_proton_use_steamhelper" != "true" ]; then
 	      _patchname='fsync-staging-no_alloc_handle.patch' && _patchmsg="Added no_alloc_handle object method to fsync" && nonuser_patcher
 	    fi
-	  elif [ "$_use_esync" == "true" ]; then
+	  elif [ "$_use_esync" = "true" ]; then
 	    if git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
 	      _patchname='fsync-mainline.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
 	    elif git merge-base --is-ancestor e5030a4ac0a303d6788ae79ffdcd88e66cf78bd2 HEAD; then
@@ -1190,7 +1190,7 @@ EOM
 	  else
 	    echo "Fsync forcefully disabled due to incompatible tree" >> "$_where"/last_build_config.log
 	  fi
-	  if [ "$_fsync_spincounts" == "true" ] && [ "$_use_staging" == "true" ] && $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8b2fd051c97187c68dee2ba2f0df7aca65c4cca6 HEAD && cd "${srcdir}"/"${_winesrcdir}"); then # Temporarily only allow on staging - we depend on esync mutexes abandonment
+	  if [ "$_fsync_spincounts" = "true" ] && [ "$_use_staging" = "true" ] && $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8b2fd051c97187c68dee2ba2f0df7aca65c4cca6 HEAD && cd "${srcdir}"/"${_winesrcdir}"); then # Temporarily only allow on staging - we depend on esync mutexes abandonment
 	    _patchname='fsync-spincounts.patch' && _patchmsg="Add a configurable spin count to fsync" && nonuser_patcher
 	  fi
 	fi
@@ -1198,7 +1198,7 @@ EOM
 	echo -e "" >> "$_where"/last_build_config.log
 
 	# Legacy Proton Fullscreen inline patching
-	if [ "$_proton_rawinput" == "true" ] && [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ] && $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
 	  echo -e "\nLegacy Proton Fullscreen inline patching" >> "$_where"/prepare.log
 	  for _f in "$_where"/valve_proton_fullscreen_hack-staging-{938dddf,de64501,82c6ec3,7cc69d7,0cb79db,a4b9460,57bb5cc,6e87235}.patch; do
 	    patch ${_f} >> "$_where"/prepare.log << 'EOM'
@@ -1216,11 +1216,11 @@ EOM
 	fi
 
 	# Proton Fullscreen patch - Allows resolution changes for fullscreen games without changing desktop resolution
-	if [ "$_proton_fs_hack" == "true" ]; then
+	if [ "$_proton_fs_hack" = "true" ]; then
 	  if [ "$_FS_bypass_compositor" != "true" ]; then
 	    _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	  fi
-	  if [ "$_use_staging" == "true" ]; then
+	  if [ "$_use_staging" = "true" ]; then
 	    if git merge-base --is-ancestor 707fcb99a60015fcbb20c83e9031bc5be7a58618 HEAD; then
 	      _patchname='valve_proton_fullscreen_hack-staging.patch' && _patchmsg="Applied Proton fullscreen hack patch (staging)" && nonuser_patcher
 	    else
@@ -1283,7 +1283,7 @@ EOM
 	fi
 
 	# Proton compatible rawinput patchset
-	if [ "$_proton_rawinput" == "true" ] && [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ] && git merge-base --is-ancestor cfcc280905b7804efde8f42bcd6bddbe5ebd8cad HEAD; then
+	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor cfcc280905b7804efde8f42bcd6bddbe5ebd8cad HEAD; then
 	  if git merge-base --is-ancestor d5fd3c8a386cf716b1a9695069462be0abd0fa4f HEAD; then
 	    _patchname='proton-rawinput.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
 	  elif git merge-base --is-ancestor dbe7694c533ce8bc454248255a2abad66f221e01 HEAD; then
@@ -1304,8 +1304,8 @@ EOM
 	fi
 
 	# Update winevulkan
-	if [ "$_update_winevulkan" == "true" ] && git merge-base --is-ancestor ad82739dda15b44510f6003302f0ad17848a35a7 HEAD && ! git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
-	  if [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_update_winevulkan" = "true" ] && git merge-base --is-ancestor ad82739dda15b44510f6003302f0ad17848a35a7 HEAD && ! git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
+	  if [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ]; then
 	    _patchname='winevulkan-1.1.113-proton.patch' && _patchmsg="Applied winevulkan 1.1.113 patch (proton edition)" && nonuser_patcher
 	  else
 	    _patchname='winevulkan-1.1.113.patch' && _patchmsg="Applied winevulkan 1.1.113 patch" && nonuser_patcher
@@ -1313,20 +1313,20 @@ EOM
 	fi
 
 	# Overwatch mf crash fix from Guy1524 - https://bugs.winehq.org/show_bug.cgi?id=47385 - Fixed in b182ba88
-	if [ "$_OW_fix" == "true" ] && git merge-base --is-ancestor 9bf4db1325d303a876bf282543289e15f9c698ad HEAD && ! git merge-base --is-ancestor b182ba882cfcce7b8769470f49f0fba216095c45 HEAD; then
+	if [ "$_OW_fix" = "true" ] && git merge-base --is-ancestor 9bf4db1325d303a876bf282543289e15f9c698ad HEAD && ! git merge-base --is-ancestor b182ba882cfcce7b8769470f49f0fba216095c45 HEAD; then
 	   _patchname='overwatch-mfstub.patch' && _patchmsg="Applied Overwatch mf crash fix" && nonuser_patcher
 	fi
 
 	# Magic The Gathering: Arena crash fix - (>aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6)
-	if [ "$_mtga_fix" == "true" ] && git merge-base --is-ancestor aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6 HEAD; then
+	if [ "$_mtga_fix" = "true" ] && git merge-base --is-ancestor aa0c4bb5e72caf290b6588bc1f9931cc89a9feb6 HEAD; then
 	  if git merge-base --is-ancestor c3fac6e36caab168974dd04a60ae1bbb1a0fd919 HEAD; then
-	    if [ "$_use_staging" == "true" ]; then
+	    if [ "$_use_staging" = "true" ]; then
 	      _patchname='mtga-staging.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
 	    else
 	      _patchname='mtga-mainline.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
 	    fi
 	  else
-	    if [ "$_use_staging" == "true" ]; then
+	    if [ "$_use_staging" = "true" ]; then
 	      _patchname='mtga-staging-c3fac6e.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
 	    else
 	      _patchname='mtga-mainline-c3fac6e.patch' && _patchmsg="Applied MTGA crashfix" && nonuser_patcher
@@ -1335,7 +1335,7 @@ EOM
 	fi
 
 	# Workarounds to prevent crashes on some mf functions
-	if [ "$_use_staging" == "true" ] && [ "$_proton_mf_hacks" == "true" ] && git merge-base --is-ancestor b182ba882cfcce7b8769470f49f0fba216095c45 HEAD; then
+	if [ "$_use_staging" = "true" ] && [ "$_proton_mf_hacks" = "true" ] && git merge-base --is-ancestor b182ba882cfcce7b8769470f49f0fba216095c45 HEAD; then
 	  if git merge-base --is-ancestor f540d1615fe66c95a3824e86e5292a026511749e HEAD; then
 	    _patchname='proton_mf_hacks.patch' && _patchmsg="Applied proton mf hacks patch" && nonuser_patcher
 	  elif git merge-base --is-ancestor 120505ed6b590daea11486a512dd563600d0329f HEAD; then
@@ -1348,19 +1348,19 @@ EOM
 	fi
 
 	# Enable STAGING_SHARED_MEMORY by default - https://wiki.winehq.org/Wine-Staging_Environment_Variables#Shared_Memory
-	if [ "$_stg_shared_mem_default" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_stg_shared_mem_default" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  _patchname='enable_stg_shared_mem_def.patch' && _patchmsg="Enable STAGING_SHARED_MEMORY by default" && nonuser_patcher
 	fi
 
 	# Nvidia hate - Prevents building of nvapi/nvapi64, nvcuda, nvcuvid and nvencodeapi/nvencodeapi64 libs
-	if [ "$_nvidia_hate" == "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_nvidia_hate" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  _patchname='nvidia-hate.patch' && _patchmsg="Hatin' on novideo" && nonuser_patcher
 	fi
 
 	# Revert moving various funcs to kernelbase & ntdll to fix some dll loading issues and ntdll crashes (with Cemu and Blizzard games notably)
-	if [ "$_kernelbase_reverts" == "true" ] || [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ] && git merge-base --is-ancestor 8d25965e12717b266f2fc74bb10d915234d16772 HEAD && ! git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
+	if [ "$_kernelbase_reverts" = "true" ] || [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ] && git merge-base --is-ancestor 8d25965e12717b266f2fc74bb10d915234d16772 HEAD && ! git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
 	  if git merge-base --is-ancestor 461b5e56f95eb095d97e4af1cb1c5fd64bb2862a HEAD; then
-	    if [ "$_use_staging" == "true" ]; then
+	    if [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-tkg-staging-kernelbase-reverts.patch' && _patchmsg="Using kernelbase reverts patch (staging)" && nonuser_patcher
 	    else
 	      _patchname='proton-tkg-kernelbase-reverts.patch' && _patchmsg="Using kernelbase reverts patch" && nonuser_patcher
@@ -1376,7 +1376,7 @@ EOM
 	      _lastcommit="9551cb0"
 	    fi
 	    if [ -n "$_lastcommit" ]; then
-	      if [ "$_use_staging" == "true" ]; then
+	      if [ "$_use_staging" = "true" ]; then
 	        _patchname="proton-tkg-staging-kernelbase-reverts-$_lastcommit.patch" && _patchmsg="Using kernelbase reverts patch (staging) (<$_lastcommit)" && nonuser_patcher
 	      else
 	        _patchname="proton-tkg-kernelbase-reverts-$_lastcommit.patch" && _patchmsg="Using kernelbase reverts patch (<$_lastcommit)" && nonuser_patcher
@@ -1386,20 +1386,20 @@ EOM
 	fi
 
 	# IMAGE_FILE_LARGE_ADDRESS_AWARE override - Enable with WINE_LARGE_ADDRESS_AWARE=1
-	if [ "$_large_address_aware" == "true" ] && git merge-base --is-ancestor c998667bf0983ef99cc48847d3d6fc6ca6ff4a2d HEAD && ! git merge-base --is-ancestor 9f0d66923933d82ae0b09fe5d84f977c1a657cc1 HEAD; then
-	  if [ "$_use_staging" == "true" ]; then
+	if [ "$_large_address_aware" = "true" ] && git merge-base --is-ancestor c998667bf0983ef99cc48847d3d6fc6ca6ff4a2d HEAD && ! git merge-base --is-ancestor 9f0d66923933d82ae0b09fe5d84f977c1a657cc1 HEAD; then
+	  if [ "$_use_staging" = "true" ]; then
 	    _patchname='legacy-LAA-staging.patch' && _patchmsg="Applied large address aware override support (legacy)" && nonuser_patcher
 	  else
 	    _patchname='legacy-LAA.patch' && _patchmsg="Applied large address aware override support (legacy)" && nonuser_patcher
 	  fi
-	elif [ "$_large_address_aware" == "true" ] && git merge-base --is-ancestor 608d086f1b1bb7168e9322c65224c23f34e75f29 HEAD; then
-	  if [ "$_use_staging" == "true" ]; then
+	elif [ "$_large_address_aware" = "true" ] && git merge-base --is-ancestor 608d086f1b1bb7168e9322c65224c23f34e75f29 HEAD; then
+	  if [ "$_use_staging" = "true" ]; then
 	    _patchname='LAA-staging.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
 	  else
 	    _patchname='LAA.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
 	  fi
-	elif [ "$_large_address_aware" == "true" ] && git merge-base --is-ancestor 9f0d66923933d82ae0b09fe5d84f977c1a657cc1 HEAD; then
-	  if [ "$_use_staging" == "true" ]; then
+	elif [ "$_large_address_aware" = "true" ] && git merge-base --is-ancestor 9f0d66923933d82ae0b09fe5d84f977c1a657cc1 HEAD; then
+	  if [ "$_use_staging" = "true" ]; then
 	    _patchname='LAA-staging-608d086.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
 	  else
 	    _patchname='LAA-608d086.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
@@ -1407,12 +1407,12 @@ EOM
 	fi
 
 	# Proton/fs-hack friendly winex11-MWM_Decorations
-	if [ "$_proton_fs_hack" == "true" ] && [ "$_use_staging" == "true" ] && git merge-base --is-ancestor 8000b5415d2c249176bda3d8b49f8fc9978e1623 HEAD; then
+	if [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 8000b5415d2c249176bda3d8b49f8fc9978e1623 HEAD; then
 	  _patchname='proton-staging_winex11-MWM_Decorations.patch' && _patchmsg="Applied proton friendly winex11-MWM_Decorations" && nonuser_patcher
 	fi
 
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ]; then
-	  if [ "$_proton_fs_hack" != "true" ] && [ "$_use_staging" == "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
+	  if [ "$_proton_fs_hack" != "true" ] && [ "$_use_staging" = "true" ]; then
 	    _patchname='staging-winex11-key_translation.patch' && _patchmsg="Applied non-fshack friendly staging winex11-key_translation patchset" && nonuser_patcher
 	  fi
 	  if [ "$_steamclient_noswap" != "true" ] && git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
@@ -1426,14 +1426,14 @@ EOM
 
 	echo -e "" >> "$_where"/last_build_config.log
 
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD || ([ "$_protonify" == "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD || ([ "$_protonify" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
 	  if git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
-	    if [ "$_use_staging" == "true" ]; then
+	    if [ "$_use_staging" = "true" ]; then
 	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD; then
 	        _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/3" && nonuser_patcher
 	      fi
 	      _patchname='proton-tkg-staging.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 2/3" && nonuser_patcher
-	      if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ]; then
+	      if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	        if git merge-base --is-ancestor 9122bc1096f3231c5f6b8ffc0d7ad3e700f18af1 HEAD; then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
 	        elif git merge-base --is-ancestor 6eb05dab7c83893684b5e17e9e3a765835d77fcd HEAD; then
@@ -1454,7 +1454,7 @@ EOM
 	        _patchname='proton-tkg-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 1/3" && nonuser_patcher
 	      fi
 	      _patchname='proton-tkg.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 2/3" && nonuser_patcher
-	      if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ]; then
+	      if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	        if git merge-base --is-ancestor 9122bc1096f3231c5f6b8ffc0d7ad3e700f18af1 HEAD; then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 3/3" && nonuser_patcher
 	        elif git merge-base --is-ancestor 6eb05dab7c83893684b5e17e9e3a765835d77fcd HEAD; then
@@ -1556,12 +1556,12 @@ EOM
 	    else
 	      _lastcommit="eafb4af"
         fi
-	    if [ "$_use_staging" == "true" ]; then
-	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD && [ "$_rpc" == "1" ]; then
+	    if [ "$_use_staging" = "true" ]; then
+	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD && [ "$_rpc" = "1" ]; then
 	        _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/2" && nonuser_patcher
 	      fi
 	      _patchname="proton-tkg-staging-$_lastcommit.patch" && _patchmsg="Using Steam-specific Proton-tkg patches (staging-$_lastcommit) 2/2" && nonuser_patcher
-	      if [ "$_stmbits" == "1" ] && [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ]; then
+	      if [ "$_stmbits" = "1" ] && [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	        if git merge-base --is-ancestor 9122bc1096f3231c5f6b8ffc0d7ad3e700f18af1 HEAD; then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
 	        elif git merge-base --is-ancestor 6eb05dab7c83893684b5e17e9e3a765835d77fcd HEAD; then
@@ -1578,11 +1578,11 @@ EOM
 	        fi
 	      fi
 	    else
-	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD && [ "$_rpc" == "1" ]; then
+	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD && [ "$_rpc" = "1" ]; then
 	        _patchname='proton-tkg-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 1/2" && nonuser_patcher
 	      fi
 	      _patchname="proton-tkg-$_lastcommit.patch" && _patchmsg="Using Steam-specific Proton-tkg patches ($_lastcommit) 2/2" && nonuser_patcher
-	      if [ "$_stmbits" == "1" ] && [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ]; then
+	      if [ "$_stmbits" = "1" ] && [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	        if git merge-base --is-ancestor 9122bc1096f3231c5f6b8ffc0d7ad3e700f18af1 HEAD; then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 3/3" && nonuser_patcher
 	        elif git merge-base --is-ancestor 6eb05dab7c83893684b5e17e9e3a765835d77fcd HEAD; then
@@ -1597,14 +1597,14 @@ EOM
 	      fi
 	    fi
 	  fi
-	  if [ "$_staging_pulse_disable" != "true" ] && [ "$_use_staging" == "true" ]; then
+	  if [ "$_staging_pulse_disable" != "true" ] && [ "$_use_staging" = "true" ]; then
 	    _patchname='proton-pa-staging.patch' && _patchmsg="Enable Proton's PA additions" && nonuser_patcher
 	  fi
 	fi
 
-	if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	  # SDL Joystick support - from Proton
-	  if [ "$_sdl_joy_support" == "true" ]; then
+	  if [ "$_sdl_joy_support" = "true" ]; then
 	    if git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
 	      _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	    else
@@ -1614,7 +1614,7 @@ EOM
 	      _patchname='proton-sdl-joy-2.patch' && _patchmsg="Enable SDL Joystick support additions (from Proton)" && nonuser_patcher
 	    fi
 	    # Gamepad additions - from Proton
-	    if [ "$_gamepad_additions" == "true" ] && [ "$_use_staging" == "true" ]; then
+	    if [ "$_gamepad_additions" = "true" ] && [ "$_use_staging" = "true" ]; then
 	      if git merge-base --is-ancestor 6cb3d0fb3778f660546e581787b1734e2b1d2955 HEAD; then
 	        _patchname='proton-gamepad-additions.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
 	      elif git merge-base --is-ancestor c074966b9d75d9519e8640e87725ad439f4ffa0c HEAD; then
@@ -1647,10 +1647,10 @@ EOM
 	  #if git merge-base --is-ancestor 0ffb1535517301d28c7c004eac639a9a0cc26c00 HEAD; then
 	  #  _patchname='proton-restore-unicode.patch' && _patchmsg="Restore installing wine/unicode.h to please Proton" && nonuser_patcher
 	  #fi
-	  if [ "$_wined3d_additions" == "true" ] && [ "$_use_staging" == "false" ]; then
+	  if [ "$_wined3d_additions" = "true" ] && [ "$_use_staging" = "false" ]; then
 	    _patchname='proton-wined3d-additions.patch' && _patchmsg="Enable Proton non-vr-related wined3d additions" && nonuser_patcher
 	  fi
-	  if [ "$_steamvr_support" == "true" ]; then
+	  if [ "$_steamvr_support" = "true" ]; then
 	    if git merge-base --is-ancestor a6d74b0545afcbf05d53fcbc9641ecc36c3be95c HEAD; then
 	      _patchname='proton-vr.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
 	    elif git merge-base --is-ancestor c736321633c6a247b406be50b1780ca0439ef8b0 HEAD; then
@@ -1662,15 +1662,15 @@ EOM
 	fi
 
 	# Proton fs hack additions
-	if git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && [ "$_proton_fs_hack" == "true" ]; then
+	if git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
 	  _patchname='proton-vk-bits-4.5.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
 	fi
-	if git merge-base --is-ancestor 458e0ad5133c9a449e22688a89183f3a6ab286e4 HEAD && [ "$_proton_fs_hack" == "true" ]; then
+	if git merge-base --is-ancestor 458e0ad5133c9a449e22688a89183f3a6ab286e4 HEAD && [ "$_proton_fs_hack" = "true" ]; then
 	  _patchname='proton_fs_hack_integer_scaling.patch' && _patchmsg="Enable Proton fs hack integer scaling" && nonuser_patcher
 	fi
-	if [ "$_update_winevulkan" == "true" ] && git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
+	if [ "$_update_winevulkan" = "true" ] && git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
 	  if git merge-base --is-ancestor d2f552d1508dbabb595eae23db9e5c157eaf9b41 HEAD; then
-	    if [ "$_proton_fs_hack" == "true" ]; then
+	    if [ "$_proton_fs_hack" = "true" ]; then
 	      _patchname='proton-winevulkan.patch' && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
 	    else
 	      _patchname='proton-winevulkan-nofshack.patch' && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
@@ -1687,7 +1687,7 @@ EOM
 	    elif git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
 	      _lastcommit="7b1622d"
 	    fi
-	    if [ "$_proton_fs_hack" == "true" ]; then
+	    if [ "$_proton_fs_hack" = "true" ]; then
 	      _patchname="proton-winevulkan-$_lastcommit.patch" && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
 	    else
 	      _patchname="proton-winevulkan-nofshack-$_lastcommit.patch" && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
@@ -1696,8 +1696,8 @@ EOM
 	fi
 
 	# Enforce mscvrt Dlls to native then builtin - from Proton
-	if [ "$_msvcrt_nativebuiltin" == "true" ]; then
-	  if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ] && [ "$_unfrog" != "true" ]; then
+	if [ "$_msvcrt_nativebuiltin" = "true" ]; then
+	  if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	    if git merge-base --is-ancestor 51ffea5a3940bdc74b44b9303c4574dfb156efc0 HEAD; then
 	      _patchname='msvcrt_nativebuiltin.patch' && _patchmsg="Enforce msvcrt Dlls to native then builtin (from Proton)" && nonuser_patcher
 	    elif git merge-base --is-ancestor eafb4aff5a2c322f4f156fdfada5743834996be4 HEAD; then
@@ -1713,7 +1713,7 @@ EOM
 	fi
 
 	# Set the default wine version to win10
-	if [ "$_win10_default" == "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
+	if [ "$_win10_default" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	  if git merge-base --is-ancestor e13d54665765d9dd8829233f0ea748fd685a1913 HEAD; then
 	    _patchname='proton-win10-default.patch' && _patchmsg="Enforce win10 as default wine version" && nonuser_patcher
 	  else
@@ -1722,7 +1722,7 @@ EOM
 	fi
 
 	# Add support for dxvk_config library to Wine's dxgi when vkd3d support is enabled
-	if [ "$_use_vkd3d" == "mainline" ] || [ "$_use_vkd3d" == "fork" ] && [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
+	if [ "$_use_vkd3d" = "mainline" ] || [ "$_use_vkd3d" = "fork" ] && [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	  if git merge-base --is-ancestor 591068cec06257f3d5ed23e19ee4ad055ad978aa HEAD; then
 	    _patchname='dxvk_config_dxgi_support.patch' && _patchmsg="Add support for dxvk_config library to Wine's dxgi" && nonuser_patcher
 	  else
@@ -1731,7 +1731,7 @@ EOM
 	fi
 
 	# Add HansKristian's d3d12/vkd3d fixes wwhen vkd3d is enabled - https://www.winehq.org/pipermail/wine-devel/2019-October/152356.html - https://www.winehq.org/pipermail/wine-devel/2019-October/152357.html
-	if [ "$_use_vkd3d" == "fork" ]; then
+	if [ "$_use_vkd3d" = "fork" ]; then
 	  _patchname='d3d12-fixes.patch' && _patchmsg="Add HansKristian's d3d12 fixes" && nonuser_patcher
 	fi
 
@@ -1745,7 +1745,7 @@ EOM
 	echo -e "" >> "$_where"/last_build_config.log
 
 	# wine user patches
-	if [ "$_user_patches" == "true" ]; then
+	if [ "$_user_patches" = "true" ]; then
 	  _userpatch_target="plain-wine"
 	  _userpatch_ext="my"
 	  cd "${srcdir}"/"${_winesrcdir}"
@@ -1755,7 +1755,7 @@ EOM
 
 	echo "" >> "$_where"/last_build_config.log
 
-	if [ "$_use_staging" == "true" ] && [ "$_LOCAL_PRESET" != "staging" ]; then
+	if [ "$_use_staging" = "true" ] && [ "$_LOCAL_PRESET" != "staging" ]; then
 	  _patchname='wine-tkg-staging.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Tk-Glitch/PKGBUILDS/issues instead." && nonuser_patcher
 	elif [ "$_use_staging" != "true" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
 	  _patchname='wine-tkg.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Tk-Glitch/PKGBUILDS/issues instead." && nonuser_patcher
@@ -1781,24 +1781,24 @@ EOM
 	# Set custom version tags
 	local _version_tags=()
 	_version_tags+=(TkG) # watermark to keep track of TkG builds independently of the settings
-	if [ "$_use_staging" == "true" ]; then
+	if [ "$_use_staging" = "true" ]; then
 	  _version_tags+=(Staging)
 	else
 	  _version_tags+=(Plain)
 	fi
-	if [ "$_use_esync" == "true" ] || [ "$_staging_esync" == "true" ]; then
+	if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ]; then
 	  _version_tags+=(Esync)
 	fi
-	if [ "$_use_fsync" == "true" ] && [ "$_staging_esync" == "true" ]; then
+	if [ "$_use_fsync" = "true" ] && [ "$_staging_esync" = "true" ]; then
 	  _version_tags+=(Fsync)
 	fi
-	if [ "$_use_pba" == "true" ] && [ "$_pba_version" != "none" ]; then
+	if [ "$_use_pba" = "true" ] && [ "$_pba_version" != "none" ]; then
 	  _version_tags+=(PBA)
 	fi
-	if [ "$_use_legacy_gallium_nine" == "true" ]; then
+	if [ "$_use_legacy_gallium_nine" = "true" ]; then
 	  _version_tags+=(Nine)
 	fi
-	if [ "$_use_vkd3d" == "mainline" ] || [ "$_use_vkd3d" == "fork" ]; then
+	if [ "$_use_vkd3d" = "mainline" ] || [ "$_use_vkd3d" = "fork" ]; then
 	  if [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	    _version_tags+=(Vkd3d DXVK-Compatible)
 	  else
@@ -1819,7 +1819,7 @@ EOM
 	fi
 
 	# no compilation
-	if [ "$_NOCOMPILE" == "true" ]; then
+	if [ "$_NOCOMPILE" = "true" ]; then
 	  cp -u "$_where"/last_build_config.log "${srcdir}"/"${_winesrcdir}"/wine-tkg-config.txt
 	fi
 
@@ -1828,7 +1828,7 @@ EOM
 
 _makedirs() {
 	# Nuke if present then create new build dirs
-	if [ "$_NUKR" == "true" ] && [ "$_SKIPBUILDING" != "true" ]; then
+	if [ "$_NUKR" = "true" ] && [ "$_SKIPBUILDING" != "true" ]; then
 	  rm -rf "${srcdir}"/"${pkgname}"-64-build
 	  rm -rf "${srcdir}"/"${pkgname}"-32-build
 	fi

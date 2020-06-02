@@ -38,7 +38,7 @@ error() {
 
 pkgver() {
   if [ -d "${srcdir}/${_winesrcdir}" ]; then
-	if [ "$_use_staging" == "true" ] && [ -d "${srcdir}/${_stgsrcdir}" ]; then
+	if [ "$_use_staging" = "true" ] && [ -d "${srcdir}/${_stgsrcdir}" ]; then
 	  cd "${srcdir}/${_stgsrcdir}"
 	else
 	  cd "${srcdir}/${_winesrcdir}"
@@ -50,7 +50,7 @@ pkgver() {
 }
 
   # The dependency "helper" (running configure) doesn't have to go through the initial prompt, so skip it
-  if [ "$1" == "--deps64" ] || [ "$1" == "--deps32" ]; then
+  if [ "$1" = "--deps64" ] || [ "$1" = "--deps32" ]; then
     _DEPSHELPER=1
   fi
 
@@ -76,7 +76,7 @@ pkgver() {
   fi
 
   # this script makes external builds already and we don't want the specific pacman-related stuff to interfere, so enforce _EXTERNAL_INSTALL="false" when not building proton-tkg
-  if [ "$_EXTERNAL_INSTALL" == "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+  if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
     _EXTERNAL_INSTALL="false"
   fi
 
@@ -95,7 +95,7 @@ _nomakepkgsrcinit() {
     _winesrcdir=$( sed 's|/|-|g' <<< $(sed 's|.*://.[^/]*/||g' <<< $_custom_wine_source))
     _winesrctarget="$_custom_wine_source"
   else
-    if [ "$_plain_mirrorsrc" == "true" ]; then
+    if [ "$_plain_mirrorsrc" = "true" ]; then
       _winesrcdir="wine-mirror-git"
       _winesrctarget="https://github.com/wine-mirror/wine.git"
     else
@@ -115,14 +115,14 @@ _nomakepkgsrcinit() {
     git clone --mirror "${_winesrctarget}" "$_winesrcdir" || true
 
     # Wine staging source
-    if [ "$_use_staging" == "true" ]; then
+    if [ "$_use_staging" = "true" ]; then
       git clone --mirror https://github.com/wine-staging/wine-staging.git "$_stgsrcdir" || true
     fi
 
     pushd "$srcdir" &>/dev/null
 
     # Wine staging update and checkout
-    if [ "$_use_staging" == "true" ]; then
+    if [ "$_use_staging" = "true" ]; then
       cd "$_where"/"${_stgsrcdir}"
       if [[ "https://github.com/wine-staging/wine-staging.git" != "$(git config --get remote.origin.url)" ]] ; then
         echo "${_stgsrcdir} is not a clone of ${_stgsrcdir}. Please delete ${_winesrcdir} and src dirs and try again."
@@ -132,7 +132,7 @@ _nomakepkgsrcinit() {
       rm -rf "${srcdir}/${_stgsrcdir}" && git clone "$_where"/"${_stgsrcdir}" "${srcdir}/${_stgsrcdir}"
       cd "${srcdir}"/"${_stgsrcdir}"
       git checkout --force --no-track -B makepkg origin/HEAD
-      if [ -n "$_staging_version" ] && [ "$_use_staging" == "true" ]; then
+      if [ -n "$_staging_version" ] && [ "$_use_staging" = "true" ]; then
         git checkout "${_staging_version}"
       fi
     fi
@@ -156,7 +156,7 @@ _nomakepkgsrcinit() {
 }
 
 nonuser_patcher() {
-  if [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW1" == "y" ]; then
+  if [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW1" = "y" ]; then
     if [ "$_nopatchmsg" != "true" ]; then
       _fullpatchmsg=" -- ( $_patchmsg )"
     fi
@@ -177,7 +177,7 @@ build_wine_tkg() {
   touch "${_where}"/BIG_UGLY_FROGMINER
 
   # mingw-w64-gcc
-  if [ "$_NOMINGW" == "true" ]; then
+  if [ "$_NOMINGW" = "true" ]; then
     _configure_args+=(--without-mingw)
   fi
 
@@ -195,7 +195,7 @@ build_wine_tkg() {
 
   _makedirs
 
-  if [ "$_nomakepkg_nover" == "true" ] ; then
+  if [ "$_nomakepkg_nover" = "true" ] ; then
     _nomakepkg_pkgname="${pkgname}"
   else
     _nomakepkg_pkgname="${pkgname}-${pkgver}"
@@ -217,12 +217,12 @@ build_wine_tkg() {
   fi
 
   # External install
-  if [ "$_EXTERNAL_INSTALL" == "true" ]; then
+  if [ "$_EXTERNAL_INSTALL" = "true" ]; then
     if [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
-      if [ "$_EXTERNAL_NOVER" == "true" ]; then
+      if [ "$_EXTERNAL_NOVER" = "true" ]; then
         _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
       else
-        if [ "$_use_staging" == "true" ]; then
+        if [ "$_use_staging" = "true" ]; then
           cd "$srcdir/$_stgsrcdir"
         else
           cd "$srcdir/$_winesrcdir"
@@ -230,7 +230,7 @@ build_wine_tkg() {
         _realwineversion=$(_describe_wine)
         _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion"
       fi
-    elif [ "$_EXTERNAL_INSTALL_TYPE" == "proton" ]; then
+    elif [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
       #_prefix="$_where"
       _configure_args+=(--without-curses)
     fi
@@ -248,12 +248,12 @@ build_wine_tkg() {
   fi
 }
 
-if [ "$1" == "--deps64" ]; then
+if [ "$1" = "--deps64" ]; then
   _nomakepkgsrcinit
   cd "${srcdir}"/"${_winesrcdir}"
   ./configure --enable-win64
   msg2 "You might find help regarding dependencies here: https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git#dependencies"
-elif [ "$1" == "--deps32" ]; then
+elif [ "$1" = "--deps32" ]; then
   _nomakepkgsrcinit
   cd "${srcdir}"/"${_winesrcdir}"
   ./configure
