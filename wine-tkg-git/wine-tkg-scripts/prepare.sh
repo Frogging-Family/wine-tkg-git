@@ -388,8 +388,8 @@ _prepare() {
 
 	# wine-staging user patches
 	if [ "$_user_patches" == "true" ] && [ "$_use_staging" == "true" ]; then
-	  _userpatch_target="wine-staging"
-	  _userpatch_ext="mystaging"
+	  _userpatch_target="wine-staging-early"
+	  _userpatch_ext="myearlystaging"
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  hotfixer
 	  user_patcher
@@ -508,8 +508,8 @@ _prepare() {
 	  cd "${srcdir}"/"${_winesrcdir}"
 	done
 	if [ "$_user_patches" == "true" ] && [ "$_use_staging" == "true" ]; then
-	  _userpatch_target="wine-staging-late"
-	  _userpatch_ext="mylatestaging"
+	  _userpatch_target="wine-staging"
+	  _userpatch_ext="mystaging"
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  hotfixer
 	  cd "${srcdir}"/"${_winesrcdir}"
