@@ -1,0 +1,187 @@
+diff --git a/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch b/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
+--- a/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
++++ b/patches/winebuild-Fake_Dlls/0010-tools-winebuild-Add-syscall-thunks-for-64-bit.patch
+@@ -119,8 +119,8 @@ index 0941dd87c05..002f3215af2 100644
+ --- a/server/mapping.c
+ +++ b/server/mapping.c
+ @@ -964,7 +964,11 @@ struct object *create_user_data_mapping( struct object *root, const struct unico
+-     if (!(mapping = create_mapping( root, name, OBJ_OPENIF, sizeof(KSHARED_USER_DATA),
+-                                     SEC_COMMIT, 0, FILE_READ_DATA | FILE_WRITE_DATA, NULL ))) return NULL;
++     grab_object( mapping );
++     make_object_static( &mapping->obj );
+      ptr = mmap( NULL, mapping->size, PROT_WRITE, MAP_SHARED, get_unix_fd( mapping->fd ), 0 );
+ -    if (ptr != MAP_FAILED) user_shared_data = ptr;
+ +    if (ptr != MAP_FAILED)
+@@ -128,9 +128,9 @@ +    {
+ +        user_shared_data = ptr;
+ +        user_shared_data->SystemCallPad[0] = 1;
+ +    }
+-     return &mapping->obj;
+  }
+  
++ /* create a file mapping */
+ diff --git a/tools/winebuild/parser.c b/tools/winebuild/parser.c
+ index 74216f8bb6e..820516329a4 100644
+ --- a/tools/winebuild/parser.c
+
+diff --git a/patches/ntdll-Fix_Alignment/0001-ntdll-Move-NtProtectVirtualMemory-and-NtCreateSectio.patch b/patches/ntdll-Fix_Alignment/0001-ntdll-Move-NtProtectVirtualMemory-and-NtCreateSectio.patch
+index aa940f9de..270c82fdd 100644
+--- a/patches/ntdll-Fix_Alignment/0001-ntdll-Move-NtProtectVirtualMemory-and-NtCreateSectio.patch
++++ b/patches/ntdll-Fix_Alignment/0001-ntdll-Move-NtProtectVirtualMemory-and-NtCreateSectio.patch
+@@ -7,16 +7,16 @@ Subject: ntdll: Move NtProtectVirtualMemory and NtCreateSection to separate
+ ---
+  dlls/ntdll/virtual.c | 8 ++++++++
+  1 file changed, 8 insertions(+)
+ 
+ diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
+-index ce2469829b0..eb2dbe8a2cd 100644
++index cfe30bbe710..6173846cfb4 100644
+ --- a/dlls/ntdll/virtual.c
+ +++ b/dlls/ntdll/virtual.c
+-@@ -168,6 +168,14 @@ static void *preload_reserve_end;
+- static BOOL use_locks;
+- static BOOL force_exec_prot;  /* whether to force PROT_EXEC on all PROT_READ mmaps */
++@@ -366,6 +366,14 @@ static void free_ranges_remove_view( struct file_view *view )
++ }
++ 
+  
+ +#if defined(__i386__)
+ +NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T *size_ptr,
+ +                                        ULONG new_prot, ULONG *old_prot ) DECLSPEC_ALIGN(4096);
+ +NTSTATUS WINAPI NtCreateSection( HANDLE *handle, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr,
+ 
+diff --git a/patches/ntdll-ForceBottomUpAlloc/definition b/patches/ntdll-ForceBottomUpAlloc/definition
+index fe758c9e4..c58d53a50 100644
+--- a/patches/ntdll-ForceBottomUpAlloc/definition
++++ b/patches/ntdll-ForceBottomUpAlloc/definition
+@@ -1,3 +1,3 @@
+ Fixes: [48175] AION (64 bit) - crashes in crysystem.dll.CryFree() due to high memory pointers allocated
+ Fixes: [46568] 64-bit msxml6.dll from Microsoft Core XML Services 6.0 redist package fails to load (Wine doesn't respect 44-bit user-mode VA limitation from Windows < 8.1)
+-
++Disabled: true
+
+diff --git a/patches/patchinstall.sh b/patches/patchinstall.sh
+index 82c5545db..6e38522a2 100755
+--- a/patches/patchinstall.sh
++++ b/patches/patchinstall.sh
+@@ -175,7 +175,6 @@ patch_enable_all ()
+ 	enable_ntdll_FileDispositionInformation="$1"
+ 	enable_ntdll_FileFsFullSizeInformation="$1"
+ 	enable_ntdll_Fix_Alignment="$1"
+-	enable_ntdll_ForceBottomUpAlloc="$1"
+ 	enable_ntdll_HashLinks="$1"
+ 	enable_ntdll_Heap_Improvements="$1"
+ 	enable_ntdll_Hide_Wine_Exports="$1"
+@@ -626,9 +625,6 @@ patch_enable ()
+ 		ntdll-Fix_Alignment)
+ 			enable_ntdll_Fix_Alignment="$2"
+ 			;;
+-		ntdll-ForceBottomUpAlloc)
+-			enable_ntdll_ForceBottomUpAlloc="$2"
+-			;;
+ 		ntdll-HashLinks)
+ 			enable_ntdll_HashLinks="$2"
+ 			;;
+@@ -3867,35 +3863,6 @@ if test "$enable_ntdll_Fix_Alignment" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
+-# Patchset ntdll-ForceBottomUpAlloc
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#48175] AION (64 bit) - crashes in crysystem.dll.CryFree() due to high memory pointers allocated
+-# |   *	[#46568] 64-bit msxml6.dll from Microsoft Core XML Services 6.0 redist package fails to load (Wine doesn't respect
+-# | 	44-bit user-mode VA limitation from Windows < 8.1)
+-# |
+-# | Modified files:
+-# |   *	dlls/ntdll/virtual.c, include/wine/library.h, libs/wine/mmap.c, libs/wine/wine.map
+-# |
+-if test "$enable_ntdll_ForceBottomUpAlloc" -eq 1; then
+-	patch_apply ntdll-ForceBottomUpAlloc/0001-ntdll-Stop-search-on-mmap-error-in-try_map_free_area.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0002-ntdll-Use-MAP_FIXED_NOREPLACE-flag-in-try_map_free_a.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0003-ntdll-Force-bottom-up-allocation-order-for-64-bit-ar.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0004-ntdll-Increase-step-after-failed-map-attempt-in-try_.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0005-libs-wine-Add-functions-for-managing-free-area-list.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0006-ntdll-Use-free-area-list-for-virtual-memory-allocati.patch
+-	patch_apply ntdll-ForceBottomUpAlloc/0007-ntdll-Permanently-exclude-natively-mapped-areas-from.patch
+-	(
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Stop search on mmap() error in try_map_free_area().", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Use MAP_FIXED_NOREPLACE flag in try_map_free_area() if available.", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Force bottom up allocation order for 64 bit arch unless top down is requested.", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Increase step after failed map attempt in try_map_free_area().", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "libs/wine: Add functions for managing free area list.", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Use free area list for virtual memory allocation.", 1 },';
+-		printf '%s\n' '+    { "Paul Gofman", "ntdll: Permanently exclude natively mapped areas from free areas list.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+ # Patchset ntdll-HashLinks
+ # |
+ # | Modified files:
+
+diff --git a/patches/winedevice-Default_Drivers/0004-programs-winedevice-Load-some-common-drivers-and-fix.patch b/patches/winedevice-Default_Drivers/0004-programs-winedevice-Load-some-common-drivers-and-fix.patch
+index aac259197..a145bffa5 100644
+--- a/patches/winedevice-Default_Drivers/0004-programs-winedevice-Load-some-common-drivers-and-fix.patch
++++ b/patches/winedevice-Default_Drivers/0004-programs-winedevice-Load-some-common-drivers-and-fix.patch
+@@ -1,4 +1,4 @@
+-From 06fef705b2735f358f64443c2c3f5c1904eae273 Mon Sep 17 00:00:00 2001
++From 86c0ddea979a6124a4e60a970501102b83664a21 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Michael=20M=C3=BCller?= <michael@fds-team.de>
+ Date: Thu, 8 Jun 2017 23:50:03 +0200
+ Subject: [PATCH] programs/winedevice: Load some common drivers and fix ldr
+@@ -10,7 +10,7 @@ Subject: [PATCH] programs/winedevice: Load some common drivers and fix ldr
+  2 files changed, 76 insertions(+)
+ 
+ diff --git a/dlls/ntoskrnl.exe/tests/driver.c b/dlls/ntoskrnl.exe/tests/driver.c
+-index 356c60a2e78d..bdc69c16f448 100644
++index f51064986b5..d34db7c5828 100644
+ --- a/dlls/ntoskrnl.exe/tests/driver.c
+ +++ b/dlls/ntoskrnl.exe/tests/driver.c
+ @@ -44,6 +44,7 @@ static const WCHAR driver_link[] = {'\\','D','o','s','D','e','v','i','c','e','s'
+@@ -21,7 +21,7 @@ index 356c60a2e78d..bdc69c16f448 100644
+  
+  static HANDLE okfile;
+  static LONG successes;
+-@@ -1504,6 +1505,7 @@ static void test_resource(void)
++@@ -1681,6 +1682,7 @@ static void test_resource(void)
+      ok(status == STATUS_SUCCESS, "got status %#x\n", status);
+  }
+  
+@@ -29,8 +29,8 @@ index 356c60a2e78d..bdc69c16f448 100644
+  static void test_lookup_thread(void)
+  {
+      NTSTATUS status;
+-@@ -1779,6 +1781,52 @@ static void test_affinity(void)
+-     KeRevertToUserAffinityThread();
++@@ -2132,6 +2134,52 @@ static void test_process_memory(const struct test_input *test_input)
++     ObDereferenceObject(process);
+  }
+  
+ +static void test_default_modules(void)
+@@ -82,7 +82,7 @@ index 356c60a2e78d..bdc69c16f448 100644
+  static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *stack)
+  {
+      ULONG length = stack->Parameters.DeviceIoControl.OutputBufferLength;
+-@@ -1825,6 +1873,7 @@ static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *st
++@@ -2178,6 +2226,7 @@ static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *st
+      test_stack_callout();
+      test_lookaside_list();
+      test_ob_reference(test_input->path);
+@@ -90,7 +90,7 @@ index 356c60a2e78d..bdc69c16f448 100644
+      test_resource();
+      test_lookup_thread();
+      test_IoAttachDeviceToDeviceStack();
+-@@ -2076,6 +2125,7 @@ NTSTATUS WINAPI DriverEntry(DRIVER_OBJECT *driver, PUNICODE_STRING registry)
++@@ -2431,6 +2480,7 @@ NTSTATUS WINAPI DriverEntry(DRIVER_OBJECT *driver, PUNICODE_STRING registry)
+      DbgPrint("loading driver\n");
+  
+      driver_obj = driver;
+@@ -99,7 +99,7 @@ index 356c60a2e78d..bdc69c16f448 100644
+      /* Allow unloading of the driver */
+      driver->DriverUnload = driver_Unload;
+ diff --git a/programs/winedevice/device.c b/programs/winedevice/device.c
+-index 0755caaafb01..6595788053e8 100644
++index 0755caaafb0..6595788053e 100644
+ --- a/programs/winedevice/device.c
+ +++ b/programs/winedevice/device.c
+ @@ -120,7 +120,33 @@ static DWORD WINAPI service_handler( DWORD ctrl, DWORD event_type, LPVOID event_
