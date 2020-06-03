@@ -1,22 +1,24 @@
-From 8dcfe3073f04551eb3ab51b162ba750741fd7d53 Mon Sep 17 00:00:00 2001
+From aa73d7d11fb4897de8f931051ed98858cf73ac69 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Thu, 2 Apr 2020 20:41:43 +0200
 Subject: [PATCH] ntdll: Guard seccomp with WINESECCOMP env var.
 
 ---
- dlls/ntdll/signal_x86_64.c | 10 ++++++++++
- 1 file changed, 10 insertions(+)
+ dlls/ntdll/signal_x86_64.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
 
 diff --git a/dlls/ntdll/signal_x86_64.c b/dlls/ntdll/signal_x86_64.c
-index c2bdf0d3a9a..3266a504c9c 100644
+index dd9c5e8c77c..9ffce27b515 100644
 --- a/dlls/ntdll/signal_x86_64.c
 +++ b/dlls/ntdll/signal_x86_64.c
-@@ -3315,6 +3315,16 @@ void signal_init_thread( TEB *teb )
- 
- static void install_bpf(struct sigaction *sig_act)
- {
+@@ -3342,9 +3342,18 @@ static void install_bpf(struct sigaction *sig_act)
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+     };
 +    static int enable_seccomp = -1;
-+
+     struct sock_fprog prog;
+     int ret;
+ 
 +    if (enable_seccomp == -1)
 +        enable_seccomp = getenv("WINESECCOMP") && atoi(getenv("WINESECCOMP"));
 +
@@ -25,7 +27,6 @@ index c2bdf0d3a9a..3266a504c9c 100644
 +
 +    MESSAGE("wine: enabling seccomp syscall filters.\n");
 +
- #ifdef HAVE_SECCOMP
-     static struct sock_filter filter[] =
-     {
- 
+     memset(&prog, 0, sizeof(prog));
+     prog.len = ARRAY_SIZE(filter);
+     prog.filter = filter;
