@@ -557,7 +557,9 @@ _prepare() {
 	fi
 
 	# Hotfixer-staging
-	cd "${srcdir}"/"${_stgsrcdir}" && _userpatch_target="wine-staging" _userpatch_ext="mystaging" hotfixer && cd "${srcdir}"/"${_winesrcdir}"
+	if [ "$_use_staging" = "true" ]; then
+	  cd "${srcdir}"/"${_stgsrcdir}" && _userpatch_target="wine-staging" _userpatch_ext="mystaging" hotfixer && cd "${srcdir}"/"${_winesrcdir}"
+	fi
 
 	# Update winevulkan
 	if [ "$_update_winevulkan" = "true" ] && ! git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && git merge-base --is-ancestor eb39d3dbcac7a8d9c17211ab358cda4b7e07708a HEAD; then
