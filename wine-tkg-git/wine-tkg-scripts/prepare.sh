@@ -359,7 +359,7 @@ _prepare() {
 	# holds extra arguments to staging's patcher script, if applicable
 	local _staging_args=()
 
-	source "$_where"/wine-tkg-patches/hotfixes/hotfixer
+	source "$_where"/wine-tkg-patches/hotfixes/earlyhotfixer
 
 	# grabs userdefined staging args if any
 	_staging_args+=($_staging_userargs)
@@ -384,16 +384,6 @@ _prepare() {
 	  for _p in ${_community_patches[@]}; do
 	    ln -s "$_where"/../../community-patches/wine-tkg-git/$_p "$_where"/
 	  done
-	fi
-
-	# wine-staging user patches
-	if [ "$_user_patches" = "true" ] && [ "$_use_staging" = "true" ]; then
-	  _userpatch_target="wine-staging-early"
-	  _userpatch_ext="myearlystaging"
-	  cd "${srcdir}"/"${_stgsrcdir}"
-	  hotfixer
-	  user_patcher
-	  cd "${srcdir}"/"${_winesrcdir}"
 	fi
 
 	# output config to logfile
@@ -499,21 +489,17 @@ _prepare() {
 	}
 
 	# Hotfixer
+	source "$_where"/wine-tkg-patches/hotfixes/hotfixer
 	for _commit in ${_hotfix_mainlinereverts[@]}; do
+	  cd "${srcdir}"/"${_winesrcdir}"
 	  _committorevert=$_commit _hotfixmsg="(hotfix)" nonuser_reverter
+	  cd "${srcdir}"/"${_winesrcdir}"
 	done
 	for _commit in ${_hotfix_stagingreverts[@]}; do
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  _committorevert=$_commit _hotfixmsg="(staging hotfix)" nonuser_reverter
 	  cd "${srcdir}"/"${_winesrcdir}"
 	done
-	if [ "$_user_patches" = "true" ] && [ "$_use_staging" = "true" ]; then
-	  _userpatch_target="wine-staging"
-	  _userpatch_ext="mystaging"
-	  cd "${srcdir}"/"${_stgsrcdir}"
-	  hotfixer
-	  cd "${srcdir}"/"${_winesrcdir}"
-	fi
 
 	if [ "$_mtga_fix" = "true" ] && git merge-base --is-ancestor e5a9c256ce08868f65ed730c00cf016a97369ce3 HEAD; then
 	  _committorevert=341068aa61a71afecb712feda9aabb3dc1c3ab5f && nonuser_reverter
@@ -569,6 +555,9 @@ _prepare() {
 	  _committorevert=461b5e56f95eb095d97e4af1cb1c5fd64bb2862a && nonuser_reverter
 	  echo -e "( Kernelbase reverts clean reverts applied )\n" >> "$_where"/last_build_config.log
 	fi
+
+	# Hotfixer-staging
+	cd "${srcdir}"/"${_stgsrcdir}" && _userpatch_target="wine-staging" _userpatch_ext="mystaging" hotfixer && cd "${srcdir}"/"${_winesrcdir}"
 
 	# Update winevulkan
 	if [ "$_update_winevulkan" = "true" ] && ! git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && git merge-base --is-ancestor eb39d3dbcac7a8d9c17211ab358cda4b7e07708a HEAD; then
