@@ -680,6 +680,7 @@ _prepare() {
 	if ( [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_use_steamhelper" = "true" ] ) || [ "$_protonify" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
 	  if git merge-base --is-ancestor 4e7071e4f14f6ce85b0eb4b88accfb0267d6545b HEAD; then
+	    _proton_use_steamhelper="true"
 	    _staging_args+=(-W server-Desktop_Refcount -W ws2_32-TransmitFile)
 	  fi
 	  cd "${srcdir}"/"${_winesrcdir}"
