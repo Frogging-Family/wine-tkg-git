@@ -1451,7 +1451,11 @@ EOM
 	          _patchname='proton-steam-bits-f8fb43a.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
 	        fi
 	        if [[ ! ${_staging_userargs[*]} =~ "ntdll-Syscall_Emulation" ]]; then
-	          _patchname='proton-seccomp-envvar.patch' && _patchmsg="Add WINESECCOMP env var support" && nonuser_patcher
+	          if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 805f2e9252de5b4de115335f803db4e753f66ff2 HEAD ); then
+	            _patchname='proton-seccomp-envvar.patch' && _patchmsg="Add WINESECCOMP env var support" && nonuser_patcher
+	          elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 595f2f9860adafed612737529745ad24c50acdb9 HEAD ); then
+	            _patchname='proton-seccomp-envvar-805f2e9.patch' && _patchmsg="Add WINESECCOMP env var support" && nonuser_patcher
+	          fi
 	        fi
 	      fi
 	    else
@@ -1579,7 +1583,11 @@ EOM
 	          _patchname='proton-steam-bits-f8fb43a.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
 	        fi
 	        if [[ ! ${_staging_userargs[*]} =~ "ntdll-Syscall_Emulation" ]]; then
-	          _patchname='proton-seccomp-envvar.patch' && _patchmsg="Add WINESECCOMP env var support" && nonuser_patcher
+	          if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 805f2e9252de5b4de115335f803db4e753f66ff2 HEAD ); then
+	            _patchname='proton-seccomp-envvar.patch' && _patchmsg="Add WINESECCOMP env var support" && nonuser_patcher
+	          elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 595f2f9860adafed612737529745ad24c50acdb9 HEAD ); then
+	            _patchname='proton-seccomp-envvar-805f2e9.patch' && _patchmsg="Add WINESECCOMP env var support" && nonuser_patcher
+	          fi
 	        fi
 	      fi
 	    else
