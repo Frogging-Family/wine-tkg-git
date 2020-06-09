@@ -689,8 +689,17 @@ _prepare() {
 	cd "${srcdir}"/"${_stgsrcdir}"
 	if [ "$_use_staging" = "true" ] && git merge-base --is-ancestor e09468ec178930ac7b1ee33482cd03f0cc136685 HEAD && ! git merge-base --is-ancestor 5b066d6aed7fd90c0be0a2a156b0e5c6cbb44bba HEAD; then
 	  _staging_args+=(-W user32-rawinput)
-    fi
+	fi
 	cd "${srcdir}"/"${_winesrcdir}"
+
+	# Disable Staging's `xactengine-initial` patchset to fix BGM on KOF98 & 2002
+	if [ "$_kof98_2002_BGM_fix" = "true" ] && [ "$_use_staging" = "true" ]; then
+	  cd "${srcdir}"/"${_stgsrcdir}"
+	  if git merge-base --is-ancestor 2fc5c88068e3dea2612c182ff300511aa2954242 HEAD; then
+	    _staging_args+=(-W xactengine-initial)
+	  fi
+	  cd "${srcdir}"/"${_winesrcdir}"
+	fi
 
 	# Patch to allow Path of Exile to run with DirectX11
 	# https://bugs.winehq.org/show_bug.cgi?id=42695
