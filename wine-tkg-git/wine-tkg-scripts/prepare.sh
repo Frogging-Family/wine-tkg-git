@@ -1237,10 +1237,12 @@ EOM
 	    _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	  fi
 	  if [ "$_use_staging" = "true" ]; then
-	    if git merge-base --is-ancestor 707fcb99a60015fcbb20c83e9031bc5be7a58618 HEAD; then
+	    if git merge-base --is-ancestor 3db619d46e70a398a06001573fb42b0a32d81209 HEAD; then
 	      _patchname='valve_proton_fullscreen_hack-staging.patch' && _patchmsg="Applied Proton fullscreen hack patch (staging)" && nonuser_patcher
 	    else
-	      if git merge-base --is-ancestor b0e2d046fc69cc4a4c5aefe383793950b44a1a7b HEAD; then
+	      if git merge-base --is-ancestor 707fcb99a60015fcbb20c83e9031bc5be7a58618 HEAD; then
+	        _lastcommit="3db619d"
+	      elif git merge-base --is-ancestor b0e2d046fc69cc4a4c5aefe383793950b44a1a7b HEAD; then
 	        _lastcommit="707fcb9"
 	      elif git merge-base --is-ancestor 594814c00ab059d9686ed836b1865f8a94859c8a HEAD; then
 	        _lastcommit="b0e2d04"
@@ -1274,8 +1276,10 @@ EOM
 	      _patchname="valve_proton_fullscreen_hack-staging-$_lastcommit.patch" && _patchmsg="Applied Proton fullscreen hack patch ($_lastcommit)" && nonuser_patcher
 	    fi
 	  else
-	    if git merge-base --is-ancestor 707fcb99a60015fcbb20c83e9031bc5be7a58618 HEAD; then
+	    if git merge-base --is-ancestor 3db619d46e70a398a06001573fb42b0a32d81209 HEAD; then
 	      _patchname='valve_proton_fullscreen_hack.patch' && _patchmsg="Applied Proton fullscreen hack patch (mainline)" && nonuser_patcher
+	    elif git merge-base --is-ancestor 707fcb99a60015fcbb20c83e9031bc5be7a58618 HEAD; then
+	      _patchname='valve_proton_fullscreen_hack-3db619d.patch' && _patchmsg="Applied Proton fullscreen hack patch (mainline)" && nonuser_patcher
 	    elif git merge-base --is-ancestor b0e2d046fc69cc4a4c5aefe383793950b44a1a7b HEAD; then
 	      _patchname='valve_proton_fullscreen_hack-707fcb9.patch' && _patchmsg="Applied Proton fullscreen hack patch (mainline)" && nonuser_patcher
 	    elif git merge-base --is-ancestor 594814c00ab059d9686ed836b1865f8a94859c8a HEAD; then
