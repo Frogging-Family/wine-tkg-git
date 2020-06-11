@@ -606,6 +606,9 @@ else
     if [ "$_use_dxvk" != "false" ] && [ "$_dxvk_dxgi" != "true" ]; then
       sed -i 's/.*PROTON_USE_WINE_DXGI.*/     "PROTON_USE_WINE_DXGI": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
     fi
+    if [ -n "$_proton_shadercache_path" ]; then
+      sed -i "s|.*PROTON_BYPASS_SHADERCACHE_PATH.*|     \"PROTON_BYPASS_SHADERCACHE_PATH\": \"${_proton_shadercache_path}\",|g" "proton_tkg_$_protontkg_version/user_settings.py"
+    fi
 
     # Use the corresponding DXVK/D9VK combo options
     if [ "$_use_dxvk" != "false" ]; then
