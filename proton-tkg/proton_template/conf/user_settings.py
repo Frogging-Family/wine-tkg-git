@@ -79,4 +79,7 @@ user_settings = {
 
     #Disable futex-based in-process synchronization primitives
 #    "PROTON_NO_FSYNC": "1",
+
+    #Enforce driver shader cache path when Steam's shader pre-caching is disabled
+#    "PROTON_BYPASS_SHADERCACHE_PATH": "",
 }
