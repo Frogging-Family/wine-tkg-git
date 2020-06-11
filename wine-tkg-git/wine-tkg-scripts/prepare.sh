@@ -1407,11 +1407,17 @@ EOM
 	  else
 	    _patchname='legacy-LAA.patch' && _patchmsg="Applied large address aware override support (legacy)" && nonuser_patcher
 	  fi
-	elif [ "$_large_address_aware" = "true" ] && git merge-base --is-ancestor 608d086f1b1bb7168e9322c65224c23f34e75f29 HEAD; then
+	elif [ "$_large_address_aware" = "true" ] && git merge-base --is-ancestor 18411a19b4ea3a68234980c56d4c252670dfc000 HEAD; then
 	  if [ "$_use_staging" = "true" ]; then
 	    _patchname='LAA-staging.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
 	  else
 	    _patchname='LAA.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
+	  fi
+	elif [ "$_large_address_aware" = "true" ] && git merge-base --is-ancestor 608d086f1b1bb7168e9322c65224c23f34e75f29 HEAD; then
+	  if [ "$_use_staging" = "true" ]; then
+	    _patchname='LAA-staging-18411a1.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
+	  else
+	    _patchname='LAA-18411a1.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
 	  fi
 	elif [ "$_large_address_aware" = "true" ] && git merge-base --is-ancestor 9f0d66923933d82ae0b09fe5d84f977c1a657cc1 HEAD; then
 	  if [ "$_use_staging" = "true" ]; then
