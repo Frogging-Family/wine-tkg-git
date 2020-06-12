@@ -543,6 +543,12 @@ _prepare() {
 	  fi
 	fi
 
+	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 26c1131201f8fd9918a01231a7eb6f1989400858 HEAD ); then
+	  _committorevert=306c40e67319cae8e4c448ec8fc8d3996f87943f && nonuser_reverter
+	  _committorevert=26c1131201f8fd9918a01231a7eb6f1989400858 && nonuser_reverter
+	  echo -e "( Proton rawinput unbreak reverts applied )\n" >> "$_where"/last_build_config.log
+	fi
+
 	# Kernelbase reverts patchset - cleanly reverting part
 	if [ "$_kernelbase_reverts" = "true" ] || [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
 	  _committorevert=b0199ea2fe8f9b77aee7ab4f68c9ae1755442586 && nonuser_reverter
@@ -1304,8 +1310,10 @@ EOM
 
 	# Proton compatible rawinput patchset
 	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor cfcc280905b7804efde8f42bcd6bddbe5ebd8cad HEAD; then
-	  if git merge-base --is-ancestor d5fd3c8a386cf716b1a9695069462be0abd0fa4f HEAD; then
+	  if git merge-base --is-ancestor 306c40e67319cae8e4c448ec8fc8d3996f87943f HEAD; then
 	    _patchname='proton-rawinput.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
+	  elif git merge-base --is-ancestor d5fd3c8a386cf716b1a9695069462be0abd0fa4f HEAD; then
+	    _patchname='proton-rawinput-306c40e.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
 	  elif git merge-base --is-ancestor dbe7694c533ce8bc454248255a2abad66f221e01 HEAD; then
 	    _patchname='proton-rawinput-d5fd3c8.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
 	  elif git merge-base --is-ancestor 19c6524e48db1d785095953d25591f1e2d2872d9 HEAD; then
@@ -1643,8 +1651,10 @@ EOM
 	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	  # SDL Joystick support - from Proton
 	  if [ "$_sdl_joy_support" = "true" ]; then
-	    if git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
+	    if git merge-base --is-ancestor 306c40e67319cae8e4c448ec8fc8d3996f87943f HEAD; then
 	      _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
+	    elif git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
+	      _patchname='proton-sdl-joy-306c40e.patch' && _patchmsg="Enable SDL Joystick support (from Proton) (<306c40e)" && nonuser_patcher
 	    else
 	      _patchname='proton-sdl-joy-b87256c.patch' && _patchmsg="Enable SDL Joystick support (from Proton) (<b87256c)" && nonuser_patcher
 	    fi
