@@ -185,6 +185,7 @@ build_wine_tkg() {
   fi
 
   if [ "$_SKIPBUILDING" != "true" ]; then
+    msg2 "Cloning and preparing sources... Please be patient."
     _nomakepkgsrcinit > "$_where"/prepare.log 2>&1
 
     _source_cleanup >> "$_where"/prepare.log
