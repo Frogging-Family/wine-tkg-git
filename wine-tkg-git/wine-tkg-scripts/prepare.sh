@@ -502,6 +502,8 @@ _prepare() {
 	  cd "${srcdir}"/"${_winesrcdir}"
 	done
 
+	echo "" >> "$_where"/last_build_config.log
+
 	if [ "$_mtga_fix" = "true" ] && git merge-base --is-ancestor e5a9c256ce08868f65ed730c00cf016a97369ce3 HEAD; then
 	  _committorevert=341068aa61a71afecb712feda9aabb3dc1c3ab5f && nonuser_reverter
 	  _committorevert=e5a9c256ce08868f65ed730c00cf016a97369ce3 && nonuser_reverter
@@ -517,6 +519,11 @@ _prepare() {
 	  _committorevert=bae4776c571cf975be1689594f4caf93ad23e0ca && nonuser_reverter
 	  _committorevert=5e218fe758fe6beed5c7ad73405eccf33c307e6d && nonuser_reverter
 	  echo -e "( Warframe Launcher unbreak reverts applied )\n" >> "$_where"/last_build_config.log
+	fi
+
+	if [ "$_origin_fix" = "true" ] && git merge-base --is-ancestor 3078f10d43d834b0498358fe0accb565191b7020 HEAD; then
+	  _committorevert=3078f10d43d834b0498358fe0accb565191b7020 && nonuser_reverter
+	  echo -e "( Origin unbreak revert applied )\n" >> "$_where"/last_build_config.log
 	fi
 
 	if [ "$_proton_fs_hack" = "true" ]; then
