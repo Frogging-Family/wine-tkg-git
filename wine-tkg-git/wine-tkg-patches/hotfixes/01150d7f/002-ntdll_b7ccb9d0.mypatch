@@ -1,0 +1,68 @@
+From b7ccb9d06a897a384b71ccb959b431168ca07e03 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 22 Jun 2020 23:27:49 +0200
+Subject: [PATCH] ntdll: Only raise EXCEPTION_INVALID_HANDLE if debugger is
+ present.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CoD: WWII writes to PEB->BeingDebugged field, so we cannot completely
+trust it, but we can double check with ProcessDebugPort.
+
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
+---
+ dlls/ntdll/om.c              |  5 ++++-
+ dlls/ntdll/tests/exception.c | 12 ++++++++++++
+ 2 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/om.c b/dlls/ntdll/om.c
+index aaed9abaa93..f14e969652a 100644
+--- a/dlls/ntdll/om.c
++++ b/dlls/ntdll/om.c
+@@ -364,9 +364,12 @@ static LONG WINAPI invalid_handle_exception_handler( EXCEPTION_POINTERS *eptr )
+ /* Everquest 2 / Pirates of the Burning Sea hooks NtClose, so we need a wrapper */
+ NTSTATUS close_handle( HANDLE handle )
+ {
++    DWORD_PTR debug_port;
+     NTSTATUS ret = unix_funcs->NtClose( handle );
+ 
+-    if (ret == STATUS_INVALID_HANDLE && handle && NtCurrentTeb()->Peb->BeingDebugged)
++    if (ret == STATUS_INVALID_HANDLE && handle && NtCurrentTeb()->Peb->BeingDebugged &&
++        !NtQueryInformationProcess( NtCurrentProcess(), ProcessDebugPort, &debug_port,
++                                    sizeof(debug_port), NULL) && debug_port)
+     {
+         __TRY
+         {
+diff --git a/dlls/ntdll/tests/exception.c b/dlls/ntdll/tests/exception.c
+index a5e6faa461a..411439f180f 100644
+--- a/dlls/ntdll/tests/exception.c
++++ b/dlls/ntdll/tests/exception.c
+@@ -3595,6 +3595,12 @@ START_TEST(exception)
+     test_suspend_process();
+     test_unload_trace();
+ 
++    /* Call of Duty WWII writes to BeingDebugged then closes an invalid handle,
++     * crashing the game if an exception is raised. */
++    NtCurrentTeb()->Peb->BeingDebugged = 0x98;
++    test_closehandle(0, (HANDLE)0xdeadbeef);
++    NtCurrentTeb()->Peb->BeingDebugged = 0;
++
+ #elif defined(__x86_64__)
+ 
+ #define X(f) p##f = (void*)GetProcAddress(hntdll, #f)
+@@ -3638,6 +3644,12 @@ START_TEST(exception)
+     else
+       skip( "Dynamic unwind functions not found\n" );
+ 
++    /* Call of Duty WWII writes to BeingDebugged then closes an invalid handle,
++     * crashing the game if an exception is raised. */
++    NtCurrentTeb()->Peb->BeingDebugged = 0x98;
++    test_closehandle(0, (HANDLE)0xdeadbeef);
++    NtCurrentTeb()->Peb->BeingDebugged = 0;
++
+ #endif
+ 
+     VirtualFree(code_mem, 0, MEM_RELEASE);
+ 
