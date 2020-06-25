@@ -513,6 +513,28 @@ else
       fi
     fi
 
+    # mono
+    curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest \
+    | grep "browser_download_url.*x86.tar.xz" \
+    | cut -d : -f 2,3 \
+    | tr -d \" \
+    | wget -qi -
+    tar -xvJf wine-mono-*.tar.xz >/dev/null 2>&1
+    rm -f wine-mono-*.tar.*
+    mkdir -p proton_dist_tmp/share/wine/mono
+    mv wine-mono-* proton_dist_tmp/share/wine/mono/
+
+    # gecko
+    _gecko_ver="2.47.1"
+    wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86_64.tar.bz2
+    wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86.tar.bz2
+    tar -xvf wine-gecko-$_gecko_ver-x86_64.tar.* >/dev/null 2>&1
+    tar -xvf wine-gecko-$_gecko_ver-x86.tar.* >/dev/null 2>&1
+    rm -f wine-gecko-*.tar.*
+    mkdir -p proton_dist_tmp/share/wine/gecko
+    mv wine-gecko-*-x86_64 proton_dist_tmp/share/wine/gecko/
+    mv wine-gecko-*-x86 proton_dist_tmp/share/wine/gecko/
+
     echo ''
     echo "Packaging..."
 
