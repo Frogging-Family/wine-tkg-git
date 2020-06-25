@@ -521,11 +521,6 @@ _prepare() {
 	  echo -e "( Warframe Launcher unbreak reverts applied )\n" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_origin_fix" = "true" ] && [ "$_broken_origin_fix" = "true" ] && git merge-base --is-ancestor 3078f10d43d834b0498358fe0accb565191b7020 HEAD; then
-	  _committorevert=3078f10d43d834b0498358fe0accb565191b7020 && nonuser_reverter
-	  echo -e "( Origin unbreak revert applied )\n" >> "$_where"/last_build_config.log
-	fi
-
 	if [ "$_proton_fs_hack" = "true" ]; then
 	  if ! git merge-base --is-ancestor aee91dc4ac08428e74fbd21f97438db38f84dbe5 HEAD; then
 	    _committorevert=427152ec7b4ee85631617b693dbf1deea763c0ba && nonuser_reverter
@@ -1041,11 +1036,6 @@ _prepare() {
 	# Low latency alsa audio - https://blog.thepoon.fr/osuLinuxAudioLatency/
 	if [ "$_lowlatency_audio" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  _patchname='lowlatency_audio.patch' && _patchmsg="Applied low latency alsa audio patch" && nonuser_patcher
-	fi
-
-	# Origin fix for 3078f10d without revert
-	if [ "$_origin_fix" = "true" ] && [ "$_broken_origin_fix" != "true" ] && git merge-base --is-ancestor 3078f10d43d834b0498358fe0accb565191b7020 HEAD; then
-	  _patchname='origin_3078f10d_fix.patch' && _patchmsg="Applied Origin 3078f10d fix" && nonuser_patcher
 	fi
 
 	# The Sims 2 fix - https://bugs.winehq.org/show_bug.cgi?id=8051
