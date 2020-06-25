@@ -591,6 +591,9 @@ _prepare() {
 	if [ "$_update_winevulkan" = "true" ] && ! git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && git merge-base --is-ancestor eb39d3dbcac7a8d9c17211ab358cda4b7e07708a HEAD; then
 	  _patchname='winevulkan-1.1.103.patch' && _patchmsg="Applied winevulkan 1.1.103 patch" && nonuser_patcher
 	fi
+	if ( [ "$_update_winevulkan" = "true" ] && [ "$_use_staging" = "true" ] && cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor df2fd22e4de96b28eb0ced5e8aa9bf4c421b5ed8 HEAD ); then
+	  _staging_args+=(-W winevulkan-vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
+	fi
 
 	# use CLOCK_MONOTONIC instead of CLOCK_MONOTONIC_RAW in ntdll/server - lowers overhead
 	if [ "$_clock_monotonic" = "true" ]; then
