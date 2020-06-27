@@ -1342,7 +1342,7 @@ EOM
 	  else
 	    _patchname='proton-rawinput-74dc0c5.patch' && _patchmsg="Using rawinput patchset (<74dc0c5)" && nonuser_patcher
 	  fi
-	  if [[ ! ${_staging_userargs[*]} =~ "winex11-key_translation" ]] && $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD && cd "${srcdir}"/"${_winesrcdir}"); then # Apply staging winex11-key_translation patchset post staging-application when enabled
+	  if [[ ! ${_staging_userargs[*]} =~ "winex11-key_translation" ]] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD && ! git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then # Apply staging winex11-key_translation patchset post staging-application when enabled
 	      cp -u "${srcdir}"/"${_stgsrcdir}"/patches/winex11-key_translation/*.patch "$_where"/ && ln -s -f "${srcdir}"/"${_stgsrcdir}"/patches/winex11-key_translation/*.patch "${srcdir}"/
 	      _patchname='0001-winex11-Match-keyboard-in-Unicode.patch' && _patchmsg="Applied proton friendly winex11-Match-keyboard-in-Unicode" && nonuser_patcher
 	      _patchname='0002-winex11-Fix-more-key-translation.patch' && _patchmsg="Applied proton friendly winex11-Fix-more-key-translation" && nonuser_patcher
