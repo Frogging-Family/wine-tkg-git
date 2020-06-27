@@ -336,6 +336,12 @@ _describe_other() {
   git describe --long --tags --always | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//'
 }
 
+_committer() {
+  if [ "$_generate_patchsets" != "false" ]; then
+    ( git add . && git commit -m "$_commitmsg" && git format-patch -n HEAD^ || true ) >/dev/null 2>&1
+  fi
+}
+
 _source_cleanup() {
 	if [ "$_NUKR" != "debug" ]; then
 	  if [ "$_use_staging" = "true" ]; then
@@ -416,6 +422,7 @@ _prepare() {
 	fi
 
 	echo "" >> "$_where"/last_build_config.log
+	echo -e "*.patch\n*.orig\n*~\n.gitignore\nautom4te.cache/*" > "${srcdir}"/"${_winesrcdir}"/.gitignore
 
 	# Disable local Esync on 553986f
 	if [ "$_use_staging" = "true" ]; then
@@ -567,6 +574,8 @@ _prepare() {
 	  _committorevert=461b5e56f95eb095d97e4af1cb1c5fd64bb2862a && nonuser_reverter
 	  echo -e "( Kernelbase reverts clean reverts applied )\n" >> "$_where"/last_build_config.log
 	fi
+
+	_commitmsg="01-reverts" _committer
 
 	# Hotfixer-staging
 	if [ "$_use_staging" = "true" ]; then
@@ -841,12 +850,15 @@ _prepare() {
 	  cd "${srcdir}"/"${_winesrcdir}"
 	fi
 
+	_commitmsg="02-pre-staging" _committer
+
 	if [ "$_use_staging" = "true" ] && [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW2" = "y" ]; then
 	  msg2 "Applying wine-staging patches..." && echo -e "\nStaging overrides, if any: ${_staging_args[@]}\n" >> "$_where"/last_build_config.log && echo -e "\nApplying wine-staging patches..." >> "$_where"/prepare.log
 	  "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh DESTDIR="${srcdir}/${_winesrcdir}" --all "${_staging_args[@]}" >> "$_where"/prepare.log 2>&1 || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
 
 	  # Remove staging version tag
 	  sed -i "s/  (Staging)//g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
+	  _commitmsg="03-staging" _committer
 	fi
 
 	# esync
@@ -1816,14 +1828,15 @@ EOM
 	fi
 
 	echo -e "" >> "$_where"/last_build_config.log
+	_commitmsg="04-post-staging" _committer
 
 	# wine user patches
 	if [ "$_user_patches" = "true" ]; then
 	  _userpatch_target="plain-wine"
 	  _userpatch_ext="my"
 	  cd "${srcdir}"/"${_winesrcdir}"
-	  hotfixer
-	  user_patcher
+	  hotfixer && _commitmsg="05-hotfixes" _committer
+	  user_patcher && _commitmsg="06-userpatches" _committer
 	fi
 
 	echo "" >> "$_where"/last_build_config.log
@@ -1887,12 +1900,11 @@ EOM
 	# fix path of opencl headers
 	sed 's|OpenCL/opencl.h|CL/opencl.h|g' -i configure*
 
+	_commitmsg="07-tags-n-polish" _committer
+
 	if [ "$_NUKR" != "debug" ]; then
 	  # delete old build dirs (from previous builds)
 	  rm -rf "${srcdir}"/wine-tkg-*-{32,64}-build
-	elif [ $(git log -1 --pretty=%B | grep -c "wine-tkg patches") = 0 ]; then
-	  git add .
-	  git commit -m "wine-tkg patches"
 	fi
 
 	# no compilation
