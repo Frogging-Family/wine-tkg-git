@@ -1200,7 +1200,7 @@ EOM
 	    elif git merge-base --is-ancestor 1d9a3f6d12322891a2af4aadd66a92ea66479233 HEAD; then
 	      _patchname='fsync-staging-cf04b8d.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging <cf04b8d)" && nonuser_patcher
 	    fi
-	    if [ "$_proton_use_steamhelper" != "true" ]; then
+	    if [[ ! ${_staging_args[*]} =~ "server-Desktop_Refcount" ]]; then
 	      _patchname='fsync-staging-no_alloc_handle.patch' && _patchmsg="Added no_alloc_handle object method to fsync" && nonuser_patcher
 	      if ([ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]) || [ "$_protonify" = "true" ] && git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
 	        _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it-no_alloc_handle.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch (no_alloc_handle edition)" && nonuser_patcher
