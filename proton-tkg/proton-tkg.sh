@@ -368,6 +368,10 @@ function download_dxvk_version {
   done
 }
 
+function latest_mono {
+  curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.tar.xz" | cut -d : -f 2,3 | tr -d \"
+}
+
 if [ "$1" = "clean" ]; then
   proton_tkg_uninstaller
 elif [ "$1" = "build_vrclient" ]; then
@@ -514,26 +518,28 @@ else
     fi
 
     # mono
-    curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest \
-    | grep "browser_download_url.*x86.tar.xz" \
-    | cut -d : -f 2,3 \
-    | tr -d \" \
-    | wget -qi -
-    tar -xvJf wine-mono-*.tar.xz >/dev/null 2>&1
-    rm -f wine-mono-*.tar.*
+    mkdir -p "$_nowhere"/mono && cd "$_nowhere"/mono
+    _mono_bin=( latest_mono )
+    if [ ! -e ${_mono_bin##*/} ]; then
+      latest_mono | wget -qi -
+    fi
+    cd "$_nowhere"
     mkdir -p proton_dist_tmp/share/wine/mono
-    mv wine-mono-* proton_dist_tmp/share/wine/mono/
+    tar -xvJf "$_nowhere"/mono/wine-mono-*.tar.xz -C proton_dist_tmp/share/wine/mono >/dev/null 2>&1
 
     # gecko
     _gecko_ver="2.47.1"
-    wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86_64.tar.bz2
-    wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86.tar.bz2
-    tar -xvf wine-gecko-$_gecko_ver-x86_64.tar.* >/dev/null 2>&1
-    tar -xvf wine-gecko-$_gecko_ver-x86.tar.* >/dev/null 2>&1
-    rm -f wine-gecko-*.tar.*
+    mkdir -p "$_nowhere"/gecko && cd "$_nowhere"/gecko
+    if [ ! -e "wine-gecko-$_gecko_ver-x86_64.tar.bz2" ]; then
+      wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86_64.tar.bz2
+    fi
+    if [ ! -e "wine-gecko-$_gecko_ver-x86.tar.bz2" ]; then
+      wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86.tar.bz2
+    fi
+    cd "$_nowhere"
     mkdir -p proton_dist_tmp/share/wine/gecko
-    mv wine-gecko-*-x86_64 proton_dist_tmp/share/wine/gecko/
-    mv wine-gecko-*-x86 proton_dist_tmp/share/wine/gecko/
+    tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86_64.tar.* -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
+    tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86.tar.* -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
 
     echo ''
     echo "Packaging..."
