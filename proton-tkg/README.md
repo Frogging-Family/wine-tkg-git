@@ -22,11 +22,6 @@ It can create Steamplay compatible wine builds based on wine-tkg-git + additiona
 git clone https://github.com/Frogging-Family/wine-tkg-git.git
 ```
 
- * To optionally make use of community patches, you'll want to clone its repo as well:
-```
-git clone https://github.com/Frogging-Family/community-patches.git
-```
-
 ## Configuration/customization :
 
 If you want to customize the patches and features of your builds, you can find basic settings in [proton-tkg.cfg](https://github.com/Frogging-Family/wine-tkg-git/blob/master/proton-tkg/proton-tkg.cfg) and advanced settings in [proton-tkg-profiles/advanced-customization.cfg](https://github.com/Frogging-Family/wine-tkg-git/blob/master/proton-tkg/proton-tkg-profiles/advanced-customization.cfg).
