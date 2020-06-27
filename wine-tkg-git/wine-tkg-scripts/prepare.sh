@@ -297,7 +297,9 @@ user_patcher() {
 	        msg2 ""
 	        msg2 "######################################################"
 	        echo -e "\nReverting your own patch ${_f##*/}" >> "$_where"/prepare.log
-	        patch -Np1 -R < "${_f}" >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+	        if ! patch -Np1 -R < "${_f}" >> "$_where"/prepare.log; then
+	          error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1
+	        fi
 	        echo -e "Reverted your own patch ${_f##*/}" >> "$_where"/last_build_config.log
 	      fi
 	    done
@@ -320,7 +322,9 @@ user_patcher() {
 	        msg2 ""
 	        msg2 "######################################################"
 	        echo -e "\nApplying your own patch ${_f##*/}" >> "$_where"/prepare.log
-	        patch -Np1 < "${_f}" >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+	        if ! patch -Np1 < "${_f}" >> "$_where"/prepare.log; then
+	          error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1
+	        fi
 	        echo -e "Applied your own patch ${_f##*/}" >> "$_where"/last_build_config.log
 	      fi
 	    done
