@@ -1,0 +1,486 @@
+From 3a9edf9aad43c3e8ba724571da5381f821f1dc56 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Thu, 25 Jun 2020 19:08:43 +0200
+Subject: [PATCH] user32: Implement GetRawInputBuffer.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CoD: WWII uses it to read mouse motion instead of listening to WM_INPUT
+messages.
+
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
+---
+ dlls/user32/rawinput.c         | 91 +++++++++++++++++++++++++++++++++-
+ dlls/user32/tests/input.c      | 27 ----------
+ dlls/user32/user_private.h     |  2 +-
+ include/wine/server_protocol.h | 21 +++++++-
+ server/protocol.def            | 10 ++++
+ server/queue.c                 | 40 +++++++++++++++
+ server/request.h               |  8 +++
+ server/trace.c                 | 16 ++++++
+ 8 files changed, 184 insertions(+), 31 deletions(-)
+
+diff --git a/dlls/user32/rawinput.c b/dlls/user32/rawinput.c
+index 1ec6c7bd236..775b066e673 100644
+--- a/dlls/user32/rawinput.c
++++ b/dlls/user32/rawinput.c
+@@ -491,14 +491,101 @@ UINT WINAPI GetRawInputData(HRAWINPUT rawinput, UINT command, void *data, UINT *
+     return s;
+ }
+ 
++#ifdef _WIN64
++typedef RAWINPUT RAWINPUT64;
++#else
++typedef struct
++{
++    RAWINPUTHEADER header;
++    char pad[8];
++    union {
++        RAWMOUSE    mouse;
++        RAWKEYBOARD keyboard;
++        RAWHID      hid;
++    } data;
++} RAWINPUT64;
++#endif
++
+ /***********************************************************************
+  *              GetRawInputBuffer   (USER32.@)
+  */
+ UINT WINAPI DECLSPEC_HOTPATCH GetRawInputBuffer(RAWINPUT *data, UINT *data_size, UINT header_size)
+ {
+-    FIXME("data %p, data_size %p, header_size %u stub!\n", data, data_size, header_size);
++    struct hardware_msg_data *msg_data;
++    RAWINPUT *rawinput;
++    UINT count = 0, rawinput_size, next_size, overhead;
++    BOOL is_wow64;
++    int i;
++
++    if (IsWow64Process( GetCurrentProcess(), &is_wow64 ) && is_wow64)
++        rawinput_size = sizeof(RAWINPUT64);
++    else
++        rawinput_size = sizeof(RAWINPUT);
++    overhead = rawinput_size - sizeof(RAWINPUT);
+ 
+-    return 0;
++    if (header_size != sizeof(RAWINPUTHEADER))
++    {
++        WARN("Invalid structure size %u.\n", header_size);
++        SetLastError(ERROR_INVALID_PARAMETER);
++        return ~0U;
++    }
++
++    if (!data_size)
++    {
++        SetLastError(ERROR_INVALID_PARAMETER);
++        return ~0U;
++    }
++
++    if (!data)
++    {
++        TRACE("data %p, data_size %p (%u), header_size %u\n", data, data_size, *data_size, header_size);
++        SERVER_START_REQ( get_rawinput_buffer )
++        {
++            req->rawinput_size = rawinput_size;
++            req->buffer_size = 0;
++            if (wine_server_call( req )) return ~0U;
++            *data_size = reply->next_size;
++        }
++        SERVER_END_REQ;
++        return 0;
++    }
++
++    if (!(rawinput = rawinput_thread_data())) return ~0U;
++
++    msg_data = (struct hardware_msg_data *)NEXTRAWINPUTBLOCK(rawinput);
++    SERVER_START_REQ( get_rawinput_buffer )
++    {
++        req->rawinput_size = rawinput_size;
++        req->buffer_size = *data_size;
++        wine_server_set_reply( req, msg_data, RAWINPUT_BUFFER_SIZE - rawinput->header.dwSize );
++        if (wine_server_call( req )) return ~0U;
++        next_size = reply->next_size;
++        count = reply->count;
++    }
++    SERVER_END_REQ;
++
++    for (i = 0; i < count; ++i)
++    {
++        rawinput_from_hardware_message(data, msg_data);
++        if (overhead) memmove((char *)&data->data + overhead, &data->data,
++                              data->header.dwSize - sizeof(RAWINPUTHEADER));
++        data->header.dwSize += overhead;
++        data = NEXTRAWINPUTBLOCK(data);
++        msg_data++;
++    }
++
++    if (count == 0 && next_size == 0) *data_size = 0;
++    else if (next_size == 0) next_size = rawinput_size;
++
++    if (next_size && *data_size <= next_size)
++    {
++        SetLastError(ERROR_INSUFFICIENT_BUFFER);
++        *data_size = next_size;
++        count = ~0U;
++    }
++
++    if (count) TRACE("data %p, data_size %p (%u), header_size %u, count %u\n", data, data_size, *data_size, header_size, count);
++    return count;
+ }
+ 
+ /***********************************************************************
+diff --git a/dlls/user32/tests/input.c b/dlls/user32/tests/input.c
+index 979471551ff..5c589908125 100644
+--- a/dlls/user32/tests/input.c
++++ b/dlls/user32/tests/input.c
+@@ -1864,26 +1864,20 @@ static LRESULT CALLBACK rawinputbuffer_wndproc(HWND hwnd, UINT msg, WPARAM wpara
+     if (msg == WM_INPUT)
+     {
+         count = GetRawInputBuffer(NULL, NULL, sizeof(RAWINPUTHEADER));
+-        todo_wine
+         ok(count == ~0U, "GetRawInputBuffer succeeded\n");
+ 
+         size = sizeof(buffer);
+         count = GetRawInputBuffer(NULL, &size, sizeof(RAWINPUTHEADER));
+         ok(count == 0, "GetRawInputBuffer returned %u\n", count);
+-        todo_wine
+         ok(size == rawinput_size, "GetRawInputBuffer returned unexpected size: %u\n", size);
+ 
+         size = sizeof(buffer);
+         memset(buffer, 0, sizeof(buffer));
+         count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
+-        todo_wine
+         ok(count == 3, "GetRawInputBuffer returned %u\n", count);
+         ok(size == sizeof(buffer), "GetRawInputBuffer returned unexpected size: %u\n", size);
+-        todo_wine
+         ok(rawinput_buffer_mouse_x(buffer, 0) == 2, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 0));
+-        todo_wine
+         ok(rawinput_buffer_mouse_x(buffer, 1) == 3, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 1));
+-        todo_wine
+         ok(rawinput_buffer_mouse_x(buffer, 2) == 4, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 2));
+ 
+         /* the first event should be removed by the next GetRawInputBuffer call
+@@ -1901,9 +1895,7 @@ static LRESULT CALLBACK rawinputbuffer_wndproc(HWND hwnd, UINT msg, WPARAM wpara
+             size = rawinput_size + 1;
+             memset(buffer, 0, sizeof(buffer));
+             count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
+-            todo_wine
+             ok(count == 1, "GetRawInputBuffer returned %u\n", count);
+-            todo_wine
+             ok(rawinput_buffer_mouse_x(buffer, 0) == 5, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 0));
+ 
+             /* peek the messages now, they should still arrive in the correct order */
+@@ -1918,7 +1910,6 @@ static LRESULT CALLBACK rawinputbuffer_wndproc(HWND hwnd, UINT msg, WPARAM wpara
+         if (iteration == 1)
+         {
+             ok(count == sizeof(ri), "GetRawInputData failed\n");
+-            todo_wine
+             ok(ri.data.mouse.lLastX == 6, "Unexpected rawinput data: %d\n", ri.data.mouse.lLastX);
+         }
+         else
+@@ -1960,15 +1951,12 @@ static void test_GetRawInputBuffer(void)
+ 
+     SetLastError(0xdeadbeef);
+     count = GetRawInputBuffer(NULL, NULL, sizeof(RAWINPUTHEADER));
+-    todo_wine
+     ok(count == ~0U, "GetRawInputBuffer succeeded\n");
+-    todo_wine
+     ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputBuffer returned %08x\n", GetLastError());
+ 
+     size = sizeof(buffer);
+     count = GetRawInputBuffer(NULL, &size, sizeof(RAWINPUTHEADER));
+     ok(count == 0U, "GetRawInputBuffer returned %u\n", count);
+-    todo_wine
+     ok(size == 0U, "GetRawInputBuffer returned unexpected size: %u\n", size);
+ 
+     size = 0;
+@@ -1979,15 +1967,12 @@ static void test_GetRawInputBuffer(void)
+     SetLastError(0xdeadbeef);
+     size = sizeof(buffer);
+     count = GetRawInputBuffer((RAWINPUT*)buffer, &size, 0);
+-    todo_wine
+     ok(count == ~0U, "GetRawInputBuffer succeeded\n");
+-    todo_wine
+     ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputBuffer returned %08x\n", GetLastError());
+ 
+     size = sizeof(buffer);
+     count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
+     ok(count == 0U, "GetRawInputBuffer returned %u\n", count);
+-    todo_wine
+     ok(size == 0U, "GetRawInputBuffer returned unexpected size: %u\n", size);
+ 
+     mouse_event(MOUSEEVENTF_MOVE, 5, 0, 0, 0);
+@@ -1995,34 +1980,26 @@ static void test_GetRawInputBuffer(void)
+     SetLastError(0xdeadbeef);
+     size = 0;
+     count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
+-    todo_wine
+     ok(count == ~0U, "GetRawInputBuffer succeeded\n");
+-    todo_wine
+     ok(size == rawinput_size, "GetRawInputBuffer returned unexpected size: %u\n", size);
+-    todo_wine
+     ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "GetRawInputBuffer returned %08x\n", GetLastError());
+ 
+     size = 0;
+     count = GetRawInputBuffer(NULL, &size, sizeof(RAWINPUTHEADER));
+     ok(count == 0, "GetRawInputBuffer returned %u\n", count);
+-    todo_wine
+     ok(size == rawinput_size, "GetRawInputBuffer returned unexpected size: %u\n", size);
+ 
+     SetLastError(0xdeadbeef);
+     size = sizeof(buffer);
+     count = GetRawInputBuffer((RAWINPUT*)buffer, &size, 0);
+-    todo_wine
+     ok(count == ~0U, "GetRawInputBuffer succeeded\n");
+-    todo_wine
+     ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputBuffer returned %08x\n", GetLastError());
+ 
+     size = sizeof(buffer);
+     memset(buffer, 0, sizeof(buffer));
+     count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
+-    todo_wine
+     ok(count == 1U, "GetRawInputBuffer returned %u\n", count);
+     ok(size == sizeof(buffer), "GetRawInputBuffer returned unexpected size: %u\n", size);
+-    todo_wine
+     ok(rawinput_buffer_mouse_x(buffer, 0) == 5, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 0));
+ 
+ 
+@@ -2034,11 +2011,8 @@ static void test_GetRawInputBuffer(void)
+     size = rawinput_size;
+     memset(buffer, 0, sizeof(buffer));
+     count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
+-    todo_wine
+     ok(count == ~0U, "GetRawInputBuffer succeeded\n");
+-    todo_wine
+     ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "GetRawInputBuffer returned %08x\n", GetLastError());
+-    todo_wine
+     ok(rawinput_buffer_mouse_x(buffer, 0) == 5, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 0));
+ 
+     size = sizeof(buffer);
+@@ -2052,7 +2026,6 @@ static void test_GetRawInputBuffer(void)
+     mouse_event(MOUSEEVENTF_MOVE, 3, 0, 0, 0);
+     mouse_event(MOUSEEVENTF_MOVE, 4, 0, 0, 0);
+     empty_message_queue();
+-    todo_wine
+     ok(rawinputbuffer_wndproc_count == 2, "Spurious WM_INPUT messages\n");
+ 
+     raw_devices[0].dwFlags = RIDEV_REMOVE;
+diff --git a/dlls/user32/user_private.h b/dlls/user32/user_private.h
+index d7f4741ebe6..eb828203597 100644
+--- a/dlls/user32/user_private.h
++++ b/dlls/user32/user_private.h
+@@ -196,7 +196,7 @@ struct user_thread_info
+     struct user_key_state_info   *key_state;              /* Cache of global key state */
+     HWND                          top_window;             /* Desktop window */
+     HWND                          msg_window;             /* HWND_MESSAGE parent window */
+-    RAWINPUT                     *rawinput;               /* Rawinput buffer */
++    RAWINPUT                     *rawinput;
+ };
+ 
+ C_ASSERT( sizeof(struct user_thread_info) <= sizeof(((TEB *)0)->Win32ClientInfo) );
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index b22aac93041..331bab86879 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -5644,6 +5644,22 @@ struct set_cursor_reply
+ 
+ 
+ 
++struct get_rawinput_buffer_request
++{
++    struct request_header __header;
++    data_size_t rawinput_size;
++    data_size_t buffer_size;
++    char __pad_20[4];
++};
++struct get_rawinput_buffer_reply
++{
++    struct reply_header __header;
++    data_size_t next_size;
++    unsigned int count;
++    /* VARARG(data,bytes); */
++};
++
++
+ struct update_rawinput_devices_request
+ {
+     struct request_header __header;
+@@ -6084,6 +6100,7 @@ enum request
+     REQ_alloc_user_handle,
+     REQ_free_user_handle,
+     REQ_set_cursor,
++    REQ_get_rawinput_buffer,
+     REQ_update_rawinput_devices,
+     REQ_create_job,
+     REQ_open_job,
+@@ -6387,6 +6404,7 @@ union generic_request
+     struct alloc_user_handle_request alloc_user_handle_request;
+     struct free_user_handle_request free_user_handle_request;
+     struct set_cursor_request set_cursor_request;
++    struct get_rawinput_buffer_request get_rawinput_buffer_request;
+     struct update_rawinput_devices_request update_rawinput_devices_request;
+     struct create_job_request create_job_request;
+     struct open_job_request open_job_request;
+@@ -6688,6 +6706,7 @@ union generic_reply
+     struct alloc_user_handle_reply alloc_user_handle_reply;
+     struct free_user_handle_reply free_user_handle_reply;
+     struct set_cursor_reply set_cursor_reply;
++    struct get_rawinput_buffer_reply get_rawinput_buffer_reply;
+     struct update_rawinput_devices_reply update_rawinput_devices_reply;
+     struct create_job_reply create_job_reply;
+     struct open_job_reply open_job_reply;
+diff --git a/server/protocol.def b/server/protocol.def
+index a4b91b6ab62..6416306c0a1 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -3884,6 +3884,16 @@ struct handle_info
+ #define SET_CURSOR_NOCLIP 0x10
+ 
+ 
++/* Batch read rawinput message data */
++@REQ(get_rawinput_buffer)
++    data_size_t rawinput_size; /* size of RAWINPUT structure */
++    data_size_t buffer_size;   /* size of output buffer */
++@REPLY
++    data_size_t next_size; /* minimum size to get next message data */
++    unsigned int count;
++    VARARG(data,bytes);
++@END
++
+ /* Modify the list of registered rawinput devices */
+ @REQ(update_rawinput_devices)
+     VARARG(devices,rawinput_devices);
+diff --git a/server/queue.c b/server/queue.c
+index c3925dd6646..432885f9e4c 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -3226,6 +3226,46 @@ DECL_HANDLER(set_cursor)
+     reply->last_change = input->desktop->cursor.last_change;
+ }
+ 
++DECL_HANDLER(get_rawinput_buffer)
++{
++    struct thread_input *input = current->queue->input;
++    data_size_t size = 0, next_size = 0;
++    struct list *ptr;
++    char *buf, *cur;
++    int count = 0;
++
++    if (!req->buffer_size) buf = NULL;
++    else if (!(buf = mem_alloc( get_reply_max_size() )))
++        return;
++
++    cur = buf;
++    ptr = list_head( &input->msg_list );
++    while (ptr)
++    {
++        struct message *msg = LIST_ENTRY( ptr, struct message, entry );
++        struct hardware_msg_data *data = msg->data;
++
++        ptr = list_next( &input->msg_list, ptr );
++        if (msg->msg != WM_INPUT) continue;
++
++        next_size = req->rawinput_size;
++        if (size + next_size > req->buffer_size) break;
++        if (cur + sizeof(*data) > buf + get_reply_max_size()) break;
++
++        memcpy(cur, data, sizeof(*data));
++        list_remove( &msg->entry );
++        free_message( msg );
++
++        size += next_size;
++        cur += sizeof(*data);
++        count++;
++    }
++
++    reply->next_size = next_size;
++    reply->count = count;
++    set_reply_data_ptr( buf, cur - buf );
++}
++
+ DECL_HANDLER(update_rawinput_devices)
+ {
+     const struct rawinput_device *devices = get_req_data();
+diff --git a/server/request.h b/server/request.h
+index 80f7e1923fd..62937d9a5a9 100644
+--- a/server/request.h
++++ b/server/request.h
+@@ -404,6 +404,7 @@ DECL_HANDLER(set_window_layered_info);
+ DECL_HANDLER(alloc_user_handle);
+ DECL_HANDLER(free_user_handle);
+ DECL_HANDLER(set_cursor);
++DECL_HANDLER(get_rawinput_buffer);
+ DECL_HANDLER(update_rawinput_devices);
+ DECL_HANDLER(create_job);
+ DECL_HANDLER(open_job);
+@@ -706,6 +707,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+     (req_handler)req_alloc_user_handle,
+     (req_handler)req_free_user_handle,
+     (req_handler)req_set_cursor,
++    (req_handler)req_get_rawinput_buffer,
+     (req_handler)req_update_rawinput_devices,
+     (req_handler)req_create_job,
+     (req_handler)req_open_job,
+@@ -2418,6 +2420,12 @@ C_ASSERT( FIELD_OFFSET(struct set_cursor_reply, new_y) == 28 );
+ C_ASSERT( FIELD_OFFSET(struct set_cursor_reply, new_clip) == 32 );
+ C_ASSERT( FIELD_OFFSET(struct set_cursor_reply, last_change) == 48 );
+ C_ASSERT( sizeof(struct set_cursor_reply) == 56 );
++C_ASSERT( FIELD_OFFSET(struct get_rawinput_buffer_request, rawinput_size) == 12 );
++C_ASSERT( FIELD_OFFSET(struct get_rawinput_buffer_request, buffer_size) == 16 );
++C_ASSERT( sizeof(struct get_rawinput_buffer_request) == 24 );
++C_ASSERT( FIELD_OFFSET(struct get_rawinput_buffer_reply, next_size) == 8 );
++C_ASSERT( FIELD_OFFSET(struct get_rawinput_buffer_reply, count) == 12 );
++C_ASSERT( sizeof(struct get_rawinput_buffer_reply) == 16 );
+ C_ASSERT( sizeof(struct update_rawinput_devices_request) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct create_job_request, access) == 12 );
+ C_ASSERT( sizeof(struct create_job_request) == 16 );
+diff --git a/server/trace.c b/server/trace.c
+index c8ccd304b0a..2fb5afd5ef1 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -4528,6 +4528,19 @@ static void dump_set_cursor_reply( const struct set_cursor_reply *req )
+     fprintf( stderr, ", last_change=%08x", req->last_change );
+ }
+ 
++static void dump_get_rawinput_buffer_request( const struct get_rawinput_buffer_request *req )
++{
++    fprintf( stderr, " rawinput_size=%u", req->rawinput_size );
++    fprintf( stderr, ", buffer_size=%u", req->buffer_size );
++}
++
++static void dump_get_rawinput_buffer_reply( const struct get_rawinput_buffer_reply *req )
++{
++    fprintf( stderr, " next_size=%u", req->next_size );
++    fprintf( stderr, ", count=%08x", req->count );
++    dump_varargs_bytes( ", data=", cur_size );
++}
++
+ static void dump_update_rawinput_devices_request( const struct update_rawinput_devices_request *req )
+ {
+     dump_varargs_rawinput_devices( " devices=", cur_size );
+@@ -4895,6 +4908,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_alloc_user_handle_request,
+     (dump_func)dump_free_user_handle_request,
+     (dump_func)dump_set_cursor_request,
++    (dump_func)dump_get_rawinput_buffer_request,
+     (dump_func)dump_update_rawinput_devices_request,
+     (dump_func)dump_create_job_request,
+     (dump_func)dump_open_job_request,
+@@ -5194,6 +5208,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_alloc_user_handle_reply,
+     NULL,
+     (dump_func)dump_set_cursor_reply,
++    (dump_func)dump_get_rawinput_buffer_reply,
+     NULL,
+     (dump_func)dump_create_job_reply,
+     (dump_func)dump_open_job_reply,
+@@ -5493,6 +5508,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
+     "alloc_user_handle",
+     "free_user_handle",
+     "set_cursor",
++    "get_rawinput_buffer",
+     "update_rawinput_devices",
+     "create_job",
+     "open_job",
+ 
