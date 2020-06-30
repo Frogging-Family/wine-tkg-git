@@ -678,6 +678,8 @@ _prepare() {
 	      if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor d8496cacd170347bbde755ead066be8394fbb82b HEAD ); then
 	        _staging_args+=(-W user32-rawinput-keyboard)
 	      fi
+	    elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor f904ca32a3f678bf829a325dc66699a21e510857 HEAD ); then
+	      _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-mouse-experimental -W user32-rawinput-hid)
 	    fi
 	  fi
 	fi
@@ -686,6 +688,8 @@ _prepare() {
 	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_fs_hack" != "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD ); then
 	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
 	    _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-nolegacy -W user32-rawinput-mouse-experimental -W user32-rawinput-hid -W winex11-key_translation)
+	  elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor f904ca32a3f678bf829a325dc66699a21e510857 HEAD ); then
+	    _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-mouse-experimental -W user32-rawinput-hid)
 	  fi
 	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor d8496cacd170347bbde755ead066be8394fbb82b HEAD ); then
 	    _staging_args+=(-W user32-rawinput-keyboard)
@@ -1333,7 +1337,9 @@ EOM
 
 	# Proton compatible rawinput patchset
 	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor cfcc280905b7804efde8f42bcd6bddbe5ebd8cad HEAD; then
-	  if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
+	  if git merge-base --is-ancestor 3a9edf9aad43c3e8ba724571da5381f821f1dc56 HEAD; then
+	    _patchname='proton-rawinput.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
+	  elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
 	    _patchname='proton-rawinput.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
 	  elif git merge-base --is-ancestor 306c40e67319cae8e4c448ec8fc8d3996f87943f HEAD; then
 	    _patchname='proton-rawinput-27a52d0.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
