@@ -666,7 +666,7 @@ _prepare() {
 	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 437038604a09c7952a52b28c373cfbe706d8e78b HEAD ); then
 	      sed -i 's/-@@ -3383,3 +3393,14 @@ DECL_HANDLER(get_rawinput_devices)/-@@ -3432,3 +3442,14 @@ DECL_HANDLER(get_rawinput_devices)/g' "$_where"/staging-44d1a45-localreverts.patch
 	    fi
-	    _patchname='staging-44d1a45-localreverts.patch' && _patchmsg="Applied local reverts for staging 44d1a45 fshack" && nonuser_patcher
+	    cd "${srcdir}"/"${_stgsrcdir}" && _patchname='staging-44d1a45-localreverts.patch' _patchmsg="Applied local reverts for staging 44d1a45 fshack" nonuser_patcher && cd "${srcdir}"/"${_winesrcdir}"
 	  fi
 	  if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7cc69d770780b8fb60fb249e007f1a777a03e51a HEAD ); then
 	    _staging_args+=(-W winex11.drv-mouse-coorrds -W winex11-MWM_Decorations)
@@ -698,7 +698,7 @@ _prepare() {
 	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 437038604a09c7952a52b28c373cfbe706d8e78b HEAD ); then
 	      sed -i 's/-@@ -3383,3 +3393,14 @@ DECL_HANDLER(get_rawinput_devices)/-@@ -3432,3 +3442,14 @@ DECL_HANDLER(get_rawinput_devices)/g' "$_where"/staging-44d1a45-localreverts.patch
 	    fi
-	    _patchname='staging-44d1a45-localreverts.patch' && _patchmsg="Applied local reverts for staging 44d1a45 proton-nofshack" && nonuser_patcher
+	    cd "${srcdir}"/"${_stgsrcdir}" && _patchname='staging-44d1a45-localreverts.patch' _patchmsg="Applied local reverts for staging 44d1a45 proton-nofshack" nonuser_patcher && cd "${srcdir}"/"${_winesrcdir}"
 	  fi
 	fi
 
