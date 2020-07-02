@@ -1344,7 +1344,7 @@ EOM
 	  if git merge-base --is-ancestor 3a9edf9aad43c3e8ba724571da5381f821f1dc56 HEAD; then
 	    _patchname='proton-rawinput.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
-	    _patchname='proton-rawinput.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
+	    _patchname='proton-rawinput-3a9edf9.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
 	  elif git merge-base --is-ancestor 306c40e67319cae8e4c448ec8fc8d3996f87943f HEAD; then
 	    _patchname='proton-rawinput-27a52d0.patch' && _patchmsg="Using rawinput patchset" && nonuser_patcher
 	  elif git merge-base --is-ancestor d5fd3c8a386cf716b1a9695069462be0abd0fa4f HEAD; then
