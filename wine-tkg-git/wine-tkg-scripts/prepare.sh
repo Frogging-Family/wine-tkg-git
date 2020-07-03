@@ -501,17 +501,19 @@ _prepare() {
 	}
 
 	# Hotfixer
-	source "$_where"/wine-tkg-patches/hotfixes/hotfixer
-	for _commit in ${_hotfix_mainlinereverts[@]}; do
-	  cd "${srcdir}"/"${_winesrcdir}"
-	  _committorevert=$_commit _hotfixmsg="(hotfix)" nonuser_reverter
-	  cd "${srcdir}"/"${_winesrcdir}"
-	done
-	for _commit in ${_hotfix_stagingreverts[@]}; do
-	  cd "${srcdir}"/"${_stgsrcdir}"
-	  _committorevert=$_commit _hotfixmsg="(staging hotfix)" nonuser_reverter
-	  cd "${srcdir}"/"${_winesrcdir}"
-	done
+	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
+	  source "$_where"/wine-tkg-patches/hotfixes/hotfixer
+	  for _commit in ${_hotfix_mainlinereverts[@]}; do
+	    cd "${srcdir}"/"${_winesrcdir}"
+	    _committorevert=$_commit _hotfixmsg="(hotfix)" nonuser_reverter
+	    cd "${srcdir}"/"${_winesrcdir}"
+	  done
+	  for _commit in ${_hotfix_stagingreverts[@]}; do
+	    cd "${srcdir}"/"${_stgsrcdir}"
+	    _committorevert=$_commit _hotfixmsg="(staging hotfix)" nonuser_reverter
+	    cd "${srcdir}"/"${_winesrcdir}"
+	  done
+	fi
 
 	echo "" >> "$_where"/last_build_config.log
 
@@ -583,7 +585,9 @@ _prepare() {
 
 	# Hotfixer-staging
 	if [ "$_use_staging" = "true" ]; then
-	  cd "${srcdir}"/"${_stgsrcdir}" && _userpatch_target="wine-staging" _userpatch_ext="mystaging" hotfixer && cd "${srcdir}"/"${_winesrcdir}"
+	  if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
+	    cd "${srcdir}"/"${_stgsrcdir}" && _userpatch_target="wine-staging" _userpatch_ext="mystaging" hotfixer && cd "${srcdir}"/"${_winesrcdir}"
+	  fi
 	fi
 
 	# wine-staging user patches
@@ -1841,7 +1845,9 @@ EOM
 	  _userpatch_target="plain-wine"
 	  _userpatch_ext="my"
 	  cd "${srcdir}"/"${_winesrcdir}"
-	  hotfixer && _commitmsg="05-hotfixes" _committer
+	  if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
+	    hotfixer && _commitmsg="05-hotfixes" _committer
+	  fi
 	  user_patcher && _commitmsg="06-userpatches" _committer
 	fi
 
