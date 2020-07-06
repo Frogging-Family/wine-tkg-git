@@ -480,6 +480,11 @@ _prepare() {
 	  echo "NOT using VKD3D for d3d12 translation" >> "$_where"/last_build_config.log
 	fi
 
+	# mingw-w64-gcc
+	if [ "$_NOMINGW" = "true" ]; then
+	  _configure_args+=(--without-mingw)
+	fi
+
 	echo "" >> "$_where"/last_build_config.log
 
 	if [ "$_NUKR" = "debug" ]; then

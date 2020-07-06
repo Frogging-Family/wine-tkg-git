@@ -179,11 +179,6 @@ build_wine_tkg() {
   # state tracker start - FEAR THE MIGHTY FROG MINER
   touch "${_where}"/BIG_UGLY_FROGMINER
 
-  # mingw-w64-gcc
-  if [ "$_NOMINGW" = "true" ]; then
-    _configure_args+=(--without-mingw)
-  fi
-
   if [ "$_SKIPBUILDING" != "true" ]; then
     msg2 "Cloning and preparing sources... Please be patient."
     _nomakepkgsrcinit > "$_where"/prepare.log 2>&1
