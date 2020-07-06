@@ -155,8 +155,8 @@ function build_lsteamclient {
 function build_vkd3d {
   cd "$_nowhere"
   mkdir -p vkd3d-fork-build && cd vkd3d-fork-build
-  git clone https://github.com/HansKristian-Work/vkd3d.git || true # It'll complain the path already exists on subsequent builds
-  cd vkd3d
+  git clone https://github.com/HansKristian-Work/vkd3d-proton.git || true # It'll complain the path already exists on subsequent builds
+  cd vkd3d-proton
   git reset --hard HEAD
   git clean -xdf
   git pull origin master
@@ -175,14 +175,14 @@ function build_vkd3d {
   export CC='gcc -m64'
   export CXX='g++ -m64'
   cd build/lib64-vkd3d
-  "$_nowhere"/vkd3d-fork-build/vkd3d/configure --prefix="$_nowhere/vkd3d-fork-build/build/lib64-vkd3d/out" --with-spirv-tools
+  "$_nowhere"/vkd3d-fork-build/vkd3d-proton/configure --prefix="$_nowhere/vkd3d-fork-build/build/lib64-vkd3d/out" --with-spirv-tools
   make -j$(nproc) -C "$_nowhere/vkd3d-fork-build/build/lib64-vkd3d" && make install
   cd ../..
 
   export CC='gcc -m32'
   export CXX='g++ -m32'
   cd build/lib32-vkd3d
-  "$_nowhere"/vkd3d-fork-build/vkd3d/configure --prefix="$_nowhere/vkd3d-fork-build/build/lib32-vkd3d/out" --with-spirv-tools
+  "$_nowhere"/vkd3d-fork-build/vkd3d-proton/configure --prefix="$_nowhere/vkd3d-fork-build/build/lib32-vkd3d/out" --with-spirv-tools
   make -j$(nproc) -C "$_nowhere/vkd3d-fork-build/build/lib32-vkd3d" && make install
   cd $_nowhere
 }
