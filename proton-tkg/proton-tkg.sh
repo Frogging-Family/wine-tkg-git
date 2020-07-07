@@ -160,6 +160,7 @@ function build_vkd3d {
   git reset --hard HEAD
   git clean -xdf
   git pull origin master
+  git submodule update --init --recursive
   ./autogen.sh
   cd ..
 
