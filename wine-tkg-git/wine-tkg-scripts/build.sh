@@ -191,7 +191,7 @@ _package_nomakepkg() {
 	cp -v "$_where"/wine-tkg-scripts/wine-tkg-interactive "$_prefix"/bin/wine-tkg-interactive
 
 	# strip
-	if [ "$_nomakepkg_strip" = "true" ]; then
+	if [ "$_pkg_strip" = "true" ]; then
 	  for _f in "$_prefix"/{bin,lib,lib32,lib64}/{wine/*,*}; do
 	    if [[ "$_f" = *.so ]] || [[ "$_f" = *.dll ]]; then
 	      strip --strip-unneeded "$_f"
