@@ -86,7 +86,9 @@ pkgver() {
   # disable faudio check so we don't fail to build even if faudio libs are missing
   _faudio_ignorecheck="true"
 
-  _pkgnaming
+  if [ -z "$_localbuild" ]; then
+    _pkgnaming
+  fi
 
   # remove the faudio pkgname tag as we can't be sure it'll get used even if enabled
   pkgname="${pkgname/-faudio-git/}"
@@ -190,6 +192,14 @@ build_wine_tkg() {
       _winesrcdir="$_localbuild"
       _use_staging="false"
       pkgname="$_localbuild"
+      if [ -n "$_PKGNAME_OVERRIDE" ]; then
+        if [ "$_PKGNAME_OVERRIDE" = "none" ]; then
+          pkgname="${pkgname}"
+        else
+          pkgname="${pkgname}-${_PKGNAME_OVERRIDE}"
+        fi
+        msg2 "Overriding default pkgname. New pkgname: ${pkgname}"
+      fi
     fi
     ## prepare step end
 
