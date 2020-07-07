@@ -1875,6 +1875,8 @@ _polish() {
 	      _patchname='wine-tkg-c7760ce.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead." && nonuser_patcher
 	    fi
 	  fi
+	else
+	  _configure_args=()
 	fi
 
 	# Get rid of temp patches
