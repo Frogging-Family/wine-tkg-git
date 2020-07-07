@@ -1905,37 +1905,39 @@ _polish() {
 	  _configure_args+=(--disable-tests)
 	fi
 
-	# Set custom version so that it reports the same as pkgver
-	sed -i "s/GIT_DIR=\$(top_srcdir)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_realwineversion\"/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
+	if [ -z "$_localbuild" ]; then
+	  # Set custom version so that it reports the same as pkgver
+	  sed -i "s/GIT_DIR=\$(top_srcdir)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_realwineversion\"/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
 
-	# Set custom version tags
-	local _version_tags=()
-	_version_tags+=(TkG) # watermark to keep track of TkG builds independently of the settings
-	if [ "$_use_staging" = "true" ]; then
-	  _version_tags+=(Staging)
-	else
-	  _version_tags+=(Plain)
-	fi
-	if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ]; then
-	  _version_tags+=(Esync)
-	fi
-	if [ "$_use_fsync" = "true" ] && [ "$_staging_esync" = "true" ]; then
-	  _version_tags+=(Fsync)
-	fi
-	if [ "$_use_pba" = "true" ] && [ "$_pba_version" != "none" ]; then
-	  _version_tags+=(PBA)
-	fi
-	if [ "$_use_legacy_gallium_nine" = "true" ]; then
-	  _version_tags+=(Nine)
-	fi
-	if [ "$_use_vkd3d" = "mainline" ] || [ "$_use_vkd3d" = "fork" ]; then
-	  if [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
-	    _version_tags+=(Vkd3d DXVK-Compatible)
+	  # Set custom version tags
+	  local _version_tags=()
+	  _version_tags+=(TkG) # watermark to keep track of TkG builds independently of the settings
+	  if [ "$_use_staging" = "true" ]; then
+	    _version_tags+=(Staging)
 	  else
-	    _version_tags+=(Vkd3d)
+	    _version_tags+=(Plain)
 	  fi
+	  if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ]; then
+	   _version_tags+=(Esync)
+	  fi
+	  if [ "$_use_fsync" = "true" ] && [ "$_staging_esync" = "true" ]; then
+	    _version_tags+=(Fsync)
+	  fi
+	  if [ "$_use_pba" = "true" ] && [ "$_pba_version" != "none" ]; then
+	    _version_tags+=(PBA)
+	  fi
+	  if [ "$_use_legacy_gallium_nine" = "true" ]; then
+	    _version_tags+=(Nine)
+	  fi
+	  if [ "$_use_vkd3d" = "mainline" ] || [ "$_use_vkd3d" = "fork" ]; then
+	    if [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
+	      _version_tags+=(Vkd3d DXVK-Compatible)
+	    else
+	      _version_tags+=(Vkd3d)
+	    fi
+	  fi
+	  sed -i "s/\\\1/\\\1  ( ${_version_tags[*]} )/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
 	fi
-	sed -i "s/\\\1/\\\1  ( ${_version_tags[*]} )/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
 
 	# fix path of opencl headers
 	sed 's|OpenCL/opencl.h|CL/opencl.h|g' -i configure*
