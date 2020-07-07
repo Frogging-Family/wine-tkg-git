@@ -595,6 +595,11 @@ _prepare() {
 	  fi
 	fi
 
+	# Hotfixer early mainline
+	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
+	  _userpatch_target="wine-mainline" _userpatch_ext="myearly" hotfixer
+	fi
+
 	# wine-staging user patches
 	if [ "$_user_patches" = "true" ]; then
 	  _userpatch_target="wine-staging"
