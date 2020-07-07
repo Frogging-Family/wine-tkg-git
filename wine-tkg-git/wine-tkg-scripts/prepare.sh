@@ -1877,6 +1877,18 @@ _polish() {
 	  fi
 	else
 	  _configure_args=()
+	  # output config to logfile
+	  echo "# Last $pkgname configuration - $(date) :" > "$_where"/last_build_config.log
+	  echo "" >> "$_where"/last_build_config.log
+
+	  # log config file in use
+	  if [ -n "$_LOCAL_PRESET" ] && [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
+	    _cfgstringin="$_LOCAL_PRESET" && _cfgstring && echo "Local preset configuration file $_cfgstringout used" >> "$_where"/last_build_config.log
+	  elif [ -n "$_EXT_CONFIG_PATH" ] && [ -e "$_EXT_CONFIG_PATH" ]; then
+	    _cfgstringin="$_EXT_CONFIG_PATH" && _cfgstring && echo "External configuration file $_cfgstringout used" >> "$_where"/last_build_config.log
+	  else
+	    echo "Local cfg files used" >> "$_where"/last_build_config.log
+	  fi
 	fi
 
 	# Get rid of temp patches
