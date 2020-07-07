@@ -1,0 +1,246 @@
+ From e0e3b6bc91f7db956e3a66f2938eea45d4055a39 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 6 Jul 2020 12:04:50 +0200
+Subject: [PATCH] user32: Use WM_INPUT message hw_id as RAWINPUT handle.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This fixes the GetRawInputData regression introduced with
+359ee2ecc21b08e4118f0f77b3a208e4b5e1e63d where the message data couldn't
+be read twice, while keeping the overwrite logic it introduced.
+
+This also adds some SetLastError to fix some unit tests todos.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=49522
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
+---
+ dlls/user32/message.c      | 11 +++++-----
+ dlls/user32/rawinput.c     | 43 +++++++++++++++++++++++++-------------
+ dlls/user32/tests/input.c  |  7 -------
+ dlls/user32/user_private.h | 10 +++++++--
+ 4 files changed, 42 insertions(+), 29 deletions(-)
+
+diff --git a/dlls/user32/message.c b/dlls/user32/message.c
+index 53e0b6495ba..aadec28b559 100644
+--- a/dlls/user32/message.c
++++ b/dlls/user32/message.c
+@@ -2283,13 +2283,14 @@ static void accept_hardware_message( UINT hw_id )
+ }
+ 
+ 
+-static BOOL process_rawinput_message( MSG *msg, const struct hardware_msg_data *msg_data )
++static BOOL process_rawinput_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data )
+ {
+-    RAWINPUT *rawinput = rawinput_thread_data();
+-    if (!rawinput_from_hardware_message(rawinput, msg_data))
++    struct rawinput_thread_data *thread_data = rawinput_thread_data();
++    if (!rawinput_from_hardware_message( thread_data->buffer, msg_data ))
+         return FALSE;
+ 
+-    msg->lParam = (LPARAM)rawinput;
++    thread_data->hw_id = hw_id;
++    msg->lParam = (LPARAM)hw_id;
+     msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
+     return TRUE;
+ }
+@@ -2610,7 +2611,7 @@ static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardwar
+     context = SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
+ 
+     if (msg->message == WM_INPUT)
+-        ret = process_rawinput_message( msg, msg_data );
++        ret = process_rawinput_message( msg, hw_id, msg_data );
+     else if (is_keyboard_message( msg->message ))
+         ret = process_keyboard_message( msg, hw_id, hwnd_filter, first, last, remove );
+     else if (is_mouse_message( msg->message ))
+diff --git a/dlls/user32/rawinput.c b/dlls/user32/rawinput.c
+index b5af008e885..a4208bf1407 100644
+--- a/dlls/user32/rawinput.c
++++ b/dlls/user32/rawinput.c
+@@ -223,12 +223,14 @@ static void find_devices(void)
+ }
+ 
+ 
+-RAWINPUT *rawinput_thread_data(void)
++struct rawinput_thread_data *rawinput_thread_data(void)
+ {
+     struct user_thread_info *thread_info = get_user_thread_info();
+-    RAWINPUT *rawinput = thread_info->rawinput;
+-    if (!rawinput) rawinput = thread_info->rawinput = HeapAlloc( GetProcessHeap(), 0, RAWINPUT_BUFFER_SIZE );
+-    return rawinput;
++    struct rawinput_thread_data *data = thread_info->rawinput;
++    if (data) return data;
++    data = thread_info->rawinput = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
++                                              RAWINPUT_BUFFER_SIZE + sizeof(struct user_thread_info) );
++    return data;
+ }
+ 
+ 
+@@ -453,43 +455,51 @@ BOOL WINAPI DECLSPEC_HOTPATCH RegisterRawInputDevices(RAWINPUTDEVICE *devices, U
+  */
+ UINT WINAPI GetRawInputData(HRAWINPUT rawinput, UINT command, void *data, UINT *data_size, UINT header_size)
+ {
+-    RAWINPUT *ri = (RAWINPUT *)rawinput;
+-    UINT s;
++    struct rawinput_thread_data *thread_data = rawinput_thread_data();
++    UINT size;
+ 
+     TRACE("rawinput %p, command %#x, data %p, data_size %p, header_size %u.\n",
+             rawinput, command, data, data_size, header_size);
+ 
+-    if (!ri || !ri->header.dwSize)
++    if (!rawinput || thread_data->hw_id != (UINT_PTR)rawinput)
++    {
++        SetLastError(ERROR_INVALID_HANDLE);
+         return ~0U;
++    }
+ 
+     if (header_size != sizeof(RAWINPUTHEADER))
+     {
+         WARN("Invalid structure size %u.\n", header_size);
++        SetLastError(ERROR_INVALID_PARAMETER);
+         return ~0U;
+     }
+ 
+     switch (command)
+     {
+     case RID_INPUT:
+-        s = ri->header.dwSize;
++        size = thread_data->buffer->header.dwSize;
+         break;
+     case RID_HEADER:
+-        s = sizeof(RAWINPUTHEADER);
++        size = sizeof(RAWINPUTHEADER);
+         break;
+     default:
++        SetLastError(ERROR_INVALID_PARAMETER);
+         return ~0U;
+     }
+ 
+     if (!data)
+     {
+-        *data_size = s;
++        *data_size = size;
+         return 0;
+     }
+ 
+-    if (*data_size < s) return ~0U;
+-    memcpy(data, ri, s);
+-    ri->header.dwSize = 0;
+-    return s;
++    if (*data_size < size)
++    {
++        SetLastError(ERROR_INSUFFICIENT_BUFFER);
++        return ~0U;
++    }
++    memcpy(data, thread_data->buffer, size);
++    return size;
+ }
+ 
+ #ifdef _WIN64
+@@ -513,6 +523,7 @@ typedef struct
+ UINT WINAPI DECLSPEC_HOTPATCH GetRawInputBuffer(RAWINPUT *data, UINT *data_size, UINT header_size)
+ {
+     struct hardware_msg_data *msg_data;
++    struct rawinput_thread_data *thread_data;
+     RAWINPUT *rawinput;
+     UINT count = 0, rawinput_size, next_size, overhead;
+     BOOL is_wow64;
+@@ -551,8 +562,10 @@ UINT WINAPI DECLSPEC_HOTPATCH GetRawInputBuffer(RAWINPUT *data, UINT *data_size,
+         return 0;
+     }
+ 
+-    if (!(rawinput = rawinput_thread_data())) return ~0U;
++    if (!(thread_data = rawinput_thread_data())) return ~0U;
++    rawinput = thread_data->buffer;
+ 
++    /* first RAWINPUT block in the buffer is used for WM_INPUT message data */
+     msg_data = (struct hardware_msg_data *)NEXTRAWINPUTBLOCK(rawinput);
+     SERVER_START_REQ( get_rawinput_buffer )
+     {
+diff --git a/dlls/user32/tests/input.c b/dlls/user32/tests/input.c
+index fd401b330d5..d4b0e34fa91 100644
+--- a/dlls/user32/tests/input.c
++++ b/dlls/user32/tests/input.c
+@@ -1760,7 +1760,6 @@ static void test_GetRawInputData(void)
+     SetLastError(0xdeadbeef);
+     ret = GetRawInputData(NULL, RID_INPUT, NULL, &size, sizeof(RAWINPUTHEADER));
+     ok(ret == ~0U, "Expect ret %u, got %u\n", ~0U, ret);
+-    todo_wine
+     ok(GetLastError() == ERROR_INVALID_HANDLE, "GetRawInputData returned %08x\n", GetLastError());
+ }
+ 
+@@ -1916,36 +1915,30 @@ static LRESULT CALLBACK rawinputbuffer_wndproc(HWND hwnd, UINT msg, WPARAM wpara
+             SetLastError(0xdeadbeef);
+             count = GetRawInputData((HRAWINPUT)lparam, RID_INPUT, &ri, &size, 0);
+             ok(count == ~0U, "GetRawInputData succeeded\n");
+-            todo_wine
+             ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputData returned %08x\n", GetLastError());
+ 
+             SetLastError(0xdeadbeef);
+             size = 0;
+             count = GetRawInputData((HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER));
+             ok(count == ~0U, "GetRawInputData succeeded\n");
+-            todo_wine
+             ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "GetRawInputData returned %08x\n", GetLastError());
+ 
+             SetLastError(0xdeadbeef);
+             size = sizeof(ri);
+             count = GetRawInputData((HRAWINPUT)lparam, 0, &ri, &size, sizeof(RAWINPUTHEADER));
+             ok(count == ~0U, "GetRawInputData succeeded\n");
+-            todo_wine
+             ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputData returned %08x\n", GetLastError());
+ 
+             SetLastError(0xdeadbeef);
+             size = sizeof(ri);
+             count = GetRawInputData((HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER));
+-            todo_wine
+             ok(count == sizeof(ri), "GetRawInputData failed\n");
+-            todo_wine
+             ok(ri.data.mouse.lLastX == 6, "Unexpected rawinput data: %d\n", ri.data.mouse.lLastX);
+             ok(GetLastError() == 0xdeadbeef, "GetRawInputData returned %08x\n", GetLastError());
+         }
+         else
+         {
+             ok(count == ~0U, "GetRawInputData succeeded\n");
+-            todo_wine
+             ok(GetLastError() == ERROR_INVALID_HANDLE, "GetRawInputData returned %08x\n", GetLastError());
+         }
+ 
+diff --git a/dlls/user32/user_private.h b/dlls/user32/user_private.h
+index eb828203597..8fa54b9229a 100644
+--- a/dlls/user32/user_private.h
++++ b/dlls/user32/user_private.h
+@@ -173,6 +173,12 @@ struct wm_char_mapping_data
+ /* hold up to 10s of 1kHz mouse rawinput events */
+ #define RAWINPUT_BUFFER_SIZE (512*1024)
+ 
++struct rawinput_thread_data
++{
++    UINT     hw_id;     /* current rawinput message id */
++    RAWINPUT buffer[1]; /* rawinput message data buffer */
++};
++
+ /* this is the structure stored in TEB->Win32ClientInfo */
+ /* no attempt is made to keep the layout compatible with the Windows one */
+ struct user_thread_info
+@@ -196,7 +202,7 @@ struct user_thread_info
+     struct user_key_state_info   *key_state;              /* Cache of global key state */
+     HWND                          top_window;             /* Desktop window */
+     HWND                          msg_window;             /* HWND_MESSAGE parent window */
+-    RAWINPUT                     *rawinput;
++    struct rawinput_thread_data  *rawinput;               /* RawInput thread local data / buffer */
+ };
+ 
+ C_ASSERT( sizeof(struct user_thread_info) <= sizeof(((TEB *)0)->Win32ClientInfo) );
+@@ -236,7 +242,7 @@ struct tagWND;
+ 
+ struct hardware_msg_data;
+ extern BOOL rawinput_from_hardware_message(RAWINPUT *rawinput, const struct hardware_msg_data *msg_data);
+-extern RAWINPUT *rawinput_thread_data(void);
++extern struct rawinput_thread_data *rawinput_thread_data(void);
+ 
+ extern void CLIPBOARD_ReleaseOwner( HWND hwnd ) DECLSPEC_HIDDEN;
+ extern BOOL FOCUS_MouseActivate( HWND hwnd ) DECLSPEC_HIDDEN;
+
