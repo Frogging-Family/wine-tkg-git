@@ -1849,13 +1849,15 @@ EOM
 
 	echo -e "" >> "$_where"/last_build_config.log
 	_commitmsg="04-post-staging" _committer
+}
 
+_polish() {
 	# wine user patches
 	if [ "$_user_patches" = "true" ]; then
 	  _userpatch_target="plain-wine"
 	  _userpatch_ext="my"
 	  cd "${srcdir}"/"${_winesrcdir}"
-	  if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
+	  if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ -z "$_localbuild" ]; then
 	    hotfixer && _commitmsg="05-hotfixes" _committer
 	  fi
 	  user_patcher && _commitmsg="06-userpatches" _committer
@@ -1863,13 +1865,15 @@ EOM
 
 	echo "" >> "$_where"/last_build_config.log
 
-	if [ "$_use_staging" = "true" ] && [ "$_LOCAL_PRESET" != "staging" ]; then
-	  _patchname='wine-tkg-staging.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead." && nonuser_patcher
-	elif [ "$_use_staging" != "true" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
-	  if git merge-base --is-ancestor c7760ce7a247eeb9f15b51d0ec68ca0961efc0b0 HEAD; then
-	    _patchname='wine-tkg.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead." && nonuser_patcher
-	  else
-	    _patchname='wine-tkg-c7760ce.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead." && nonuser_patcher
+	if [ -z "$_localbuild" ]; then
+	  if [ "$_use_staging" = "true" ] && [ "$_LOCAL_PRESET" != "staging" ]; then
+	    _patchname='wine-tkg-staging.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead." && nonuser_patcher
+	  elif [ "$_use_staging" != "true" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
+	    if git merge-base --is-ancestor c7760ce7a247eeb9f15b51d0ec68ca0961efc0b0 HEAD; then
+	      _patchname='wine-tkg.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead." && nonuser_patcher
+	    else
+	      _patchname='wine-tkg-c7760ce.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead." && nonuser_patcher
+	    fi
 	  fi
 	fi
 

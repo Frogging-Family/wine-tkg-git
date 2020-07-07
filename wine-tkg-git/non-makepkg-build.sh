@@ -181,10 +181,16 @@ build_wine_tkg() {
 
   if [ "$_SKIPBUILDING" != "true" ]; then
     msg2 "Cloning and preparing sources... Please be patient."
-    _nomakepkgsrcinit > "$_where"/prepare.log 2>&1
+    if [ -z "$_localbuild" ]; then
+      _nomakepkgsrcinit > "$_where"/prepare.log 2>&1
 
-    _source_cleanup >> "$_where"/prepare.log
-    _prepare
+      _source_cleanup > "$_where"/prepare.log
+      _prepare
+    else
+      _winesrcdir="$_localbuild"
+      _use_staging="false"
+      pkgname="$_localbuild"
+    fi
     ## prepare step end
 
     _prebuild_common
@@ -192,6 +198,7 @@ build_wine_tkg() {
 
   pkgver=$(pkgver)
 
+  _polish
   _makedirs
 
   if [ "$_nomakepkg_nover" = "true" ] ; then
