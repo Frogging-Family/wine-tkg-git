@@ -186,12 +186,13 @@ build_wine_tkg() {
     if [ -z "$_localbuild" ]; then
       _nomakepkgsrcinit > "$_where"/prepare.log 2>&1
 
-      _source_cleanup > "$_where"/prepare.log
+      _source_cleanup >> "$_where"/prepare.log
       _prepare
     else
       _winesrcdir="$_localbuild"
       _use_staging="false"
       pkgname="$_localbuild"
+      echo -e "Building local source $_localbuild" > "$_where"/prepare.log
       if [ -n "$_PKGNAME_OVERRIDE" ]; then
         if [ "$_PKGNAME_OVERRIDE" = "none" ]; then
           pkgname="${pkgname}"
