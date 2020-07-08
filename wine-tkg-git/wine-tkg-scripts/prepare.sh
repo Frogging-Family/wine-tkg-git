@@ -496,12 +496,14 @@ _prepare() {
 	  read -rp "Do you want to run configure? You need to run it at least once to populate your build dirs!"$'\n> N/y : ' _DEBUGANSW3;
 	fi
 
-	# Reverts for commits known to break specific versions of the FS hack
+	# Reverts
 	nonuser_reverter() {
 	  if git merge-base --is-ancestor $_committorevert HEAD; then
 	    echo -e "\n$_committorevert reverted $_hotfixmsg" >> "$_where"/prepare.log
 	    git revert -n --no-edit $_committorevert >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
-	    echo -e "$_committorevert reverted $_hotfixmsg" >> "$_where"/last_build_config.log
+	    if [ "$_hotfixmsg" != "(hotfix)" ] && [ "$_hotfixmsg" != "(staging hotfix)" ]; then
+	      echo -e "$_committorevert reverted $_hotfixmsg" >> "$_where"/last_build_config.log
+	    fi
 	  fi
 	}
 
@@ -518,6 +520,7 @@ _prepare() {
 	    _committorevert=$_commit _hotfixmsg="(staging hotfix)" nonuser_reverter
 	    cd "${srcdir}"/"${_winesrcdir}"
 	  done
+	  echo -e "Done applying reverting hotfixes (if any) - list available in prepare.log" >> "$_where"/last_build_config.log
 	fi
 
 	echo "" >> "$_where"/last_build_config.log
