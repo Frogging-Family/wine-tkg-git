@@ -1130,8 +1130,10 @@ _prepare() {
 
 	# Fix for Mortal Kombat 11 - Requires staging, native mfplat (win7) and a different GPU driver than RADV
 	if [ "$_mk11_fix" = "true" ] && [ "$_use_staging" = "true" ]; then
-	  if git merge-base --is-ancestor fb7cc99f8a8c5a1594cfa780807d5e75f4b9539e HEAD; then
+	  if git merge-base --is-ancestor 2ea3e40465f0530ad71c31e77c9727c00673d91f HEAD; then
 	    _patchname='mk11.patch' && _patchmsg="Applied Mortal Kombat 11 fix" && nonuser_patcher
+	  elif git merge-base --is-ancestor fb7cc99f8a8c5a1594cfa780807d5e75f4b9539e HEAD; then
+	    _patchname='mk11-2ea3e40.patch' && _patchmsg="Applied Mortal Kombat 11 fix" && nonuser_patcher
 	  elif git merge-base --is-ancestor 78e9b02cebf4b107aba69aa9a845ab661a7daf10 HEAD; then
 	    _patchname='mk11-fb7cc99.patch' && _patchmsg="Applied Mortal Kombat 11 fix" && nonuser_patcher
 	  elif git merge-base --is-ancestor b1c748c85205970b97cd31b4347a751c58b2d72e HEAD; then
