@@ -42,6 +42,11 @@ _prebuild_common() {
 	echo "LDFLAGS = ${LDFLAGS}" >> "$_where"/last_build_config.log
 	echo "CROSSCFLAGS = ${CROSSCFLAGS}" >> "$_where"/last_build_config.log
 	echo "CROSSLDFLAGS = ${CROSSLDFLAGS}" >> "$_where"/last_build_config.log
+
+	# Disable tests by default, enable back with _enable_tests="true"
+	if [ "$_ENABLE_TESTS" != "true" ]; then
+	  _configure_args+=(--disable-tests)
+	fi
 }
 
 _build() {
