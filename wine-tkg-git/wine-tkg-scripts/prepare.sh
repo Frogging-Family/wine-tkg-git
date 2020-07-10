@@ -1914,11 +1914,6 @@ _polish() {
 	tools/make_requests
 	autoreconf -f
 
-	# Disable tests by default, enable back with _enable_tests="true"
-	if [ "$_ENABLE_TESTS" != "true" ]; then
-	  _configure_args+=(--disable-tests)
-	fi
-
 	if [ -z "$_localbuild" ]; then
 	  # Set custom version so that it reports the same as pkgver
 	  sed -i "s/GIT_DIR=\$(top_srcdir)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_realwineversion\"/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
