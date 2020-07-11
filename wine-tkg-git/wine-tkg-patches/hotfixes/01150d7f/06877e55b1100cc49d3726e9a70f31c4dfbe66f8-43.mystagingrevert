@@ -1,3 +1,980 @@
+diff --git a/patches/advapi32-CreateRestrictedToken/0001-ntdll-Implement-NtFilterToken.patch b/patches/advapi32-CreateRestrictedToken/0001-ntdll-Implement-NtFilterToken.patch
+index af044c166..40d9143a9 100644
+--- a/patches/advapi32-CreateRestrictedToken/0001-ntdll-Implement-NtFilterToken.patch
++++ b/patches/advapi32-CreateRestrictedToken/0001-ntdll-Implement-NtFilterToken.patch
+@@ -1,27 +1,29 @@
+-From 1eb8acd819f9eee8fdf154d0ef43881008265916 Mon Sep 17 00:00:00 2001
++From 5a8cf4ee45f472a7b455aba19fa0c2a0b0b87473 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Michael=20M=C3=BCller?= <michael@fds-team.de>
+ Date: Fri, 4 Aug 2017 02:33:14 +0200
+-Subject: ntdll: Implement NtFilterToken.
++Subject: [PATCH] ntdll: Implement NtFilterToken.
+ 
+ ---
+- dlls/ntdll/nt.c       | 59 ++++++++++++++++++++++++++++++++++++
++ dlls/ntdll/nt.c       | 59 ++++++++++++++++++++++++++++++
+  dlls/ntdll/ntdll.spec |  2 +-
+  include/winnt.h       |  5 +++
+  include/winternl.h    |  1 +
++ server/named_pipe.c   |  2 +-
+  server/process.c      |  2 +-
+  server/protocol.def   | 10 ++++++
+  server/security.h     |  4 ++-
+- server/token.c        | 84 +++++++++++++++++++++++++++++++++++++++++++++++++--
+- 8 files changed, 162 insertions(+), 5 deletions(-)
++ server/token.c        | 84 +++++++++++++++++++++++++++++++++++++++++--
++ 9 files changed, 163 insertions(+), 6 deletions(-)
+ 
+ diff --git a/dlls/ntdll/nt.c b/dlls/ntdll/nt.c
+-index c3f5df3..59a08de 100644
++index 2d2d9a7e3d8..ce6904dbcfb 100644
+ --- a/dlls/ntdll/nt.c
+ +++ b/dlls/ntdll/nt.c
+-@@ -119,6 +119,65 @@ NTSTATUS WINAPI NtDuplicateToken(
++@@ -90,6 +90,65 @@ NTSTATUS WINAPI NtDuplicateToken(
++     return status;
+  }
+  
+- /******************************************************************************
+++/******************************************************************************
+ + *  NtFilterToken        [NTDLL.@]
+ + *  ZwFilterToken        [NTDLL.@]
+ + */
+@@ -80,15 +82,14 @@ index c3f5df3..59a08de 100644
+ +    return status;
+ +}
+ +
+-+/******************************************************************************
++ /******************************************************************************
+   *  NtOpenProcessToken		[NTDLL.@]
+   *  ZwOpenProcessToken		[NTDLL.@]
+-  */
+ diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+-index c260b0d..3c5e69c 100644
++index bd41da37af4..c65902a2adf 100644
+ --- a/dlls/ntdll/ntdll.spec
+ +++ b/dlls/ntdll/ntdll.spec
+-@@ -176,7 +176,7 @@
++@@ -208,7 +208,7 @@
+  # @ stub NtEnumerateSystemEnvironmentValuesEx
+  @ stdcall NtEnumerateValueKey(long long long ptr long ptr)
+  @ stub NtExtendSection
+@@ -98,10 +99,10 @@ index c260b0d..3c5e69c 100644
+  @ stdcall NtFlushBuffersFile(long ptr)
+  @ stdcall NtFlushInstructionCache(long ptr long)
+ diff --git a/include/winnt.h b/include/winnt.h
+-index 16d96d8..4e238f9 100644
++index e1cf78420a6..da17fe3e330 100644
+ --- a/include/winnt.h
+ +++ b/include/winnt.h
+-@@ -3904,6 +3904,11 @@ typedef enum _TOKEN_INFORMATION_CLASS {
++@@ -4221,6 +4221,11 @@ typedef enum _TOKEN_INFORMATION_CLASS {
+  					TOKEN_ADJUST_SESSIONID | \
+  					TOKEN_ADJUST_DEFAULT )
+  
+@@ -114,10 +115,10 @@ index 16d96d8..4e238f9 100644
+  #define _SECURITY_DEFINED
+  
+ diff --git a/include/winternl.h b/include/winternl.h
+-index c84e6d7..288f93e 100644
++index 10d109fede1..d2cf7d89ab5 100644
+ --- a/include/winternl.h
+ +++ b/include/winternl.h
+-@@ -2303,6 +2303,7 @@ NTSYSAPI NTSTATUS  WINAPI NtDuplicateToken(HANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES
++@@ -2749,6 +2749,7 @@ NTSYSAPI NTSTATUS  WINAPI NtDuplicateToken(HANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES
+  NTSYSAPI NTSTATUS  WINAPI NtEnumerateKey(HANDLE,ULONG,KEY_INFORMATION_CLASS,void *,DWORD,DWORD *);
+  NTSYSAPI NTSTATUS  WINAPI NtEnumerateValueKey(HANDLE,ULONG,KEY_VALUE_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+  NTSYSAPI NTSTATUS  WINAPI NtExtendSection(HANDLE,PLARGE_INTEGER);
+@@ -125,11 +126,24 @@ index c84e6d7..288f93e 100644
+  NTSYSAPI NTSTATUS  WINAPI NtFindAtom(const WCHAR*,ULONG,RTL_ATOM*);
+  NTSYSAPI NTSTATUS  WINAPI NtFlushBuffersFile(HANDLE,IO_STATUS_BLOCK*);
+  NTSYSAPI NTSTATUS  WINAPI NtFlushInstructionCache(HANDLE,LPCVOID,SIZE_T);
++diff --git a/server/named_pipe.c b/server/named_pipe.c
++index b259abb8de4..4cd4d7dc4a8 100644
++--- a/server/named_pipe.c
+++++ b/server/named_pipe.c
++@@ -1142,7 +1142,7 @@ static int pipe_server_ioctl( struct fd *fd, ioctl_code_t code, struct async *as
++         if (current->process->token) /* FIXME: use the client token */
++         {
++             struct token *token;
++-            if (!(token = token_duplicate( current->process->token, 0, SecurityImpersonation, NULL )))
+++            if (!(token = token_duplicate( current->process->token, 0, SecurityImpersonation, NULL, NULL, 0, NULL, 0 )))
++                 return 0;
++             if (current->token) release_object( current->token );
++             current->token = token;
+ diff --git a/server/process.c b/server/process.c
+-index f8739d0..71d9d6d 100644
++index 5e587b28cbe..406167e825b 100644
+ --- a/server/process.c
+ +++ b/server/process.c
+-@@ -566,7 +566,7 @@ struct thread *create_process( int fd, struct thread *parent_thread, int inherit
++@@ -577,7 +577,7 @@ struct process *create_process( int fd, struct process *parent, int inherit_all,
+                                         : alloc_handle_table( process, 0 );
+          /* Note: for security reasons, starting a new process does not attempt
+           * to use the current impersonation token for the new process */
+@@ -139,10 +153,10 @@ index f8739d0..71d9d6d 100644
+      }
+      if (!process->handles || !process->token) goto error;
+ diff --git a/server/protocol.def b/server/protocol.def
+-index 35824ae..6ee6d28 100644
++index 19dd9afb24d..43e0862433a 100644
+ --- a/server/protocol.def
+ +++ b/server/protocol.def
+-@@ -3356,6 +3356,16 @@ enum caret_state
++@@ -3293,6 +3293,16 @@ enum caret_state
+      obj_handle_t  new_handle; /* duplicated handle */
+  @END
+  
+@@ -160,10 +174,10 @@ index 35824ae..6ee6d28 100644
+      obj_handle_t    handle; /* handle to the token */
+      unsigned int    desired_access; /* desired access to the object */
+ diff --git a/server/security.h b/server/security.h
+-index 873bbc6..bc4a8f6 100644
++index 606dbb2ab2c..6c337143c3d 100644
+ --- a/server/security.h
+ +++ b/server/security.h
+-@@ -55,7 +55,9 @@ extern const PSID security_high_label_sid;
++@@ -56,7 +56,9 @@ extern const PSID security_high_label_sid;
+  extern struct token *token_create_admin(void);
+  extern int token_assign_label( struct token *token, PSID label );
+  extern struct token *token_duplicate( struct token *src_token, unsigned primary,
+@@ -175,10 +189,10 @@ index 873bbc6..bc4a8f6 100644
+                                     const LUID_AND_ATTRIBUTES *reqprivs,
+                                     unsigned int count, LUID_AND_ATTRIBUTES *usedprivs);
+ diff --git a/server/token.c b/server/token.c
+-index 0810a61..2f6a467 100644
++index 2fa95e17aaf..38a4c203d54 100644
+ --- a/server/token.c
+ +++ b/server/token.c
+-@@ -276,6 +276,19 @@ static int acl_is_valid( const ACL *acl, data_size_t size )
++@@ -285,6 +285,19 @@ static int acl_is_valid( const ACL *acl, data_size_t size )
+      return TRUE;
+  }
+  
+@@ -198,7 +212,7 @@ index 0810a61..2f6a467 100644
+  /* checks whether all members of a security descriptor fit inside the size
+   * of memory specified */
+  int sd_is_valid( const struct security_descriptor *sd, data_size_t size )
+-@@ -619,8 +632,36 @@ static struct token *create_token( unsigned primary, const SID *user,
++@@ -626,8 +639,36 @@ static struct token *create_token( unsigned primary, const SID *user,
+      return token;
+  }
+  
+@@ -236,7 +250,7 @@ index 0810a61..2f6a467 100644
+  {
+      const luid_t *modified_id =
+          primary || (impersonation_level == src_token->impersonation_level) ?
+-@@ -656,6 +697,12 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
++@@ -663,6 +704,12 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
+              return NULL;
+          }
+          memcpy( newgroup, group, size );
+@@ -249,7 +263,7 @@ index 0810a61..2f6a467 100644
+          list_add_tail( &token->groups, &newgroup->entry );
+          if (src_token->primary_group == &group->sid)
+          {
+-@@ -667,11 +714,14 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
++@@ -674,11 +721,14 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
+  
+      /* copy privileges */
+      LIST_FOR_EACH_ENTRY( privilege, &src_token->privileges, struct privilege, entry )
+@@ -264,7 +278,7 @@ index 0810a61..2f6a467 100644
+  
+      if (sd) default_set_sd( &token->obj, sd, OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+                              DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION );
+-@@ -1304,7 +1354,7 @@ DECL_HANDLER(duplicate_token)
++@@ -1311,7 +1361,7 @@ DECL_HANDLER(duplicate_token)
+                                                       TOKEN_DUPLICATE,
+                                                       &token_ops )))
+      {
+@@ -273,7 +287,7 @@ index 0810a61..2f6a467 100644
+          if (token)
+          {
+              reply->new_handle = alloc_handle_no_access_check( current->process, token, req->access, objattr->attributes );
+-@@ -1314,6 +1364,36 @@ DECL_HANDLER(duplicate_token)
++@@ -1321,6 +1371,36 @@ DECL_HANDLER(duplicate_token)
+      }
+  }
+  
+@@ -311,5 +325,5 @@ index 0810a61..2f6a467 100644
+  DECL_HANDLER(check_token_privileges)
+  {
+ -- 
+-2.7.4
++2.27.0
+ 
+diff --git a/patches/advapi32-Token_Integrity_Level/0013-server-Correctly-assign-security-labels-for-tokens.patch b/patches/advapi32-Token_Integrity_Level/0013-server-Correctly-assign-security-labels-for-tokens.patch
+index b880863da..1e1a9214d 100644
+--- a/patches/advapi32-Token_Integrity_Level/0013-server-Correctly-assign-security-labels-for-tokens.patch
++++ b/patches/advapi32-Token_Integrity_Level/0013-server-Correctly-assign-security-labels-for-tokens.patch
+@@ -1,20 +1,21 @@
+-From 6d8fd34cabbcbc64062675be610fb8704fcdc3ec Mon Sep 17 00:00:00 2001
++From a8915b8ebd4c06b0216fc82d1ba8d958a677eccf Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Michael=20M=C3=BCller?= <michael@fds-team.de>
+ Date: Mon, 7 Aug 2017 03:33:26 +0200
+ Subject: [PATCH] server: Correctly assign security labels for tokens.
+ 
+ ---
+- dlls/advapi32/tests/security.c | 21 ++++++++++-----------
+- server/process.c               |  8 +-------
++ dlls/advapi32/tests/security.c | 21 +++++++++--------
++ server/named_pipe.c            |  2 +-
++ server/process.c               |  8 +------
+  server/security.h              |  2 +-
+- server/token.c                 | 41 ++++++++++++++++++++++++-----------------
+- 4 files changed, 36 insertions(+), 36 deletions(-)
++ server/token.c                 | 41 ++++++++++++++++++++--------------
++ 5 files changed, 37 insertions(+), 37 deletions(-)
+ 
+ diff --git a/dlls/advapi32/tests/security.c b/dlls/advapi32/tests/security.c
+-index bf4161c..0610ec7 100644
++index 94f3ea4601a..ab572421a73 100644
+ --- a/dlls/advapi32/tests/security.c
+ +++ b/dlls/advapi32/tests/security.c
+-@@ -7186,7 +7186,6 @@ static void test_token_security_descriptor(void)
++@@ -7105,7 +7105,6 @@ static void test_token_security_descriptor(void)
+      defaulted = TRUE;
+      ret = GetSecurityDescriptorDacl(sd2, &present, &acl2, &defaulted);
+      ok(ret, "GetSecurityDescriptorDacl failed with error %u\n", GetLastError());
+@@ -22,7 +23,7 @@ index bf4161c..0610ec7 100644
+      ok(present, "DACL not present\n");
+  
+      if (present)
+-@@ -7307,7 +7306,7 @@ static void test_token_security_descriptor(void)
++@@ -7226,7 +7225,7 @@ static void test_token_security_descriptor(void)
+                  ok(ret, "GetAce failed with error %u\n", GetLastError());
+                  ok(ace->Header.AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE,
+                     "Unexpected ACE type %#x\n", ace->Header.AceType);
+@@ -31,7 +32,7 @@ index bf4161c..0610ec7 100644
+                     "Expected medium integrity level\n");
+              }
+  
+-@@ -7360,8 +7359,8 @@ static void test_token_security_descriptor(void)
++@@ -7279,8 +7278,8 @@ static void test_token_security_descriptor(void)
+              sacl = NULL;
+              ret = GetSecurityDescriptorSacl(sd3, &present, &sacl, &defaulted);
+              ok(ret, "GetSecurityDescriptorSacl failed with error %u\n", GetLastError());
+@@ -42,7 +43,7 @@ index bf4161c..0610ec7 100644
+  
+              if (sacl)
+              {
+-@@ -7410,8 +7409,8 @@ static void test_token_security_descriptor(void)
++@@ -7329,8 +7328,8 @@ static void test_token_security_descriptor(void)
+              sacl = NULL;
+              ret = GetSecurityDescriptorSacl(sd3, &present, &sacl, &defaulted);
+              ok(ret, "GetSecurityDescriptorSacl failed with error %u\n", GetLastError());
+@@ -53,7 +54,7 @@ index bf4161c..0610ec7 100644
+  
+              if (sacl)
+              {
+-@@ -7475,8 +7474,8 @@ static void test_token_security_descriptor(void)
++@@ -7394,8 +7393,8 @@ static void test_token_security_descriptor(void)
+  
+          ret = GetSecurityDescriptorSacl(sd3, &present, &sacl, &defaulted);
+          ok(ret, "GetSecurityDescriptorSacl failed with error %u\n", GetLastError());
+@@ -64,7 +65,7 @@ index bf4161c..0610ec7 100644
+  
+          if (sacl)
+          {
+-@@ -7513,8 +7512,8 @@ static void test_token_security_descriptor(void)
++@@ -7432,8 +7431,8 @@ static void test_token_security_descriptor(void)
+          sacl = NULL;
+          ret = GetSecurityDescriptorSacl(sd3, &present, &sacl, &defaulted);
+          ok(ret, "GetSecurityDescriptorSacl failed with error %u\n", GetLastError());
+@@ -75,7 +76,7 @@ index bf4161c..0610ec7 100644
+  
+          if (sacl)
+          {
+-@@ -7732,7 +7731,7 @@ static void test_child_token_sd_medium(void)
++@@ -7652,7 +7651,7 @@ static void test_child_token_sd_medium(void)
+      ok(ret, "GetAce failed with error %u\n", GetLastError());
+      ok(ace_label->Header.AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE,
+         "Unexpected ACE type %#x\n", ace_label->Header.AceType);
+@@ -84,11 +85,24 @@ index bf4161c..0610ec7 100644
+         "Expected medium integrity level\n");
+  
+      memset(buffer_integrity, 0, sizeof(buffer_integrity));
++diff --git a/server/named_pipe.c b/server/named_pipe.c
++index 4cd4d7dc4a8..06bf8402aea 100644
++--- a/server/named_pipe.c
+++++ b/server/named_pipe.c
++@@ -1142,7 +1142,7 @@ static int pipe_server_ioctl( struct fd *fd, ioctl_code_t code, struct async *as
++         if (current->process->token) /* FIXME: use the client token */
++         {
++             struct token *token;
++-            if (!(token = token_duplicate( current->process->token, 0, SecurityImpersonation, NULL, NULL, 0, NULL, 0 )))
+++            if (!(token = token_duplicate( current->process->token, 0, SecurityImpersonation, NULL, NULL, 0, NULL, 0, NULL )))
++                 return 0;
++             if (current->token) release_object( current->token );
++             current->token = token;
+ diff --git a/server/process.c b/server/process.c
+-index b7c9da3..250f777 100644
++index 31d5b96a25d..2c485831e33 100644
+ --- a/server/process.c
+ +++ b/server/process.c
+-@@ -562,17 +562,11 @@ struct process *create_process( int fd, struct thread *parent_thread, int inheri
++@@ -577,17 +577,11 @@ struct process *create_process( int fd, struct process *parent, int inherit_all,
+                                         : alloc_handle_table( process, 0 );
+          /* Note: for security reasons, starting a new process does not attempt
+           * to use the current impersonation token for the new process */
+@@ -108,7 +122,7 @@ index b7c9da3..250f777 100644
+      return process;
+  
+ diff --git a/server/security.h b/server/security.h
+-index 32dfe5f..87377cc 100644
++index 32dfe5f8db9..87377ccd673 100644
+ --- a/server/security.h
+ +++ b/server/security.h
+ @@ -59,7 +59,7 @@ extern int token_assign_label( struct token *token, PSID label );
+@@ -121,10 +135,10 @@ index 32dfe5f..87377cc 100644
+                                     const LUID_AND_ATTRIBUTES *reqprivs,
+                                     unsigned int count, LUID_AND_ATTRIBUTES *usedprivs);
+ diff --git a/server/token.c b/server/token.c
+-index 5db97b4..bd251c7 100644
++index 2f466aa1b25..23bc1cc13f7 100644
+ --- a/server/token.c
+ +++ b/server/token.c
+-@@ -668,7 +668,7 @@ static int filter_privilege( struct privilege *privilege, const LUID_AND_ATTRIBU
++@@ -675,7 +675,7 @@ static int filter_privilege( struct privilege *privilege, const LUID_AND_ATTRIBU
+  struct token *token_duplicate( struct token *src_token, unsigned primary,
+                                 int impersonation_level, const struct security_descriptor *sd,
+                                 const LUID_AND_ATTRIBUTES *filter_privileges, unsigned int priv_count,
+@@ -133,7 +147,7 @@ index 5db97b4..bd251c7 100644
+  {
+      const luid_t *modified_id =
+          primary || (impersonation_level == src_token->impersonation_level) ?
+-@@ -735,6 +735,12 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
++@@ -742,6 +742,12 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
+      if (sd) default_set_sd( &token->obj, sd, OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+                              DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION );
+  
+@@ -146,7 +160,7 @@ index 5db97b4..bd251c7 100644
+      return token;
+  }
+  
+-@@ -906,6 +912,12 @@ struct token *token_create_admin( void )
++@@ -913,6 +919,12 @@ struct token *token_create_admin( void )
+                                admin_source, NULL, -1, TokenElevationTypeFull, &high_label_sid );
+          /* we really need a primary group */
+          assert( token->primary_group );
+@@ -159,7 +173,7 @@ index 5db97b4..bd251c7 100644
+      }
+  
+      free( logon_sid );
+-@@ -964,6 +976,12 @@ static struct token *token_create_limited( void )
++@@ -971,6 +983,12 @@ static struct token *token_create_limited( void )
+                                admin_source, NULL, -1, TokenElevationTypeLimited, &medium_label_sid );
+          /* we really need a primary group */
+          assert( token->primary_group );
+@@ -172,7 +186,7 @@ index 5db97b4..bd251c7 100644
+      }
+  
+      free( logon_sid );
+-@@ -1432,7 +1450,8 @@ DECL_HANDLER(duplicate_token)
++@@ -1439,7 +1457,8 @@ DECL_HANDLER(duplicate_token)
+                                                       TOKEN_DUPLICATE,
+                                                       &token_ops )))
+      {
+@@ -182,7 +196,7 @@ index 5db97b4..bd251c7 100644
+          if (token)
+          {
+              unsigned int access = req->access ? req->access : get_handle_access( current->process, req->handle );
+-@@ -1462,7 +1481,7 @@ DECL_HANDLER(filter_token)
++@@ -1469,7 +1488,7 @@ DECL_HANDLER(filter_token)
+          group_count = get_sid_count( filter_groups, get_req_data_size() - priv_count * sizeof(LUID_AND_ATTRIBUTES) );
+  
+          token = token_duplicate( src_token, src_token->primary, src_token->impersonation_level, NULL,
+@@ -191,7 +205,7 @@ index 5db97b4..bd251c7 100644
+          if (token)
+          {
+              unsigned int access = get_handle_access( current->process, req->handle );
+-@@ -1788,23 +1807,11 @@ DECL_HANDLER(set_token_default_dacl)
++@@ -1795,23 +1814,11 @@ DECL_HANDLER(set_token_default_dacl)
+  DECL_HANDLER(create_token)
+  {
+      struct token *token;
+@@ -218,5 +232,5 @@ index 5db97b4..bd251c7 100644
+      }
+  }
+ -- 
+-2.7.4
++2.27.0
+ 
+diff --git a/patches/ntdll-DOS_Attributes/0004-ntdll-Implement-storing-DOS-attributes-in-NtCreateFi.patch b/patches/ntdll-DOS_Attributes/0004-ntdll-Implement-storing-DOS-attributes-in-NtCreateFi.patch
+index 72f4a4739..cae68f416 100644
+--- a/patches/ntdll-DOS_Attributes/0004-ntdll-Implement-storing-DOS-attributes-in-NtCreateFi.patch
++++ b/patches/ntdll-DOS_Attributes/0004-ntdll-Implement-storing-DOS-attributes-in-NtCreateFi.patch
+@@ -1,14 +1,14 @@
+-From 1deb289cab2a4271ec84b4636e39a467bd52b117 Mon Sep 17 00:00:00 2001
++From 1eb9ac00c49041448f53be5a6b4097222567a8af Mon Sep 17 00:00:00 2001
+ From: "Erich E. Hoover" <erich.e.hoover@gmail.com>
+ Date: Wed, 20 Aug 2014 15:28:00 -0600
+-Subject: [PATCH 3/7] ntdll: Implement storing DOS attributes in NtCreateFile.
++Subject: [PATCH] ntdll: Implement storing DOS attributes in NtCreateFile.
+ 
+ ---
+- dlls/ntdll/tests/directory.c | 24 ++++++------
+- dlls/ntdll/unix/file.c       | 74 +++++++++++++++++++++++-------------
+- include/wine/port.h          |  2 +
+- libs/port/xattr.c            | 20 ++++++++++
+- 4 files changed, 81 insertions(+), 39 deletions(-)
++ dlls/ntdll/tests/directory.c | 24 +++++++++++-------------
++ dlls/ntdll/unix/file.c       | 25 ++++++++++++++++++++++++-
++ include/wine/port.h          |  2 ++
++ libs/port/xattr.c            | 20 ++++++++++++++++++++
++ 4 files changed, 57 insertions(+), 14 deletions(-)
+ 
+ diff --git a/dlls/ntdll/tests/directory.c b/dlls/ntdll/tests/directory.c
+ index 248ed99ab20..e0f4debc624 100644
+@@ -60,10 +60,10 @@ index 248ed99ab20..e0f4debc624 100644
+          }
+          testfiles[i].nfound++;
+ diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+-index d1f1b8c8f30..32653a110a2 100644
++index f1176717819..aee464fbd16 100644
+ --- a/dlls/ntdll/unix/file.c
+ +++ b/dlls/ntdll/unix/file.c
+-@@ -3580,6 +3580,20 @@ void CDECL set_show_dot_files( BOOL enable )
++@@ -3595,6 +3595,20 @@ void CDECL set_show_dot_files( BOOL enable )
+      show_dot_files = enable;
+  }
+  
+@@ -83,8 +83,8 @@ index d1f1b8c8f30..32653a110a2 100644
+ +}
+  
+  /******************************************************************************
+-  *              NtCreateFile   (NTDLL.@)
+-@@ -3589,6 +3603,10 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
++  *              open_unix_file
++@@ -3640,6 +3654,10 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
+                                ULONG attributes, ULONG sharing, ULONG disposition,
+                                ULONG options, void *ea_buffer, ULONG ea_length )
+  {
+@@ -95,68 +95,15 @@ index d1f1b8c8f30..32653a110a2 100644
+      char *unix_name;
+      BOOL created = FALSE;
+  
+-@@ -3631,36 +3649,34 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
+-         io->u.Status = STATUS_SUCCESS;
+-     }
+- 
+--    if (io->u.Status == STATUS_SUCCESS)
+-+    if (io->u.Status != STATUS_SUCCESS)
++@@ -3686,7 +3704,6 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
+      {
+--        static UNICODE_STRING empty_string;
+--        OBJECT_ATTRIBUTES unix_attr = *attr;
+--        data_size_t len;
+--        struct object_attributes *objattr;
+-+        WARN("%s not found (%x)\n", debugstr_us(attr->ObjectName), io->u.Status );
+-+        return io->u.Status;
+-+    }
+- 
+--        unix_attr.ObjectName = &empty_string;  /* we send the unix name instead */
+--        if ((io->u.Status = alloc_object_attributes( &unix_attr, &objattr, &len )))
+--        {
+--            RtlFreeHeap( GetProcessHeap(), 0, unix_name );
+--            return io->u.Status;
+--        }
+--        SERVER_START_REQ( create_file )
+--        {
+--            req->access     = access;
+--            req->sharing    = sharing;
+--            req->create     = disposition;
+--            req->options    = options;
+--            req->attrs      = attributes;
+--            wine_server_add_data( req, objattr, len );
+--            wine_server_add_data( req, unix_name, strlen(unix_name) );
+--            io->u.Status = wine_server_call( req );
+--            *handle = wine_server_ptr_handle( reply->handle );
+--        }
+--        SERVER_END_REQ;
+--        free( objattr );
+-+    unix_attr = *attr;
+-+    unix_attr.ObjectName = &empty_string;  /* we send the unix name instead */
+-+    if ((io->u.Status = alloc_object_attributes( &unix_attr, &objattr, &len )))
+-+    {
+-         RtlFreeHeap( GetProcessHeap(), 0, unix_name );
+-+        return io->u.Status;
+-+    }
+-+
+-+    SERVER_START_REQ( create_file )
+-+    {
+-+        req->access     = access;
+-+        req->sharing    = sharing;
+-+        req->create     = disposition;
+-+        req->options    = options;
+-+        req->attrs      = attributes;
+-+        wine_server_add_data( req, objattr, len );
+-+        wine_server_add_data( req, unix_name, strlen(unix_name) );
+-+        io->u.Status = wine_server_call( req );
+-+        *handle = wine_server_ptr_handle( reply->handle );
++         io->u.Status = open_unix_file( handle, unix_name, access, attr, attributes,
++                                        sharing, disposition, options, ea_buffer, ea_length );
++-        RtlFreeHeap( GetProcessHeap(), 0, unix_name );
+      }
+--    else WARN( "%s not found (%x)\n", debugstr_us(attr->ObjectName), io->u.Status );
+-+    SERVER_END_REQ;
+-+    free( objattr );
++     else WARN( "%s not found (%x)\n", debugstr_us(attr->ObjectName), io->u.Status );
+  
+-     if (io->u.Status == STATUS_SUCCESS)
+-     {
+-@@ -3682,6 +3698,11 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
++@@ -3710,6 +3727,11 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
+              io->Information = FILE_OVERWRITTEN;
+              break;
+          }
+@@ -168,7 +115,7 @@ index d1f1b8c8f30..32653a110a2 100644
+      }
+      else if (io->u.Status == STATUS_TOO_MANY_OPENED_FILES)
+      {
+-@@ -3689,6 +3710,7 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
++@@ -3717,6 +3739,7 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
+          if (!once++) ERR_(winediag)( "Too many open files, ulimit -n probably needs to be increased\n" );
+      }
+  
+diff --git a/patches/ntdll-DeviceType_Systemroot/0001-ntdll-Don-t-translate-Unix-virtual-disks-to-FILE_DEV.patch b/patches/ntdll-DeviceType_Systemroot/0001-ntdll-Don-t-translate-Unix-virtual-disks-to-FILE_DEV.patch
+deleted file mode 100644
+index 726aa6d16..000000000
+--- a/patches/ntdll-DeviceType_Systemroot/0001-ntdll-Don-t-translate-Unix-virtual-disks-to-FILE_DEV.patch
++++ /dev/null
+@@ -1,57 +0,0 @@
+-From 835c102cf1c8edf8216b12ea98846cb1e3b40219 Mon Sep 17 00:00:00 2001
+-From: Zebediah Figura <z.figura12@gmail.com>
+-Date: Fri, 29 May 2015 19:57:22 +0200
+-Subject: [PATCH] ntdll: Don't translate Unix virtual disks to
+- FILE_DEVICE_VIRTUAL_DISK.
+-
+-Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=36546
+-Signed-off-by: Zebediah Figura <z.figura12@gmail.com>
+----
+-Despite my sign-off, I don't profess to hold an opinion on whether this bug
+-should be solved, but multiple users have requested this behaviour, and it
+-seems not wholly unreasonable. I'm submitting this patch so that the question
+-at least doesn't languish on bugzilla forever.
+-
+-This patch was tested with FutureMark's SystemInfo version 4.28; it refuses to
+-install in a WINEPREFIX in tmpfs without this patch, and succeeds with it.
+-
+- dlls/ntdll/unix/file.c | 12 ++++++++----
+- 1 file changed, 8 insertions(+), 4 deletions(-)
+-
+-diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+-index a0ad361fcbb..a28cfe9818f 100644
+---- a/dlls/ntdll/unix/file.c
+-+++ b/dlls/ntdll/unix/file.c
+-@@ -6001,12 +6001,15 @@ static NTSTATUS get_device_info( int fd, FILE_FS_DEVICE_INFORMATION *info )
+-             info->DeviceType = FILE_DEVICE_NETWORK_FILE_SYSTEM;
+-             info->Characteristics |= FILE_REMOTE_DEVICE;
+-             break;
+--        case 0x01021994:  /* tmpfs */
+--        case 0x28cd3d45:  /* cramfs */
+-         case 0x1373:      /* devfs */
+-         case 0x9fa0:      /* procfs */
+-             info->DeviceType = FILE_DEVICE_VIRTUAL_DISK;
+-             break;
+-+        case 0x01021994:  /* tmpfs */
+-+        case 0x28cd3d45:  /* cramfs */
+-+            /* Don't map these to FILE_DEVICE_VIRTUAL_DISK by default. Virtual
+-+             * filesystems are rare on Windows, and some programs refuse to
+-+             * recognize them as valid. */
+-         default:
+-             info->DeviceType = FILE_DEVICE_DISK_FILE_SYSTEM;
+-             break;
+-@@ -6050,8 +6053,9 @@ static NTSTATUS get_device_info( int fd, FILE_FS_DEVICE_INFORMATION *info )
+-                 info->Characteristics |= FILE_REMOVABLE_MEDIA;
+-                 break;
+-             case DKC_MD:
+--                info->DeviceType = FILE_DEVICE_VIRTUAL_DISK;
+--                break;
+-+            /* Don't map these to FILE_DEVICE_VIRTUAL_DISK by default. Virtual
+-+             * filesystems are rare on Windows, and some programs refuse to
+-+             * recognize them as valid. */
+-             default:
+-                 info->DeviceType = FILE_DEVICE_DISK_FILE_SYSTEM;
+-             }
+--- 
+-2.27.0
+-
+diff --git a/patches/ntdll-DeviceType_Systemroot/definition b/patches/ntdll-DeviceType_Systemroot/definition
+deleted file mode 100644
+index d7368f666..000000000
+--- a/patches/ntdll-DeviceType_Systemroot/definition
++++ /dev/null
+@@ -1 +0,0 @@
+-Fixes: [36546] Return fake device type when systemroot is located on virtual disk
+diff --git a/patches/ntdll-NtDevicePath/0001-ntdll-Implement-opening-files-through-nt-device-path.patch b/patches/ntdll-NtDevicePath/0001-ntdll-Implement-opening-files-through-nt-device-path.patch
+index 82a0918c7..c0d692895 100644
+--- a/patches/ntdll-NtDevicePath/0001-ntdll-Implement-opening-files-through-nt-device-path.patch
++++ b/patches/ntdll-NtDevicePath/0001-ntdll-Implement-opening-files-through-nt-device-path.patch
+@@ -1,4 +1,4 @@
+-From 0d4ebc66e01e42acef9db63872d38abc789d83c5 Mon Sep 17 00:00:00 2001
++From 7ad6b055c6f24d9dc193f9d80e2f5921f4f7e67c Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Michael=20M=C3=BCller?= <michael@fds-team.de>
+ Date: Fri, 26 May 2017 05:17:17 +0200
+ Subject: [PATCH] ntdll: Implement opening files through nt device paths.
+@@ -63,10 +63,10 @@ index 6164b0c4bde..6610edbd042 100644
+  
+  static void open_file_test(void)
+ diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+-index 3c4670e114c..6b0dbaa7b3d 100644
++index aae715521a5..7fcb9f23460 100644
+ --- a/dlls/ntdll/unix/file.c
+ +++ b/dlls/ntdll/unix/file.c
+-@@ -3279,7 +3279,7 @@ static NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, char *
++@@ -3294,7 +3294,7 @@ static NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, char *
+   * element doesn't have to exist; in that case STATUS_NO_SUCH_FILE is
+   * returned, but the unix name is still filled in properly.
+   */
+@@ -75,7 +75,7 @@ index 3c4670e114c..6b0dbaa7b3d 100644
+  {
+      static const WCHAR unixW[] = {'u','n','i','x'};
+      static const WCHAR pipeW[] = {'p','i','p','e'};
+-@@ -3417,6 +3417,126 @@ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, char *nam
++@@ -3432,6 +3432,126 @@ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, char *nam
+      return status;
+  }
+  
+@@ -109,7 +109,7 @@ index 3c4670e114c..6b0dbaa7b3d 100644
+ +static NTSTATUS nt_to_dos_device( WCHAR *name, size_t length, WCHAR *device_ret )
+ +{
+ +    static const WCHAR dosdevicesW[] = {'\\','D','o','s','D','e','v','i','c','e','s',0};
+-+    UNICODE_STRING dosdevW;
+++    UNICODE_STRING dosdevW = { sizeof(dosdevicesW) - sizeof(WCHAR), sizeof(dosdevicesW), (WCHAR *)dosdevicesW };
+ +    WCHAR symlinkW[MAX_DIR_ENTRY_LEN];
+ +    OBJECT_ATTRIBUTES attr;
+ +    NTSTATUS status;
+@@ -126,7 +126,6 @@ index 3c4670e114c..6b0dbaa7b3d 100644
+ +    attr.SecurityDescriptor = NULL;
+ +    attr.SecurityQualityOfService = NULL;
+ +
+-+    RtlInitUnicodeString( &dosdevW, dosdevicesW );
+ +    status = NtOpenDirectoryObject( &handle, FILE_LIST_DIRECTORY, &attr );
+ +    if (status) return STATUS_BAD_DEVICE_TYPE;
+ +
+@@ -193,7 +192,8 @@ index 3c4670e114c..6b0dbaa7b3d 100644
+ +    memcpy( ptr, nameW->Buffer + offset, nameW->Length - offset * sizeof(WCHAR) );
+ +    ptr[ nameW->Length / sizeof(WCHAR) - offset ] = 0;
+ +
+-+    RtlInitUnicodeString( &dospathW, name );
+++    dospathW.Buffer = name;
+++    dospathW.Length = wcslen( name ) * sizeof(WCHAR);
+ +    status = nt_to_unix_file_name_internal( &dospathW, unix_name_ret, disposition );
+ +
+ +    RtlFreeHeap( GetProcessHeap(), 0, name );
+diff --git a/patches/ntdll-NtQueryVirtualMemory/definition b/patches/ntdll-NtQueryVirtualMemory/definition
+index ba2685333..8ee7f1df5 100644
+--- a/patches/ntdll-NtQueryVirtualMemory/definition
++++ b/patches/ntdll-NtQueryVirtualMemory/definition
+@@ -2,3 +2,6 @@ Fixes: [23999] Implement MemorySectionName class in NtQueryVirtualMemory
+ Fixes: [27248] Implement K32GetMappedFileName
+ Depends: ntdll-NtDevicePath
+ Depends: ntdll-ForceBottomUpAlloc
++# This uses RtlDosPathNameToNtPathName_U (and RtlInitUnicodeString) from
++# ntdll.so, and needs to stop. Defer this until after we have a conversation
++# about volumes.
+\ No newline at end of file
+diff --git a/patches/ntdll-SystemModuleInformation/0001-ntdll-Don-t-call-LdrQueryProcessModuleInformation-in.patch b/patches/ntdll-SystemModuleInformation/0001-ntdll-Don-t-call-LdrQueryProcessModuleInformation-in.patch
+deleted file mode 100644
+index d68b212d9..000000000
+--- a/patches/ntdll-SystemModuleInformation/0001-ntdll-Don-t-call-LdrQueryProcessModuleInformation-in.patch
++++ /dev/null
+@@ -1,50 +0,0 @@
+-From e2f505d4c63dde39dbbcc215a7801020b04e3c25 Mon Sep 17 00:00:00 2001
+-From: Zebediah Figura <z.figura12@gmail.com>
+-Date: Mon, 6 Aug 2018 21:32:56 -0500
+-Subject: [PATCH] ntdll: Don't call LdrQueryProcessModuleInformation in
+- NtQuerySystemInformation(SystemModuleInformation).
+-
+-Based on a patch by Andrew Wesie.
+-
+-This is simply incorrect; this function should only list kernel drivers.
+-
+-This makes the anticheat engine in League of Legends 8.15+ happy.
+-
+-Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=45550
+----
+- dlls/ntdll/unix/system.c | 19 ++++++++++++++++---
+- 1 file changed, 16 insertions(+), 3 deletions(-)
+-
+-diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+-index 68de16b7e5b..a57b040c533 100644
+---- a/dlls/ntdll/unix/system.c
+-+++ b/dlls/ntdll/unix/system.c
+-@@ -1930,9 +1930,22 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
+-     }
+- 
+-     case SystemModuleInformation:
+--        /* FIXME: should be system-wide */
+--        if (!info) ret = STATUS_ACCESS_VIOLATION;
+--        else ret = LdrQueryProcessModuleInformation( info, size, &len );
+-+        if (!info)
+-+            ret = STATUS_ACCESS_VIOLATION;
+-+        else if (size < FIELD_OFFSET( SYSTEM_MODULE_INFORMATION, Modules[1] ))
+-+        {
+-+            len = FIELD_OFFSET( SYSTEM_MODULE_INFORMATION, Modules[1] );
+-+            ret = STATUS_INFO_LENGTH_MISMATCH;
+-+        }
+-+        else
+-+        {
+-+            SYSTEM_MODULE_INFORMATION *smi = info;
+-+
+-+            FIXME("returning fake driver list\n");
+-+            smi->ModulesCount = 1;
+-+            memset(&smi->Modules[0], 0, sizeof(smi->Modules[0]));
+-+            ret = STATUS_SUCCESS;
+-+        }
+-         break;
+- 
+-     case SystemHandleInformation:
+--- 
+-2.27.0
+-
+diff --git a/patches/ntdll-SystemModuleInformation/0002-ntdll-Return-ntdll.dll-as-the-first-entry-for-System.patch b/patches/ntdll-SystemModuleInformation/0002-ntdll-Return-ntdll.dll-as-the-first-entry-for-System.patch
+deleted file mode 100644
+index e88a05231..000000000
+--- a/patches/ntdll-SystemModuleInformation/0002-ntdll-Return-ntdll.dll-as-the-first-entry-for-System.patch
++++ /dev/null
+@@ -1,59 +0,0 @@
+-From fb6d3997445d70ea0744205f47ede1d3be8c50c1 Mon Sep 17 00:00:00 2001
+-From: Andrew Wesie <awesie@gmail.com>
+-Date: Fri, 12 Apr 2019 20:04:03 -0500
+-Subject: [PATCH] ntdll: Return ntdll.dll as the first entry for
+- SystemModuleInformation.
+-
+----
+- dlls/ntdll/unix/system.c | 28 +++++++++++++++++++++++++++-
+- 1 file changed, 27 insertions(+), 1 deletion(-)
+-
+-diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+-index 0aa55a69ba1..60a92f39a7c 100644
+---- a/dlls/ntdll/unix/system.c
+-+++ b/dlls/ntdll/unix/system.c
+-@@ -1630,6 +1630,32 @@ static void get_performance_info( SYSTEM_PERFORMANCE_INFORMATION *info )
+-     info->TotalCommitLimit    = (totalram + totalswap) / page_size;
+- }
+- 
+-+static void get_ntdll_system_module(SYSTEM_MODULE *sm)
+-+{
+-+    char *ptr;
+-+    ANSI_STRING str;
+-+    PLIST_ENTRY entry;
+-+    LDR_DATA_TABLE_ENTRY *mod;
+-+
+-+    /* The first entry must be ntdll. */
+-+    entry = NtCurrentTeb()->Peb->LdrData->InLoadOrderModuleList.Flink;
+-+    mod = CONTAINING_RECORD(entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+-+
+-+    sm->Section = 0;
+-+    sm->MappedBaseAddress = 0;
+-+    sm->ImageBaseAddress = mod->DllBase;
+-+    sm->ImageSize = mod->SizeOfImage;
+-+    sm->Flags = mod->Flags;
+-+    sm->LoadOrderIndex = 0;
+-+    sm->InitOrderIndex = 0;
+-+    sm->LoadCount = 0;
+-+    str.Length = 0;
+-+    str.MaximumLength = MAXIMUM_FILENAME_LENGTH;
+-+    str.Buffer = (char*)sm->Name;
+-+    RtlUnicodeStringToAnsiString(&str, &mod->FullDllName, FALSE);
+-+    ptr = strrchr(str.Buffer, '\\');
+-+    sm->NameOffset = (ptr != NULL) ? (ptr - str.Buffer + 1) : 0;
+-+}
+- 
+- /* calculate the mday of dst change date, so that for instance Sun 5 Oct 2007
+-  * (last Sunday in October of 2007) becomes Sun Oct 28 2007
+-@@ -2319,7 +2345,7 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
+- 
+-             FIXME("returning fake driver list\n");
+-             smi->ModulesCount = 1;
+--            memset(&smi->Modules[0], 0, sizeof(smi->Modules[0]));
+-+            get_ntdll_system_module(&smi->Modules[0]);
+-             ret = STATUS_SUCCESS;
+-         }
+-         break;
+--- 
+-2.27.0
+-
+diff --git a/patches/ntdll-SystemModuleInformation/0003-ntdll-Add-stub-for-NtQuerySystemInformation-SystemMo.patch b/patches/ntdll-SystemModuleInformation/0003-ntdll-Add-stub-for-NtQuerySystemInformation-SystemMo.patch
+index 5657b038f..d844aafec 100644
+--- a/patches/ntdll-SystemModuleInformation/0003-ntdll-Add-stub-for-NtQuerySystemInformation-SystemMo.patch
++++ b/patches/ntdll-SystemModuleInformation/0003-ntdll-Add-stub-for-NtQuerySystemInformation-SystemMo.patch
+@@ -1,52 +1,72 @@
+-From ab068a620223a6566c2a1d089fb4583992359bd2 Mon Sep 17 00:00:00 2001
+-From: Andrew Wesie <awesie@gmail.com>
++From 6c3862d1e2d08c9a82623e0d4ab3bb123a3efde0 Mon Sep 17 00:00:00 2001
++From: Zebediah Figura <z.figura12@gmail.com>
+ Date: Fri, 12 Apr 2019 20:06:08 -0500
+ Subject: [PATCH] ntdll: Add stub for
+  NtQuerySystemInformation(SystemModuleInformationEx).
+ 
++Based on a patch by Andrew Wesie.
+ ---
+- dlls/ntdll/unix/system.c | 22 ++++++++++++++++++++++
++ dlls/ntdll/unix/system.c | 41 ++++++++++++++++++++++++++++++++++++++++
+  include/winternl.h       |  9 +++++++++
+- 2 files changed, 31 insertions(+)
++ 2 files changed, 50 insertions(+)
+ 
+ diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+-index f118db8a89f..eecde7dcf97 100644
++index c3dca7ffe28..1260326bc4b 100644
+ --- a/dlls/ntdll/unix/system.c
+ +++ b/dlls/ntdll/unix/system.c
+-@@ -1974,6 +1974,28 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
+-         }
++@@ -2328,6 +2328,47 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
+          break;
++     }
+  
+ +    case SystemModuleInformationEx:
+-+        if (!info)
+-+            ret = STATUS_ACCESS_VIOLATION;
+-+        else if (size < sizeof(SYSTEM_MODULE_INFORMATION_EX))
+++    {
+++        /* FIXME: return some fake info for now */
+++        static const char *fake_modules[] =
+ +        {
+-+            len = sizeof(SYSTEM_MODULE_INFORMATION_EX);
+-+            ret = STATUS_INFO_LENGTH_MISMATCH;
+-+        }
+++            "\\SystemRoot\\system32\\ntoskrnl.exe",
+++            "\\SystemRoot\\system32\\hal.dll",
+++            "\\SystemRoot\\system32\\drivers\\mountmgr.sys"
+++        };
+++
+++        if (!info) ret = STATUS_ACCESS_VIOLATION;
+ +        else
+ +        {
+-+            SYSTEM_MODULE_INFORMATION_EX *info = info;
+++            ULONG i;
+++
+++            for (i = 0; i < ARRAY_SIZE(fake_modules); i++)
+++            {
+++                SYSTEM_MODULE_INFORMATION_EX *smi = (SYSTEM_MODULE_INFORMATION_EX *)((char *)info + len);
+++
+++                len += sizeof(SYSTEM_MODULE_INFORMATION_EX);
+++                if (len > size)
+++                {
+++                    ret = STATUS_INFO_LENGTH_MISMATCH;
+++                    continue;
+++                }
+ +
+-+            FIXME("info_class SystemModuleInformationEx stub!\n");
+-+            get_ntdll_system_module(&info->BaseInfo);
+-+            info->NextOffset = 0;
+-+            info->ImageCheckSum = 0;
+-+            info->TimeDateStamp = 0;
+-+            info->DefaultBase = info->BaseInfo.ImageBaseAddress;
+-+            ret = STATUS_SUCCESS;
+++                memset(smi, 0, sizeof(*smi));
+++                if (i < ARRAY_SIZE(fake_modules) - 1)
+++                    smi->NextOffset = len;
+++                smi->BaseInfo.ImageBaseAddress = (char *)0x10000000 + 0x200000 * i;
+++                smi->BaseInfo.ImageSize = 0x200000;
+++                smi->BaseInfo.LoadOrderIndex = i;
+++                smi->BaseInfo.LoadCount = 1;
+++                strcpy( (char *)smi->BaseInfo.Name, fake_modules[i] );
+++                smi->BaseInfo.NameOffset = strrchr( fake_modules[i], '\\' ) - fake_modules[i] + 1;
+++                smi->DefaultBase = smi->BaseInfo.ImageBaseAddress;
+++            }
+ +        }
+ +        break;
+++    }
+ +
+      case SystemHandleInformation:
+      {
+          struct handle_info *handle_info;
+ diff --git a/include/winternl.h b/include/winternl.h
+-index 3ff15f28c15..879b0931fc5 100644
++index 10d109fede1..b91af1d2dbe 100644
+ --- a/include/winternl.h
+ +++ b/include/winternl.h
+-@@ -2469,6 +2469,15 @@ typedef struct _SYSTEM_MODULE_INFORMATION
++@@ -2484,6 +2484,15 @@ typedef struct _SYSTEM_MODULE_INFORMATION
+  #define PROCESS_CREATE_FLAGS_SUSPENDED              0x00000200
+  #define PROCESS_CREATE_FLAGS_EXTENDED_UNKNOWN       0x00000400
+  
+diff --git a/patches/patchinstall.sh b/patches/patchinstall.sh
+index 00a070030..9092fc243 100755
+--- a/patches/patchinstall.sh
++++ b/patches/patchinstall.sh
+@@ -166,7 +166,6 @@ patch_enable_all ()
+ 	enable_ntdll_CriticalSection="$1"
+ 	enable_ntdll_DOS_Attributes="$1"
+ 	enable_ntdll_Dealloc_Thread_Stack="$1"
+-	enable_ntdll_DeviceType_Systemroot="$1"
+ 	enable_ntdll_Exception="$1"
+ 	enable_ntdll_FLS_Callbacks="$1"
+ 	enable_ntdll_FileDispositionInformation="$1"
+@@ -587,9 +586,6 @@ patch_enable ()
+ 		ntdll-Dealloc_Thread_Stack)
+ 			enable_ntdll_Dealloc_Thread_Stack="$2"
+ 			;;
+-		ntdll-DeviceType_Systemroot)
+-			enable_ntdll_DeviceType_Systemroot="$2"
+-			;;
+ 		ntdll-Exception)
+ 			enable_ntdll_Exception="$2"
+ 			;;
+@@ -1816,7 +1812,7 @@ fi
+ # |
+ # | Modified files:
+ # |   *	dlls/kernelbase/security.c, dlls/ntdll/nt.c, dlls/ntdll/ntdll.spec, include/winnt.h, include/winternl.h,
+-# | 	server/process.c, server/protocol.def, server/security.h, server/token.c
++# | 	server/named_pipe.c, server/process.c, server/protocol.def, server/security.h, server/token.c
+ # |
+ if test "$enable_advapi32_CreateRestrictedToken" -eq 1; then
+ 	patch_apply advapi32-CreateRestrictedToken/0001-ntdll-Implement-NtFilterToken.patch
+@@ -1854,8 +1850,8 @@ fi
+ # |   *	configure.ac, dlls/advapi32/tests/Makefile.in, dlls/advapi32/tests/security.c, dlls/kernelbase/process.c,
+ # | 	dlls/ntdll/loader.c, dlls/ntdll/nt.c, dlls/ntdll/ntdll.spec, dlls/ntdll/ntdll_misc.h, dlls/ntdll/process.c,
+ # | 	dlls/ntdll/unix/process.c, dlls/shell32/shlexec.c, dlls/user32/win.c, programs/runas/Makefile.in,
+-# | 	programs/runas/runas.c, programs/runas/runas.h, programs/runas/runas.rc, server/process.c, server/process.h,
+-# | 	server/protocol.def, server/request.c, server/security.h, server/token.c
++# | 	programs/runas/runas.c, programs/runas/runas.h, programs/runas/runas.rc, server/named_pipe.c, server/process.c,
++# | 	server/process.h, server/protocol.def, server/request.c, server/security.h, server/token.c
+ # |
+ if test "$enable_advapi32_Token_Integrity_Level" -eq 1; then
+ 	patch_apply advapi32-Token_Integrity_Level/0001-advapi32-tests-Extend-security-label-token-integrity.patch
+@@ -3491,21 +3487,6 @@ if test "$enable_ntdll_Dealloc_Thread_Stack" -eq 1; then
+ 	) >> "$patchlist"
+ fi
+ 
+-# Patchset ntdll-DeviceType_Systemroot
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#36546] Return fake device type when systemroot is located on virtual disk
+-# |
+-# | Modified files:
+-# |   *	dlls/ntdll/unix/file.c
+-# |
+-if test "$enable_ntdll_DeviceType_Systemroot" -eq 1; then
+-	patch_apply ntdll-DeviceType_Systemroot/0001-ntdll-Don-t-translate-Unix-virtual-disks-to-FILE_DEV.patch
+-	(
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Don'\''t translate Unix virtual disks to FILE_DEVICE_VIRTUAL_DISK.", 1 },';
+-	) >> "$patchlist"
+-fi
+-
+ # Patchset ntdll-Exception
+ # |
+ # | This patchset fixes the following Wine bugs:
+@@ -3886,13 +3867,9 @@ fi
+ # |   *	dlls/ntdll/unix/system.c, include/winternl.h
+ # |
+ if test "$enable_ntdll_SystemModuleInformation" -eq 1; then
+-	patch_apply ntdll-SystemModuleInformation/0001-ntdll-Don-t-call-LdrQueryProcessModuleInformation-in.patch
+-	patch_apply ntdll-SystemModuleInformation/0002-ntdll-Return-ntdll.dll-as-the-first-entry-for-System.patch
+ 	patch_apply ntdll-SystemModuleInformation/0003-ntdll-Add-stub-for-NtQuerySystemInformation-SystemMo.patch
+ 	(
+-		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Don'\''t call LdrQueryProcessModuleInformation in NtQuerySystemInformation(SystemModuleInformation).", 1 },';
+-		printf '%s\n' '+    { "Andrew Wesie", "ntdll: Return ntdll.dll as the first entry for SystemModuleInformation.", 1 },';
+-		printf '%s\n' '+    { "Andrew Wesie", "ntdll: Add stub for NtQuerySystemInformation(SystemModuleInformationEx).", 1 },';
++		printf '%s\n' '+    { "Zebediah Figura", "ntdll: Add stub for NtQuerySystemInformation(SystemModuleInformationEx).", 1 },';
+ 	) >> "$patchlist"
+ fi
+ 
 diff --git a/patches/ntdll-DOS_Attributes/0004-ntdll-Implement-storing-DOS-attributes-in-NtCreateFi.patch b/patches/ntdll-DOS_Attributes/0004-ntdll-Implement-storing-DOS-attributes-in-NtCreateFi.patch
 index 7fdc0af23..72f4a4739 100644
 --- a/patches/ntdll-DOS_Attributes/0004-ntdll-Implement-storing-DOS-attributes-in-NtCreateFi.patch
