@@ -84,7 +84,7 @@ Replaces: wine, wine-development, wine-staging, libwine, fonts-wine, wine32, win
 License: LGPL
 Depends: libc6 (>= 2.17), libfontconfig1 (>= 2.11), libfreetype6 (>= 2.2.1), libncurses5 (>= 6), libasound2 (>= 1.0.16), libgcc1 (>= 1:3.0), libglu1-mesa | libglu1, liblcms2-2 (>= 2.2+git20110628), libldap-2.4-2 (>= 2.4.7), libmpg123-0 (>= 1.6.2), libopenal1 (>= 1.14), libpcap0.8 (>= 0.9.8), libpulse0 (>= 0.99.1), libx11-6, libxext6, libxml2 (>= 2.9.0), ocl-icd-libopencl1 | libopencl1, ocl-icd-libopencl1 (>= 1.0) | libopencl-1.1-1, zlib1g (>= 1:1.1.4)
 Installed-Size: $(du -sb ${files} | awk '{printf "%1.0f\n",$1/1024}')
-Description: This "Wine to rule them all" package is the result of some random pkgbuild found online. Looks safe to me, amirite? Some variants of it can be found in lutris runners. 🐸🐸🐸🐸🐸🐸🐸🐸
+Description: This "Wine to rule them all" package is the result of wine-tkg build system found online. Some variants of it can be found in lutris runners. 🐸🐸🐸🐸🐸🐸🐸🐸
 EOL
 tar czf $tmpDir/control.tar.gz -C $tmpDir/control ./ >> /dev/null
 rm -r $tmpDir/control
