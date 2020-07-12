@@ -1867,13 +1867,13 @@ EOM
 
 _polish() {
 	# wine user patches
+	_userpatch_target="plain-wine"
+	_userpatch_ext="my"
+	cd "${srcdir}"/"${_winesrcdir}"
+	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ -z "$_localbuild" ]; then
+	  hotfixer && _commitmsg="05-hotfixes" _committer
+	fi
 	if [ "$_user_patches" = "true" ]; then
-	  _userpatch_target="plain-wine"
-	  _userpatch_ext="my"
-	  cd "${srcdir}"/"${_winesrcdir}"
-	  if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ -z "$_localbuild" ]; then
-	    hotfixer && _commitmsg="05-hotfixes" _committer
-	  fi
 	  user_patcher && _commitmsg="06-userpatches" _committer
 	fi
 
