@@ -221,7 +221,7 @@ _package_nomakepkg() {
 	  pkgdir="${_nomakepkg_prefix_path}/${_nomakepkg_pkgname}"
 	fi
 
-	if [ "$_GENERATE_DEBIAN_PACKAGE" = "true" ]; then
+	if [ "$_GENERATE_DEBIAN_PACKAGE" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
 		_generate_debian_package "$_prefix"
 	fi
 
@@ -335,7 +335,7 @@ _package_makepkg() {
 
 	cp "$_where"/last_build_config.log "${pkgdir}$_prefix"/share/wine/wine-tkg-config.txt
 
-	if [ "$_GENERATE_DEBIAN_PACKAGE" = "true" ]; then
+	if [ "$_GENERATE_DEBIAN_PACKAGE" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
 		_generate_debian_package "$_prefix"
 	fi
 
