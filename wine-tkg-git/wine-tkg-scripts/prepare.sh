@@ -1093,7 +1093,7 @@ _prepare() {
 
 	# Workaround for Final Fantasy XIV Launcher 404 error - Thanks @varris1 ! - Fixed by d535df42f665a097ec721b10fb49d7b18f899be9 (4.10)
 	if [ "$_ffxivlauncher_fix" = "true" ]; then
-	  if $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 4e6a477acd32651dd571205786132666505aeb5b HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 4e6a477acd32651dd571205786132666505aeb5b HEAD ); then
 	    _patchname='ffxiv-launcher-workaround.patch' && _patchmsg="Applied Final Fantasy XIV Launcher fix" && nonuser_patcher
 	  else
 	    _patchname='ffxiv-launcher-workaround-4e6a477.patch' && _patchmsg="Applied Final Fantasy XIV Launcher fix" && nonuser_patcher
@@ -1163,7 +1163,7 @@ _prepare() {
 EOM
 	      done
 	    fi
-	    if $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 89af635b941cf450ae371395e7b28d09161f3a36 HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 89af635b941cf450ae371395e7b28d09161f3a36 HEAD ); then
 	      _patchname='mk11-b1c748c.patch' && _patchmsg="Applied Mortal Kombat 11 fix (<b1c748c)" && nonuser_patcher
 	    else
 	      _patchname='mk11-89af635.patch' && _patchmsg="Applied Mortal Kombat 11 fix (<89af635)" && nonuser_patcher
@@ -1225,8 +1225,8 @@ EOM
 	      _patchname='fsync-staging-8701260.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging)" && nonuser_patcher
 	    elif git merge-base --is-ancestor 608d086f1b1bb7168e9322c65224c23f34e75f29 HEAD; then
 	      _patchname='fsync-staging-fc17535.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging <fc17535)" && nonuser_patcher
-	    elif $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor cf04b8d6ac710c83dc9a433aea3e5d3c451095a1 HEAD); then
-	      cd "${srcdir}"/"${_winesrcdir}" && _patchname='fsync-staging-608d086.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging <608d086)" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor cf04b8d6ac710c83dc9a433aea3e5d3c451095a1 HEAD ); then
+	      _patchname='fsync-staging-608d086.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging <608d086)" && nonuser_patcher
 	    elif git merge-base --is-ancestor 1d9a3f6d12322891a2af4aadd66a92ea66479233 HEAD; then
 	      _patchname='fsync-staging-cf04b8d.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging <cf04b8d)" && nonuser_patcher
 	    fi
@@ -1257,7 +1257,7 @@ EOM
 	  else
 	    echo "Fsync forcefully disabled due to incompatible tree" >> "$_where"/last_build_config.log
 	  fi
-	  if [ "$_fsync_spincounts" = "true" ] && [ "$_use_staging" = "true" ] && $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8b2fd051c97187c68dee2ba2f0df7aca65c4cca6 HEAD && cd "${srcdir}"/"${_winesrcdir}"); then # Temporarily only allow on staging - we depend on esync mutexes abandonment
+	  if [ "$_fsync_spincounts" = "true" ] && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8b2fd051c97187c68dee2ba2f0df7aca65c4cca6 HEAD ); then # Temporarily only allow on staging - we depend on esync mutexes abandonment
 	    _patchname='fsync-spincounts.patch' && _patchmsg="Add a configurable spin count to fsync" && nonuser_patcher
 	  fi
 	fi
@@ -1265,7 +1265,7 @@ EOM
 	echo -e "" >> "$_where"/last_build_config.log
 
 	# Legacy Proton Fullscreen inline patching
-	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD ); then
 	  echo -e "\nLegacy Proton Fullscreen inline patching" >> "$_where"/prepare.log
 	  for _f in "$_where"/valve_proton_fullscreen_hack-staging-{938dddf,de64501,82c6ec3,7cc69d7,0cb79db,a4b9460,57bb5cc,6e87235}.patch; do
 	    patch ${_f} >> "$_where"/prepare.log << 'EOM'
@@ -1311,13 +1311,13 @@ EOM
 	        _lastcommit="74dc0c5"
 	      elif git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
 	        _lastcommit="aee91dc"
-	      elif $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 734918298c4a6eb1cb23f31e21481f2ef58a0970 HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	      elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 734918298c4a6eb1cb23f31e21481f2ef58a0970 HEAD ); then
 	        _lastcommit="7e736b5"
 	      elif git merge-base --is-ancestor de6450135de419ac7e64aee0c0efa27b60bea3e8 HEAD; then
 	        _lastcommit="938dddf"
 	      elif git merge-base --is-ancestor 82c6ec3a32f44e8b3e0cc88b7f10e0c0d7fa1b89 HEAD; then
 	        _lastcommit="de64501"
-	      elif $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7cc69d770780b8fb60fb249e007f1a777a03e51a HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	      elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7cc69d770780b8fb60fb249e007f1a777a03e51a HEAD ); then
 	        _lastcommit="82c6ec3"
 	      elif git merge-base --is-ancestor 0cb79db12ac7c48477518dcff269ccc5d6b745e0 HEAD; then
 	        _lastcommit="7cc69d7"
@@ -1362,7 +1362,7 @@ EOM
 	    _patchname='FS_bypass_compositor-disabler.patch' && _patchmsg="Turned off Fullscreen compositor bypass" && nonuser_patcher
 	  fi
 	  # Legacy split realmodes patchset
-	  if $(cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 734918298c4a6eb1cb23f31e21481f2ef58a0970 HEAD); then
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 734918298c4a6eb1cb23f31e21481f2ef58a0970 HEAD ); then
 	    _patchname='valve_proton_fullscreen_hack_realmodes.patch' && _patchmsg="Using real modes in FS hack addon" && nonuser_patcher
 	  fi
 	fi
@@ -1586,7 +1586,7 @@ EOM
 	      _lastcommit="a302ab4"
 	      _rpc="1"
 	      _stmbits="1"
-	    elif $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor d33cdb84fd8fed24e3a9ce89954ad43213b86426 HEAD && cd "${srcdir}"/"${_winesrcdir}"); then
+	    elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor d33cdb84fd8fed24e3a9ce89954ad43213b86426 HEAD ); then
 	      _lastcommit="2633a5c"
 	      _rpc="1"
 	      _stmbits="1"
@@ -1746,13 +1746,11 @@ EOM
 	        _patchname='proton-gamepad-additions-c074966.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
 	      elif git merge-base --is-ancestor 8db70e92a899fea6711c4f4fa3fa45adf1574fe8 HEAD; then
 	        _patchname='proton-gamepad-additions-aa48242.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
-	      elif $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor fcfeaf092cf9e8060223744f507395946554fe09 HEAD); then
-	        cd "${srcdir}"/"${_winesrcdir}"
+	      elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor fcfeaf092cf9e8060223744f507395946554fe09 HEAD ); then
 	        _patchname='proton-gamepad-additions-8db70e9.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
 	      elif git merge-base --is-ancestor d2d3959d3d29b3da334b53283b34cafde653b3e8 HEAD; then
 	        _patchname='proton-gamepad-additions-fcfeaf0.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
-	      elif $(cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 4413770af102ed80f9c5c19a9148ab32d3dc1a0f HEAD); then
-	        cd "${srcdir}"/"${_winesrcdir}"
+	      elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 4413770af102ed80f9c5c19a9148ab32d3dc1a0f HEAD ); then
 	        _patchname='proton-gamepad-additions-d2d3959.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
 	      elif git merge-base --is-ancestor 9c6ea019358eadcf86159872e2890ffc94960965 HEAD; then
 	        _patchname='proton-gamepad-additions-4413770.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
