@@ -1353,6 +1353,8 @@ EOM
 	      _patchname='valve_proton_fullscreen_hack-086c686.patch' && _patchmsg="Applied Proton fullscreen hack patch (mainline <086c686)" && nonuser_patcher
 	    elif git merge-base --is-ancestor aee91dc4ac08428e74fbd21f97438db38f84dbe5 HEAD; then
 	      _patchname='valve_proton_fullscreen_hack-74dc0c5.patch' && _patchmsg="Applied Proton fullscreen hack patch (mainline <74dc0c5)" && nonuser_patcher
+	    else
+	      _proton_fs_hack="false"
 	    fi
 	  fi
 	  if [ "$_FS_bypass_compositor" != "true" ]; then
