@@ -1813,8 +1813,8 @@ EOM
 	      _lastcommit="086c686"
 	    elif git merge-base --is-ancestor 7b1622d1ab90f01fdb3a2bc24e12ab4990f07f68 HEAD; then
 	      _lastcommit="bdeae71"
-	    elif git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
-	      _lastcommit="7b1622d"
+	    #elif git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
+	    #  _lastcommit="7b1622d"
 	    else
 	      _lastcommit="none"
 	    fi
