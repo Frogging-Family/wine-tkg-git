@@ -1465,8 +1465,10 @@ EOM
 	      _lastcommit="c258b5e"
 	    elif git merge-base --is-ancestor 8d25965e12717b266f2fc74bb10d915234d16772 HEAD; then
 	      _lastcommit="9551cb0"
+	    else
+	      _lastcommit="none"
 	    fi
-	    if [ -n "$_lastcommit" ]; then
+	    if [ "$_lastcommit" != "none" ]; then
 	      if [ "$_use_staging" = "true" ]; then
 	        _patchname="proton-tkg-staging-kernelbase-reverts-$_lastcommit.patch" && _patchmsg="Using kernelbase reverts patch (staging) (<$_lastcommit)" && nonuser_patcher
 	      else
@@ -1813,11 +1815,15 @@ EOM
 	      _lastcommit="bdeae71"
 	    elif git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
 	      _lastcommit="7b1622d"
-	    fi
-	    if [ "$_proton_fs_hack" = "true" ]; then
-	      _patchname="proton-winevulkan-$_lastcommit.patch" && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
 	    else
-	      _patchname="proton-winevulkan-nofshack-$_lastcommit.patch" && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
+	      _lastcommit="none"
+	    fi
+	    if [ "$_lastcommit" != "none" ]; then
+	      if [ "$_proton_fs_hack" = "true" ]; then
+	        _patchname="proton-winevulkan-$_lastcommit.patch" && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
+	      else
+	        _patchname="proton-winevulkan-nofshack-$_lastcommit.patch" && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
+	      fi
 	    fi
 	  fi
 	fi
