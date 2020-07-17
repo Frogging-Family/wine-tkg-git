@@ -203,14 +203,14 @@ build_wine_tkg() {
       fi
     fi
     ## prepare step end
-
-    _prebuild_common
   fi
 
   pkgver=$(pkgver)
 
   _polish
   _makedirs
+
+  _prebuild_common
 
   if [ "$_nomakepkg_nover" = "true" ] ; then
     _nomakepkg_pkgname="${pkgname}"
