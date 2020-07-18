@@ -622,6 +622,66 @@ index 6344157f384..6fefe5d6d80 100644
      if (rounded_size < size) goto oom;  /* overflow */
      if (rounded_size < HEAP_MIN_DATA_SIZE) rounded_size = HEAP_MIN_DATA_SIZE;
  
+From 33cd3de313071c787bece5acc31351c36abd74e9 Mon Sep 17 00:00:00 2001
+From: Brendan Shanks <bshanks@codeweavers.com>
+Date: Tue, 22 Oct 2019 16:27:51 -0700
+Subject: [PATCH] HACK: ntdll: Run WT_EXECUTEINWAITTHREAD wait callbacks
+ serially.
+
+On Windows, waits registered with the WT_EXECUTEINWAITTHREAD flag will
+often have their callbacks run serially (since they're all handled by
+the same wait thread). Running them in parallel can expose race
+conditions.
+Use a process-wide critical section to serialize these callbacks.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=47843
+---
+ dlls/ntdll/threadpool.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/dlls/ntdll/threadpool.c b/dlls/ntdll/threadpool.c
+index 639e032f629..dbd9577d6bc 100644
+--- a/dlls/ntdll/threadpool.c
++++ b/dlls/ntdll/threadpool.c
+@@ -84,6 +84,17 @@ struct wait_work_item
+     int CallbackInProgress;
+ };
+ 
++static RTL_CRITICAL_SECTION_DEBUG wait_thread_executeinwaitthread_cs_debug;
++
++static RTL_CRITICAL_SECTION wait_thread_executeinwaitthread_cs = {&wait_thread_executeinwaitthread_cs_debug, -1, 0, 0, 0, 0};
++
++static RTL_CRITICAL_SECTION_DEBUG wait_thread_executeinwaitthread_cs_debug =
++{
++    0, 0, &wait_thread_executeinwaitthread_cs,
++    { &wait_thread_executeinwaitthread_cs_debug.ProcessLocksList, &wait_thread_executeinwaitthread_cs_debug.ProcessLocksList },
++      0, 0, { (DWORD_PTR)(__FILE__ ": wait_thread_executeinwaitthread_cs") }
++};
++
+ struct timer_queue;
+ struct queue_timer
+ {
+@@ -527,7 +538,20 @@ static DWORD CALLBACK wait_thread_proc(LPVOID Arg)
+                 TRACE( "Work has been canceled.\n" );
+                 break;
+             }
++
++            /* HACK: On Windows, waits created with WT_EXECUTEINWAITTHREAD often end up on the same wait thread
++             * and run serialized. Running these waits simultaneously on separate threads may expose race conditions
++             * not seen on Windows.
++             * Use a critical section to ensure these callbacks run serially.
++             */
++            if (wait_work_item->Flags & WT_EXECUTEINWAITTHREAD)
++                enter_critical_section(&wait_thread_executeinwaitthread_cs);
++
+             wait_work_item->Callback( wait_work_item->Context, TimerOrWaitFired );
++
++            if (wait_work_item->Flags & WT_EXECUTEINWAITTHREAD)
++                leave_critical_section(&wait_thread_executeinwaitthread_cs);
++
+             InterlockedExchange( &wait_work_item->CallbackInProgress, FALSE );
+ 
+             if (wait_work_item->Flags & WT_EXECUTEONLYONCE)
 From 5cd65deffffad9073538acf4fd8e794ac07824a5 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Wed, 9 Oct 2019 09:47:12 +0200
@@ -1048,78 +1108,33 @@ Content-Transfer-Encoding: 8bit
 
 Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
 ---
- configure                     |  1 +
- configure.ac                  |  1 +
- dlls/dwmapi/tests/Makefile.in |  6 +++
- dlls/dwmapi/tests/dwmapi.c    | 75 +++++++++++++++++++++++++++++++++++
- 4 files changed, 83 insertions(+)
- create mode 100644 dlls/dwmapi/tests/Makefile.in
- create mode 100644 dlls/dwmapi/tests/dwmapi.c
-
-diff --git a/configure b/configure
-index d4a1fb46b3a..6608fd0a0f7 100755
---- a/configure
-+++ b/configure
-@@ -20500,6 +20500,7 @@ wine_fn_config_makefile dlls/dssenh/tests enable_tests
- wine_fn_config_makefile dlls/dswave enable_dswave
- wine_fn_config_makefile dlls/dswave/tests enable_tests
- wine_fn_config_makefile dlls/dwmapi enable_dwmapi
-+wine_fn_config_makefile dlls/dwmapi/tests enable_tests
- wine_fn_config_makefile dlls/dwrite enable_dwrite
- wine_fn_config_makefile dlls/dwrite/tests enable_tests
- wine_fn_config_makefile dlls/dx8vb enable_dx8vb
-diff --git a/configure.ac b/configure.ac
-index 41aabf2d2ea..ce24b716ba6 100644
---- a/configure.ac
-+++ b/configure.ac
-@@ -3253,6 +3253,7 @@ WINE_CONFIG_MAKEFILE(dlls/dssenh/tests)
- WINE_CONFIG_MAKEFILE(dlls/dswave)
- WINE_CONFIG_MAKEFILE(dlls/dswave/tests)
- WINE_CONFIG_MAKEFILE(dlls/dwmapi)
-+WINE_CONFIG_MAKEFILE(dlls/dwmapi/tests)
- WINE_CONFIG_MAKEFILE(dlls/dwrite)
- WINE_CONFIG_MAKEFILE(dlls/dwrite/tests)
- WINE_CONFIG_MAKEFILE(dlls/dx8vb)
 diff --git a/dlls/dwmapi/tests/Makefile.in b/dlls/dwmapi/tests/Makefile.in
-new file mode 100644
-index 00000000000..b441d9db35f
---- /dev/null
+index f365f96c72..947e3312b5 100644
+--- a/dlls/dwmapi/tests/Makefile.in
 +++ b/dlls/dwmapi/tests/Makefile.in
-@@ -0,0 +1,6 @@
-+TESTDLL   = dwmapi.dll
+@@ -1,5 +1,5 @@
+ TESTDLL   = dwmapi.dll
+-IMPORTS   = dwmapi
 +IMPORTS   = dwmapi gdi32 user32
-+
-+
-+C_SRCS = \
-+	dwmapi.c
+ 
+ C_SRCS = \
+ 	dwmapi.c
 diff --git a/dlls/dwmapi/tests/dwmapi.c b/dlls/dwmapi/tests/dwmapi.c
-new file mode 100644
-index 00000000000..0fc8820b095
---- /dev/null
+index 7c51e77c4a..68babd6eb2 100644
+--- a/dlls/dwmapi/tests/dwmapi.c
 +++ b/dlls/dwmapi/tests/dwmapi.c
-@@ -0,0 +1,75 @@
-+/*
-+ * Copyright 2019 Gabriel Ivăncescu for CodeWeavers
-+ *
-+ * This library is free software; you can redistribute it and/or
-+ * modify it under the terms of the GNU Lesser General Public
-+ * License as published by the Free Software Foundation; either
-+ * version 2.1 of the License, or (at your option) any later version.
-+ *
-+ * This library is distributed in the hope that it will be useful,
-+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
-+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-+ * Lesser General Public License for more details.
-+ *
-+ * You should have received a copy of the GNU Lesser General Public
-+ * License along with this library; if not, write to the Free Software
-+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
-+ */
-+
+@@ -19,13 +19,40 @@
+  *
+  */
+ 
 +#include <windows.h>
-+#include <dwmapi.h>
-+#include "wine/test.h"
-+
+ #include "dwmapi.h"
+-
+ #include "wine/test.h"
+ 
+ static HRESULT (WINAPI *pDwmIsCompositionEnabled)(BOOL*);
+ static HRESULT (WINAPI *pDwmEnableComposition)(UINT);
+ static HRESULT (WINAPI *pDwmGetTransportAttributes)(BOOL*,BOOL*,DWORD*);
 +static HWND test_wnd;
 +static LRESULT WINAPI test_wndproc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 +{
@@ -1147,8 +1162,13 @@ index 00000000000..0fc8820b095
 +    ok(nc_rendering == FALSE || nc_rendering == TRUE, "non-boolean value 0x%x.\n", nc_rendering);
 +}
 +
-+START_TEST(dwmapi)
-+{
+ 
+ BOOL dwmenabled;
+ 
+@@ -92,6 +119,21 @@ static void test_dwm_get_transport_attributes(void)
+ START_TEST(dwmapi)
+ {
+     HMODULE hmod = LoadLibraryA("dwmapi.dll");
 +    HINSTANCE inst = GetModuleHandleA(NULL);
 +    WNDCLASSA cls;
 +
@@ -1164,6 +1184,14 @@ index 00000000000..0fc8820b095
 +    cls.lpszClassName = "Test";
 +    RegisterClassA(&cls);
 +
+ 
+     if (!hmod)
+     {
+@@ -105,4 +147,14 @@ START_TEST(dwmapi)
+ 
+     test_isdwmenabled();
+     test_dwm_get_transport_attributes();
++
 +    test_wnd = CreateWindowExA(0, "Test", "Test Window", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 +                               100, 100, 200, 200, 0, 0, 0, NULL);
 +    ok(test_wnd != NULL, "Failed to create test window.\n");
@@ -1172,7 +1200,8 @@ index 00000000000..0fc8820b095
 +
 +    DestroyWindow(test_wnd);
 +    UnregisterClassA("Test", inst);
-+}
++
+ }
 From 1a2e600a9c35a9558b32e7986668d7dc81c8b5ae Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
 Date: Fri, 13 Dec 2019 15:54:30 +0200
@@ -1552,107 +1581,6 @@ index a5235b69a8d..4b2c9bd41ae 100644
          /* forward request to the foreground window if it's in a different thread */
          tid = GetWindowThreadProcessId( foreground, &pid );
          if (tid && tid != GetCurrentThreadId() && pid == GetCurrentProcessId())
-From 02951753970f5b2a0dafe41aee9fe96bc1a24301 Mon Sep 17 00:00:00 2001
-From: Piotr Caban <piotr@codeweavers.com>
-Date: Wed, 4 Mar 2020 18:49:37 +0100
-Subject: [PATCH] HACK: ntdll: Mark first gta5.exe page as copied.
-
----
- dlls/ntdll/virtual.c | 30 +++++++++++++++++++++++++++---
- 1 file changed, 27 insertions(+), 3 deletions(-)
-
-diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
-index dbcbd52c6d6..90a790241a9 100644
---- a/dlls/ntdll/virtual.c
-+++ b/dlls/ntdll/virtual.c
-@@ -58,6 +58,7 @@
- #include "wine/exception.h"
- #include "wine/rbtree.h"
- #include "wine/debug.h"
-+#include "wine/unicode.h"
- #include "ntdll_misc.h"
- 
- WINE_DEFAULT_DEBUG_CHANNEL(virtual);
-@@ -84,6 +85,7 @@ struct file_view
- #define VPROT_GUARD      0x10
- #define VPROT_COMMITTED  0x20
- #define VPROT_WRITEWATCH 0x40
-+#define VPROT_COPIED     0x80
- /* per-mapping protection flags */
- #define VPROT_SYSTEM     0x0200  /* system view (underlying mmap not under our control) */
- 
-@@ -304,7 +306,8 @@ static const char *VIRTUAL_GetProtStr( BYTE prot )
-     buffer[0] = (prot & VPROT_COMMITTED) ? 'c' : '-';
-     buffer[1] = (prot & VPROT_GUARD) ? 'g' : ((prot & VPROT_WRITEWATCH) ? 'H' : '-');
-     buffer[2] = (prot & VPROT_READ) ? 'r' : '-';
--    buffer[3] = (prot & VPROT_WRITECOPY) ? 'W' : ((prot & VPROT_WRITE) ? 'w' : '-');
-+    buffer[3] = (prot & VPROT_WRITECOPY) ? (prot & VPROT_COPIED ? 'w' : 'W')
-+        : ((prot & VPROT_WRITE) ? 'w' : '-');
-     buffer[4] = (prot & VPROT_EXEC) ? 'x' : '-';
-     buffer[5] = 0;
-     return buffer;
-@@ -901,8 +904,11 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
-  */
- static DWORD VIRTUAL_GetWin32Prot( BYTE vprot, unsigned int map_prot )
- {
--    DWORD ret = VIRTUAL_Win32Flags[vprot & 0x0f];
--    if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
-+    DWORD ret;
-+
-+    if ((vprot & (VPROT_COPIED | VPROT_WRITECOPY)) == (VPROT_COPIED | VPROT_WRITECOPY))
-+        vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
-+    ret = VIRTUAL_Win32Flags[vprot & 0x0f];
-     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
-     return ret;
- }
-@@ -2957,6 +2963,24 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH NtProtectVirtualMemory( HANDLE process, PVOID
-         {
-             old = VIRTUAL_GetWin32Prot( vprot, view->protect );
-             status = set_protection( view, base, size, new_prot );
-+
-+            /* GTA5 HACK: Mark first page as copied. */
-+            if (status == STATUS_SUCCESS && (view->protect & SEC_IMAGE) &&
-+                    base == (void*)NtCurrentTeb()->Peb->ImageBaseAddress)
-+            {
-+                const WCHAR gta5W[] = { 'g','t','a','5','.','e','x','e',0 };
-+                WCHAR *name, *p;
-+
-+                name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
-+                p = strrchrW(name, '\\');
-+                p = p ? p+1 : name;
-+
-+                if(!strcmpiW(p, gta5W))
-+                {
-+                    FIXME("HACK: changing GTA5.exe vprot\n");
-+                    set_page_vprot_bits(base, page_size, VPROT_COPIED, 0);
-+                }
-+            }
-         }
-         else status = STATUS_NOT_COMMITTED;
-     }
-From 5e8fedb161bae24ecf6d9425e90e3c595ec2505c Mon Sep 17 00:00:00 2001
-From: Piotr Caban <piotr@codeweavers.com>
-Date: Wed, 11 Mar 2020 09:17:05 -0500
-Subject: [PATCH] ntdll: Restore PAGE_GUARD flag
-
-On rebase, squash into 'HACK: ntdll: Mark first gta5.exe page as
-copied.'
----
- dlls/ntdll/virtual.c | 1 +
- 1 file changed, 1 insertion(+)
-
-diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
-index 90a790241a9..d0cd2639ee9 100644
---- a/dlls/ntdll/virtual.c
-+++ b/dlls/ntdll/virtual.c
-@@ -909,6 +909,7 @@ static DWORD VIRTUAL_GetWin32Prot( BYTE vprot, unsigned int map_prot )
-     if ((vprot & (VPROT_COPIED | VPROT_WRITECOPY)) == (VPROT_COPIED | VPROT_WRITECOPY))
-         vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
-     ret = VIRTUAL_Win32Flags[vprot & 0x0f];
-+    if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
-     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
-     return ret;
- }
 From 24a8f709ec8fcf8fa4fcc349a7885c02cc184d74 Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Wed, 26 Feb 2020 13:09:48 -0600
@@ -1745,6 +1673,70 @@ index 9cd6812d032..9e5fe2f3129 100644
      while (*candidates)
      {
          WCHAR **args = CommandLineToArgvW( candidates, &count );
+From 3082a724542ba7527fa52eaac3611ed97ff91cac Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Mon, 10 Dec 2018 12:48:41 -0600
+Subject: [PATCH] xaudio2: Set PulseAudio application name property in the
+ environment
+
+So PA doesn't present all Wine applications as "wine-preloader", and
+allows PA to store per-application settings.
+---
+ dlls/winepulse.drv/mmdevdrv.c |  1 +
+ dlls/xaudio2_7/xaudio_dll.c   | 21 +++++++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/dlls/winepulse.drv/mmdevdrv.c b/dlls/winepulse.drv/mmdevdrv.c
+index c80ea4f9d04..6a2906761a7 100644
+--- a/dlls/winepulse.drv/mmdevdrv.c
++++ b/dlls/winepulse.drv/mmdevdrv.c
+@@ -571,6 +571,7 @@ static HRESULT pulse_connect(void)
+     WideCharToMultiByte(CP_UNIXCP, 0, name, -1, str, len, NULL, NULL);
+     TRACE("Name: %s\n", str);
+     pulse_ctx = pa_context_new(pa_mainloop_get_api(pulse_ml), str);
++    setenv("PULSE_PROP_application.name", str, 1);
+     pa_xfree(str);
+     if (!pulse_ctx) {
+         ERR("Failed to create context\n");
+diff --git a/dlls/xaudio2_7/xaudio_dll.c b/dlls/xaudio2_7/xaudio_dll.c
+index 4ca04198b6e..483e2b4138a 100644
+--- a/dlls/xaudio2_7/xaudio_dll.c
++++ b/dlls/xaudio2_7/xaudio_dll.c
+@@ -38,6 +38,7 @@
+ #include "wine/asm.h"
+ #include "wine/debug.h"
+ #include "wine/heap.h"
++#include "wine/unicode.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(xaudio2);
+ 
+@@ -1948,6 +1949,26 @@ static HRESULT WINAPI XAudio2CF_CreateInstance(IClassFactory *iface, IUnknown *p
+     pthread_cond_init(&object->mst.engine_done, NULL);
+     pthread_cond_init(&object->mst.engine_ready, NULL);
+ 
++    /* set PulseAudio's application.name in the environment since FAudio and
++     * SDL provide no way to pass this in */
++    {
++        WCHAR path[MAX_PATH], *name;
++        char *str;
++        DWORD len;
++
++        GetModuleFileNameW(NULL, path, ARRAY_SIZE(path));
++        name = strrchrW(path, '\\');
++        if (!name)
++            name = path;
++        else
++            name++;
++        len = WideCharToMultiByte(CP_UNIXCP, 0, name, -1, NULL, 0, NULL, NULL);
++        str = HeapAlloc(GetProcessHeap(), 0, len);
++        WideCharToMultiByte(CP_UNIXCP, 0, name, -1, str, len, NULL, NULL);
++        setenv("PULSE_PROP_application.name", str, 1);
++        HeapFree(GetProcessHeap(), 0, str);
++    }
++
+     FAudioCOMConstructWithCustomAllocatorEXT(
+         &object->faudio,
+         XAUDIO2_VER,
 From b739d48093cce805b7b4f48fdbd9d0bb62bc8013 Mon Sep 17 00:00:00 2001
 From: Brendan Shanks <bshanks@codeweavers.com>
 Date: Mon, 13 Apr 2020 16:25:47 -0700
@@ -1821,6 +1813,37 @@ index 0ae3aadde92..e95ede8aed5 100644
      return FALSE;
  }
 
+From fdc1acce7e81f08eb10652b7b39b3d3e4bbed8f8 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 24 Apr 2020 20:08:38 +0300
+Subject: [PATCH] Avoid undefined result in ntdll_wcstoumbs() in case of error.
+
+Undefined result is due to RtlUnicodeToUTF8N() not setting output
+length on error which is a correct behaviour according to
+existing tests.
+
+'Planet Zoo' is affected which passes NULL object name buffer to
+NtCreateFile().
+
+Signed-off-by: Paul Gofman <gofmanp@gmail.com>
+---
+ dlls/ntdll/locale.c | 2 +-
+ 1 file changed, 1 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/locale.c b/dlls/ntdll/locale.c
+index d6bde700e42..4f03e3881f0 100644
+--- a/dlls/ntdll/locale.c
++++ b/dlls/ntdll/locale.c
+@@ -769,7 +769,7 @@ DWORD ntdll_umbstowcs( const char *src, DWORD srclen, WCHAR *dst, DWORD dstlen )
+  */
+ int ntdll_wcstoumbs( const WCHAR *src, DWORD srclen, char *dst, DWORD dstlen, BOOL strict )
+ {
+-    DWORD i, reslen;
++    DWORD i, reslen = 0;
+ 
+     if (!unix_table.CodePage)
+         RtlUnicodeToUTF8N( dst, dstlen, &reslen, src, srclen * sizeof(WCHAR) );
+
 From 9cffda4856b5e5057008d165dd38ec971b9af712 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Fri, 24 Apr 2020 19:48:20 +0300
@@ -1856,6 +1879,197 @@ index 784e720edf8..56f9be0f06e 100644
      name     = attr->ObjectName->Buffer;
      name_len = attr->ObjectName->Length / sizeof(WCHAR);
 
+From 48f7cb8e0cdec072ed6e2164946239fde5ecb722 Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Fri, 26 Jun 2020 18:57:35 +0200
+Subject: [PATCH] Import rebased against hotfixed staging -tkg fca69733
+ Paul Gofman's proton patchset.
+
+ ntdll: Use case sensitive search for \??\unix file names
+
+diff --git a/dlls/kernel32/path.c b/dlls/kernel32/path.c
+index 0f075d0af1c..db2c1fb0240 100644
+--- a/dlls/kernel32/path.c
++++ b/dlls/kernel32/path.c
+@@ -263,7 +263,7 @@ BOOL WINAPI RemoveDirectoryW( LPCWSTR path )
+         return FALSE;
+     }
+ 
+-    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN );
+     if (status == STATUS_SUCCESS)
+     {
+         status = NtQueryAttributesFile( &attr, &info );
+@@ -342,7 +342,7 @@ char * CDECL wine_get_unix_file_name( LPCWSTR dosW )
+     NTSTATUS status;
+ 
+     if (!RtlDosPathNameToNtPathName_U( dosW, &nt_name, NULL, NULL )) return NULL;
+-    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF );
+     RtlFreeUnicodeString( &nt_name );
+     if (status && status != STATUS_NO_SUCH_FILE)
+     {
+diff --git a/dlls/ntdll/directory.c b/dlls/ntdll/directory.c
+index 56f9be0f06e..92d96ad582e 100644
+--- a/dlls/ntdll/directory.c
++++ b/dlls/ntdll/directory.c
+@@ -2699,7 +2699,6 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+     char *unix_name;
+     int name_len, unix_len;
+     NTSTATUS status;
+-    BOOLEAN check_case = !(attr->Attributes & OBJ_CASE_INSENSITIVE);
+ 
+     if (!attr->ObjectName->Buffer && attr->ObjectName->Length)
+         return STATUS_ACCESS_VIOLATION;
+@@ -2709,7 +2708,7 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+         if (!attr->ObjectName->Buffer)
+             return STATUS_OBJECT_PATH_SYNTAX_BAD;
+ 
+-        return wine_nt_to_unix_file_name( attr->ObjectName, unix_name_ret, disposition, check_case );
++        return wine_nt_to_unix_file_name( attr->ObjectName, unix_name_ret, disposition );
+     }
+ 
+     name     = attr->ObjectName->Buffer;
+@@ -2740,7 +2739,7 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+             if ((old_cwd = open( ".", O_RDONLY )) != -1 && fchdir( root_fd ) != -1)
+             {
+                 status = lookup_unix_name( name, name_len, &unix_name, unix_len, 1,
+-                                           disposition, check_case );
++                                           disposition, FALSE );
+                 if (fchdir( old_cwd ) == -1) chdir( "/" );
+             }
+             else status = FILE_GetNtStatus();
+@@ -2747,7 +2746,7 @@ static NTSTATUS nt_to_unix_file_name_internal( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+  *           nt_to_unix_file_name_internal
+  */
+ static NTSTATUS nt_to_unix_file_name_internal( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+-                                               UINT disposition, BOOLEAN check_case )
++                                               UINT disposition )
+ {
+     static const WCHAR unixW[] = {'u','n','i','x'};
+     static const WCHAR pipeW[] = {'p','i','p','e'};
+@@ -2777,6 +2776,7 @@ static NTSTATUS nt_to_unix_file_name_internal( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+     char *unix_name;
+     int pos, ret, name_len, unix_len, prefix_len;
+     WCHAR prefix[MAX_DIR_ENTRY_LEN + 1];
++    BOOLEAN check_case = FALSE;
+     BOOLEAN is_unix = FALSE;
+     BOOLEAN is_pipe = FALSE;
+ 
+@@ -2789,7 +2788,7 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+  * returned, but the unix name is still filled in properly.
+  */
+ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+-                                          UINT disposition, BOOLEAN check_case )
++                                          UINT disposition )
+ {
+     static const WCHAR unixW[] = {'u','n','i','x'};
+     static const WCHAR invalid_charsW[] = { INVALID_NT_CHARS, 0 };
+@@ -2915,7 +2915,7 @@ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+         prefix = user_shared_data->NtSystemRoot;
+     }
+     else
+-        return nt_to_unix_file_name_internal( nameW, unix_name_ret, disposition, check_case );
++        return nt_to_unix_file_name_internal( nameW, unix_name_ret, disposition );
+ 
+     name_len = sizeof(dosprefixW) + wcslen(prefix) * sizeof(WCHAR) +
+                nameW->Length - offset * sizeof(WCHAR) + sizeof(WCHAR);
+@@ -2931,7 +2931,7 @@ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+     ptr[ nameW->Length / sizeof(WCHAR) - offset ] = 0;
+ 
+     RtlInitUnicodeString( &dospathW, name );
+-    status = nt_to_unix_file_name_internal( &dospathW, unix_name_ret, disposition, check_case );
++    status = nt_to_unix_file_name_internal( &dospathW, unix_name_ret, disposition );
+ 
+     RtlFreeHeap( GetProcessHeap(), 0, name );
+     return status;
+diff --git a/dlls/ntdll/file.c b/dlls/ntdll/file.c
+index 1cb45fa0d8c..1a36d75a76c 100644
+--- a/dlls/ntdll/file.c
++++ b/dlls/ntdll/file.c
+@@ -1726,7 +1726,7 @@ NTSTATUS FILE_CreateSymlink(HANDLE handle, REPARSE_DATA_BUFFER *buffer)
+     }
+ 
+     nt_dest_allocated = TRUE;
+-    status = wine_nt_to_unix_file_name( &nt_dest, &unix_dest, FILE_WINE_PATH, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_dest, &unix_dest, FILE_WINE_PATH );
+     if (status != STATUS_SUCCESS && status != STATUS_NO_SUCH_FILE)
+         goto cleanup;
+     dest_allocated = TRUE;
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 6ef10d6c18a..2979061a5e2 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -3079,7 +3079,7 @@ static NTSTATUS load_so_dll( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+ 
+     if (!so_name)
+     {
+-        if (wine_nt_to_unix_file_name( nt_name, &unix_name, FILE_OPEN, FALSE ))
++        if (wine_nt_to_unix_file_name( nt_name, &unix_name, FILE_OPEN ))
+             return STATUS_DLL_NOT_FOUND;
+ 
+         /* remove .so extension from Windows name */
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index 1a8bd4e11e1..ba0776073fb 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -1575,7 +1575,7 @@
+ @ cdecl __wine_set_signal_handler(long ptr)
+ 
+ # Filesystem
+-@ cdecl wine_nt_to_unix_file_name(ptr ptr long long)
++@ cdecl wine_nt_to_unix_file_name(ptr ptr long)
+ @ cdecl wine_unix_to_nt_file_name(ptr ptr)
+ 
+ @ cdecl __wine_esync_set_queue_fd(long)
+diff --git a/dlls/ntdll/process.c b/dlls/ntdll/process.c
+index d7ff7fa2c6f..0f4f42a240f 100644
+--- a/dlls/ntdll/process.c
++++ b/dlls/ntdll/process.c
+@@ -1458,7 +1458,7 @@ static char *get_unix_curdir( const RTL_USER_PROCESS_PARAMETERS *params )
+ 
+     if (!RtlDosPathNameToNtPathName_U( params->CurrentDirectory.DosPath.Buffer, &nt_name, NULL, NULL ))
+         return NULL;
+-    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF );
+     RtlFreeUnicodeString( &nt_name );
+     if (status && status != STATUS_NO_SUCH_FILE) return NULL;
+     return unix_name.Buffer;
+@@ -1479,7 +1479,7 @@ static NTSTATUS fork_and_exec( UNICODE_STRING *path, const RTL_USER_PROCESS_PARA
+     ANSI_STRING unix_name;
+     NTSTATUS status;
+ 
+-    status = wine_nt_to_unix_file_name( path, &unix_name, FILE_OPEN, FALSE );
++    status = wine_nt_to_unix_file_name( path, &unix_name, FILE_OPEN );
+     if (status) return status;
+ 
+ #ifdef HAVE_PIPE2
+diff --git a/dlls/ntdll/tests/file.c b/dlls/ntdll/tests/file.c
+index 9ebe41ac7d8..b7a2979506c 100644
+--- a/dlls/ntdll/tests/file.c
++++ b/dlls/ntdll/tests/file.c
+@@ -370,7 +370,7 @@ static void open_file_test(void)
+     attr.Length = sizeof(attr);
+     attr.RootDirectory = 0;
+     attr.ObjectName = &nameW;
+-    attr.Attributes = OBJ_CASE_INSENSITIVE;
++    attr.Attributes = 0;
+     attr.SecurityDescriptor = NULL;
+     attr.SecurityQualityOfService = NULL;
+     status = pNtOpenFile( &dir, SYNCHRONIZE|FILE_LIST_DIRECTORY, &attr, &io,
+diff --git a/include/winternl.h b/include/winternl.h
+index e67fcabb6a2..ecaf2af7f80 100644
+--- a/include/winternl.h
++++ b/include/winternl.h
+@@ -3021,7 +3021,7 @@ NTSYSAPI void      WINAPI TpWaitForWork(TP_WORK *,BOOL);
+ /* Wine internal functions */
+ 
+ NTSYSAPI NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+-                                                   UINT disposition, BOOLEAN check_case );
++                                                   UINT disposition );
+ NTSYSAPI NTSTATUS CDECL wine_unix_to_nt_file_name( const ANSI_STRING *name, UNICODE_STRING *nt );
+ 
+ 
 From cb427c70056654bf12fb0d7d6dcb13386d193ff4 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
 Date: Fri, 24 Apr 2020 14:37:58 +0300
@@ -2267,6 +2481,948 @@ index c7881fe4516..bb4be45da5d 100644
      }
  
      blacklist_filename_count = 0;
+From eb9b688d1b5d8c2061137100609c0a9b8189301c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 14 Jul 2020 18:25:16 +0200
+Subject: [PATCH] dxgi: Implement IDXGIOutput5 and IDXGIOutput6 stubs.
+
+---
+ dlls/dxgi/adapter.c      |   2 +-
+ dlls/dxgi/dxgi_private.h |   2 +-
+ dlls/dxgi/output.c       | 140 ++++++++++++++++++++++++++-------------
+ 3 files changed, 97 insertions(+), 47 deletions(-)
+
+diff --git a/dlls/dxgi/adapter.c b/dlls/dxgi/adapter.c
+index a5563498cdd..ae01c860057 100644
+--- a/dlls/dxgi/adapter.c
++++ b/dlls/dxgi/adapter.c
+@@ -140,7 +140,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_adapter_EnumOutputs(IWineDXGIAdapter *ifac
+         return hr;
+     }
+ 
+-    *output = (IDXGIOutput *)&output_object->IDXGIOutput4_iface;
++    *output = (IDXGIOutput *)&output_object->IDXGIOutput6_iface;
+ 
+     TRACE("Returning output %p.\n", *output);
+ 
+diff --git a/dlls/dxgi/dxgi_private.h b/dlls/dxgi/dxgi_private.h
+index 5b934498349..3338be7a8de 100644
+--- a/dlls/dxgi/dxgi_private.h
++++ b/dlls/dxgi/dxgi_private.h
+@@ -142,7 +142,7 @@ HRESULT dxgi_device_init(struct dxgi_device *device, struct dxgi_device_layer *l
+ /* IDXGIOutput */
+ struct dxgi_output
+ {
+-    IDXGIOutput4 IDXGIOutput4_iface;
++    IDXGIOutput6 IDXGIOutput6_iface;
+     LONG refcount;
+     struct wined3d_private_store private_store;
+     struct dxgi_adapter *adapter;
+diff --git a/dlls/dxgi/output.c b/dlls/dxgi/output.c
+index a2331358e69..5d02802c74c 100644
+--- a/dlls/dxgi/output.c
++++ b/dlls/dxgi/output.c
+@@ -183,18 +183,20 @@ static HRESULT dxgi_output_get_display_mode_list(struct dxgi_output *output,
+     return S_OK;
+ }
+ 
+-static inline struct dxgi_output *impl_from_IDXGIOutput4(IDXGIOutput4 *iface)
++static inline struct dxgi_output *impl_from_IDXGIOutput6(IDXGIOutput6 *iface)
+ {
+-    return CONTAINING_RECORD(iface, struct dxgi_output, IDXGIOutput4_iface);
++    return CONTAINING_RECORD(iface, struct dxgi_output, IDXGIOutput6_iface);
+ }
+ 
+ /* IUnknown methods */
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_QueryInterface(IDXGIOutput4 *iface, REFIID iid, void **object)
++static HRESULT STDMETHODCALLTYPE dxgi_output_QueryInterface(IDXGIOutput6 *iface, REFIID iid, void **object)
+ {
+     TRACE("iface %p, iid %s, object %p.\n", iface, debugstr_guid(iid), object);
+ 
+-    if (IsEqualGUID(iid, &IID_IDXGIOutput4)
++    if (IsEqualGUID(iid, &IID_IDXGIOutput6)
++            || IsEqualGUID(iid, &IID_IDXGIOutput5)
++            || IsEqualGUID(iid, &IID_IDXGIOutput4)
+             || IsEqualGUID(iid, &IID_IDXGIOutput3)
+             || IsEqualGUID(iid, &IID_IDXGIOutput2)
+             || IsEqualGUID(iid, &IID_IDXGIOutput1)
+@@ -213,9 +215,9 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_QueryInterface(IDXGIOutput4 *iface,
+     return E_NOINTERFACE;
+ }
+ 
+-static ULONG STDMETHODCALLTYPE dxgi_output_AddRef(IDXGIOutput4 *iface)
++static ULONG STDMETHODCALLTYPE dxgi_output_AddRef(IDXGIOutput6 *iface)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+     ULONG refcount = InterlockedIncrement(&output->refcount);
+ 
+     TRACE("%p increasing refcount to %u.\n", output, refcount);
+@@ -223,9 +225,9 @@ static ULONG STDMETHODCALLTYPE dxgi_output_AddRef(IDXGIOutput4 *iface)
+     return refcount;
+ }
+ 
+-static ULONG STDMETHODCALLTYPE dxgi_output_Release(IDXGIOutput4 *iface)
++static ULONG STDMETHODCALLTYPE dxgi_output_Release(IDXGIOutput6 *iface)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+     ULONG refcount = InterlockedDecrement(&output->refcount);
+ 
+     TRACE("%p decreasing refcount to %u.\n", output, refcount);
+@@ -242,40 +244,40 @@ static ULONG STDMETHODCALLTYPE dxgi_output_Release(IDXGIOutput4 *iface)
+ 
+ /* IDXGIObject methods */
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_SetPrivateData(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_SetPrivateData(IDXGIOutput6 *iface,
+         REFGUID guid, UINT data_size, const void *data)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+ 
+     TRACE("iface %p, guid %s, data_size %u, data %p.\n", iface, debugstr_guid(guid), data_size, data);
+ 
+     return dxgi_set_private_data(&output->private_store, guid, data_size, data);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_SetPrivateDataInterface(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_SetPrivateDataInterface(IDXGIOutput6 *iface,
+         REFGUID guid, const IUnknown *object)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+ 
+     TRACE("iface %p, guid %s, object %p.\n", iface, debugstr_guid(guid), object);
+ 
+     return dxgi_set_private_data_interface(&output->private_store, guid, object);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_GetPrivateData(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetPrivateData(IDXGIOutput6 *iface,
+         REFGUID guid, UINT *data_size, void *data)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+ 
+     TRACE("iface %p, guid %s, data_size %p, data %p.\n", iface, debugstr_guid(guid), data_size, data);
+ 
+     return dxgi_get_private_data(&output->private_store, guid, data_size, data);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_GetParent(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetParent(IDXGIOutput6 *iface,
+         REFIID riid, void **parent)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+ 
+     TRACE("iface %p, riid %s, parent %p.\n", iface, debugstr_guid(riid), parent);
+ 
+@@ -284,9 +286,9 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetParent(IDXGIOutput4 *iface,
+ 
+ /* IDXGIOutput methods */
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc(IDXGIOutput4 *iface, DXGI_OUTPUT_DESC *desc)
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc(IDXGIOutput6 *iface, DXGI_OUTPUT_DESC *desc)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+     struct wined3d_output_desc wined3d_desc;
+     HRESULT hr;
+ 
+@@ -315,10 +317,10 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc(IDXGIOutput4 *iface, DXGI_O
+     return S_OK;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList(IDXGIOutput6 *iface,
+         DXGI_FORMAT format, UINT flags, UINT *mode_count, DXGI_MODE_DESC *modes)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+ 
+     FIXME("iface %p, format %s, flags %#x, mode_count %p, modes %p partial stub!\n",
+             iface, debug_dxgi_format(format), flags, mode_count, modes);
+@@ -327,10 +329,10 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList(IDXGIOutput4 *if
+             format, mode_count, modes, DXGI_MODE_STRUCT_VERSION_0);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_FindClosestMatchingMode(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_FindClosestMatchingMode(IDXGIOutput6 *iface,
+         const DXGI_MODE_DESC *mode, DXGI_MODE_DESC *closest_match, IUnknown *device)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+     struct wined3d_display_mode wined3d_mode;
+     HRESULT hr;
+ 
+@@ -350,7 +352,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_FindClosestMatchingMode(IDXGIOutput
+     return hr;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_WaitForVBlank(IDXGIOutput4 *iface)
++static HRESULT STDMETHODCALLTYPE dxgi_output_WaitForVBlank(IDXGIOutput6 *iface)
+ {
+     static BOOL once = FALSE;
+ 
+@@ -362,9 +364,9 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_WaitForVBlank(IDXGIOutput4 *iface)
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_TakeOwnership(IDXGIOutput4 *iface, IUnknown *device, BOOL exclusive)
++static HRESULT STDMETHODCALLTYPE dxgi_output_TakeOwnership(IDXGIOutput6 *iface, IUnknown *device, BOOL exclusive)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+     HRESULT hr;
+ 
+     TRACE("iface %p, device %p, exclusive %d.\n", iface, device, exclusive);
+@@ -382,9 +384,9 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_TakeOwnership(IDXGIOutput4 *iface,
+     return hr;
+ }
+ 
+-static void STDMETHODCALLTYPE dxgi_output_ReleaseOwnership(IDXGIOutput4 *iface)
++static void STDMETHODCALLTYPE dxgi_output_ReleaseOwnership(IDXGIOutput6 *iface)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+ 
+     TRACE("iface %p.\n", iface);
+ 
+@@ -396,7 +398,7 @@ static void STDMETHODCALLTYPE dxgi_output_ReleaseOwnership(IDXGIOutput4 *iface)
+     wined3d_mutex_unlock();
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControlCapabilities(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControlCapabilities(IDXGIOutput6 *iface,
+         DXGI_GAMMA_CONTROL_CAPABILITIES *gamma_caps)
+ {
+     unsigned int i;
+@@ -417,7 +419,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControlCapabilities(IDXGIOu
+     return S_OK;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_SetGammaControl(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_SetGammaControl(IDXGIOutput6 *iface,
+         const DXGI_GAMMA_CONTROL *gamma_control)
+ {
+     FIXME("iface %p, gamma_control %p stub!\n", iface, gamma_control);
+@@ -425,7 +427,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_SetGammaControl(IDXGIOutput4 *iface
+     return S_OK;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControl(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControl(IDXGIOutput6 *iface,
+         DXGI_GAMMA_CONTROL *gamma_control)
+ {
+     FIXME("iface %p, gamma_control %p stub!\n", iface, gamma_control);
+@@ -433,21 +435,21 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControl(IDXGIOutput4 *iface
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_SetDisplaySurface(IDXGIOutput4 *iface, IDXGISurface *surface)
++static HRESULT STDMETHODCALLTYPE dxgi_output_SetDisplaySurface(IDXGIOutput6 *iface, IDXGISurface *surface)
+ {
+     FIXME("iface %p, surface %p stub!\n", iface, surface);
+ 
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplaySurfaceData(IDXGIOutput4 *iface, IDXGISurface *surface)
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplaySurfaceData(IDXGIOutput6 *iface, IDXGISurface *surface)
+ {
+     FIXME("iface %p, surface %p stub!\n", iface, surface);
+ 
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_GetFrameStatistics(IDXGIOutput4 *iface, DXGI_FRAME_STATISTICS *stats)
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetFrameStatistics(IDXGIOutput6 *iface, DXGI_FRAME_STATISTICS *stats)
+ {
+     FIXME("iface %p, stats %p stub!\n", iface, stats);
+ 
+@@ -456,10 +458,10 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetFrameStatistics(IDXGIOutput4 *if
+ 
+ /* IDXGIOutput1 methods */
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList1(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList1(IDXGIOutput6 *iface,
+         DXGI_FORMAT format, UINT flags, UINT *mode_count, DXGI_MODE_DESC1 *modes)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+ 
+     FIXME("iface %p, format %s, flags %#x, mode_count %p, modes %p partial stub!\n",
+             iface, debug_dxgi_format(format), flags, mode_count, modes);
+@@ -468,10 +470,10 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList1(IDXGIOutput4 *i
+             format, mode_count, modes, DXGI_MODE_STRUCT_VERSION_1);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_FindClosestMatchingMode1(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_FindClosestMatchingMode1(IDXGIOutput6 *iface,
+         const DXGI_MODE_DESC1 *mode, DXGI_MODE_DESC1 *closest_match, IUnknown *device)
+ {
+-    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
++    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+     struct wined3d_display_mode wined3d_mode;
+     HRESULT hr;
+ 
+@@ -491,7 +493,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_FindClosestMatchingMode1(IDXGIOutpu
+     return hr;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplaySurfaceData1(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplaySurfaceData1(IDXGIOutput6 *iface,
+         IDXGIResource *resource)
+ {
+     FIXME("iface %p, resource %p stub!\n", iface, resource);
+@@ -499,7 +501,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplaySurfaceData1(IDXGIOutput4
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_DuplicateOutput(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_DuplicateOutput(IDXGIOutput6 *iface,
+         IUnknown *device, IDXGIOutputDuplication **output_duplication)
+ {
+     FIXME("iface %p, device %p, output_duplication %p stub!\n", iface, device, output_duplication);
+@@ -509,7 +511,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_DuplicateOutput(IDXGIOutput4 *iface
+ 
+ /* IDXGIOutput2 methods */
+ 
+-static BOOL STDMETHODCALLTYPE dxgi_output_SupportsOverlays(IDXGIOutput4 *iface)
++static BOOL STDMETHODCALLTYPE dxgi_output_SupportsOverlays(IDXGIOutput6 *iface)
+ {
+     FIXME("iface %p stub!\n", iface);
+ 
+@@ -518,7 +520,7 @@ static BOOL STDMETHODCALLTYPE dxgi_output_SupportsOverlays(IDXGIOutput4 *iface)
+ 
+ /* IDXGIOutput3 methods */
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_CheckOverlaySupport(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_CheckOverlaySupport(IDXGIOutput6 *iface,
+         DXGI_FORMAT format, IUnknown *device, UINT *flags)
+ {
+     FIXME("iface %p, format %#x, device %p, flags %p stub!\n", iface, format, device, flags);
+@@ -528,7 +530,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_CheckOverlaySupport(IDXGIOutput4 *i
+ 
+ /* IDXGIOutput4 methods */
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_output_CheckOverlayColorSpaceSupport(IDXGIOutput4 *iface,
++static HRESULT STDMETHODCALLTYPE dxgi_output_CheckOverlayColorSpaceSupport(IDXGIOutput6 *iface,
+         DXGI_FORMAT format, DXGI_COLOR_SPACE_TYPE color_space, IUnknown *device, UINT *flags)
+ {
+     FIXME("iface %p, format %#x, color_space %#x, device %p, flags %p stub!\n",
+@@ -537,7 +539,50 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_CheckOverlayColorSpaceSupport(IDXGI
+     return E_NOTIMPL;
+ }
+ 
+-static const struct IDXGIOutput4Vtbl dxgi_output_vtbl =
++/* IDXGIOutput5 methods */
++
++static HRESULT STDMETHODCALLTYPE dxgi_output_DuplicateOutput1(IDXGIOutput6 *iface,
++        IUnknown *device, UINT flags, UINT format_count, const DXGI_FORMAT *formats,
++        IDXGIOutputDuplication **duplication)
++{
++    FIXME("iface %p, device %p, flags %#x, format_count %d, formats %p, "
++            "output_duplication %p stub!\n", iface, device, flags, format_count,
++            formats, duplication);
++
++    return E_NOTIMPL;
++}
++
++/* IDXGIOutput6 methods */
++
++static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc1(IDXGIOutput6 *iface,
++        DXGI_OUTPUT_DESC1 *desc)
++{
++    DXGI_OUTPUT_DESC base_desc;
++    HRESULT hr;
++
++    FIXME("iface %p, desc %p stub!\n", iface, desc);
++
++    if (!desc)
++        return E_INVALIDARG;
++
++    if (FAILED(hr = dxgi_output_GetDesc(iface, &base_desc)))
++        return hr;
++
++    memset(desc, 0, sizeof(*desc));
++    memcpy(desc, &base_desc, sizeof(base_desc));
++
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE dxgi_output_CheckHardwareCompositionSupport(IDXGIOutput6 *iface,
++        UINT *flags)
++{
++    FIXME("iface %p, flags %p stub!\n", iface, flags);
++
++    return E_NOTIMPL;
++}
++
++static const struct IDXGIOutput6Vtbl dxgi_output_vtbl =
+ {
+     dxgi_output_QueryInterface,
+     dxgi_output_AddRef,
+@@ -571,6 +616,11 @@ static const struct IDXGIOutput4Vtbl dxgi_output_vtbl =
+     dxgi_output_CheckOverlaySupport,
+     /* IDXGIOutput4 methods */
+     dxgi_output_CheckOverlayColorSpaceSupport,
++    /* IDXGIOutput5 methods */
++    dxgi_output_DuplicateOutput1,
++    /* IDXGIOutput6 methods */
++    dxgi_output_GetDesc1,
++    dxgi_output_CheckHardwareCompositionSupport,
+ };
+ 
+ struct dxgi_output *unsafe_impl_from_IDXGIOutput(IDXGIOutput *iface)
+@@ -578,13 +628,13 @@ struct dxgi_output *unsafe_impl_from_IDXGIOutput(IDXGIOutput *iface)
+     if (!iface)
+         return NULL;
+     assert(iface->lpVtbl == (IDXGIOutputVtbl *)&dxgi_output_vtbl);
+-    return CONTAINING_RECORD(iface, struct dxgi_output, IDXGIOutput4_iface);
++    return CONTAINING_RECORD(iface, struct dxgi_output, IDXGIOutput6_iface);
+ }
+ 
+ static void dxgi_output_init(struct dxgi_output *output, unsigned int output_idx,
+         struct dxgi_adapter *adapter)
+ {
+-    output->IDXGIOutput4_iface.lpVtbl = &dxgi_output_vtbl;
++    output->IDXGIOutput6_iface.lpVtbl = &dxgi_output_vtbl;
+     output->refcount = 1;
+     output->wined3d_output = wined3d_adapter_get_output(adapter->wined3d_adapter, output_idx);
+     wined3d_private_store_init(&output->private_store);
+From b3f778dcb0ba405cb05144b7edfa26ade4502a1e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 14 Jul 2020 22:29:08 +0200
+Subject: [PATCH] dxgi: Implement IDXGISwapChain4 stub.
+
+---
+ dlls/dxgi/swapchain.c | 157 +++++++++++++++++++++++-------------------
+ 1 file changed, 85 insertions(+), 72 deletions(-)
+
+diff --git a/dlls/dxgi/swapchain.c b/dlls/dxgi/swapchain.c
+index a3d0929a39b..97878093a6b 100644
+--- a/dlls/dxgi/swapchain.c
++++ b/dlls/dxgi/swapchain.c
+@@ -1062,7 +1062,7 @@ static HRESULT hresult_from_vk_result(VkResult vr)
+ 
+ struct d3d12_swapchain
+ {
+-    IDXGISwapChain3 IDXGISwapChain3_iface;
++    IDXGISwapChain4 IDXGISwapChain4_iface;
+     LONG refcount;
+     struct wined3d_private_store private_store;
+ 
+@@ -1850,14 +1850,14 @@ static HRESULT d3d12_swapchain_recreate_vulkan_swapchain(struct d3d12_swapchain
+     return hr;
+ }
+ 
+-static inline struct d3d12_swapchain *d3d12_swapchain_from_IDXGISwapChain3(IDXGISwapChain3 *iface)
++static inline struct d3d12_swapchain *d3d12_swapchain_from_IDXGISwapChain4(IDXGISwapChain4 *iface)
+ {
+-    return CONTAINING_RECORD(iface, struct d3d12_swapchain, IDXGISwapChain3_iface);
++    return CONTAINING_RECORD(iface, struct d3d12_swapchain, IDXGISwapChain4_iface);
+ }
+ 
+ /* IUnknown methods */
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_QueryInterface(IDXGISwapChain3 *iface, REFIID iid, void **object)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_QueryInterface(IDXGISwapChain4 *iface, REFIID iid, void **object)
+ {
+     TRACE("iface %p, iid %s, object %p.\n", iface, debugstr_guid(iid), object);
+ 
+@@ -1867,7 +1867,8 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_QueryInterface(IDXGISwapChain3
+             || IsEqualGUID(iid, &IID_IDXGISwapChain)
+             || IsEqualGUID(iid, &IID_IDXGISwapChain1)
+             || IsEqualGUID(iid, &IID_IDXGISwapChain2)
+-            || IsEqualGUID(iid, &IID_IDXGISwapChain3))
++            || IsEqualGUID(iid, &IID_IDXGISwapChain3)
++            || IsEqualGUID(iid, &IID_IDXGISwapChain4))
+     {
+         IUnknown_AddRef(iface);
+         *object = iface;
+@@ -1880,9 +1881,9 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_QueryInterface(IDXGISwapChain3
+     return E_NOINTERFACE;
+ }
+ 
+-static ULONG STDMETHODCALLTYPE d3d12_swapchain_AddRef(IDXGISwapChain3 *iface)
++static ULONG STDMETHODCALLTYPE d3d12_swapchain_AddRef(IDXGISwapChain4 *iface)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+     ULONG refcount = InterlockedIncrement(&swapchain->refcount);
+ 
+     TRACE("%p increasing refcount to %u.\n", swapchain, refcount);
+@@ -1934,9 +1935,9 @@ static void d3d12_swapchain_destroy(struct d3d12_swapchain *swapchain)
+     wined3d_swapchain_state_destroy(swapchain->state);
+ }
+ 
+-static ULONG STDMETHODCALLTYPE d3d12_swapchain_Release(IDXGISwapChain3 *iface)
++static ULONG STDMETHODCALLTYPE d3d12_swapchain_Release(IDXGISwapChain4 *iface)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+     ULONG refcount = InterlockedDecrement(&swapchain->refcount);
+ 
+     TRACE("%p decreasing refcount to %u.\n", swapchain, refcount);
+@@ -1952,39 +1953,39 @@ static ULONG STDMETHODCALLTYPE d3d12_swapchain_Release(IDXGISwapChain3 *iface)
+ 
+ /* IDXGIObject methods */
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetPrivateData(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetPrivateData(IDXGISwapChain4 *iface,
+         REFGUID guid, UINT data_size, const void *data)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, guid %s, data_size %u, data %p.\n", iface, debugstr_guid(guid), data_size, data);
+ 
+     return dxgi_set_private_data(&swapchain->private_store, guid, data_size, data);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetPrivateDataInterface(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetPrivateDataInterface(IDXGISwapChain4 *iface,
+         REFGUID guid, const IUnknown *object)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, guid %s, object %p.\n", iface, debugstr_guid(guid), object);
+ 
+     return dxgi_set_private_data_interface(&swapchain->private_store, guid, object);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetPrivateData(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetPrivateData(IDXGISwapChain4 *iface,
+         REFGUID guid, UINT *data_size, void *data)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, guid %s, data_size %p, data %p.\n", iface, debugstr_guid(guid), data_size, data);
+ 
+     return dxgi_get_private_data(&swapchain->private_store, guid, data_size, data);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetParent(IDXGISwapChain3 *iface, REFIID iid, void **parent)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetParent(IDXGISwapChain4 *iface, REFIID iid, void **parent)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, iid %s, parent %p.\n", iface, debugstr_guid(iid), parent);
+ 
+@@ -1993,9 +1994,9 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetParent(IDXGISwapChain3 *ifac
+ 
+ /* IDXGIDeviceSubObject methods */
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetDevice(IDXGISwapChain3 *iface, REFIID iid, void **device)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetDevice(IDXGISwapChain4 *iface, REFIID iid, void **device)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, iid %s, device %p.\n", iface, debugstr_guid(iid), device);
+ 
+@@ -2213,19 +2214,19 @@ static HRESULT d3d12_swapchain_present(struct d3d12_swapchain *swapchain,
+     return hresult_from_vk_result(vr);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_Present(IDXGISwapChain3 *iface, UINT sync_interval, UINT flags)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_Present(IDXGISwapChain4 *iface, UINT sync_interval, UINT flags)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, sync_interval %u, flags %#x.\n", iface, sync_interval, flags);
+ 
+     return d3d12_swapchain_present(swapchain, sync_interval, flags);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetBuffer(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetBuffer(IDXGISwapChain4 *iface,
+         UINT buffer_idx, REFIID iid, void **surface)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, buffer_idx %u, iid %s, surface %p.\n",
+             iface, buffer_idx, debugstr_guid(iid), surface);
+@@ -2240,10 +2241,10 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetBuffer(IDXGISwapChain3 *ifac
+     return ID3D12Resource_QueryInterface(swapchain->buffers[buffer_idx], iid, surface);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d12_swapchain_SetFullscreenState(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d12_swapchain_SetFullscreenState(IDXGISwapChain4 *iface,
+         BOOL fullscreen, IDXGIOutput *target)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+     DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc = &swapchain->fullscreen_desc;
+     const DXGI_SWAP_CHAIN_DESC1 *swapchain_desc = &swapchain->desc;
+     struct wined3d_swapchain_desc wined3d_desc;
+@@ -2262,7 +2263,7 @@ static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d12_swapchain_SetFullscreen
+     {
+         IDXGIOutput_AddRef(target);
+     }
+-    else if (FAILED(hr = IDXGISwapChain3_GetContainingOutput(iface, &target)))
++    else if (FAILED(hr = IDXGISwapChain4_GetContainingOutput(iface, &target)))
+     {
+         WARN("Failed to get target output for swapchain, hr %#x.\n", hr);
+         return hr;
+@@ -2296,10 +2297,10 @@ static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d12_swapchain_SetFullscreen
+     return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetFullscreenState(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetFullscreenState(IDXGISwapChain4 *iface,
+         BOOL *fullscreen, IDXGIOutput **target)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, fullscreen %p, target %p.\n", iface, fullscreen, target);
+ 
+@@ -2312,9 +2313,9 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetFullscreenState(IDXGISwapCha
+     return S_OK;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetDesc(IDXGISwapChain3 *iface, DXGI_SWAP_CHAIN_DESC *desc)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetDesc(IDXGISwapChain4 *iface, DXGI_SWAP_CHAIN_DESC *desc)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+     const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc = &swapchain->fullscreen_desc;
+     const DXGI_SWAP_CHAIN_DESC1 *swapchain_desc = &swapchain->desc;
+ 
+@@ -2401,10 +2402,10 @@ static HRESULT d3d12_swapchain_resize_buffers(struct d3d12_swapchain *swapchain,
+     return d3d12_swapchain_recreate_vulkan_swapchain(swapchain);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_ResizeBuffers(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_ResizeBuffers(IDXGISwapChain4 *iface,
+         UINT buffer_count, UINT width, UINT height, DXGI_FORMAT format, UINT flags)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, buffer_count %u, width %u, height %u, format %s, flags %#x.\n",
+             iface, buffer_count, width, height, debug_dxgi_format(format), flags);
+@@ -2412,20 +2413,20 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_ResizeBuffers(IDXGISwapChain3 *
+     return d3d12_swapchain_resize_buffers(swapchain, buffer_count, width, height, format, flags);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_ResizeTarget(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_ResizeTarget(IDXGISwapChain4 *iface,
+         const DXGI_MODE_DESC *target_mode_desc)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, target_mode_desc %p.\n", iface, target_mode_desc);
+ 
+     return dxgi_swapchain_resize_target(swapchain->state, target_mode_desc);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetContainingOutput(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetContainingOutput(IDXGISwapChain4 *iface,
+         IDXGIOutput **output)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+     IUnknown *device_parent;
+     IDXGIFactory *factory;
+     IDXGIAdapter *adapter;
+@@ -2453,7 +2454,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetContainingOutput(IDXGISwapCh
+     return hr;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetFrameStatistics(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetFrameStatistics(IDXGISwapChain4 *iface,
+         DXGI_FRAME_STATISTICS *stats)
+ {
+     FIXME("iface %p, stats %p stub!\n", iface, stats);
+@@ -2461,7 +2462,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetFrameStatistics(IDXGISwapCha
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetLastPresentCount(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetLastPresentCount(IDXGISwapChain4 *iface,
+         UINT *last_present_count)
+ {
+     FIXME("iface %p, last_present_count %p stub!\n", iface, last_present_count);
+@@ -2471,9 +2472,9 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetLastPresentCount(IDXGISwapCh
+ 
+ /* IDXGISwapChain1 methods */
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetDesc1(IDXGISwapChain3 *iface, DXGI_SWAP_CHAIN_DESC1 *desc)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetDesc1(IDXGISwapChain4 *iface, DXGI_SWAP_CHAIN_DESC1 *desc)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, desc %p.\n", iface, desc);
+ 
+@@ -2487,10 +2488,10 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetDesc1(IDXGISwapChain3 *iface
+     return S_OK;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetFullscreenDesc(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetFullscreenDesc(IDXGISwapChain4 *iface,
+         DXGI_SWAP_CHAIN_FULLSCREEN_DESC *desc)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, desc %p.\n", iface, desc);
+ 
+@@ -2504,9 +2505,9 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetFullscreenDesc(IDXGISwapChai
+     return S_OK;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetHwnd(IDXGISwapChain3 *iface, HWND *hwnd)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetHwnd(IDXGISwapChain4 *iface, HWND *hwnd)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, hwnd %p.\n", iface, hwnd);
+ 
+@@ -2520,7 +2521,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetHwnd(IDXGISwapChain3 *iface,
+     return S_OK;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetCoreWindow(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetCoreWindow(IDXGISwapChain4 *iface,
+         REFIID iid, void **core_window)
+ {
+     FIXME("iface %p, iid %s, core_window %p stub!\n", iface, debugstr_guid(iid), core_window);
+@@ -2531,10 +2532,10 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetCoreWindow(IDXGISwapChain3 *
+     return DXGI_ERROR_INVALID_CALL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_Present1(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_Present1(IDXGISwapChain4 *iface,
+         UINT sync_interval, UINT flags, const DXGI_PRESENT_PARAMETERS *present_parameters)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, sync_interval %u, flags %#x, present_parameters %p.\n",
+             iface, sync_interval, flags, present_parameters);
+@@ -2545,14 +2546,14 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_Present1(IDXGISwapChain3 *iface
+     return d3d12_swapchain_present(swapchain, sync_interval, flags);
+ }
+ 
+-static BOOL STDMETHODCALLTYPE d3d12_swapchain_IsTemporaryMonoSupported(IDXGISwapChain3 *iface)
++static BOOL STDMETHODCALLTYPE d3d12_swapchain_IsTemporaryMonoSupported(IDXGISwapChain4 *iface)
+ {
+     FIXME("iface %p stub!\n", iface);
+ 
+     return FALSE;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetRestrictToOutput(IDXGISwapChain3 *iface, IDXGIOutput **output)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetRestrictToOutput(IDXGISwapChain4 *iface, IDXGIOutput **output)
+ {
+     FIXME("iface %p, output %p stub!\n", iface, output);
+ 
+@@ -2566,28 +2567,28 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetRestrictToOutput(IDXGISwapCh
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetBackgroundColor(IDXGISwapChain3 *iface, const DXGI_RGBA *color)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetBackgroundColor(IDXGISwapChain4 *iface, const DXGI_RGBA *color)
+ {
+     FIXME("iface %p, color %p stub!\n", iface, color);
+ 
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetBackgroundColor(IDXGISwapChain3 *iface, DXGI_RGBA *color)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetBackgroundColor(IDXGISwapChain4 *iface, DXGI_RGBA *color)
+ {
+     FIXME("iface %p, color %p stub!\n", iface, color);
+ 
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetRotation(IDXGISwapChain3 *iface, DXGI_MODE_ROTATION rotation)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetRotation(IDXGISwapChain4 *iface, DXGI_MODE_ROTATION rotation)
+ {
+     FIXME("iface %p, rotation %#x stub!\n", iface, rotation);
+ 
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetRotation(IDXGISwapChain3 *iface, DXGI_MODE_ROTATION *rotation)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetRotation(IDXGISwapChain4 *iface, DXGI_MODE_ROTATION *rotation)
+ {
+     FIXME("iface %p, rotation %p stub!\n", iface, rotation);
+ 
+@@ -2596,23 +2597,23 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetRotation(IDXGISwapChain3 *if
+ 
+ /* IDXGISwapChain2 methods */
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetSourceSize(IDXGISwapChain3 *iface, UINT width, UINT height)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetSourceSize(IDXGISwapChain4 *iface, UINT width, UINT height)
+ {
+     FIXME("iface %p, width %u, height %u stub!\n", iface, width, height);
+ 
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetSourceSize(IDXGISwapChain3 *iface, UINT *width, UINT *height)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetSourceSize(IDXGISwapChain4 *iface, UINT *width, UINT *height)
+ {
+     FIXME("iface %p, width %p, height %p stub!\n", iface, width, height);
+ 
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetMaximumFrameLatency(IDXGISwapChain3 *iface, UINT max_latency)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetMaximumFrameLatency(IDXGISwapChain4 *iface, UINT max_latency)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, max_latency %u.\n", iface, max_latency);
+ 
+@@ -2632,9 +2633,9 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetMaximumFrameLatency(IDXGISwa
+     return S_OK;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetMaximumFrameLatency(IDXGISwapChain3 *iface, UINT *max_latency)
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetMaximumFrameLatency(IDXGISwapChain4 *iface, UINT *max_latency)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p, max_latency %p.\n", iface, max_latency);
+ 
+@@ -2648,16 +2649,16 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetMaximumFrameLatency(IDXGISwa
+     return S_OK;
+ }
+ 
+-static HANDLE STDMETHODCALLTYPE d3d12_swapchain_GetFrameLatencyWaitableObject(IDXGISwapChain3 *iface)
++static HANDLE STDMETHODCALLTYPE d3d12_swapchain_GetFrameLatencyWaitableObject(IDXGISwapChain4 *iface)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p.\n", iface);
+ 
+     return swapchain->frame_latency_event;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetMatrixTransform(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetMatrixTransform(IDXGISwapChain4 *iface,
+         const DXGI_MATRIX_3X2_F *matrix)
+ {
+     FIXME("iface %p, matrix %p stub!\n", iface, matrix);
+@@ -2665,7 +2666,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetMatrixTransform(IDXGISwapCha
+     return E_NOTIMPL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetMatrixTransform(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetMatrixTransform(IDXGISwapChain4 *iface,
+         DXGI_MATRIX_3X2_F *matrix)
+ {
+     FIXME("iface %p, matrix %p stub!\n", iface, matrix);
+@@ -2675,9 +2676,9 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetMatrixTransform(IDXGISwapCha
+ 
+ /* IDXGISwapChain3 methods */
+ 
+-static UINT STDMETHODCALLTYPE d3d12_swapchain_GetCurrentBackBufferIndex(IDXGISwapChain3 *iface)
++static UINT STDMETHODCALLTYPE d3d12_swapchain_GetCurrentBackBufferIndex(IDXGISwapChain4 *iface)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+ 
+     TRACE("iface %p.\n", iface);
+ 
+@@ -2686,7 +2687,7 @@ static UINT STDMETHODCALLTYPE d3d12_swapchain_GetCurrentBackBufferIndex(IDXGISwa
+     return swapchain->current_buffer_index;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_CheckColorSpaceSupport(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_CheckColorSpaceSupport(IDXGISwapChain4 *iface,
+         DXGI_COLOR_SPACE_TYPE colour_space, UINT *colour_space_support)
+ {
+     UINT support_flags = 0;
+@@ -2704,7 +2705,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_CheckColorSpaceSupport(IDXGISwa
+     return S_OK;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetColorSpace1(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetColorSpace1(IDXGISwapChain4 *iface,
+         DXGI_COLOR_SPACE_TYPE colour_space)
+ {
+     FIXME("iface %p, colour_space %#x semi-stub!\n", iface, colour_space);
+@@ -2718,11 +2719,11 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetColorSpace1(IDXGISwapChain3
+     return S_OK;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d12_swapchain_ResizeBuffers1(IDXGISwapChain3 *iface,
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_ResizeBuffers1(IDXGISwapChain4 *iface,
+         UINT buffer_count, UINT width, UINT height, DXGI_FORMAT format, UINT flags,
+         const UINT *node_mask, IUnknown * const *present_queue)
+ {
+-    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain3(iface);
++    struct d3d12_swapchain *swapchain = d3d12_swapchain_from_IDXGISwapChain4(iface);
+     size_t i, count;
+ 
+     TRACE("iface %p, buffer_count %u, width %u, height %u, format %s, flags %#x, "
+@@ -2744,7 +2745,17 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_ResizeBuffers1(IDXGISwapChain3
+     return d3d12_swapchain_resize_buffers(swapchain, buffer_count, width, height, format, flags);
+ }
+ 
+-static const struct IDXGISwapChain3Vtbl d3d12_swapchain_vtbl =
++/* IDXGISwapChain4 methods */
++
++static HRESULT STDMETHODCALLTYPE d3d12_swapchain_SetHDRMetaData(IDXGISwapChain4 *iface,
++        DXGI_HDR_METADATA_TYPE type, UINT size, void *metadata)
++{
++    FIXME("iface %p, type %#x size %#x, metadata %p stub!\n", iface, type, size, metadata);
++
++    return E_NOTIMPL;
++}
++
++static const struct IDXGISwapChain4Vtbl d3d12_swapchain_vtbl =
+ {
+     /* IUnknown methods */
+     d3d12_swapchain_QueryInterface,
+@@ -2793,6 +2804,8 @@ static const struct IDXGISwapChain3Vtbl d3d12_swapchain_vtbl =
+     d3d12_swapchain_CheckColorSpaceSupport,
+     d3d12_swapchain_SetColorSpace1,
+     d3d12_swapchain_ResizeBuffers1,
++    /* IDXGISwapChain4 methods */
++    d3d12_swapchain_SetHDRMetaData,
+ };
+ 
+ static BOOL load_vkd3d_functions(void *vkd3d_handle)
+@@ -2940,7 +2953,7 @@ static HRESULT d3d12_swapchain_init(struct d3d12_swapchain *swapchain, IWineDXGI
+         return E_ACCESSDENIED;
+     }
+ 
+-    swapchain->IDXGISwapChain3_iface.lpVtbl = &d3d12_swapchain_vtbl;
++    swapchain->IDXGISwapChain4_iface.lpVtbl = &d3d12_swapchain_vtbl;
+     swapchain->refcount = 1;
+ 
+     swapchain->window = window;
+@@ -3126,7 +3139,7 @@ HRESULT d3d12_swapchain_create(IWineDXGIFactory *factory, ID3D12CommandQueue *qu
+ 
+     TRACE("Created swapchain %p.\n", object);
+ 
+-    *swapchain = (IDXGISwapChain1 *)&object->IDXGISwapChain3_iface;
++    *swapchain = (IDXGISwapChain1 *)&object->IDXGISwapChain4_iface;
+ 
+     return S_OK;
+ }
 From 6085222f76135e10abefdd5f58d3fdcf86a904c8 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Wed, 15 Jul 2020 09:41:11 +0200
