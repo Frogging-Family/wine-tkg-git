@@ -418,6 +418,14 @@ else
   # Wine-tkg-git has injected versioning and settings in the token for us, so get the values back
   source "$_nowhere/proton_tkg_token"
 
+  # Use custom compiler paths if defined
+  if [ -n "${CUSTOM_MINGW_PATH}" ]; then
+    PATH="${PATH}:${CUSTOM_MINGW_PATH}/bin:${CUSTOM_MINGW_PATH}/lib:${CUSTOM_MINGW_PATH}/include"
+  fi
+  if [ -n "${CUSTOM_GCC_PATH}" ]; then
+    PATH="${CUSTOM_GCC_PATH}/bin:${CUSTOM_GCC_PATH}/lib:${CUSTOM_GCC_PATH}/include:${PATH}"
+  fi
+
   # Copy the resulting package in here to begin our work
   if [ -e "$_proton_pkgdest"/../HL3_confirmed ]; then
 
