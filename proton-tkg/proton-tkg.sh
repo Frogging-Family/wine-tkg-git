@@ -465,7 +465,8 @@ else
     fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationMono-Regular" "CourierNew" "Courier New" "Courier New"
 
     # Grab share template and inject version
-    echo "1552061114 proton-tkg-$_protontkg_version" > "$_nowhere/proton_dist_tmp/version" && cp -r "$_nowhere/proton_template/share"/* "$_nowhere/proton_dist_tmp/share"/
+    _versionpre=`date '+%s'`
+    echo $_versionpre "proton-tkg-$_protontkg_version" > "$_nowhere/proton_dist_tmp/version" && cp -r "$_nowhere/proton_template/share"/* "$_nowhere/proton_dist_tmp/share"/
 
     # Create the dxvk dirs
     mkdir -p "$_nowhere/proton_dist_tmp/lib64/wine/dxvk"
@@ -550,7 +551,7 @@ else
     cd "$_nowhere" && rm -rf proton_dist_tmp
 
     # Grab conf template and inject version
-    echo "1552061114 proton-tkg-$_protontkg_version" > "proton_tkg_$_protontkg_version/version" && cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/ && sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
+    echo $_versionpre "proton-tkg-$_protontkg_version" > "proton_tkg_$_protontkg_version/version" && cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/ && sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
 
     # Patch our proton script to use the current proton tree prefix version value
     _prefix_version=$(cat "$_nowhere/Proton/proton" | grep "CURRENT_PREFIX_VERSION=")
