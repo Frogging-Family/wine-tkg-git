@@ -16,8 +16,8 @@ _nowhere="$PWD"
 _nomakepkg="true"
 _no_steampath="false"
 
-# Build vkd3d - Requires Wine installed system-wide
-_build_vkd3d="false"
+# Build vkd3d-proton - Requires MinGW-w64-gcc or it won't be built
+_build_vkd3d="true"
 
 # Enforce using makepkg when using --makepkg
 if [ "$1" = "--makepkg" ]; then
@@ -154,37 +154,25 @@ function build_lsteamclient {
 
 function build_vkd3d {
   cd "$_nowhere"
-  mkdir -p vkd3d-fork-build && cd vkd3d-fork-build
   git clone https://github.com/HansKristian-Work/vkd3d-proton.git || true # It'll complain the path already exists on subsequent builds
   cd vkd3d-proton
   git reset --hard HEAD
   git clean -xdf
   git pull origin master
   git submodule update --init --recursive
-  ./autogen.sh
-  cd ..
-
-  export CFLAGS="-O2 -g -I$_wine_tkg_git_path/src/$_winesrcdir/include/"
-  export CXXFLAGS="-Wno-attributes -O2 -g -I$_wine_tkg_git_path/src/$_winesrcdir/include/"
-  export PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
 
   rm -rf build/lib64-vkd3d
   rm -rf build/lib32-vkd3d
-  mkdir -p build/lib64-vkd3d/out
-  mkdir -p build/lib32-vkd3d/out
+  mkdir -p build/lib64-vkd3d
+  mkdir -p build/lib32-vkd3d
 
-  export CC='gcc -m64'
-  export CXX='g++ -m64'
-  cd build/lib64-vkd3d
-  "$_nowhere"/vkd3d-fork-build/vkd3d-proton/configure --prefix="$_nowhere/vkd3d-fork-build/build/lib64-vkd3d/out" --with-spirv-tools
-  make -j$(nproc) -C "$_nowhere/vkd3d-fork-build/build/lib64-vkd3d" && make install
-  cd ../..
+  meson --cross-file build-win64.txt -Denable_standalone_d3d12=True --buildtype release --strip -Denable_tests=false --prefix "$_nowhere"/vkd3d-proton/build/lib64-vkd3d "$_nowhere"/vkd3d-proton/build/lib64-vkd3d
+  cd "$_nowhere"/vkd3d-proton/build/lib64-vkd3d && ninja install
+  cd "$_nowhere"/vkd3d-proton
 
-  export CC='gcc -m32'
-  export CXX='g++ -m32'
-  cd build/lib32-vkd3d
-  "$_nowhere"/vkd3d-fork-build/vkd3d-proton/configure --prefix="$_nowhere/vkd3d-fork-build/build/lib32-vkd3d/out" --with-spirv-tools
-  make -j$(nproc) -C "$_nowhere/vkd3d-fork-build/build/lib32-vkd3d" && make install
+  meson --cross-file build-win32.txt -Denable_standalone_d3d12=True  --buildtype release --strip -Denable_tests=false --prefix "$_nowhere"/vkd3d-proton/build/lib32-vkd3d "$_nowhere"/vkd3d-proton/build/lib32-vkd3d
+  cd "$_nowhere"/vkd3d-proton/build/lib32-vkd3d && ninja install
+
   cd $_nowhere
 }
 
@@ -396,11 +384,6 @@ else
 
   rm -rf "$_nowhere"/proton_dist_tmp
 
-  # Build vkd3d
-  if [ "$_build_vkd3d" = "true" ]; then
-    build_vkd3d
-  fi
-
   cd "$_nowhere"
 
   # We'll need a token to register to wine-tkg-git - keep one for us to steal wine-tkg-git options later
@@ -424,6 +407,14 @@ else
   fi
   if [ -n "${CUSTOM_GCC_PATH}" ]; then
     PATH="${CUSTOM_GCC_PATH}/bin:${CUSTOM_GCC_PATH}/lib:${CUSTOM_GCC_PATH}/include:${PATH}"
+  fi
+
+  # If mingw-w64 gcc can't be found, disable building vkd3d-proton
+  if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
+    echo -e "######\nmingw-w64 gcc not found - vkd3d-proton won't be built\n######"
+    _build_vkd3d="false"
+  else
+    echo -e "######\nmingw-w64 gcc found\n######"
   fi
 
   # Copy the resulting package in here to begin our work
@@ -492,14 +483,13 @@ else
     # Build steam helper
     build_steamhelper
 
-    # Inject vkd3d libs in our wine-tkg-git build
+    # vkd3d
     if [ "$_build_vkd3d" = "true" ]; then
-      for f in "$_nowhere"/vkd3d-fork-build/build/lib64-vkd3d/out/lib/libvkd3d*so*; do
-        strip "$f" && cp -v "$f" proton_dist_tmp/lib64/
-      done
-      for f in "$_nowhere"/vkd3d-fork-build/build/lib32-vkd3d/out/lib/libvkd3d*so*; do
-        strip "$f" && cp -v "$f" proton_dist_tmp/lib/
-      done
+      build_vkd3d
+      mkdir -p proton_dist_tmp/lib64/wine/vkd3d-proton
+      mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton
+      cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/lib64/wine/vkd3d-proton/
+      cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/
     fi
 
     # dxvk
