@@ -16,11 +16,6 @@ _nowhere="$PWD"
 _nomakepkg="true"
 _no_steampath="false"
 
-# Build vkd3d-proton when vkd3dlib is disabled - Requires MinGW-w64-gcc or it won't be built
-if [ "$_use_vkd3dlib" = "false" ]; then
-  _build_vkd3d="true"
-fi
-
 # Enforce using makepkg when using --makepkg
 if [ "$1" = "--makepkg" ]; then
   _nomakepkg="false"
@@ -486,6 +481,10 @@ else
     build_steamhelper
 
     # vkd3d
+    # Build vkd3d-proton when vkd3dlib is disabled - Requires MinGW-w64-gcc or it won't be built
+    if [ "$_use_vkd3dlib" = "false" ]; then
+      _build_vkd3d="true"
+    fi
     if [ "$_build_vkd3d" = "true" ]; then
       build_vkd3d
       mkdir -p proton_dist_tmp/lib64/wine/vkd3d-proton
