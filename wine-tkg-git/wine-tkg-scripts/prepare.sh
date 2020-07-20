@@ -43,6 +43,7 @@ _exit_cleanup() {
     echo "_dxvk_dxgi=${_dxvk_dxgi}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_use_dxvk=${_use_dxvk}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_dxvk_version=${_dxvk_version}" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_use_vkd3dlib='${_use_vkd3dlib}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_pkgdest='${pkgdir}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_steamvr_support='${_steamvr_support}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_NUKR='${_NUKR}'" >> "$_proton_tkg_path"/proton_tkg_token
@@ -224,9 +225,9 @@ msg2 ''
     _unfrog="true"
   fi
 
-  # If _use_vkd3d="true", redefine to "mainline"
-  if [ "$_use_vkd3d" = "true" ]; then
-    _use_vkd3d="mainline"
+  # If _use_vkd3dlib="true", redefine to "mainline"
+  if [ "$_use_vkd3dlib" = "true" ]; then
+    _use_vkd3dlib="mainline"
   fi
 }
 
@@ -264,7 +265,7 @@ _pkgnaming() {
       msg2 "Using gallium nine patchset (legacy)"
     fi
 
-    if [ "$_use_vkd3d" = "mainline" ] || [ "$_use_vkd3d" = "fork" ]; then
+    if [ "$_use_vkd3dlib" = "mainline" ] || [ "$_use_vkd3dlib" = "fork" ]; then
       pkgname="${pkgname/%-git/-vkd3d-git}"
       msg2 "Using VKD3D for d3d12 translation"
     fi
@@ -474,7 +475,7 @@ _prepare() {
 	  echo "Using gallium nine patchset (legacy)" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_use_vkd3d" = "mainline" ] || [ "$_use_vkd3d" = "fork" ]; then
+	if [ "$_use_vkd3dlib" = "mainline" ] || [ "$_use_vkd3dlib" = "fork" ]; then
 	  _configure_args+=(--with-vkd3d)
 	  echo "Using VKD3D for d3d12 translation" >> "$_where"/last_build_config.log
 	else
@@ -1870,7 +1871,7 @@ EOM
 	fi
 
 	# Add support for dxvk_config library to Wine's dxgi when vkd3d support is enabled
-	if [ "$_use_vkd3d" = "mainline" ] || [ "$_use_vkd3d" = "fork" ] && [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
+	if [ "$_use_vkd3dlib" = "mainline" ] || [ "$_use_vkd3dlib" = "fork" ] && [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	  if git merge-base --is-ancestor 591068cec06257f3d5ed23e19ee4ad055ad978aa HEAD; then
 	    _patchname='dxvk_config_dxgi_support.patch' && _patchmsg="Add support for dxvk_config library to Wine's dxgi" && nonuser_patcher
 	  else
@@ -1879,7 +1880,7 @@ EOM
 	fi
 
 	# Add HansKristian's d3d12/vkd3d fixes wwhen vkd3d is enabled - https://www.winehq.org/pipermail/wine-devel/2019-October/152356.html - https://www.winehq.org/pipermail/wine-devel/2019-October/152357.html
-	if [ "$_use_vkd3d" = "fork" ]; then
+	if [ "$_use_vkd3dlib" = "fork" ]; then
 	  _patchname='d3d12-fixes.patch' && _patchmsg="Add HansKristian's d3d12 fixes" && nonuser_patcher
 	fi
 
@@ -1967,7 +1968,7 @@ _polish() {
 	  if [ "$_use_legacy_gallium_nine" = "true" ]; then
 	    _version_tags+=(Nine)
 	  fi
-	  if [ "$_use_vkd3d" = "mainline" ] || [ "$_use_vkd3d" = "fork" ]; then
+	  if [ "$_use_vkd3dlib" = "mainline" ] || [ "$_use_vkd3dlib" = "fork" ]; then
 	    if [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	      _version_tags+=(Vkd3d DXVK-Compatible)
 	    else

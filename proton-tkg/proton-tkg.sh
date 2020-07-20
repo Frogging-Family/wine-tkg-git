@@ -16,8 +16,10 @@ _nowhere="$PWD"
 _nomakepkg="true"
 _no_steampath="false"
 
-# Build vkd3d-proton - Requires MinGW-w64-gcc or it won't be built
-_build_vkd3d="true"
+# Build vkd3d-proton when vkd3dlib is disabled - Requires MinGW-w64-gcc or it won't be built
+if [ "$_use_vkd3dlib" = "false" ]; then
+  _build_vkd3d="true"
+fi
 
 # Enforce using makepkg when using --makepkg
 if [ "$1" = "--makepkg" ]; then
