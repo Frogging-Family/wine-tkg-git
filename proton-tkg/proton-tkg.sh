@@ -416,6 +416,9 @@ else
     echo -e "######\nmingw-w64 gcc not found - vkd3d-proton won't be built\n######"
     _build_vkd3d="false"
   else
+    if [ "$_use_vkd3dlib" = "false" ]; then
+      _build_vkd3d="true"
+    fi
     echo -e "######\nmingw-w64 gcc found\n######"
   fi
 
@@ -487,9 +490,6 @@ else
 
     # vkd3d
     # Build vkd3d-proton when vkd3dlib is disabled - Requires MinGW-w64-gcc or it won't be built
-    if [ "$_use_vkd3dlib" = "false" ]; then
-      _build_vkd3d="true"
-    fi
     if [ "$_build_vkd3d" = "true" ]; then
       build_vkd3d
       mkdir -p proton_dist_tmp/lib64/wine/vkd3d-proton
