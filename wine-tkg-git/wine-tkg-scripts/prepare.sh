@@ -559,6 +559,11 @@ _prepare() {
 	    _committorevert=81f8b6e8c215dc04a19438e4369fcba8f7f4f333 && nonuser_reverter
 	    echo -e "( FS hack unbreak reverts applied )\n" >> "$_where"/last_build_config.log
 	  elif git merge-base --is-ancestor 2538b0100fbbe1223e7c18a52bade5cfe5f8d3e3 HEAD; then
+	    _committorevert=2a6de8d7f7d6f5ac018d8e330cfa580fc0c3b9e5 && nonuser_reverter
+	    _committorevert=6f305dd881e16f77f9eb183684d04b0b8746b769 && nonuser_reverter
+	    _committorevert=679ff720902b8e5d5d750b980084bdcdc9a051ed && nonuser_reverter
+	    _committorevert=0b0ac41981006514616abdd4c4b6922cf66be7b6 && nonuser_reverter
+	    _committorevert=dd13b274104b561f05873e8acdc4bfd34bbe796e && nonuser_reverter
 	    _committorevert=3a3c7cbd209e23cc6ee88299b3ba877ab20a767f && nonuser_reverter
 	    _committorevert=6f9d20806e821ab07c8adf81ae6630fae94b00ef && nonuser_reverter
 	    _committorevert=145cfce1135a7e59cc4c89cd05b572403f188161 && nonuser_reverter
