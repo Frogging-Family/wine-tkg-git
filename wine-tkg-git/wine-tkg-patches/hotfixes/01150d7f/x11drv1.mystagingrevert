@@ -1,0 +1,88 @@
+diff --git a/patches/winex11-DefaultDisplayFrequency/0001-winex11.drv-Allow-to-select-default-display-frequenc.patch b/patches/winex11-DefaultDisplayFrequency/0001-winex11.drv-Allow-to-select-default-display-frequenc.patch
+index c72b5f04d..c7927241e 100644
+--- a/patches/winex11-DefaultDisplayFrequency/0001-winex11.drv-Allow-to-select-default-display-frequenc.patch
++++ b/patches/winex11-DefaultDisplayFrequency/0001-winex11.drv-Allow-to-select-default-display-frequenc.patch
+@@ -1,4 +1,4 @@
+-From 6de6fba2c1135044da2a9958df07772f00784de5 Mon Sep 17 00:00:00 2001
++From 143a62bdfaed5466d42835682b7d9de35cee8423 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Michael=20M=C3=BCller?= <michael@fds-team.de>
+ Date: Thu, 5 Nov 2015 14:33:48 +0100
+ Subject: [PATCH] winex11.drv: Allow to select default display frequency in
+@@ -17,19 +17,19 @@ HKCU\Software\Wine\X11 Driver\DefaultDisplayFrequency
+  3 files changed, 44 insertions(+), 15 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/settings.c b/dlls/winex11.drv/settings.c
+-index bbbb6fdf0a3..82120cdbc2a 100644
++index 28c405ae0e0..dcda676788f 100644
+ --- a/dlls/winex11.drv/settings.c
+ +++ b/dlls/winex11.drv/settings.c
+-@@ -378,7 +378,7 @@ LONG CDECL X11DRV_ChangeDisplaySettingsEx( LPCWSTR devname, LPDEVMODEW devmode,
+-     WCHAR primary_adapter[CCHDEVICENAME];
+-     char bpp_buffer[16], freq_buffer[18];
+-     DEVMODEW default_mode;
++@@ -526,7 +526,7 @@ LONG CDECL X11DRV_ChangeDisplaySettingsEx( LPCWSTR devname, LPDEVMODEW devmode,
++     DEVMODEW default_mode, *full_mode;
++     ULONG_PTR id;
++     LONG ret;
+ -    DWORD i;
+ +    DWORD i, mode;
+  
+-     if (!get_primary_adapter(primary_adapter))
+-         return DISP_CHANGE_FAILED;
+-@@ -402,6 +402,7 @@ LONG CDECL X11DRV_ChangeDisplaySettingsEx( LPCWSTR devname, LPDEVMODEW devmode,
++     /* Use the new interface if it is available */
++     if (!handler.name)
++@@ -621,6 +621,7 @@ old_interface:
+          return DISP_CHANGE_SUCCESSFUL;
+      }
+  
+@@ -37,7 +37,7 @@ index bbbb6fdf0a3..82120cdbc2a 100644
+      for (i = 0; i < dd_mode_count; i++)
+      {
+          if (devmode->dmFields & DM_BITSPERPEL)
+-@@ -419,12 +420,24 @@ LONG CDECL X11DRV_ChangeDisplaySettingsEx( LPCWSTR devname, LPDEVMODEW devmode,
++@@ -638,12 +639,24 @@ old_interface:
+              if (devmode->dmPelsHeight != dd_modes[i].height)
+                  continue;
+          }
+@@ -64,7 +64,7 @@ index bbbb6fdf0a3..82120cdbc2a 100644
+          /* we have a valid mode */
+          TRACE("Requested display settings match mode %d (%s)\n", i, handler_name);
+  
+-@@ -441,20 +454,31 @@ LONG CDECL X11DRV_ChangeDisplaySettingsEx( LPCWSTR devname, LPDEVMODEW devmode,
++@@ -660,20 +673,31 @@ old_interface:
+              return DISP_CHANGE_SUCCESSFUL;
+          }
+  
+@@ -109,10 +109,10 @@ index bbbb6fdf0a3..82120cdbc2a 100644
+ +    return DISP_CHANGE_SUCCESSFUL;
+  }
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index a9eaed20cab..76e1344a616 100644
++index c47394f97b2..c4967bbb12f 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -404,6 +404,7 @@ extern BOOL private_color_map DECLSPEC_HIDDEN;
++@@ -403,6 +403,7 @@ extern BOOL private_color_map DECLSPEC_HIDDEN;
+  extern int primary_monitor DECLSPEC_HIDDEN;
+  extern int copy_default_colors DECLSPEC_HIDDEN;
+  extern int alloc_system_colors DECLSPEC_HIDDEN;
+@@ -121,7 +121,7 @@ index a9eaed20cab..76e1344a616 100644
+  extern HMODULE x11drv_module DECLSPEC_HIDDEN;
+  extern char *process_name DECLSPEC_HIDDEN;
+ diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+-index e6e61e801e1..6b82784c5f9 100644
++index 4b163aaafbb..da6f7edbabe 100644
+ --- a/dlls/winex11.drv/x11drv_main.c
+ +++ b/dlls/winex11.drv/x11drv_main.c
+ @@ -85,6 +85,7 @@ BOOL client_side_with_render = TRUE;
+@@ -132,7 +132,7 @@ index e6e61e801e1..6b82784c5f9 100644
+  DWORD thread_data_tls_index = TLS_OUT_OF_INDEXES;
+  int xrender_error_base = 0;
+  HMODULE x11drv_module = 0;
+-@@ -435,6 +436,9 @@ static void setup_options(void)
++@@ -438,6 +439,9 @@ static void setup_options(void)
+      if (!get_config_key( hkey, appkey, "AllocSystemColors", buffer, sizeof(buffer) ))
+          alloc_system_colors = atoi(buffer);
+  
+ 
