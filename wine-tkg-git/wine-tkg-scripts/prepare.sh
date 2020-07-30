@@ -73,6 +73,7 @@ _exit_cleanup() {
   # Remove temporarily copied patches & other potential fluff
   rm -f "$_where"/wine-tkg
   rm -f "$_where"/wine-tkg-interactive
+  rm -f "$_where"/wine-tkg.install
   rm -rf "$_where"/*.patch
   rm -rf "$_where"/*.my*
   rm -rf "$_where"/*.conf
