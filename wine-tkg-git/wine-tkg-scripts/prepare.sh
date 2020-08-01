@@ -1820,8 +1820,10 @@ EOM
 	fi
 
 	# Proton fs hack additions
-	if git merge-base --is-ancestor 408a5a86ec30e293bf9e6eec4890d552073a82e8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
+	if git merge-base --is-ancestor 1e074c39f635c585595e9f3ece99aa290a7f9cf8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
 	  _patchname='proton-vk-bits-4.5.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
+	elif git merge-base --is-ancestor 408a5a86ec30e293bf9e6eec4890d552073a82e8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
+	  _patchname='proton-vk-bits-4.5-1e074c3.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
 	elif git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
 	  _patchname='proton-vk-bits-4.5-408a5a8.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
 	fi
