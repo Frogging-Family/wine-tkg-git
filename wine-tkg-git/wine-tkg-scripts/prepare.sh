@@ -760,7 +760,7 @@ _prepare() {
 	# Disable Staging's `xactengine-initial` patchset to fix BGM on KOF98 & 2002
 	if [ "$_kof98_2002_BGM_fix" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
-	  if git merge-base --is-ancestor 2fc5c88068e3dea2612c182ff300511aa2954242 HEAD; then
+	  if git merge-base --is-ancestor 2fc5c88068e3dea2612c182ff300511aa2954242 HEAD && ! git merge-base --is-ancestor e4a11b16639179734e1d9f12ab4605dcbfa21a27 HEAD; then
 	    _staging_args+=(-W xactengine-initial)
 	  fi
 	  cd "${srcdir}"/"${_winesrcdir}"
