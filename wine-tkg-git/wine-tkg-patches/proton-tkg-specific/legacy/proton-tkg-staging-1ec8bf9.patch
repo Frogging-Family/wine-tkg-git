@@ -622,6 +622,66 @@ index 6344157f384..6fefe5d6d80 100644
      if (rounded_size < size) goto oom;  /* overflow */
      if (rounded_size < HEAP_MIN_DATA_SIZE) rounded_size = HEAP_MIN_DATA_SIZE;
  
+From 33cd3de313071c787bece5acc31351c36abd74e9 Mon Sep 17 00:00:00 2001
+From: Brendan Shanks <bshanks@codeweavers.com>
+Date: Tue, 22 Oct 2019 16:27:51 -0700
+Subject: [PATCH] HACK: ntdll: Run WT_EXECUTEINWAITTHREAD wait callbacks
+ serially.
+
+On Windows, waits registered with the WT_EXECUTEINWAITTHREAD flag will
+often have their callbacks run serially (since they're all handled by
+the same wait thread). Running them in parallel can expose race
+conditions.
+Use a process-wide critical section to serialize these callbacks.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=47843
+---
+ dlls/ntdll/threadpool.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/dlls/ntdll/threadpool.c b/dlls/ntdll/threadpool.c
+index 639e032f629..dbd9577d6bc 100644
+--- a/dlls/ntdll/threadpool.c
++++ b/dlls/ntdll/threadpool.c
+@@ -84,6 +84,17 @@ struct wait_work_item
+     int CallbackInProgress;
+ };
+ 
++static RTL_CRITICAL_SECTION_DEBUG wait_thread_executeinwaitthread_cs_debug;
++
++static RTL_CRITICAL_SECTION wait_thread_executeinwaitthread_cs = {&wait_thread_executeinwaitthread_cs_debug, -1, 0, 0, 0, 0};
++
++static RTL_CRITICAL_SECTION_DEBUG wait_thread_executeinwaitthread_cs_debug =
++{
++    0, 0, &wait_thread_executeinwaitthread_cs,
++    { &wait_thread_executeinwaitthread_cs_debug.ProcessLocksList, &wait_thread_executeinwaitthread_cs_debug.ProcessLocksList },
++      0, 0, { (DWORD_PTR)(__FILE__ ": wait_thread_executeinwaitthread_cs") }
++};
++
+ struct timer_queue;
+ struct queue_timer
+ {
+@@ -527,7 +538,20 @@ static DWORD CALLBACK wait_thread_proc(LPVOID Arg)
+                 TRACE( "Work has been canceled.\n" );
+                 break;
+             }
++
++            /* HACK: On Windows, waits created with WT_EXECUTEINWAITTHREAD often end up on the same wait thread
++             * and run serialized. Running these waits simultaneously on separate threads may expose race conditions
++             * not seen on Windows.
++             * Use a critical section to ensure these callbacks run serially.
++             */
++            if (wait_work_item->Flags & WT_EXECUTEINWAITTHREAD)
++                enter_critical_section(&wait_thread_executeinwaitthread_cs);
++
+             wait_work_item->Callback( wait_work_item->Context, TimerOrWaitFired );
++
++            if (wait_work_item->Flags & WT_EXECUTEINWAITTHREAD)
++                leave_critical_section(&wait_thread_executeinwaitthread_cs);
++
+             InterlockedExchange( &wait_work_item->CallbackInProgress, FALSE );
+ 
+             if (wait_work_item->Flags & WT_EXECUTEONLYONCE)
 From 5cd65deffffad9073538acf4fd8e794ac07824a5 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Wed, 9 Oct 2019 09:47:12 +0200
@@ -1038,6 +1098,110 @@ index 6378a091f0b..e976fda77f2 100644
  }
  
  /**********************************************************************
+From 60ac9b821daf372aac3bc85fa97b60f2b6d56c82 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
+Date: Fri, 13 Dec 2019 15:54:29 +0200
+Subject: [PATCH] dwmapi/tests: Add basic tests for DwmGetWindowAttribute.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
+---
+diff --git a/dlls/dwmapi/tests/Makefile.in b/dlls/dwmapi/tests/Makefile.in
+index f365f96c72..947e3312b5 100644
+--- a/dlls/dwmapi/tests/Makefile.in
++++ b/dlls/dwmapi/tests/Makefile.in
+@@ -1,5 +1,5 @@
+ TESTDLL   = dwmapi.dll
+-IMPORTS   = dwmapi
++IMPORTS   = dwmapi gdi32 user32
+ 
+ C_SRCS = \
+ 	dwmapi.c
+diff --git a/dlls/dwmapi/tests/dwmapi.c b/dlls/dwmapi/tests/dwmapi.c
+index 7c51e77c4a..68babd6eb2 100644
+--- a/dlls/dwmapi/tests/dwmapi.c
++++ b/dlls/dwmapi/tests/dwmapi.c
+@@ -19,13 +19,40 @@
+  *
+  */
+ 
++#include <windows.h>
+ #include "dwmapi.h"
+-
+ #include "wine/test.h"
+ 
+ static HRESULT (WINAPI *pDwmIsCompositionEnabled)(BOOL*);
+ static HRESULT (WINAPI *pDwmEnableComposition)(UINT);
+ static HRESULT (WINAPI *pDwmGetTransportAttributes)(BOOL*,BOOL*,DWORD*);
++static HWND test_wnd;
++static LRESULT WINAPI test_wndproc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
++{
++    return DefWindowProcA(hwnd, message, wParam, lParam);
++}
++
++static void test_DwmGetWindowAttribute(void)
++{
++    BOOL nc_rendering;
++    HRESULT hr;
++
++    hr = DwmGetWindowAttribute(NULL, DWMWA_NCRENDERING_ENABLED, &nc_rendering, sizeof(nc_rendering));
++    ok(hr == E_HANDLE || broken(hr == E_INVALIDARG) /* Vista */, "DwmGetWindowAttribute(DWMWA_NCRENDERING_ENABLED) returned 0x%08x.\n", hr);
++    hr = DwmGetWindowAttribute(test_wnd, DWMWA_NCRENDERING_ENABLED, NULL, sizeof(nc_rendering));
++    ok(hr == E_INVALIDARG, "DwmGetWindowAttribute(DWMWA_NCRENDERING_ENABLED) returned 0x%08x.\n", hr);
++    hr = DwmGetWindowAttribute(test_wnd, DWMWA_NCRENDERING_ENABLED, &nc_rendering, 0);
++    ok(hr == E_INVALIDARG, "DwmGetWindowAttribute(DWMWA_NCRENDERING_ENABLED) returned 0x%08x.\n", hr);
++    nc_rendering = FALSE;
++    hr = DwmGetWindowAttribute(test_wnd, 0xdeadbeef, &nc_rendering, sizeof(nc_rendering));
++    ok(hr == E_INVALIDARG, "DwmGetWindowAttribute(0xdeadbeef) returned 0x%08x.\n", hr);
++
++    nc_rendering = 0xdeadbeef;
++    hr = DwmGetWindowAttribute(test_wnd, DWMWA_NCRENDERING_ENABLED, &nc_rendering, sizeof(nc_rendering));
++    ok(hr == S_OK, "DwmGetWindowAttribute(DWMWA_NCRENDERING_ENABLED) failed 0x%08x.\n", hr);
++    ok(nc_rendering == FALSE || nc_rendering == TRUE, "non-boolean value 0x%x.\n", nc_rendering);
++}
++
+ 
+ BOOL dwmenabled;
+ 
+@@ -92,6 +119,21 @@ static void test_dwm_get_transport_attributes(void)
+ START_TEST(dwmapi)
+ {
+     HMODULE hmod = LoadLibraryA("dwmapi.dll");
++    HINSTANCE inst = GetModuleHandleA(NULL);
++    WNDCLASSA cls;
++
++    cls.style = 0;
++    cls.lpfnWndProc = test_wndproc;
++    cls.cbClsExtra = 0;
++    cls.cbWndExtra = 0;
++    cls.hInstance = inst;
++    cls.hIcon = 0;
++    cls.hCursor = LoadCursorA(0, (LPCSTR)IDC_ARROW);
++    cls.hbrBackground = GetStockObject(WHITE_BRUSH);
++    cls.lpszMenuName = NULL;
++    cls.lpszClassName = "Test";
++    RegisterClassA(&cls);
++
+ 
+     if (!hmod)
+     {
+@@ -105,4 +147,14 @@ START_TEST(dwmapi)
+ 
+     test_isdwmenabled();
+     test_dwm_get_transport_attributes();
++
++    test_wnd = CreateWindowExA(0, "Test", "Test Window", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
++                               100, 100, 200, 200, 0, 0, 0, NULL);
++    ok(test_wnd != NULL, "Failed to create test window.\n");
++
++    test_DwmGetWindowAttribute();
++
++    DestroyWindow(test_wnd);
++    UnregisterClassA("Test", inst);
++
+ }
 From 1a2e600a9c35a9558b32e7986668d7dc81c8b5ae Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
 Date: Fri, 13 Dec 2019 15:54:30 +0200
@@ -1083,6 +1247,38 @@ index e976fda77f2..212c88c5a02 100644
      case DWMWA_CLOAKED:
          if (size < sizeof(DWORD)) return E_INVALIDARG;
  
+diff --git a/dlls/dwmapi/tests/dwmapi.c b/dlls/dwmapi/tests/dwmapi.c
+index 0fc8820b095..409f5c85876 100644
+--- a/dlls/dwmapi/tests/dwmapi.c
++++ b/dlls/dwmapi/tests/dwmapi.c
+@@ -29,6 +29,7 @@ static LRESULT WINAPI test_wndproc(HWND hwnd, UINT message, WPARAM wParam, LPARA
+ static void test_DwmGetWindowAttribute(void)
+ {
+     BOOL nc_rendering;
++    RECT rc, rc2;
+     HRESULT hr;
+ 
+     hr = DwmGetWindowAttribute(NULL, DWMWA_NCRENDERING_ENABLED, &nc_rendering, sizeof(nc_rendering));
+@@ -45,6 +46,19 @@ static void test_DwmGetWindowAttribute(void)
+     hr = DwmGetWindowAttribute(test_wnd, DWMWA_NCRENDERING_ENABLED, &nc_rendering, sizeof(nc_rendering));
+     ok(hr == S_OK, "DwmGetWindowAttribute(DWMWA_NCRENDERING_ENABLED) failed 0x%08x.\n", hr);
+     ok(nc_rendering == FALSE || nc_rendering == TRUE, "non-boolean value 0x%x.\n", nc_rendering);
++
++    hr = DwmGetWindowAttribute(test_wnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rc, sizeof(rc) - 1);
++    ok(hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER) || broken(hr == E_INVALIDARG) /* Vista */,
++       "DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS) returned 0x%08x.\n", hr);
++    hr = DwmGetWindowAttribute(test_wnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rc, sizeof(rc));
++    if (hr != E_HANDLE && hr != DWM_E_COMPOSITIONDISABLED /* Vista */)  /* composition is on */
++    {
++        /* For top-level Windows, the returned rect is always at least as large as GetWindowRect */
++        GetWindowRect(test_wnd, &rc2);
++        ok(hr == S_OK, "DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS) failed 0x%08x.\n", hr);
++        ok(rc.left >= rc2.left && rc.right <= rc2.right && rc.top >= rc2.top && rc.bottom <= rc2.bottom,
++           "returned rect %s not enclosed in window rect %s.\n", wine_dbgstr_rect(&rc), wine_dbgstr_rect(&rc2));
++    }
+ }
+ 
+ START_TEST(dwmapi)
 From c099ae745b3a63edee1677a2da01cab5aa5b8562 Mon Sep 17 00:00:00 2001
 From: Zebediah Figura <z.figura12@gmail.com>
 Date: Tue, 28 Jan 2020 14:30:43 -0600
@@ -1360,107 +1556,6 @@ index a5235b69a8d..4b2c9bd41ae 100644
          /* forward request to the foreground window if it's in a different thread */
          tid = GetWindowThreadProcessId( foreground, &pid );
          if (tid && tid != GetCurrentThreadId() && pid == GetCurrentProcessId())
-From 02951753970f5b2a0dafe41aee9fe96bc1a24301 Mon Sep 17 00:00:00 2001
-From: Piotr Caban <piotr@codeweavers.com>
-Date: Wed, 4 Mar 2020 18:49:37 +0100
-Subject: [PATCH] HACK: ntdll: Mark first gta5.exe page as copied.
-
----
- dlls/ntdll/virtual.c | 30 +++++++++++++++++++++++++++---
- 1 file changed, 27 insertions(+), 3 deletions(-)
-
-diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
-index dbcbd52c6d6..90a790241a9 100644
---- a/dlls/ntdll/virtual.c
-+++ b/dlls/ntdll/virtual.c
-@@ -58,6 +58,7 @@
- #include "wine/exception.h"
- #include "wine/rbtree.h"
- #include "wine/debug.h"
-+#include "wine/unicode.h"
- #include "ntdll_misc.h"
- 
- WINE_DEFAULT_DEBUG_CHANNEL(virtual);
-@@ -84,6 +85,7 @@ struct file_view
- #define VPROT_GUARD      0x10
- #define VPROT_COMMITTED  0x20
- #define VPROT_WRITEWATCH 0x40
-+#define VPROT_COPIED     0x80
- /* per-mapping protection flags */
- #define VPROT_SYSTEM     0x0200  /* system view (underlying mmap not under our control) */
- 
-@@ -304,7 +306,8 @@ static const char *VIRTUAL_GetProtStr( BYTE prot )
-     buffer[0] = (prot & VPROT_COMMITTED) ? 'c' : '-';
-     buffer[1] = (prot & VPROT_GUARD) ? 'g' : ((prot & VPROT_WRITEWATCH) ? 'H' : '-');
-     buffer[2] = (prot & VPROT_READ) ? 'r' : '-';
--    buffer[3] = (prot & VPROT_WRITECOPY) ? 'W' : ((prot & VPROT_WRITE) ? 'w' : '-');
-+    buffer[3] = (prot & VPROT_WRITECOPY) ? (prot & VPROT_COPIED ? 'w' : 'W')
-+        : ((prot & VPROT_WRITE) ? 'w' : '-');
-     buffer[4] = (prot & VPROT_EXEC) ? 'x' : '-';
-     buffer[5] = 0;
-     return buffer;
-@@ -901,8 +904,11 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
-  */
- static DWORD VIRTUAL_GetWin32Prot( BYTE vprot, unsigned int map_prot )
- {
--    DWORD ret = VIRTUAL_Win32Flags[vprot & 0x0f];
--    if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
-+    DWORD ret;
-+
-+    if ((vprot & (VPROT_COPIED | VPROT_WRITECOPY)) == (VPROT_COPIED | VPROT_WRITECOPY))
-+        vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
-+    ret = VIRTUAL_Win32Flags[vprot & 0x0f];
-     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
-     return ret;
- }
-@@ -2957,6 +2963,24 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH NtProtectVirtualMemory( HANDLE process, PVOID
-         {
-             old = VIRTUAL_GetWin32Prot( vprot, view->protect );
-             status = set_protection( view, base, size, new_prot );
-+
-+            /* GTA5 HACK: Mark first page as copied. */
-+            if (status == STATUS_SUCCESS && (view->protect & SEC_IMAGE) &&
-+                    base == (void*)NtCurrentTeb()->Peb->ImageBaseAddress)
-+            {
-+                const WCHAR gta5W[] = { 'g','t','a','5','.','e','x','e',0 };
-+                WCHAR *name, *p;
-+
-+                name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
-+                p = strrchrW(name, '\\');
-+                p = p ? p+1 : name;
-+
-+                if(!strcmpiW(p, gta5W))
-+                {
-+                    FIXME("HACK: changing GTA5.exe vprot\n");
-+                    set_page_vprot_bits(base, page_size, VPROT_COPIED, 0);
-+                }
-+            }
-         }
-         else status = STATUS_NOT_COMMITTED;
-     }
-From 5e8fedb161bae24ecf6d9425e90e3c595ec2505c Mon Sep 17 00:00:00 2001
-From: Piotr Caban <piotr@codeweavers.com>
-Date: Wed, 11 Mar 2020 09:17:05 -0500
-Subject: [PATCH] ntdll: Restore PAGE_GUARD flag
-
-On rebase, squash into 'HACK: ntdll: Mark first gta5.exe page as
-copied.'
----
- dlls/ntdll/virtual.c | 1 +
- 1 file changed, 1 insertion(+)
-
-diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
-index 90a790241a9..d0cd2639ee9 100644
---- a/dlls/ntdll/virtual.c
-+++ b/dlls/ntdll/virtual.c
-@@ -909,6 +909,7 @@ static DWORD VIRTUAL_GetWin32Prot( BYTE vprot, unsigned int map_prot )
-     if ((vprot & (VPROT_COPIED | VPROT_WRITECOPY)) == (VPROT_COPIED | VPROT_WRITECOPY))
-         vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
-     ret = VIRTUAL_Win32Flags[vprot & 0x0f];
-+    if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
-     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
-     return ret;
- }
 From 24a8f709ec8fcf8fa4fcc349a7885c02cc184d74 Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Wed, 26 Feb 2020 13:09:48 -0600
@@ -1553,6 +1648,70 @@ index 9cd6812d032..9e5fe2f3129 100644
      while (*candidates)
      {
          WCHAR **args = CommandLineToArgvW( candidates, &count );
+From 3082a724542ba7527fa52eaac3611ed97ff91cac Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Mon, 10 Dec 2018 12:48:41 -0600
+Subject: [PATCH] xaudio2: Set PulseAudio application name property in the
+ environment
+
+So PA doesn't present all Wine applications as "wine-preloader", and
+allows PA to store per-application settings.
+---
+ dlls/winepulse.drv/mmdevdrv.c |  1 +
+ dlls/xaudio2_7/xaudio_dll.c   | 21 +++++++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/dlls/winepulse.drv/mmdevdrv.c b/dlls/winepulse.drv/mmdevdrv.c
+index c80ea4f9d04..6a2906761a7 100644
+--- a/dlls/winepulse.drv/mmdevdrv.c
++++ b/dlls/winepulse.drv/mmdevdrv.c
+@@ -571,6 +571,7 @@ static HRESULT pulse_connect(void)
+     WideCharToMultiByte(CP_UNIXCP, 0, name, -1, str, len, NULL, NULL);
+     TRACE("Name: %s\n", str);
+     pulse_ctx = pa_context_new(pa_mainloop_get_api(pulse_ml), str);
++    setenv("PULSE_PROP_application.name", str, 1);
+     pa_xfree(str);
+     if (!pulse_ctx) {
+         ERR("Failed to create context\n");
+diff --git a/dlls/xaudio2_7/xaudio_dll.c b/dlls/xaudio2_7/xaudio_dll.c
+index 4ca04198b6e..483e2b4138a 100644
+--- a/dlls/xaudio2_7/xaudio_dll.c
++++ b/dlls/xaudio2_7/xaudio_dll.c
+@@ -38,6 +38,7 @@
+ #include "wine/asm.h"
+ #include "wine/debug.h"
+ #include "wine/heap.h"
++#include "wine/unicode.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(xaudio2);
+ 
+@@ -1948,6 +1949,26 @@ static HRESULT WINAPI XAudio2CF_CreateInstance(IClassFactory *iface, IUnknown *p
+     pthread_cond_init(&object->mst.engine_done, NULL);
+     pthread_cond_init(&object->mst.engine_ready, NULL);
+ 
++    /* set PulseAudio's application.name in the environment since FAudio and
++     * SDL provide no way to pass this in */
++    {
++        WCHAR path[MAX_PATH], *name;
++        char *str;
++        DWORD len;
++
++        GetModuleFileNameW(NULL, path, ARRAY_SIZE(path));
++        name = strrchrW(path, '\\');
++        if (!name)
++            name = path;
++        else
++            name++;
++        len = WideCharToMultiByte(CP_UNIXCP, 0, name, -1, NULL, 0, NULL, NULL);
++        str = HeapAlloc(GetProcessHeap(), 0, len);
++        WideCharToMultiByte(CP_UNIXCP, 0, name, -1, str, len, NULL, NULL);
++        setenv("PULSE_PROP_application.name", str, 1);
++        HeapFree(GetProcessHeap(), 0, str);
++    }
++
+     FAudioCOMConstructWithCustomAllocatorEXT(
+         &object->faudio,
+         XAUDIO2_VER,
 From b739d48093cce805b7b4f48fdbd9d0bb62bc8013 Mon Sep 17 00:00:00 2001
 From: Brendan Shanks <bshanks@codeweavers.com>
 Date: Mon, 13 Apr 2020 16:25:47 -0700
@@ -1629,6 +1788,37 @@ index 0ae3aadde92..e95ede8aed5 100644
      return FALSE;
  }
 
+From fdc1acce7e81f08eb10652b7b39b3d3e4bbed8f8 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 24 Apr 2020 20:08:38 +0300
+Subject: [PATCH] Avoid undefined result in ntdll_wcstoumbs() in case of error.
+
+Undefined result is due to RtlUnicodeToUTF8N() not setting output
+length on error which is a correct behaviour according to
+existing tests.
+
+'Planet Zoo' is affected which passes NULL object name buffer to
+NtCreateFile().
+
+Signed-off-by: Paul Gofman <gofmanp@gmail.com>
+---
+ dlls/ntdll/locale.c | 2 +-
+ 1 file changed, 1 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/locale.c b/dlls/ntdll/locale.c
+index d6bde700e42..4f03e3881f0 100644
+--- a/dlls/ntdll/locale.c
++++ b/dlls/ntdll/locale.c
+@@ -769,7 +769,7 @@ DWORD ntdll_umbstowcs( const char *src, DWORD srclen, WCHAR *dst, DWORD dstlen )
+  */
+ int ntdll_wcstoumbs( const WCHAR *src, DWORD srclen, char *dst, DWORD dstlen, BOOL strict )
+ {
+-    DWORD i, reslen;
++    DWORD i, reslen = 0;
+ 
+     if (!unix_table.CodePage)
+         RtlUnicodeToUTF8N( dst, dstlen, &reslen, src, srclen * sizeof(WCHAR) );
+
 From 9cffda4856b5e5057008d165dd38ec971b9af712 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Fri, 24 Apr 2020 19:48:20 +0300
@@ -1664,6 +1854,197 @@ index 784e720edf8..56f9be0f06e 100644
      name     = attr->ObjectName->Buffer;
      name_len = attr->ObjectName->Length / sizeof(WCHAR);
 
+From 48f7cb8e0cdec072ed6e2164946239fde5ecb722 Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Fri, 26 Jun 2020 18:57:35 +0200
+Subject: [PATCH] Import rebased against hotfixed staging -tkg fca69733
+ Paul Gofman's proton patchset.
+
+ ntdll: Use case sensitive search for \??\unix file names
+
+diff --git a/dlls/kernel32/path.c b/dlls/kernel32/path.c
+index 0f075d0af1c..db2c1fb0240 100644
+--- a/dlls/kernel32/path.c
++++ b/dlls/kernel32/path.c
+@@ -263,7 +263,7 @@ BOOL WINAPI RemoveDirectoryW( LPCWSTR path )
+         return FALSE;
+     }
+ 
+-    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN );
+     if (status == STATUS_SUCCESS)
+     {
+         status = NtQueryAttributesFile( &attr, &info );
+@@ -342,7 +342,7 @@ char * CDECL wine_get_unix_file_name( LPCWSTR dosW )
+     NTSTATUS status;
+ 
+     if (!RtlDosPathNameToNtPathName_U( dosW, &nt_name, NULL, NULL )) return NULL;
+-    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF );
+     RtlFreeUnicodeString( &nt_name );
+     if (status && status != STATUS_NO_SUCH_FILE)
+     {
+diff --git a/dlls/ntdll/directory.c b/dlls/ntdll/directory.c
+index 56f9be0f06e..92d96ad582e 100644
+--- a/dlls/ntdll/directory.c
++++ b/dlls/ntdll/directory.c
+@@ -2699,7 +2699,6 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+     char *unix_name;
+     int name_len, unix_len;
+     NTSTATUS status;
+-    BOOLEAN check_case = !(attr->Attributes & OBJ_CASE_INSENSITIVE);
+ 
+     if (!attr->ObjectName->Buffer && attr->ObjectName->Length)
+         return STATUS_ACCESS_VIOLATION;
+@@ -2709,7 +2708,7 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+         if (!attr->ObjectName->Buffer)
+             return STATUS_OBJECT_PATH_SYNTAX_BAD;
+ 
+-        return wine_nt_to_unix_file_name( attr->ObjectName, unix_name_ret, disposition, check_case );
++        return wine_nt_to_unix_file_name( attr->ObjectName, unix_name_ret, disposition );
+     }
+ 
+     name     = attr->ObjectName->Buffer;
+@@ -2740,7 +2739,7 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+             if ((old_cwd = open( ".", O_RDONLY )) != -1 && fchdir( root_fd ) != -1)
+             {
+                 status = lookup_unix_name( name, name_len, &unix_name, unix_len, 1,
+-                                           disposition, check_case );
++                                           disposition, FALSE );
+                 if (fchdir( old_cwd ) == -1) chdir( "/" );
+             }
+             else status = FILE_GetNtStatus();
+@@ -2747,7 +2746,7 @@ static NTSTATUS nt_to_unix_file_name_internal( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+  *           nt_to_unix_file_name_internal
+  */
+ static NTSTATUS nt_to_unix_file_name_internal( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+-                                               UINT disposition, BOOLEAN check_case )
++                                               UINT disposition )
+ {
+     static const WCHAR unixW[] = {'u','n','i','x'};
+     static const WCHAR pipeW[] = {'p','i','p','e'};
+@@ -2777,6 +2776,7 @@ static NTSTATUS nt_to_unix_file_name_internal( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+     char *unix_name;
+     int pos, ret, name_len, unix_len, prefix_len;
+     WCHAR prefix[MAX_DIR_ENTRY_LEN + 1];
++    BOOLEAN check_case = FALSE;
+     BOOLEAN is_unix = FALSE;
+     BOOLEAN is_pipe = FALSE;
+ 
+@@ -2789,7 +2788,7 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+  * returned, but the unix name is still filled in properly.
+  */
+ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+-                                          UINT disposition, BOOLEAN check_case )
++                                          UINT disposition )
+ {
+     static const WCHAR unixW[] = {'u','n','i','x'};
+     static const WCHAR invalid_charsW[] = { INVALID_NT_CHARS, 0 };
+@@ -2915,7 +2915,7 @@ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+         prefix = user_shared_data->NtSystemRoot;
+     }
+     else
+-        return nt_to_unix_file_name_internal( nameW, unix_name_ret, disposition, check_case );
++        return nt_to_unix_file_name_internal( nameW, unix_name_ret, disposition );
+ 
+     name_len = sizeof(dosprefixW) + wcslen(prefix) * sizeof(WCHAR) +
+                nameW->Length - offset * sizeof(WCHAR) + sizeof(WCHAR);
+@@ -2931,7 +2931,7 @@ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+     ptr[ nameW->Length / sizeof(WCHAR) - offset ] = 0;
+ 
+     RtlInitUnicodeString( &dospathW, name );
+-    status = nt_to_unix_file_name_internal( &dospathW, unix_name_ret, disposition, check_case );
++    status = nt_to_unix_file_name_internal( &dospathW, unix_name_ret, disposition );
+ 
+     RtlFreeHeap( GetProcessHeap(), 0, name );
+     return status;
+diff --git a/dlls/ntdll/file.c b/dlls/ntdll/file.c
+index 1cb45fa0d8c..1a36d75a76c 100644
+--- a/dlls/ntdll/file.c
++++ b/dlls/ntdll/file.c
+@@ -1726,7 +1726,7 @@ NTSTATUS FILE_CreateSymlink(HANDLE handle, REPARSE_DATA_BUFFER *buffer)
+     }
+ 
+     nt_dest_allocated = TRUE;
+-    status = wine_nt_to_unix_file_name( &nt_dest, &unix_dest, FILE_WINE_PATH, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_dest, &unix_dest, FILE_WINE_PATH );
+     if (status != STATUS_SUCCESS && status != STATUS_NO_SUCH_FILE)
+         goto cleanup;
+     dest_allocated = TRUE;
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 6ef10d6c18a..2979061a5e2 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -3079,7 +3079,7 @@ static NTSTATUS load_so_dll( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+ 
+     if (!so_name)
+     {
+-        if (wine_nt_to_unix_file_name( nt_name, &unix_name, FILE_OPEN, FALSE ))
++        if (wine_nt_to_unix_file_name( nt_name, &unix_name, FILE_OPEN ))
+             return STATUS_DLL_NOT_FOUND;
+ 
+         /* remove .so extension from Windows name */
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index 1a8bd4e11e1..ba0776073fb 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -1575,7 +1575,7 @@
+ @ cdecl __wine_set_signal_handler(long ptr)
+ 
+ # Filesystem
+-@ cdecl wine_nt_to_unix_file_name(ptr ptr long long)
++@ cdecl wine_nt_to_unix_file_name(ptr ptr long)
+ @ cdecl wine_unix_to_nt_file_name(ptr ptr)
+ 
+ @ cdecl __wine_esync_set_queue_fd(long)
+diff --git a/dlls/ntdll/process.c b/dlls/ntdll/process.c
+index d7ff7fa2c6f..0f4f42a240f 100644
+--- a/dlls/ntdll/process.c
++++ b/dlls/ntdll/process.c
+@@ -1458,7 +1458,7 @@ static char *get_unix_curdir( const RTL_USER_PROCESS_PARAMETERS *params )
+ 
+     if (!RtlDosPathNameToNtPathName_U( params->CurrentDirectory.DosPath.Buffer, &nt_name, NULL, NULL ))
+         return NULL;
+-    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF );
+     RtlFreeUnicodeString( &nt_name );
+     if (status && status != STATUS_NO_SUCH_FILE) return NULL;
+     return unix_name.Buffer;
+@@ -1479,7 +1479,7 @@ static NTSTATUS fork_and_exec( UNICODE_STRING *path, const RTL_USER_PROCESS_PARA
+     ANSI_STRING unix_name;
+     NTSTATUS status;
+ 
+-    status = wine_nt_to_unix_file_name( path, &unix_name, FILE_OPEN, FALSE );
++    status = wine_nt_to_unix_file_name( path, &unix_name, FILE_OPEN );
+     if (status) return status;
+ 
+ #ifdef HAVE_PIPE2
+diff --git a/dlls/ntdll/tests/file.c b/dlls/ntdll/tests/file.c
+index 9ebe41ac7d8..b7a2979506c 100644
+--- a/dlls/ntdll/tests/file.c
++++ b/dlls/ntdll/tests/file.c
+@@ -370,7 +370,7 @@ static void open_file_test(void)
+     attr.Length = sizeof(attr);
+     attr.RootDirectory = 0;
+     attr.ObjectName = &nameW;
+-    attr.Attributes = OBJ_CASE_INSENSITIVE;
++    attr.Attributes = 0;
+     attr.SecurityDescriptor = NULL;
+     attr.SecurityQualityOfService = NULL;
+     status = pNtOpenFile( &dir, SYNCHRONIZE|FILE_LIST_DIRECTORY, &attr, &io,
+diff --git a/include/winternl.h b/include/winternl.h
+index e67fcabb6a2..ecaf2af7f80 100644
+--- a/include/winternl.h
++++ b/include/winternl.h
+@@ -3021,7 +3021,7 @@ NTSYSAPI void      WINAPI TpWaitForWork(TP_WORK *,BOOL);
+ /* Wine internal functions */
+ 
+ NTSYSAPI NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+-                                                   UINT disposition, BOOLEAN check_case );
++                                                   UINT disposition );
+ NTSYSAPI NTSTATUS CDECL wine_unix_to_nt_file_name( const ANSI_STRING *name, UNICODE_STRING *nt );
+ 
+ 
 From cb427c70056654bf12fb0d7d6dcb13386d193ff4 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
 Date: Fri, 24 Apr 2020 14:37:58 +0300
