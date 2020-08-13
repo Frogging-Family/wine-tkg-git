@@ -66,7 +66,7 @@ _build() {
 	  fi
 	  msg2 'Building Wine-64...'
 	  cd  "${srcdir}"/"${pkgname}"-64-build
-	  if [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW3" = "y" ]; then
+	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW3" =~ [yY] ]]; then
 	    ../${_winesrcdir}/configure \
 		    --prefix="$_prefix" \
 			--enable-win64 \
@@ -110,7 +110,7 @@ _build() {
 	  fi
 	  msg2 'Building Wine-32...'
 	  cd "${srcdir}/${pkgname}"-32-build
-	  if [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW3" = "y" ]; then
+	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW3" =~ [yY] ]]; then
 		 if [ "$_NOLIB64" = "true" ]; then
 	       ../${_winesrcdir}/configure \
 		      --prefix="$_prefix" \

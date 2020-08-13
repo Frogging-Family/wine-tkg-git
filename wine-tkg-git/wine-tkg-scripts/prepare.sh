@@ -292,7 +292,7 @@ user_patcher() {
 	    printf '%s\n' "${_patches[@]}"
 	    read -rp "Do you want to install it/them? - Be careful with that ;)"$'\n> N/y : ' _CONDITION;
 	  fi
-	  if [ "$_CONDITION" = "y" ] || [ "$_user_patches_no_confirm" = "true" ]; then
+	  if [[ "$_CONDITION" =~ [yY] ]] || [ "$_user_patches_no_confirm" = "true" ]; then
 	    for _f in "${_patches[@]}"; do
 	      if [ -e "${_f}" ]; then
 	        msg2 "######################################################"
@@ -317,7 +317,7 @@ user_patcher() {
 	    printf '%s\n' "${_patches[@]}"
 	    read -rp "Do you want to install it/them? - Be careful with that ;)"$'\n> N/y : ' _CONDITION;
 	  fi
-	  if [ "$_CONDITION" = "y" ] || [ "$_user_patches_no_confirm" = "true" ]; then
+	  if [[ "$_CONDITION" =~ [yY] ]] || [ "$_user_patches_no_confirm" = "true" ]; then
 	    for _f in "${_patches[@]}"; do
 	      if [ -e "${_f}" ]; then
 	        msg2 "######################################################"
@@ -890,7 +890,7 @@ _prepare() {
 
 	_commitmsg="02-pre-staging" _committer
 
-	if [ "$_use_staging" = "true" ] && [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW2" = "y" ]; then
+	if [ "$_use_staging" = "true" ] && [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW2" =~ [yY] ]]; then
 	  msg2 "Applying wine-staging patches..." && echo -e "\nStaging overrides, if any: ${_staging_args[@]}\n" >> "$_where"/last_build_config.log && echo -e "\nApplying wine-staging patches..." >> "$_where"/prepare.log
 	  "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh DESTDIR="${srcdir}/${_winesrcdir}" --all "${_staging_args[@]}" >> "$_where"/prepare.log 2>&1 || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
 
