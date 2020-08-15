@@ -325,36 +325,47 @@ function setup_dxvk_version_url {
 
 function download_dxvk_version {
   while true ; do
-      setup_dxvk_version_url
-      # If anything goes wrong we get exit code 22 from "curl -f"
-      set +e
-      _dxvk_version_response=$(curl -s -f "$_dxvk_version_url")
-      _dxvk_version_response_status=$?
-      set -e
-      if [ $_dxvk_version_response_status -eq 0 ]; then
+      if [ "$_use_dxvk" = "latest" ]; then
         echo "#######################################################"
         echo ""
-        echo " Downloading ${_dxvk_version} DXVK release from github for you..."
+        echo " Downloading latest DXVK artifact from git.froggi.es for you..."
         echo ""
         echo "#######################################################"
         echo ""
-        echo "$_dxvk_version_response" \
-        | grep "browser_download_url.*tar.gz" \
-        | cut -d : -f 2,3 \
-        | tr -d \" \
-        | wget -qi -
+        wget -q -O dxvk-latest-artifact.zip "https://git.froggi.es/doitsujin/dxvk/-/jobs/artifacts/master/download?job=dxvk"
         break
       else
-        echo ""
-        echo "#######################################################"
-        echo ""
-        echo " Could not download specified DXVK version (${_dxvk_version})"
-        echo ""
-        echo "#######################################################"
-        echo ""
-        echo "Please select DXVK release version (ex: v1.6.1)"
-        read -rp "> [latest]: " _dxvk_version
-        echo ""
+        setup_dxvk_version_url
+        # If anything goes wrong we get exit code 22 from "curl -f"
+        set +e
+        _dxvk_version_response=$(curl -s -f "$_dxvk_version_url")
+        _dxvk_version_response_status=$?
+        set -e
+        if [ $_dxvk_version_response_status -eq 0 ]; then
+          echo "#######################################################"
+          echo ""
+          echo " Downloading ${_dxvk_version} DXVK release from github for you..."
+          echo ""
+          echo "#######################################################"
+          echo ""
+          echo "$_dxvk_version_response" \
+          | grep "browser_download_url.*tar.gz" \
+          | cut -d : -f 2,3 \
+          | tr -d \" \
+          | wget -qi -
+          break
+        else
+          echo ""
+          echo "#######################################################"
+          echo ""
+          echo " Could not download specified DXVK version (${_dxvk_version})"
+          echo ""
+          echo "#######################################################"
+          echo ""
+          echo "Please select DXVK release version (ex: v1.6.1)"
+          read -rp "> [latest]: " _dxvk_version
+          echo ""
+        fi
       fi
   done
 }
@@ -500,12 +511,26 @@ else
 
     # dxvk
     if [ "$_use_dxvk" != "false" ]; then
-      if [ ! -d "$_nowhere"/dxvk ] || [ "$_use_dxvk" = "release" ]; then
-        rm -rf "$_nowhere"/dxvk
-        download_dxvk_version
-        tar -xvf dxvk-*.tar.gz >/dev/null 2>&1
-        rm -f dxvk-*.tar.*
-        mv "$_nowhere"/dxvk-* "$_nowhere"/dxvk
+      if [ ! -d "$_nowhere"/dxvk ] || [ "$_use_dxvk" = "release" ] || [ "$_use_dxvk" = "latest" ]; then
+        if [ "$_use_dxvk" = "latest" ]; then
+          rm -rf "$_nowhere"/dxvk
+          # Download it & extract it into a temporary folder so we don't mess up the build in case proton-tkg also has/will have a folder "$_nowhere"/build (that folder is in the artifact zip)
+          rm -rf "$_nowhere"/tmp-dxvk-artifact
+          mkdir "$_nowhere"/tmp-dxvk-artifact
+          cd "$_nowhere"/tmp-dxvk-artifact
+          download_dxvk_version
+          unzip dxvk-latest-artifact.zip >/dev/null 2>&1
+          rm -f dxvk-latest-artifact.zip
+          mv "$_nowhere"/tmp-dxvk-artifact/build/dxvk-* "$_nowhere"/dxvk
+          cd "$_nowhere"
+          rm -rf "$_nowhere"/tmp-dxvk-artifact
+        else
+          rm -rf "$_nowhere"/dxvk
+          download_dxvk_version
+          tar -xvf dxvk-*.tar.gz >/dev/null 2>&1
+          rm -f dxvk-*.tar.*
+          mv "$_nowhere"/dxvk-* "$_nowhere"/dxvk
+        fi
       fi
       # Remove d3d10.dll and d3d10_1.dll when using a 5.3 base or newer - https://github.com/doitsujin/dxvk/releases/tag/v1.6
       if [ "$_dxvk_minimald3d10" = "true" ]; then
