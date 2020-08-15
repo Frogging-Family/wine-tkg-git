@@ -209,7 +209,7 @@ proton_patcher() {
 	    printf '%s\n' "${_patches[@]}"
 	    read -rp "Do you want to install it/them? - Be careful with that ;)"$'\n> N/y : ' _CONDITION;
 	  fi
-	  if [ "$_CONDITION" = "y" ] || [ "$_user_patches_no_confirm" = "true" ]; then
+	  if [[ "$_CONDITION" =~ [yY] ]] || [ "$_user_patches_no_confirm" = "true" ]; then
 	    for _f in "${_patches[@]}"; do
 	      if [ -e "${_f}" ]; then
 	        echo "######################################################"
@@ -230,7 +230,7 @@ proton_patcher() {
 	    printf '%s\n' "${_patches[@]}"
 	    read -rp "Do you want to install it/them? - Be careful with that ;)"$'\n> N/y : ' _CONDITION;
 	  fi
-	  if [ "$_CONDITION" = "y" ] || [ "$_user_patches_no_confirm" = "true" ]; then
+	  if [[ "$_CONDITION" =~ [yY] ]] || [ "$_user_patches_no_confirm" = "true" ]; then
 	    for _f in "${_patches[@]}"; do
 	      if [ -e "${_f}" ]; then
 	        echo "######################################################"
@@ -302,7 +302,7 @@ function proton_tkg_uninstaller {
     echo ""
     read -rp "Wanna uninstall more? N/y: " _uninstall_more;
     echo ""
-    if [ "$_uninstall_more" = "y" ]; then
+    if [[ "$_uninstall_more" =~ [yY] ]]; then
       proton_tkg_uninstaller
     fi
   elif [ -d "$_GOTCHA" ] && [ $i -eq 1 ]; then
@@ -680,7 +680,7 @@ else
           if [ "$_skip_uninstaller" != "true" ]; then
             echo ""
             read -rp "Do you want to run the uninstaller to remove previous/superfluous builds? N/y: " _ask_uninstall;
-            if [ "$_ask_uninstall" = "y" ]; then
+            if [[ "$_ask_uninstall" =~ [yY] ]]; then
               proton_tkg_uninstaller
             fi
           fi

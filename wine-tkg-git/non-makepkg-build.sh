@@ -161,7 +161,7 @@ _nomakepkgsrcinit() {
 }
 
 nonuser_patcher() {
-  if [ "$_NUKR" != "debug" ] || [ "$_DEBUGANSW1" = "y" ]; then
+  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
     if [ "$_nopatchmsg" != "true" ]; then
       _fullpatchmsg=" -- ( $_patchmsg )"
     fi
