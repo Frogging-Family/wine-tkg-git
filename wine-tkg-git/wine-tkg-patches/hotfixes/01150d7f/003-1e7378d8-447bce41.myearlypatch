@@ -1,0 +1,853 @@
+From 1e7378d80c20fc8f45a246fd043ef4e2911e94f5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 10 Aug 2020 11:04:13 +0200
+Subject: [PATCH] user32: Implement GetRegisteredRawInputDevices.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
+---
+ dlls/dinput8/tests/device.c    | 13 ---------
+ dlls/user32/rawinput.c         | 50 ++++++++++++++++++++++++++++++++--
+ dlls/user32/tests/input.c      | 15 ----------
+ include/wine/server_protocol.h | 18 +++++++++++-
+ server/protocol.def            |  6 ++++
+ server/queue.c                 | 21 ++++++++++++++
+ server/request.h               |  5 ++++
+ server/trace.c                 | 13 +++++++++
+ 8 files changed, 110 insertions(+), 31 deletions(-)
+
+diff --git a/dlls/dinput8/tests/device.c b/dlls/dinput8/tests/device.c
+index 39c635f2fb9..328174e5796 100644
+--- a/dlls/dinput8/tests/device.c
++++ b/dlls/dinput8/tests/device.c
+@@ -602,7 +602,6 @@ static void test_mouse_keyboard(void)
+ 
+     raw_devices_count = ARRAY_SIZE(raw_devices);
+     GetRegisteredRawInputDevices(NULL, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+-    todo_wine
+     ok(raw_devices_count == 0, "Unexpected raw devices registered: %d\n", raw_devices_count);
+ 
+     hr = IDirectInputDevice8_Acquire(di_keyboard);
+@@ -624,7 +623,6 @@ static void test_mouse_keyboard(void)
+     ok(SUCCEEDED(hr), "IDirectInputDevice8_Acquire failed: %08x\n", hr);
+     raw_devices_count = ARRAY_SIZE(raw_devices);
+     GetRegisteredRawInputDevices(NULL, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+-    todo_wine
+     ok(raw_devices_count == 0, "Unexpected raw devices registered: %d\n", raw_devices_count);
+ 
+     if (raw_devices[0].hwndTarget != NULL)
+@@ -662,7 +660,6 @@ static void test_mouse_keyboard(void)
+     ok(SUCCEEDED(hr), "IDirectInputDevice8_Acquire failed: %08x\n", hr);
+     raw_devices_count = ARRAY_SIZE(raw_devices);
+     GetRegisteredRawInputDevices(NULL, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+-    todo_wine
+     ok(raw_devices_count == 0, "Unexpected raw devices registered: %d\n", raw_devices_count);
+ 
+     /* expect dinput8 to take over any activated raw input devices */
+@@ -689,26 +686,18 @@ static void test_mouse_keyboard(void)
+     raw_devices_count = ARRAY_SIZE(raw_devices);
+     memset(raw_devices, 0, sizeof(raw_devices));
+     hr = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+-    todo_wine
+     ok(hr == 3, "GetRegisteredRawInputDevices returned %d, raw_devices_count: %d\n", hr, raw_devices_count);
+-    todo_wine
+     ok(raw_devices[0].usUsagePage == 1, "Unexpected raw device usage page: %x\n", raw_devices[0].usUsagePage);
+-    todo_wine
+     ok(raw_devices[0].usUsage == 2, "Unexpected raw device usage: %x\n", raw_devices[0].usUsage);
+     todo_wine
+     ok(raw_devices[0].dwFlags == RIDEV_INPUTSINK, "Unexpected raw device flags: %x\n", raw_devices[0].dwFlags);
+     todo_wine
+     ok(raw_devices[0].hwndTarget == di_hwnd, "Unexpected raw device target: %p\n", raw_devices[0].hwndTarget);
+-    todo_wine
+     ok(raw_devices[1].usUsagePage == 1, "Unexpected raw device usage page: %x\n", raw_devices[1].usUsagePage);
+-    todo_wine
+     ok(raw_devices[1].usUsage == 5, "Unexpected raw device usage: %x\n", raw_devices[1].usUsage);
+     ok(raw_devices[1].dwFlags == 0, "Unexpected raw device flags: %x\n", raw_devices[1].dwFlags);
+-    todo_wine
+     ok(raw_devices[1].hwndTarget == hwnd, "Unexpected raw device target: %p\n", raw_devices[1].hwndTarget);
+-    todo_wine
+     ok(raw_devices[2].usUsagePage == 1, "Unexpected raw device usage page: %x\n", raw_devices[1].usUsagePage);
+-    todo_wine
+     ok(raw_devices[2].usUsage == 6, "Unexpected raw device usage: %x\n", raw_devices[1].usUsage);
+     todo_wine
+     ok(raw_devices[2].dwFlags == RIDEV_INPUTSINK, "Unexpected raw device flags: %x\n", raw_devices[1].dwFlags);
+@@ -727,12 +716,10 @@ static void test_mouse_keyboard(void)
+     hr = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+     todo_wine
+     ok(hr == 1, "GetRegisteredRawInputDevices returned %d, raw_devices_count: %d\n", hr, raw_devices_count);
+-    todo_wine
+     ok(raw_devices[0].usUsagePage == 1, "Unexpected raw device usage page: %x\n", raw_devices[0].usUsagePage);
+     todo_wine
+     ok(raw_devices[0].usUsage == 5, "Unexpected raw device usage: %x\n", raw_devices[0].usUsage);
+     ok(raw_devices[0].dwFlags == 0, "Unexpected raw device flags: %x\n", raw_devices[0].dwFlags);
+-    todo_wine
+     ok(raw_devices[0].hwndTarget == hwnd, "Unexpected raw device target: %p\n", raw_devices[0].hwndTarget);
+ 
+     IDirectInputDevice8_Release(di_mouse);
+diff --git a/dlls/user32/rawinput.c b/dlls/user32/rawinput.c
+index a4208bf1407..751dc3cae78 100644
+--- a/dlls/user32/rawinput.c
++++ b/dlls/user32/rawinput.c
+@@ -745,14 +745,60 @@ UINT WINAPI GetRawInputDeviceInfoW(HANDLE handle, UINT command, void *data, UINT
+     return *data_size;
+ }
+ 
++static int compare_raw_input_devices(const void *ap, const void *bp)
++{
++    const RAWINPUTDEVICE a = *(const RAWINPUTDEVICE *)ap;
++    const RAWINPUTDEVICE b = *(const RAWINPUTDEVICE *)bp;
++
++    if (a.usUsagePage != b.usUsagePage) return a.usUsagePage - b.usUsagePage;
++    if (a.usUsage != b.usUsage) return a.usUsage - b.usUsage;
++    return 0;
++}
++
+ /***********************************************************************
+  *              GetRegisteredRawInputDevices   (USER32.@)
+  */
+ UINT WINAPI DECLSPEC_HOTPATCH GetRegisteredRawInputDevices(RAWINPUTDEVICE *devices, UINT *device_count, UINT size)
+ {
+-    FIXME("devices %p, device_count %p, size %u stub!\n", devices, device_count, size);
++    struct rawinput_device *buffer = NULL;
++    unsigned int i, status, count = ~0U, buffer_size;
+ 
+-    return 0;
++    TRACE("devices %p, device_count %p, size %u\n", devices, device_count, size);
++
++    if (size != sizeof(RAWINPUTDEVICE) || !device_count || (devices && !*device_count))
++    {
++        SetLastError(ERROR_INVALID_PARAMETER);
++        return ~0U;
++    }
++
++    buffer_size = *device_count * sizeof(*buffer);
++    if (devices && !(buffer = HeapAlloc(GetProcessHeap(), 0, buffer_size)))
++        return ~0U;
++
++    SERVER_START_REQ(get_rawinput_devices)
++    {
++        if (buffer) wine_server_set_reply(req, buffer, buffer_size);
++        status = wine_server_call_err(req);
++        *device_count = reply->device_count;
++    }
++    SERVER_END_REQ;
++
++    if (buffer && !status)
++    {
++        for (i = 0, count = *device_count; i < count; ++i)
++        {
++            devices[i].usUsagePage = buffer[i].usage_page;
++            devices[i].usUsage = buffer[i].usage;
++            devices[i].dwFlags = buffer[i].flags;
++            devices[i].hwndTarget = wine_server_ptr_handle(buffer[i].target);
++        }
++
++        qsort(devices, count, sizeof(*devices), compare_raw_input_devices);
++    }
++
++    if (buffer) HeapFree(GetProcessHeap(), 0, buffer);
++    else count = 0;
++    return count;
+ }
+ 
+ 
+diff --git a/dlls/user32/tests/input.c b/dlls/user32/tests/input.c
+index 92457af01cd..1809c147cbd 100644
+--- a/dlls/user32/tests/input.c
++++ b/dlls/user32/tests/input.c
+@@ -1796,25 +1796,20 @@ static void test_RegisterRawInputDevices(void)
+ 
+     SetLastError(0xdeadbeef);
+     count = GetRegisteredRawInputDevices(NULL, NULL, 0);
+-    todo_wine
+     ok(count == ~0U, "GetRegisteredRawInputDevices returned %u\n", count);
+-    todo_wine
+     ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRegisteredRawInputDevices unexpected error %08x\n", GetLastError());
+ 
+     SetLastError(0xdeadbeef);
+     raw_devices_count = 0;
+     count = GetRegisteredRawInputDevices(NULL, &raw_devices_count, 0);
+-    todo_wine
+     ok(count == ~0U, "GetRegisteredRawInputDevices returned %u\n", count);
+     ok(raw_devices_count == 0, "Unexpected registered devices count: %u\n", raw_devices_count);
+-    todo_wine
+     ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRegisteredRawInputDevices unexpected error %08x\n", GetLastError());
+ 
+     SetLastError(0xdeadbeef);
+     raw_devices_count = 0;
+     count = GetRegisteredRawInputDevices(NULL, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+     ok(count == 0, "GetRegisteredRawInputDevices returned %u\n", count);
+-    todo_wine
+     ok(raw_devices_count == 2, "Unexpected registered devices count: %u\n", raw_devices_count);
+     ok(GetLastError() == 0xdeadbeef, "GetRegisteredRawInputDevices unexpected error %08x\n", GetLastError());
+ 
+@@ -1825,38 +1820,28 @@ static void test_RegisterRawInputDevices(void)
+         win_skip("Ignoring GetRegisteredRawInputDevices success\n");
+     else
+     {
+-        todo_wine
+         ok(count == ~0U, "GetRegisteredRawInputDevices returned %u\n", count);
+         ok(raw_devices_count == 0, "Unexpected registered devices count: %u\n", raw_devices_count);
+-        todo_wine
+         ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRegisteredRawInputDevices unexpected error %08x\n", GetLastError());
+     }
+ 
+     SetLastError(0xdeadbeef);
+     raw_devices_count = 1;
+     count = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+-    todo_wine
+     ok(count == ~0U, "GetRegisteredRawInputDevices returned %u\n", count);
+-    todo_wine
+     ok(raw_devices_count == 2, "Unexpected registered devices count: %u\n", raw_devices_count);
+-    todo_wine
+     ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "GetRegisteredRawInputDevices unexpected error %08x\n", GetLastError());
+ 
+     SetLastError(0xdeadbeef);
+     memset(raw_devices, 0, sizeof(raw_devices));
+     raw_devices_count = ARRAY_SIZE(raw_devices);
+     count = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+-    todo_wine
+     ok(count == 2, "GetRegisteredRawInputDevices returned %u\n", count);
+     ok(raw_devices_count == 2, "Unexpected registered devices count: %u\n", raw_devices_count);
+     ok(GetLastError() == 0xdeadbeef, "GetRegisteredRawInputDevices unexpected error %08x\n", GetLastError());
+-    todo_wine
+     ok(raw_devices[0].usUsagePage == 0x01, "Unexpected usage page: %x\n", raw_devices[0].usUsagePage);
+-    todo_wine
+     ok(raw_devices[0].usUsage == 0x04, "Unexpected usage: %x\n", raw_devices[0].usUsage);
+-    todo_wine
+     ok(raw_devices[1].usUsagePage == 0x01, "Unexpected usage page: %x\n", raw_devices[1].usUsagePage);
+-    todo_wine
+     ok(raw_devices[1].usUsage == 0x05, "Unexpected usage: %x\n", raw_devices[1].usUsage);
+ 
+     /* RIDEV_REMOVE requires hwndTarget == NULL */
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index 587b2391ce9..ddf6373deca 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -5343,6 +5343,19 @@ struct update_rawinput_devices_reply
+ };
+ 
+ 
++struct get_rawinput_devices_request
++{
++    struct request_header __header;
++    char __pad_12[4];
++};
++struct get_rawinput_devices_reply
++{
++    struct reply_header __header;
++    unsigned int device_count;
++    /* VARARG(devices,rawinput_devices); */
++    char __pad_12[4];
++};
++
+ 
+ struct create_job_request
+ {
+@@ -5759,6 +5772,7 @@ enum request
+     REQ_set_cursor,
+     REQ_get_rawinput_buffer,
+     REQ_update_rawinput_devices,
++    REQ_get_rawinput_devices,
+     REQ_create_job,
+     REQ_open_job,
+     REQ_assign_job,
+@@ -6049,6 +6063,7 @@ union generic_request
+     struct set_cursor_request set_cursor_request;
+     struct get_rawinput_buffer_request get_rawinput_buffer_request;
+     struct update_rawinput_devices_request update_rawinput_devices_request;
++    struct get_rawinput_devices_request get_rawinput_devices_request;
+     struct create_job_request create_job_request;
+     struct open_job_request open_job_request;
+     struct assign_job_request assign_job_request;
+@@ -6337,6 +6352,7 @@ union generic_reply
+     struct set_cursor_reply set_cursor_reply;
+     struct get_rawinput_buffer_reply get_rawinput_buffer_reply;
+     struct update_rawinput_devices_reply update_rawinput_devices_reply;
++    struct get_rawinput_devices_reply get_rawinput_devices_reply;
+     struct create_job_reply create_job_reply;
+     struct open_job_reply open_job_reply;
+     struct assign_job_reply assign_job_reply;
+diff --git a/server/protocol.def b/server/protocol.def
+index 1bbc8c5008f..9693228eaa8 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -3658,6 +3658,12 @@ struct handle_info
+     VARARG(devices,rawinput_devices);
+ @END
+ 
++/* Retrieve the list of registered rawinput devices */
++@REQ(get_rawinput_devices)
++@REPLY
++    unsigned int device_count;
++    VARARG(devices,rawinput_devices);
++@END
+ 
+ /* Create a new job object */
+ @REQ(create_job)
+diff --git a/server/queue.c b/server/queue.c
+index a65eab38bdc..c1016016051 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -3277,3 +3277,24 @@ DECL_HANDLER(update_rawinput_devices)
+     e = find_rawinput_device( 1, 6 );
+     current->process->rawinput_kbd   = e ? &e->device : NULL;
+ }
++
++DECL_HANDLER(get_rawinput_devices)
++{
++    struct rawinput_device_entry *e;
++    struct rawinput_device *devices;
++    unsigned int i = 0, device_count = list_count( &current->process->rawinput_devices );
++    unsigned int size = device_count * sizeof(*devices);
++
++    reply->device_count = device_count;
++
++    /* no buffer provided, nothing else to do */
++    if (!get_reply_max_size()) return;
++
++    if (size > get_reply_max_size())
++        set_error( STATUS_BUFFER_TOO_SMALL );
++    else if ((devices = set_reply_data_size( size )))
++    {
++        LIST_FOR_EACH_ENTRY( e, &current->process->rawinput_devices, struct rawinput_device_entry, entry )
++            devices[i++] = e->device;
++    }
++}
+diff --git a/server/request.h b/server/request.h
+index cd0799f2c1e..1d5fe8942a3 100644
+--- a/server/request.h
++++ b/server/request.h
+@@ -392,6 +392,7 @@ DECL_HANDLER(free_user_handle);
+ DECL_HANDLER(set_cursor);
+ DECL_HANDLER(get_rawinput_buffer);
+ DECL_HANDLER(update_rawinput_devices);
++DECL_HANDLER(get_rawinput_devices);
+ DECL_HANDLER(create_job);
+ DECL_HANDLER(open_job);
+ DECL_HANDLER(assign_job);
+@@ -681,6 +682,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+     (req_handler)req_set_cursor,
+     (req_handler)req_get_rawinput_buffer,
+     (req_handler)req_update_rawinput_devices,
++    (req_handler)req_get_rawinput_devices,
+     (req_handler)req_create_job,
+     (req_handler)req_open_job,
+     (req_handler)req_assign_job,
+@@ -2265,6 +2267,9 @@ C_ASSERT( FIELD_OFFSET(struct get_rawinput_buffer_reply, next_size) == 8 );
+ C_ASSERT( FIELD_OFFSET(struct get_rawinput_buffer_reply, count) == 12 );
+ C_ASSERT( sizeof(struct get_rawinput_buffer_reply) == 16 );
+ C_ASSERT( sizeof(struct update_rawinput_devices_request) == 16 );
++C_ASSERT( sizeof(struct get_rawinput_devices_request) == 16 );
++C_ASSERT( FIELD_OFFSET(struct get_rawinput_devices_reply, device_count) == 8 );
++C_ASSERT( sizeof(struct get_rawinput_devices_reply) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct create_job_request, access) == 12 );
+ C_ASSERT( sizeof(struct create_job_request) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct create_job_reply, handle) == 8 );
+diff --git a/server/trace.c b/server/trace.c
+index 51bd490fe2e..b04d9cc36e3 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -4359,6 +4359,16 @@ static void dump_update_rawinput_devices_request( const struct update_rawinput_d
+     dump_varargs_rawinput_devices( " devices=", cur_size );
+ }
+ 
++static void dump_get_rawinput_devices_request( const struct get_rawinput_devices_request *req )
++{
++}
++
++static void dump_get_rawinput_devices_reply( const struct get_rawinput_devices_reply *req )
++{
++    fprintf( stderr, " device_count=%08x", req->device_count );
++    dump_varargs_rawinput_devices( ", devices=", cur_size );
++}
++
+ static void dump_create_job_request( const struct create_job_request *req )
+ {
+     fprintf( stderr, " access=%08x", req->access );
+@@ -4709,6 +4719,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_set_cursor_request,
+     (dump_func)dump_get_rawinput_buffer_request,
+     (dump_func)dump_update_rawinput_devices_request,
++    (dump_func)dump_get_rawinput_devices_request,
+     (dump_func)dump_create_job_request,
+     (dump_func)dump_open_job_request,
+     (dump_func)dump_assign_job_request,
+@@ -4995,6 +5006,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_set_cursor_reply,
+     (dump_func)dump_get_rawinput_buffer_reply,
+     NULL,
++    (dump_func)dump_get_rawinput_devices_reply,
+     (dump_func)dump_create_job_reply,
+     (dump_func)dump_open_job_reply,
+     NULL,
+@@ -5281,6 +5293,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
+     "set_cursor",
+     "get_rawinput_buffer",
+     "update_rawinput_devices",
++    "get_rawinput_devices",
+     "create_job",
+     "open_job",
+     "assign_job",
+From 225be12999ef8d7e9c8a504d0d26254c9cace568 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 10 Aug 2020 11:04:15 +0200
+Subject: [PATCH] dinput8: Add support for rawinput based devices.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This adds a message window that will be used as the rawinput target
+window for WM_INPUT messages.
+
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
+---
+ dlls/dinput/device_private.h |  3 ++
+ dlls/dinput/dinput_main.c    | 77 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 80 insertions(+)
+
+diff --git a/dlls/dinput/device_private.h b/dlls/dinput/device_private.h
+index fe5644f21c7..2fac4f0e61e 100644
+--- a/dlls/dinput/device_private.h
++++ b/dlls/dinput/device_private.h
+@@ -69,6 +69,9 @@ struct IDirectInputDeviceImpl
+     HWND                        win;
+     int                         acquired;
+ 
++    BOOL                        use_raw_input; /* use raw input instead of low-level messages */
++    RAWINPUTDEVICE              raw_device;    /* raw device to (un)register */
++
+     LPDIDEVICEOBJECTDATA        data_queue;  /* buffer for 'GetDeviceData'.                 */
+     int                         queue_len;   /* valid size of the queue                     */
+     int                         queue_head;  /* position to write new event into queue      */
+diff --git a/dlls/dinput/dinput_main.c b/dlls/dinput/dinput_main.c
+index 2e561502406..cd1a11b02fb 100644
+--- a/dlls/dinput/dinput_main.c
++++ b/dlls/dinput/dinput_main.c
+@@ -97,6 +97,9 @@ static const struct dinput_device *dinput_devices[] =
+ 
+ HINSTANCE DINPUT_instance;
+ 
++static const WCHAR di_em_win_w[] = {'D','I','E','m','W','i','n',0};
++static HWND di_em_win;
++
+ static BOOL check_hook_thread(void);
+ static CRITICAL_SECTION dinput_hook_crit;
+ static struct list direct_input_list = LIST_INIT( direct_input_list );
+@@ -637,6 +640,45 @@ static HRESULT WINAPI IDirectInputWImpl_QueryInterface(LPDIRECTINPUT7W iface, RE
+     return IDirectInputAImpl_QueryInterface( &This->IDirectInput7A_iface, riid, ppobj );
+ }
+ 
++static LRESULT WINAPI di_em_win_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
++{
++    IDirectInputDeviceImpl *dev;
++    RAWINPUT ri;
++    UINT size = sizeof(ri);
++    int rim = GET_RAWINPUT_CODE_WPARAM( wparam );
++
++    TRACE( "%p %d %lx %lx\n", hwnd, msg, wparam, lparam );
++
++    if (msg == WM_INPUT && (rim == RIM_INPUT || rim == RIM_INPUTSINK))
++    {
++        size = GetRawInputData( (HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER) );
++        if (size == (UINT)-1 || size < sizeof(RAWINPUTHEADER))
++            WARN( "Unable to read raw input data\n" );
++    }
++
++    return DefWindowProcW( hwnd, msg, wparam, lparam );
++}
++
++static void register_di_em_win_class(void)
++{
++    WNDCLASSEXW class;
++
++    memset(&class, 0, sizeof(class));
++    class.cbSize = sizeof(class);
++    class.lpfnWndProc = di_em_win_wndproc;
++    class.hInstance = DINPUT_instance;
++    class.lpszClassName = di_em_win_w;
++
++    if (!RegisterClassExW( &class ) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
++        WARN( "Unable to register message window class\n" );
++}
++
++static void unregister_di_em_win_class(void)
++{
++    if (!UnregisterClassW( di_em_win_w, NULL ) && GetLastError() != ERROR_CLASS_DOES_NOT_EXIST)
++        WARN( "Unable to unregister message window class\n" );
++}
++
+ static HRESULT initialize_directinput_instance(IDirectInputImpl *This, DWORD dwVersion)
+ {
+     if (!This->initialized)
+@@ -1668,11 +1710,13 @@ static LRESULT CALLBACK LL_hook_proc( int code, WPARAM wparam, LPARAM lparam )
+     EnterCriticalSection( &dinput_hook_crit );
+     LIST_FOR_EACH_ENTRY( dev, &acquired_mouse_list, IDirectInputDeviceImpl, entry )
+     {
++        if (dev->use_raw_input) continue;
+         TRACE("calling dinput_mouse_hook (%p %lx %lx)\n", dev, wparam, lparam);
+         skip |= dinput_mouse_hook( &dev->IDirectInputDevice8A_iface, wparam, lparam );
+     }
+     LIST_FOR_EACH_ENTRY( dev, &acquired_keyboard_list, IDirectInputDeviceImpl, entry )
+     {
++        if (dev->use_raw_input) continue;
+         TRACE("calling dinput_keyboard_hook (%p %lx %lx)\n", dev, wparam, lparam);
+         skip |= dinput_keyboard_hook( &dev->IDirectInputDevice8A_iface, wparam, lparam );
+     }
+@@ -1728,6 +1772,9 @@ static DWORD WINAPI hook_thread_proc(void *param)
+     static HHOOK kbd_hook, mouse_hook;
+     MSG msg;
+ 
++    di_em_win = CreateWindowW( di_em_win_w, di_em_win_w, 0, 0, 0, 0, 0,
++                               HWND_MESSAGE, 0, DINPUT_instance, NULL );
++
+     /* Force creation of the message queue */
+     PeekMessageW( &msg, 0, 0, 0, PM_NOREMOVE );
+     SetEvent(param);
+@@ -1778,6 +1825,9 @@ static DWORD WINAPI hook_thread_proc(void *param)
+         DispatchMessageW(&msg);
+     }
+ 
++    DestroyWindow( di_em_win );
++    di_em_win = NULL;
++
+     FreeLibraryAndExitThread(DINPUT_instance, 0);
+ }
+ 
+@@ -1860,6 +1910,31 @@ void check_dinput_hooks(LPDIRECTINPUTDEVICE8W iface, BOOL acquired)
+         hook_thread_event = NULL;
+     }
+ 
++    if (dev->use_raw_input)
++    {
++        if (acquired)
++        {
++            dev->raw_device.dwFlags = 0;
++            if (dev->dwCoopLevel & DISCL_BACKGROUND)
++                dev->raw_device.dwFlags |= RIDEV_INPUTSINK;
++            if (dev->dwCoopLevel & DISCL_EXCLUSIVE)
++                dev->raw_device.dwFlags |= RIDEV_NOLEGACY;
++            if ((dev->dwCoopLevel & DISCL_EXCLUSIVE) && dev->raw_device.usUsage == 2)
++                dev->raw_device.dwFlags |= RIDEV_CAPTUREMOUSE;
++            if ((dev->dwCoopLevel & DISCL_EXCLUSIVE) && dev->raw_device.usUsage == 6)
++                dev->raw_device.dwFlags |= RIDEV_NOHOTKEYS;
++            dev->raw_device.hwndTarget = di_em_win;
++        }
++        else
++        {
++            dev->raw_device.dwFlags = RIDEV_REMOVE;
++            dev->raw_device.hwndTarget = NULL;
++        }
++
++        if (!RegisterRawInputDevices( &dev->raw_device, 1, sizeof(RAWINPUTDEVICE) ))
++            WARN( "Unable to (un)register raw device %x:%x\n", dev->raw_device.usUsagePage, dev->raw_device.usUsage );
++    }
++
+     if (acquired)
+         hook_change_finished_event = CreateEventW( NULL, FALSE, FALSE, NULL );
+     PostThreadMessageW( hook_thread_id, WM_USER+0x10, 1, (LPARAM)hook_change_finished_event );
+@@ -1894,9 +1969,11 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved)
+       case DLL_PROCESS_ATTACH:
+         DisableThreadLibraryCalls(inst);
+         DINPUT_instance = inst;
++        register_di_em_win_class();
+         break;
+       case DLL_PROCESS_DETACH:
+         if (reserved) break;
++        unregister_di_em_win_class();
+         DeleteCriticalSection(&dinput_hook_crit);
+         break;
+     }
+From 81d1c79dcda0eea8fd35b2dcc6dfa3c3a17e2393 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 10 Aug 2020 11:04:16 +0200
+Subject: [PATCH] dinput8: Use rawinput interface for mouse device.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
+---
+ dlls/dinput/dinput_main.c    | 10 ++++
+ dlls/dinput/dinput_private.h |  1 +
+ dlls/dinput/mouse.c          | 90 ++++++++++++++++++++++++++++++++++++
+ dlls/dinput8/tests/device.c  | 11 ++---
+ 4 files changed, 104 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/dinput/dinput_main.c b/dlls/dinput/dinput_main.c
+index cd1a11b02fb..1c4a26987f9 100644
+--- a/dlls/dinput/dinput_main.c
++++ b/dlls/dinput/dinput_main.c
+@@ -654,6 +654,16 @@ static LRESULT WINAPI di_em_win_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
+         size = GetRawInputData( (HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER) );
+         if (size == (UINT)-1 || size < sizeof(RAWINPUTHEADER))
+             WARN( "Unable to read raw input data\n" );
++        else if (ri.header.dwType == RIM_TYPEMOUSE)
++        {
++            EnterCriticalSection( &dinput_hook_crit );
++            LIST_FOR_EACH_ENTRY( dev, &acquired_mouse_list, IDirectInputDeviceImpl, entry )
++            {
++                if (!dev->use_raw_input) continue;
++                dinput_mouse_rawinput_hook( &dev->IDirectInputDevice8A_iface, wparam, lparam, &ri );
++            }
++            LeaveCriticalSection( &dinput_hook_crit );
++        }
+     }
+ 
+     return DefWindowProcW( hwnd, msg, wparam, lparam );
+diff --git a/dlls/dinput/dinput_private.h b/dlls/dinput/dinput_private.h
+index 06a439d6a41..c0c88da9674 100644
+--- a/dlls/dinput/dinput_private.h
++++ b/dlls/dinput/dinput_private.h
+@@ -73,6 +73,7 @@ extern void dinput_hooks_acquire_device(LPDIRECTINPUTDEVICE8W iface);
+ extern void dinput_hooks_unacquire_device(LPDIRECTINPUTDEVICE8W iface);
+ extern int dinput_mouse_hook(LPDIRECTINPUTDEVICE8A iface, WPARAM wparam, LPARAM lparam);
+ extern int dinput_keyboard_hook(LPDIRECTINPUTDEVICE8A iface, WPARAM wparam, LPARAM lparam);
++extern void dinput_mouse_rawinput_hook( LPDIRECTINPUTDEVICE8A iface, WPARAM wparam, LPARAM lparam, RAWINPUT *raw );
+ 
+ extern void check_dinput_hooks(LPDIRECTINPUTDEVICE8W, BOOL) DECLSPEC_HIDDEN;
+ extern void check_dinput_events(void) DECLSPEC_HIDDEN;
+diff --git a/dlls/dinput/mouse.c b/dlls/dinput/mouse.c
+index 5e6f34f0eca..e50731fda41 100644
+--- a/dlls/dinput/mouse.c
++++ b/dlls/dinput/mouse.c
+@@ -239,6 +239,13 @@ static SysMouseImpl *alloc_device(REFGUID rguid, IDirectInputImpl *dinput)
+     newDevice->base.data_format.wine_df = df;
+     IDirectInput_AddRef(&newDevice->base.dinput->IDirectInput7A_iface);
+ 
++    if (dinput->dwVersion >= 0x0800)
++    {
++        newDevice->base.use_raw_input = TRUE;
++        newDevice->base.raw_device.usUsagePage = 1; /* HID generic device page */
++        newDevice->base.raw_device.usUsage = 2; /* HID generic mouse */
++    }
++
+     return newDevice;
+ 
+ failed:
+@@ -306,6 +313,89 @@ const struct dinput_device mouse_device = {
+  *	SysMouseA (DInput Mouse support)
+  */
+ 
++void dinput_mouse_rawinput_hook( LPDIRECTINPUTDEVICE8A iface, WPARAM wparam, LPARAM lparam, RAWINPUT *ri )
++{
++    SysMouseImpl* This = impl_from_IDirectInputDevice8A( iface );
++    POINT rel, pt;
++    DWORD seq;
++    int i, wdata = 0;
++
++    static const USHORT mouse_button_flags[] =
++    {
++        RI_MOUSE_BUTTON_1_DOWN, RI_MOUSE_BUTTON_1_UP,
++        RI_MOUSE_BUTTON_2_DOWN, RI_MOUSE_BUTTON_2_UP,
++        RI_MOUSE_BUTTON_3_DOWN, RI_MOUSE_BUTTON_3_UP,
++        RI_MOUSE_BUTTON_4_DOWN, RI_MOUSE_BUTTON_4_UP,
++        RI_MOUSE_BUTTON_5_DOWN, RI_MOUSE_BUTTON_5_UP
++    };
++
++    TRACE( "(%p) wp %08lx, lp %08lx\n", iface, wparam, lparam );
++
++    if (ri->data.mouse.usFlags & MOUSE_VIRTUAL_DESKTOP)
++        FIXME( "Unimplemented MOUSE_VIRTUAL_DESKTOP flag\n" );
++    if (ri->data.mouse.usFlags & MOUSE_ATTRIBUTES_CHANGED)
++        FIXME( "Unimplemented MOUSE_ATTRIBUTES_CHANGED flag\n" );
++
++    EnterCriticalSection( &This->base.crit );
++    seq = This->base.dinput->evsequence++;
++
++    rel.x = ri->data.mouse.lLastX;
++    rel.y = ri->data.mouse.lLastY;
++    if (ri->data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)
++    {
++        GetCursorPos( &pt );
++        rel.x -= pt.x;
++        rel.y -= pt.y;
++    }
++
++    This->m_state.lX += rel.x;
++    This->m_state.lY += rel.y;
++
++    if (This->base.data_format.user_df->dwFlags & DIDF_ABSAXIS)
++    {
++        pt.x = This->m_state.lX;
++        pt.y = This->m_state.lY;
++    }
++    else
++    {
++        pt = rel;
++    }
++
++    if (rel.x)
++        queue_event( iface, DIDFT_MAKEINSTANCE(WINE_MOUSE_X_AXIS_INSTANCE) | DIDFT_RELAXIS,
++                     pt.x, GetCurrentTime(), seq );
++
++    if (rel.y)
++        queue_event( iface, DIDFT_MAKEINSTANCE(WINE_MOUSE_Y_AXIS_INSTANCE) | DIDFT_RELAXIS,
++                     pt.y, GetCurrentTime(), seq );
++
++    if (rel.x || rel.y)
++    {
++        if ((This->warp_override == WARP_FORCE_ON) ||
++            (This->warp_override != WARP_DISABLE && (This->base.dwCoopLevel & DISCL_EXCLUSIVE)))
++            This->need_warp = TRUE;
++    }
++
++    if (ri->data.mouse.usButtonFlags & RI_MOUSE_WHEEL)
++    {
++        This->m_state.lZ += (wdata = (SHORT)ri->data.mouse.usButtonData);
++        queue_event( iface, DIDFT_MAKEINSTANCE(WINE_MOUSE_Z_AXIS_INSTANCE) | DIDFT_RELAXIS,
++                     wdata, GetCurrentTime(), seq );
++    }
++
++    for (i = 0; i < ARRAY_SIZE(mouse_button_flags); ++i)
++    {
++        if (ri->data.mouse.usButtonFlags & mouse_button_flags[i])
++        {
++            This->m_state.rgbButtons[i / 2] = 0x80 - (i % 2) * 0x80;
++            queue_event( iface, DIDFT_MAKEINSTANCE(WINE_MOUSE_BUTTONS_INSTANCE +(i / 2) ) | DIDFT_PSHBUTTON,
++                         This->m_state.rgbButtons[i / 2], GetCurrentTime(), seq );
++        }
++    }
++
++    LeaveCriticalSection( &This->base.crit );
++}
++
+ /* low-level mouse hook */
+ int dinput_mouse_hook( LPDIRECTINPUTDEVICE8A iface, WPARAM wparam, LPARAM lparam )
+ {
+diff --git a/dlls/dinput8/tests/device.c b/dlls/dinput8/tests/device.c
+index 6fe9a635510..80a7fe26c3b 100644
+--- a/dlls/dinput8/tests/device.c
++++ b/dlls/dinput8/tests/device.c
+@@ -646,13 +646,9 @@ static void test_mouse_keyboard(void)
+     raw_devices_count = ARRAY_SIZE(raw_devices);
+     memset(raw_devices, 0, sizeof(raw_devices));
+     hr = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+-    todo_wine
+     ok(hr == 1, "GetRegisteredRawInputDevices returned %d, raw_devices_count: %d\n", hr, raw_devices_count);
+-    todo_wine
+     ok(raw_devices[0].usUsagePage == 1, "Unexpected raw device usage page: %x\n", raw_devices[0].usUsagePage);
+-    todo_wine
+     ok(raw_devices[0].usUsage == 2, "Unexpected raw device usage: %x\n", raw_devices[0].usUsage);
+-    todo_wine
+     ok(raw_devices[0].dwFlags == RIDEV_INPUTSINK, "Unexpected raw device flags: %x\n", raw_devices[0].dwFlags);
+     todo_wine
+     ok(raw_devices[0].hwndTarget == di_hwnd, "Unexpected raw device target: %p\n", raw_devices[0].hwndTarget);
+@@ -662,6 +658,9 @@ static void test_mouse_keyboard(void)
+     GetRegisteredRawInputDevices(NULL, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+     ok(raw_devices_count == 0, "Unexpected raw devices registered: %d\n", raw_devices_count);
+ 
++    if (raw_devices[0].hwndTarget != NULL)
++        di_hwnd = raw_devices[0].hwndTarget;
++
+     /* expect dinput8 to take over any activated raw input devices */
+     raw_devices[0].usUsagePage = 0x01;
+     raw_devices[0].usUsage = 0x05;
+@@ -689,9 +688,7 @@ static void test_mouse_keyboard(void)
+     ok(hr == 3, "GetRegisteredRawInputDevices returned %d, raw_devices_count: %d\n", hr, raw_devices_count);
+     ok(raw_devices[0].usUsagePage == 1, "Unexpected raw device usage page: %x\n", raw_devices[0].usUsagePage);
+     ok(raw_devices[0].usUsage == 2, "Unexpected raw device usage: %x\n", raw_devices[0].usUsage);
+-    todo_wine
+     ok(raw_devices[0].dwFlags == RIDEV_INPUTSINK, "Unexpected raw device flags: %x\n", raw_devices[0].dwFlags);
+-    todo_wine
+     ok(raw_devices[0].hwndTarget == di_hwnd, "Unexpected raw device target: %p\n", raw_devices[0].hwndTarget);
+     ok(raw_devices[1].usUsagePage == 1, "Unexpected raw device usage page: %x\n", raw_devices[1].usUsagePage);
+     ok(raw_devices[1].usUsage == 5, "Unexpected raw device usage: %x\n", raw_devices[1].usUsage);
+@@ -723,7 +720,6 @@ static void test_mouse_keyboard(void)
+     memset(raw_devices, 0, sizeof(raw_devices));
+     hr = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+     ok(hr == 3, "GetRegisteredRawInputDevices returned %d, raw_devices_count: %d\n", hr, raw_devices_count);
+-    todo_wine
+     ok(raw_devices[0].dwFlags == (RIDEV_CAPTUREMOUSE|RIDEV_NOLEGACY), "Unexpected raw device flags: %x\n", raw_devices[0].dwFlags);
+     todo_wine
+     ok(raw_devices[2].dwFlags == (RIDEV_NOHOTKEYS|RIDEV_NOLEGACY), "Unexpected raw device flags: %x\n", raw_devices[1].dwFlags);
+@@ -737,7 +733,6 @@ static void test_mouse_keyboard(void)
+     todo_wine
+     ok(hr == 1, "GetRegisteredRawInputDevices returned %d, raw_devices_count: %d\n", hr, raw_devices_count);
+     ok(raw_devices[0].usUsagePage == 1, "Unexpected raw device usage page: %x\n", raw_devices[0].usUsagePage);
+-    todo_wine
+     ok(raw_devices[0].usUsage == 5, "Unexpected raw device usage: %x\n", raw_devices[0].usUsage);
+     ok(raw_devices[0].dwFlags == 0, "Unexpected raw device flags: %x\n", raw_devices[0].dwFlags);
+     ok(raw_devices[0].hwndTarget == hwnd, "Unexpected raw device target: %p\n", raw_devices[0].hwndTarget);
+From 447bce4117a58910690a0d2610ebcbdd49ae9127 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 10 Aug 2020 11:04:17 +0200
+Subject: [PATCH] dinput8: Stop using LL hooks for mouse devices.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+LL hooks are heavy and using them cause performance hit with high
+polling rate mice. We don't need them anymore since we now use rawinput
+API for mouse device.
+
+This also uses a separate list for rawinput mouse devices.
+
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
+---
+ dlls/dinput/dinput_main.c | 17 +++++++++++------
+ 1 file changed, 11 insertions(+), 6 deletions(-)
+
+diff --git a/dlls/dinput/dinput_main.c b/dlls/dinput/dinput_main.c
+index 1c4a26987f9..45023fc104a 100644
+--- a/dlls/dinput/dinput_main.c
++++ b/dlls/dinput/dinput_main.c
+@@ -104,6 +104,7 @@ static BOOL check_hook_thread(void);
+ static CRITICAL_SECTION dinput_hook_crit;
+ static struct list direct_input_list = LIST_INIT( direct_input_list );
+ static struct list acquired_mouse_list = LIST_INIT( acquired_mouse_list );
++static struct list acquired_rawmouse_list = LIST_INIT( acquired_rawmouse_list );
+ static struct list acquired_keyboard_list = LIST_INIT( acquired_keyboard_list );
+ static struct list acquired_device_list = LIST_INIT( acquired_device_list );
+ 
+@@ -116,7 +117,7 @@ void dinput_hooks_acquire_device(LPDIRECTINPUTDEVICE8W iface)
+ 
+     EnterCriticalSection( &dinput_hook_crit );
+     if (IsEqualGUID( &dev->guid, &GUID_SysMouse ))
+-        list_add_tail( &acquired_mouse_list, &dev->entry );
++        list_add_tail( dev->use_raw_input ? &acquired_rawmouse_list : &acquired_mouse_list, &dev->entry );
+     else if (IsEqualGUID( &dev->guid, &GUID_SysKeyboard ))
+         list_add_tail( &acquired_keyboard_list, &dev->entry );
+     else
+@@ -657,11 +658,8 @@ static LRESULT WINAPI di_em_win_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
+         else if (ri.header.dwType == RIM_TYPEMOUSE)
+         {
+             EnterCriticalSection( &dinput_hook_crit );
+-            LIST_FOR_EACH_ENTRY( dev, &acquired_mouse_list, IDirectInputDeviceImpl, entry )
+-            {
+-                if (!dev->use_raw_input) continue;
++            LIST_FOR_EACH_ENTRY( dev, &acquired_rawmouse_list, IDirectInputDeviceImpl, entry )
+                 dinput_mouse_rawinput_hook( &dev->IDirectInputDevice8A_iface, wparam, lparam, &ri );
+-            }
+             LeaveCriticalSection( &dinput_hook_crit );
+         }
+     }
+@@ -1720,7 +1718,6 @@ static LRESULT CALLBACK LL_hook_proc( int code, WPARAM wparam, LPARAM lparam )
+     EnterCriticalSection( &dinput_hook_crit );
+     LIST_FOR_EACH_ENTRY( dev, &acquired_mouse_list, IDirectInputDeviceImpl, entry )
+     {
+-        if (dev->use_raw_input) continue;
+         TRACE("calling dinput_mouse_hook (%p %lx %lx)\n", dev, wparam, lparam);
+         skip |= dinput_mouse_hook( &dev->IDirectInputDevice8A_iface, wparam, lparam );
+     }
+@@ -1764,6 +1761,14 @@ static LRESULT CALLBACK callwndproc_proc( int code, WPARAM wparam, LPARAM lparam
+             IDirectInputDevice_Unacquire( &dev->IDirectInputDevice8A_iface );
+         }
+     }
++    LIST_FOR_EACH_ENTRY_SAFE( dev, next, &acquired_rawmouse_list, IDirectInputDeviceImpl, entry )
++    {
++        if (msg->hwnd == dev->win && msg->hwnd != foreground)
++        {
++            TRACE( "%p window is not foreground - unacquiring %p\n", dev->win, dev );
++            IDirectInputDevice_Unacquire( &dev->IDirectInputDevice8A_iface );
++        }
++    }
+     LIST_FOR_EACH_ENTRY_SAFE( dev, next, &acquired_keyboard_list, IDirectInputDeviceImpl, entry )
+     {
+         if (msg->hwnd == dev->win && msg->hwnd != foreground)

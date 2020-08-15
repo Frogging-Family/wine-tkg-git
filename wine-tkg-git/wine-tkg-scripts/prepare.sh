@@ -514,6 +514,7 @@ _prepare() {
 	# Hotfixer
 	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
 	  source "$_where"/wine-tkg-patches/hotfixes/hotfixer
+	  msg2 "Hotfixing..."
 	  for _commit in ${_hotfix_mainlinereverts[@]}; do
 	    cd "${srcdir}"/"${_winesrcdir}"
 	    _committorevert=$_commit _hotfixmsg="(hotfix)" nonuser_reverter
