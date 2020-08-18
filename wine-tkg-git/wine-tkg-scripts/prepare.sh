@@ -6,12 +6,14 @@ _exit_cleanup() {
     if [ -n "$_PROTON_NAME_ADDON" ]; then
       if [ "$_ispkgbuild" = "true" ]; then
         echo "_protontkg_version=makepkg.${_PROTON_NAME_ADDON}" >> "$_proton_tkg_path"/proton_tkg_token
+        echo "_protontkg_true_version=${pkgver}.${_PROTON_NAME_ADDON}" >> "$_proton_tkg_path"/proton_tkg_token
       else
         echo "_protontkg_version=${pkgver}.${_PROTON_NAME_ADDON}" >> "$_proton_tkg_path"/proton_tkg_token
       fi
     else
       if [ "$_ispkgbuild" = "true" ]; then
         echo "_protontkg_version=makepkg" >> "$_proton_tkg_path"/proton_tkg_token
+        echo "_protontkg_true_version=${pkgver}" >> "$_proton_tkg_path"/proton_tkg_token
       else
         echo "_protontkg_version=${pkgver}" >> "$_proton_tkg_path"/proton_tkg_token
       fi
