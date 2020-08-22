@@ -1,0 +1,524 @@
+diff --git a/dlls/ntdll/nt.c b/dlls/ntdll/nt.c
+index 52161a3abc2..249b07a3ffd 100644
+--- a/dlls/ntdll/nt.c
++++ b/dlls/ntdll/nt.c
+@@ -2763,127 +2821,100 @@ NTSTATUS WINAPI NtQuerySystemInformation(
+         break;
+     case SystemProcessInformation:
+         {
+-            SYSTEM_PROCESS_INFORMATION* spi = SystemInformation;
+-            SYSTEM_PROCESS_INFORMATION* last = NULL;
+-            HANDLE hSnap = 0;
+-            WCHAR procname[1024];
+-            WCHAR* exename;
+-            DWORD wlen = 0;
+-            DWORD procstructlen = 0;
+-
+-            SERVER_START_REQ( create_snapshot )
++            unsigned int process_count, i, j;
++            char *buffer = NULL;
++            unsigned int pos = 0;
++            if (Length && !(buffer = RtlAllocateHeap( GetProcessHeap(), 0, Length )))
+             {
+-                req->flags      = SNAP_PROCESS | SNAP_THREAD;
+-                req->attributes = 0;
+-                if (!(ret = wine_server_call( req )))
+-                    hSnap = wine_server_ptr_handle( reply->handle );
++                ret = STATUS_NO_MEMORY;
++                break;
++            }
++
++            SERVER_START_REQ( list_processes )
++            {
++                wine_server_set_reply( req, buffer, Length );
++                ret = wine_server_call( req );
++                len = reply->info_size;
++                process_count = reply->process_count;
+             }
+             SERVER_END_REQ;
++
++            if (ret)
++            {
++                RtlFreeHeap( GetProcessHeap(), 0, buffer );
++                break;
++            }
++
+             len = 0;
+-            while (ret == STATUS_SUCCESS)
++
++            for (i = 0; i < process_count; i++)
+             {
+-                SERVER_START_REQ( next_process )
++                SYSTEM_PROCESS_INFORMATION *nt_process = (SYSTEM_PROCESS_INFORMATION *)((char *)SystemInformation + len);
++                const struct process_info *server_process;
++                const WCHAR *server_name, *file_part;
++                ULONG proc_len;
++                ULONG name_len = 0;
++
++                pos = (pos + 7) & ~7;
++                server_process = (const struct process_info *)(buffer + pos);
++                pos += sizeof(*server_process);
++
++                server_name = (const WCHAR *)(buffer + pos);
++                file_part = server_name + (server_process->name_len / sizeof(WCHAR));
++                pos += server_process->name_len;
++                while (file_part > server_name && file_part[-1] != '\\')
+                 {
+-                    req->handle = wine_server_obj_handle( hSnap );
+-                    req->reset = (len == 0);
+-                    wine_server_set_reply( req, procname, sizeof(procname)-sizeof(WCHAR) );
+-                    if (!(ret = wine_server_call( req )))
+-                    {
+-                        /* Make sure procname is 0 terminated */
+-                        procname[wine_server_reply_size(reply) / sizeof(WCHAR)] = 0;
+-
+-                        /* Get only the executable name, not the path */
+-                        if ((exename = wcsrchr(procname, '\\')) != NULL) exename++;
+-                        else exename = procname;
+-
+-                        wlen = (wcslen(exename) + 1) * sizeof(WCHAR);
+-
+-                        procstructlen = sizeof(*spi) + wlen + ((reply->threads - 1) * sizeof(SYSTEM_THREAD_INFORMATION));
+-
+-                        if (Length >= len + procstructlen)
+-                        {
+-                            /* ftCreationTime, ftUserTime, ftKernelTime;
+-                             * vmCounters, ioCounters
+-                             */
+- 
+-                            memset(spi, 0, sizeof(*spi));
+-
+-                            spi->NextEntryOffset = procstructlen - wlen;
+-                            spi->dwThreadCount = reply->threads;
+-
+-                            /* spi->pszProcessName will be set later on */
+-
+-                            spi->dwBasePriority = reply->priority;
+-                            spi->UniqueProcessId = UlongToHandle(reply->pid);
+-                            spi->ParentProcessId = UlongToHandle(reply->ppid);
+-                            spi->HandleCount = reply->handles;
+-
+-                            /* spi->ti will be set later on */
+-
+-                        }
+-                        len += procstructlen;
+-                    }
++                    file_part--;
++                    name_len++;
+                 }
+-                SERVER_END_REQ;
+- 
+-                if (ret != STATUS_SUCCESS)
++
++                proc_len = sizeof(*nt_process) + server_process->thread_count * sizeof(SYSTEM_THREAD_INFORMATION)
++                             + (name_len + 1) * sizeof(WCHAR);
++                len += proc_len;
++
++                if (len <= Length)
+                 {
+-                    if (ret == STATUS_NO_MORE_FILES) ret = STATUS_SUCCESS;
+-                    break;
++                    memset(nt_process, 0, sizeof(*nt_process));
++                    if (i < process_count - 1)
++                        nt_process->NextEntryOffset = proc_len;
++                    nt_process->dwThreadCount = server_process->thread_count;
++                    nt_process->dwBasePriority = server_process->priority;
++                    nt_process->UniqueProcessId = UlongToHandle(server_process->pid);
++                    nt_process->ParentProcessId = UlongToHandle(server_process->parent_pid);
++                    nt_process->HandleCount = server_process->handle_count;
+                 }
+ 
+-                if (Length >= len)
++                pos = (pos + 7) & ~7;
++                for (j = 0; j < server_process->thread_count; j++)
+                 {
+-                    int     i, j;
++                    const struct thread_info *server_thread = (const struct thread_info *)(buffer + pos);
+ 
+-                    /* set thread info */
+-                    i = j = 0;
+-                    while (ret == STATUS_SUCCESS)
++                    if (len <= Length)
+                     {
+-                        SERVER_START_REQ( next_thread )
+-                        {
+-                            req->handle = wine_server_obj_handle( hSnap );
+-                            req->reset = (j == 0);
+-                            if (!(ret = wine_server_call( req )))
+-                            {
+-                                j++;
+-                                if (UlongToHandle(reply->pid) == spi->UniqueProcessId)
+-                                {
+-                                    /* ftKernelTime, ftUserTime, ftCreateTime;
+-                                     * dwTickCount, dwStartAddress
+-                                     */
+-
+-                                    memset(&spi->ti[i], 0, sizeof(spi->ti));
+-
+-                                    spi->ti[i].CreateTime.QuadPart = 0xdeadbeef;
+-                                    spi->ti[i].ClientId.UniqueProcess = UlongToHandle(reply->pid);
+-                                    spi->ti[i].ClientId.UniqueThread  = UlongToHandle(reply->tid);
+-                                    spi->ti[i].dwCurrentPriority = reply->base_pri + reply->delta_pri;
+-                                    spi->ti[i].dwBasePriority = reply->base_pri;
+-                                    i++;
+-                                }
+-                            }
+-                        }
+-                        SERVER_END_REQ;
++                        nt_process->ti[j].CreateTime.QuadPart = 0xdeadbeef;
++                        nt_process->ti[j].ClientId.UniqueProcess = UlongToHandle(server_process->pid);
++                        nt_process->ti[j].ClientId.UniqueThread = UlongToHandle(server_thread->tid);
++                        nt_process->ti[j].dwCurrentPriority = server_thread->current_priority;
++                        nt_process->ti[j].dwBasePriority = server_thread->base_priority;
+                     }
+-                    if (ret == STATUS_NO_MORE_FILES) ret = STATUS_SUCCESS;
+ 
+-                    /* now append process name */
+-                    spi->ProcessName.Buffer = (WCHAR*)((char*)spi + spi->NextEntryOffset);
+-                    spi->ProcessName.Length = wlen - sizeof(WCHAR);
+-                    spi->ProcessName.MaximumLength = wlen;
+-                    memcpy( spi->ProcessName.Buffer, exename, wlen );
+-                    spi->NextEntryOffset += wlen;
++                    pos += sizeof(*server_thread);
++                }
+ 
+-                    last = spi;
+-                    spi = (SYSTEM_PROCESS_INFORMATION*)((char*)spi + spi->NextEntryOffset);
++                if (len <= Length)
++                {
++                    nt_process->ProcessName.Buffer = (WCHAR *)&nt_process->ti[server_process->thread_count];
++                    nt_process->ProcessName.Length = name_len * sizeof(WCHAR);
++                    nt_process->ProcessName.MaximumLength = (name_len + 1) * sizeof(WCHAR);
++                    memcpy(nt_process->ProcessName.Buffer, file_part, name_len * sizeof(WCHAR));
++                    nt_process->ProcessName.Buffer[name_len] = 0;
+                 }
+             }
+-            if (ret == STATUS_SUCCESS && last) last->NextEntryOffset = 0;
++
+             if (len > Length) ret = STATUS_INFO_LENGTH_MISMATCH;
+-            if (hSnap) NtClose(hSnap);
++            RtlFreeHeap( GetProcessHeap(), 0, buffer );
++	    break;
+         }
+-        break;
+     case SystemProcessorPerformanceInformation:
+         {
+             SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION *sppi = NULL;
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index 26cedfcedf2..efbd5e8befa 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -2481,6 +2481,42 @@ struct next_thread_reply
+ };
+ 
+ 
++struct thread_info
++{
++    thread_id_t     tid;
++    int             base_priority;
++    int             current_priority;
++    int             unix_tid;
++};
++
++struct process_info
++{
++    data_size_t     name_len;
++    int             thread_count;
++    int             priority;
++    process_id_t    pid;
++    process_id_t    parent_pid;
++    int             handle_count;
++    int             unix_pid;
++
++
++};
++
++
++struct list_processes_request
++{
++    struct request_header __header;
++    char __pad_12[4];
++};
++struct list_processes_reply
++{
++    struct reply_header __header;
++    data_size_t     info_size;
++    int             process_count;
++    /* VARARG(data,process_info,info_size); */
++};
++
++
+ 
+ struct wait_debug_event_request
+ {
+@@ -5893,6 +5929,7 @@ enum request
+     REQ_create_snapshot,
+     REQ_next_process,
+     REQ_next_thread,
++    REQ_list_processes,
+     REQ_wait_debug_event,
+     REQ_queue_exception_event,
+     REQ_get_exception_status,
+@@ -6196,6 +6233,7 @@ union generic_request
+     struct create_snapshot_request create_snapshot_request;
+     struct next_process_request next_process_request;
+     struct next_thread_request next_thread_request;
++    struct list_processes_request list_processes_request;
+     struct wait_debug_event_request wait_debug_event_request;
+     struct queue_exception_event_request queue_exception_event_request;
+     struct get_exception_status_request get_exception_status_request;
+@@ -6497,6 +6535,7 @@ union generic_reply
+     struct create_snapshot_reply create_snapshot_reply;
+     struct next_process_reply next_process_reply;
+     struct next_thread_reply next_thread_reply;
++    struct list_processes_reply list_processes_reply;
+     struct wait_debug_event_reply wait_debug_event_reply;
+     struct queue_exception_event_reply queue_exception_event_reply;
+     struct get_exception_status_reply get_exception_status_reply;
+diff --git a/server/process.c b/server/process.c
+index 283edc09c5e..db92ad3499b 100644
+--- a/server/process.c
++++ b/server/process.c
+@@ -22,6 +22,7 @@
+ #include "wine/port.h"
+ 
+ #include <assert.h>
++#include <errno.h>
+ #include <limits.h>
+ #include <signal.h>
+ #include <string.h>
+@@ -1819,3 +1820,70 @@ DECL_HANDLER(resume_process)
+         release_object( process );
+     }
+ }
++
++/* Get a list of processes and threads currently running */
++DECL_HANDLER(list_processes)
++{
++    struct process *process;
++    struct thread *thread;
++    unsigned int pos = 0;
++    char *buffer;
++
++    reply->process_count = 0;
++    reply->info_size = 0;
++
++    LIST_FOR_EACH_ENTRY( process, &process_list, struct process, entry )
++    {
++        struct process_dll *exe = get_process_exe_module( process );
++        reply->info_size = (reply->info_size + 7) & ~7;
++        reply->info_size += sizeof(struct process_info);
++        if (exe) reply->info_size += exe->namelen;
++        reply->info_size = (reply->info_size + 7) & ~7;
++        reply->info_size += process->running_threads * sizeof(struct thread_info);
++        reply->process_count++;
++    }
++
++    if (reply->info_size > get_reply_max_size())
++    {
++        set_error( STATUS_INFO_LENGTH_MISMATCH );
++        return;
++    }
++
++    if (!(buffer = set_reply_data_size( reply->info_size ))) return;
++
++    memset( buffer, 0, reply->info_size );
++    LIST_FOR_EACH_ENTRY( process, &process_list, struct process, entry )
++    {
++        struct process_info *process_info;
++        struct process_dll *exe = get_process_exe_module( process );
++
++        pos = (pos + 7) & ~7;
++        process_info = (struct process_info *)(buffer + pos);
++        process_info->name_len = exe ? exe->namelen : 0;
++        process_info->thread_count = process->running_threads;
++        process_info->priority = process->priority;
++        process_info->pid = process->id;
++        process_info->parent_pid = process->parent_id;
++        process_info->handle_count = get_handle_table_count(process);
++        process_info->unix_pid = process->unix_pid;
++        pos += sizeof(*process_info);
++
++        if (exe)
++        {
++            memcpy( buffer + pos, exe->filename, exe->namelen );
++            pos += exe->namelen;
++        }
++
++        pos = (pos + 7) & ~7;
++        LIST_FOR_EACH_ENTRY( thread, &process->thread_list, struct thread, proc_entry )
++        {
++            struct thread_info *thread_info = (struct thread_info *)(buffer + pos);
++
++            thread_info->tid = thread->id;
++            thread_info->base_priority = thread->priority;
++            thread_info->current_priority = thread->priority; /* FIXME */
++            thread_info->unix_tid = thread->unix_tid;
++            pos += sizeof(*thread_info);
++        }
++    }
++}
+diff --git a/server/protocol.def b/server/protocol.def
+index 87ec4dbd482..c4dcfdf72b5 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -1909,6 +1909,36 @@ enum char_info_mode
+ @END
+ 
+ 
++struct thread_info
++{
++    thread_id_t     tid;
++    int             base_priority;
++    int             current_priority;
++    int             unix_tid;
++};
++
++struct process_info
++{
++    data_size_t     name_len;
++    int             thread_count;
++    int             priority;
++    process_id_t    pid;
++    process_id_t    parent_pid;
++    int             handle_count;
++    int             unix_pid;
++    /* VARARG(name,unicode_str,name_len); */
++    /* VARARG(threads,struct thread_info,thread_count); */
++};
++
++/* Get a list of processes and threads currently running */
++@REQ(list_processes)
++@REPLY
++    data_size_t     info_size;
++    int             process_count;
++    VARARG(data,process_info,info_size);
++@END
++
++
+ /* Wait for a debug event */
+ @REQ(wait_debug_event)
+     int           get_handle;  /* should we alloc a handle for waiting? */
+diff --git a/server/request.h b/server/request.h
+index 199b6bc81d3..4cadf24ae34 100644
+--- a/server/request.h
++++ b/server/request.h
+@@ -214,6 +214,7 @@ DECL_HANDLER(is_same_mapping);
+ DECL_HANDLER(create_snapshot);
+ DECL_HANDLER(next_process);
+ DECL_HANDLER(next_thread);
++DECL_HANDLER(list_processes);
+ DECL_HANDLER(wait_debug_event);
+ DECL_HANDLER(queue_exception_event);
+ DECL_HANDLER(get_exception_status);
+@@ -516,6 +517,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+     (req_handler)req_create_snapshot,
+     (req_handler)req_next_process,
+     (req_handler)req_next_thread,
++    (req_handler)req_list_processes,
+     (req_handler)req_wait_debug_event,
+     (req_handler)req_queue_exception_event,
+     (req_handler)req_get_exception_status,
+@@ -1360,6 +1362,10 @@ C_ASSERT( FIELD_OFFSET(struct next_thread_reply, base_pri) == 20 );
+ C_ASSERT( FIELD_OFFSET(struct next_thread_reply, delta_pri) == 24 );
+ C_ASSERT( FIELD_OFFSET(struct next_thread_reply, unix_tid) == 28 );
+ C_ASSERT( sizeof(struct next_thread_reply) == 32 );
++C_ASSERT( sizeof(struct list_processes_request) == 16 );
++C_ASSERT( FIELD_OFFSET(struct list_processes_reply, info_size) == 8 );
++C_ASSERT( FIELD_OFFSET(struct list_processes_reply, process_count) == 12 );
++C_ASSERT( sizeof(struct list_processes_reply) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct wait_debug_event_request, get_handle) == 12 );
+ C_ASSERT( sizeof(struct wait_debug_event_request) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct wait_debug_event_reply, pid) == 8 );
+diff --git a/server/trace.c b/server/trace.c
+index 5b3da34872e..7c3e1e32ca0 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -1115,6 +1115,44 @@ static void dump_varargs_token_groups( const char *prefix, data_size_t size )
+     fputc( '}', stderr );
+ }
+ 
++static void dump_varargs_process_info( const char *prefix, data_size_t size )
++{
++    data_size_t pos = 0;
++    unsigned int i;
++
++    fprintf( stderr,"%s{", prefix );
++
++    while (size - pos >= sizeof(struct process_info))
++    {
++        const struct process_info *process;
++        pos = (pos + 7) & ~7;
++        process = (const struct process_info *)((const char *)cur_data + pos);
++        if (size - pos < sizeof(*process)) break;
++        if (pos) fputc( ',', stderr );
++        fprintf( stderr, "{thread_count=%u,priority=%d,pid=%04x,parent_pid=%04x,handle_count=%u,unix_pid=%d,",
++                 process->thread_count, process->priority, process->pid,
++                 process->parent_pid, process->handle_count, process->unix_pid );
++        pos += sizeof(*process);
++
++        pos = dump_inline_unicode_string( "name=L\"", pos, process->name_len, size );
++
++        pos = (pos + 7) & ~7;
++        fprintf( stderr, "\",threads={" );
++        for (i = 0; i < process->thread_count; i++)
++        {
++            const struct thread_info *thread = (const struct thread_info *)((const char *)cur_data + pos);
++            if (size - pos < sizeof(*thread)) break;
++            if (i) fputc( ',', stderr );
++            fprintf( stderr, "{tid=%04x,base_priority=%d,current_priority=%d,unix_tid=%d}",
++                     thread->tid, thread->base_priority, thread->current_priority, thread->unix_tid );
++            pos += sizeof(*thread);
++        }
++        fprintf( stderr, "}}" );
++    }
++    fputc( '}', stderr );
++    remove_data( size );
++}
++
+ static void dump_varargs_object_attributes( const char *prefix, data_size_t size )
+ {
+     const struct object_attributes *objattr = cur_data;
+@@ -2404,6 +2442,17 @@ static void dump_next_thread_reply( const struct next_thread_reply *req )
+     fprintf( stderr, ", unix_tid=%d", req->unix_tid );
+ }
+ 
++static void dump_list_processes_request( const struct list_processes_request *req )
++{
++}
++
++static void dump_list_processes_reply( const struct list_processes_reply *req )
++{
++    fprintf( stderr, " info_size=%u", req->info_size );
++    fprintf( stderr, ", process_count=%d", req->process_count );
++    dump_varargs_process_info( ", data=", min(cur_size,req->info_size) );
++}
++
+ static void dump_wait_debug_event_request( const struct wait_debug_event_request *req )
+ {
+     fprintf( stderr, " get_handle=%d", req->get_handle );
+@@ -4706,6 +4755,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_create_snapshot_request,
+     (dump_func)dump_next_process_request,
+     (dump_func)dump_next_thread_request,
++    (dump_func)dump_list_processes_request,
+     (dump_func)dump_wait_debug_event_request,
+     (dump_func)dump_queue_exception_event_request,
+     (dump_func)dump_get_exception_status_request,
+@@ -5005,6 +5055,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_create_snapshot_reply,
+     (dump_func)dump_next_process_reply,
+     (dump_func)dump_next_thread_reply,
++    (dump_func)dump_list_processes_reply,
+     (dump_func)dump_wait_debug_event_reply,
+     (dump_func)dump_queue_exception_event_reply,
+     NULL,
+@@ -5304,6 +5355,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
+     "create_snapshot",
+     "next_process",
+     "next_thread",
++    "list_processes",
+     "wait_debug_event",
+     "queue_exception_event",
+     "get_exception_status",
+ 
