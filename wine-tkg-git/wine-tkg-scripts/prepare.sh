@@ -481,6 +481,9 @@ _prepare() {
 	if [ "$_use_vkd3dlib" = "mainline" ] || [ "$_use_vkd3dlib" = "fork" ]; then
 	  _configure_args+=(--with-vkd3d)
 	  echo "Using VKD3D for d3d12 translation" >> "$_where"/last_build_config.log
+	elif [ -e "$_proton_tkg_path"/proton_tkg_token ] && [ -n "$_proton_tkg_path" ]; then
+	  _configure_args+=(--without-vkd3d)
+	  echo "Using vkd3d-proton standalone for d3d12 translation" >> "$_where"/last_build_config.log
 	else
 	  _configure_args+=(--without-vkd3d)
 	  echo "NOT using VKD3D for d3d12 translation" >> "$_where"/last_build_config.log
