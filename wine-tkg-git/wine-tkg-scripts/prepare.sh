@@ -616,6 +616,11 @@ _prepare() {
 	  echo -e "( Kernelbase reverts clean reverts applied )\n" >> "$_where"/last_build_config.log
 	fi
 
+	# Don't include *.orig and *~ files in the generated staging patchsets
+	if [ "$_generate_patchsets" != "false" ] && [ "$_use_staging" = "true" ]; then
+	  echo -e "*.orig\n*~" >> "${srcdir}"/"${_stgsrcdir}"/.gitignore
+	fi
+
 	_commitmsg="01-reverts" _committer
 
 	# Hotfixer-staging
