@@ -102,7 +102,7 @@ function build_vrclient {
   winemaker $WINEMAKERFLAGS --wine32 -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" -I"$_nowhere/Proton/build/vrclient.win32/vrclient/" -I"$_nowhere/Proton/build/vrclient.win32/" vrclient
   make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win32/vrclient" -j$(nproc) && strip vrclient/vrclient.dll.so
   winebuild --dll --fake-module -E "$_nowhere/Proton/build/vrclient.win32/vrclient/vrclient.spec" -o vrclient.dll.fake
-  cd $_nowhere
+  cd "$_nowhere"
 
   # Inject vrclient & openvr libs in our wine-tkg-git build
   cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/fakedlls/vrclient_x64.dll
@@ -142,7 +142,7 @@ function build_lsteamclient {
   cd build/lsteamclient.win32
   winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" .
   make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip lsteamclient.dll.so
-  cd $_nowhere
+  cd "$_nowhere"
 
   # Inject lsteamclient libs in our wine-tkg-git build
   cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/
@@ -175,7 +175,21 @@ function build_vkd3d {
   meson --cross-file build-win32.txt -Denable_standalone_d3d12=True  --buildtype release --strip -Denable_tests=false --prefix "$_nowhere"/vkd3d-proton/build/lib32-vkd3d "$_nowhere"/vkd3d-proton/build/lib32-vkd3d
   cd "$_nowhere"/vkd3d-proton/build/lib32-vkd3d && ninja install
 
-  cd $_nowhere
+  cd "$_nowhere"
+}
+
+function build_dxvk {
+  cd "$_nowhere"
+  git clone https://github.com/Frogging-Family/dxvk-tools.git || true # It'll complain the path already exists on subsequent builds
+  cd dxvk-tools
+  git reset --hard HEAD
+  git clean -xdf
+  git pull origin master
+
+  ./updxvk build
+  export _proton_tkg_path="proton-tkg" && ./updxvk proton-tkg
+
+  cd "$_nowhere"
 }
 
 function build_steamhelper {
@@ -193,7 +207,7 @@ function build_steamhelper {
 
     winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/build/lsteamclient.win32/steamworks_sdk_142/" -L"$_nowhere/Proton/steam_helper" .
     make -e CC="winegcc -m32" CXX="wineg++ -m32" -C "$_nowhere/Proton/build/steam.win32" -j$(nproc) && strip steam.exe.so
-    cd $_nowhere
+    cd "$_nowhere"
 
     # Inject steam helper winelib and libsteam_api lib in our wine-tkg-git build
     cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
@@ -382,6 +396,8 @@ elif [ "$1" = "build_lsteamclient" ]; then
   build_lsteamclient
 elif [ "$1" = "build_vkd3d" ]; then
   build_vkd3d
+elif [ "$1" = "build_dxvk" ]; then
+  build_dxvk
 elif [ "$1" = "build_steamhelper" ]; then
   build_steamhelper
 else
@@ -436,7 +452,7 @@ else
   # Copy the resulting package in here to begin our work
   if [ -e "$_proton_pkgdest"/../HL3_confirmed ]; then
 
-    cd $_nowhere
+    cd "$_nowhere"
 
     # Create required dirs and clean
     if [ -z $_protontkg_true_version ]; then
@@ -515,7 +531,9 @@ else
 
     # dxvk
     if [ "$_use_dxvk" != "false" ]; then
-      if [ ! -d "$_nowhere"/dxvk ] || [ "$_use_dxvk" = "release" ] || [ "$_use_dxvk" = "latest" ]; then
+      if [ "$_use_dxvk" = "git" ]; then
+        build_dxvk
+      elif [ ! -d "$_nowhere"/dxvk ] || [ "$_use_dxvk" = "release" ] || [ "$_use_dxvk" = "latest" ]; then
         if [ "$_use_dxvk" = "latest" ]; then
           rm -rf "$_nowhere"/dxvk
           # Download it & extract it into a temporary folder so we don't mess up the build in case proton-tkg also has/will have a folder "$_nowhere"/build (that folder is in the artifact zip)
@@ -682,7 +700,7 @@ else
       sed -i 's/.*PROTON_USE_WINED3D9.*/     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
     fi
 
-    cd $_nowhere
+    cd "$_nowhere"
 
     if [ "$_ispkgbuild" != "true" ]; then
       if [ "$_no_steampath" != "y" ]; then
@@ -723,7 +741,7 @@ else
       fi
     fi
   else
-    rm $_nowhere/proton_tkg_token
+    rm "$_nowhere"/proton_tkg_token
     echo "The required initial proton_dist build is missing! Wine-tkg-git compilation may have failed."
   fi
 fi
