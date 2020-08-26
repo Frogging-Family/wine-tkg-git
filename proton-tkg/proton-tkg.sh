@@ -16,6 +16,24 @@ _nowhere="$PWD"
 _nomakepkg="true"
 _no_steampath="false"
 
+function ressources_cleanup {
+  rm -f "${_nowhere}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
+}
+
+trap ressources_cleanup EXIT
+
+ressources_cleanup
+
+_ressources_path="${_nowhere}/external-ressources"
+mkdir -p "${_ressources_path}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
+ln -s "${_ressources_path}"/Proton "${_nowhere}"/Proton
+ln -s "${_ressources_path}"/vkd3d-proton "${_nowhere}"/vkd3d-proton
+ln -s "${_ressources_path}"/dxvk-tools "${_nowhere}"/dxvk-tools
+ln -s "${_ressources_path}"/dxvk "${_nowhere}"/dxvk
+ln -s "${_ressources_path}"/liberation-fonts "${_nowhere}"/liberation-fonts
+ln -s "${_ressources_path}"/mono "${_nowhere}"/mono
+ln -s "${_ressources_path}"/gecko "${_nowhere}"/gecko
+
 # Enforce using makepkg when using --makepkg
 if [ "$1" = "--makepkg" ]; then
   _nomakepkg="false"
