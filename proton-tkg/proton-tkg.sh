@@ -440,8 +440,11 @@ else
 
   # If mingw-w64 gcc can't be found, disable building vkd3d-proton
   if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
-    echo -e "######\nmingw-w64 gcc not found - vkd3d-proton won't be built\n######"
+    echo -e "######\nmingw-w64 gcc not found - vkd3d-proton and dxvk won't be built\n######"
     _build_vkd3d="false"
+    if [ "$_use_dxvk" = "git" ]; then
+      _use_dxvk="latest"
+    fi
   else
     if [ "$_use_vkd3dlib" = "false" ]; then
       _build_vkd3d="true"
