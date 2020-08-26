@@ -1783,6 +1783,12 @@ EOM
 	  if [ "$_staging_pulse_disable" != "true" ] && [ "$_use_staging" = "true" ]; then
 	    _patchname='proton-pa-staging.patch' && _patchmsg="Enable Proton's PA additions" && nonuser_patcher
 	  fi
+	  # Legacy wine.gaming.input patchset (Death Stranding)
+	  if git merge-base --is-ancestor 1ec8bf9b739f1528b742169670eac2350b33a7d4 HEAD; then
+	    if [ "$_use_staging" = "false" ] || ( [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor c4b73e1752354f1759cc8b1cad39e1931dd85a51 HEAD ) ); then
+	      _patchname='proton-windows.gaming.input.patch' && _patchmsg="Enable Proton's legacy wine.gaming.input patchset for Death Stranding" && nonuser_patcher
+	    fi
+	  fi
 	fi
 
 	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
