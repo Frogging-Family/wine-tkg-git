@@ -17,7 +17,7 @@ _nomakepkg="true"
 _no_steampath="false"
 
 function ressources_cleanup {
-  rm -f "${_nowhere}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
+  rm -rf "${_nowhere}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
 }
 
 trap ressources_cleanup EXIT
