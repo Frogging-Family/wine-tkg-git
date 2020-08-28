@@ -1,6 +1,6 @@
-From a3bb49265bb211e3476d10d07520f3f118cf1df0 Mon Sep 17 00:00:00 2001
+From 61efad3343b33f37f84d759162edde0a2d666ca8 Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
-Date: Thu, 27 Aug 2020 02:00:01 +0200
+Date: Fri, 28 Aug 2020 11:34:14 +0200
 Subject: [PATCH 1/1] 01-staging-hotfixes
 
 ---
@@ -93,7 +93,7 @@ Subject: [PATCH 1/1] 01-staging-hotfixes
  ...tlCreateUserThread-into-NtCreateThre.patch |  321 ++++
  patches/ntdll-RtlCreateUserThread/definition  |    2 +
  ...TUS_INVALID_DEVICE_REQUEST-when-tryi.patch |   40 +-
- ...dll-Support-x86_64-syscall-emulation.patch |  176 ++-
+ ...dll-Support-x86_64-syscall-emulation.patch |  178 ++-
  patches/ntdll-Syscall_Emulation/definition    |    2 +-
  ...temInformation-support-SystemCodeInt.patch |   43 +-
  ...or-NtQuerySystemInformation-SystemEx.patch |   31 +-
@@ -167,7 +167,7 @@ Subject: [PATCH 1/1] 01-staging-hotfixes
  ...ub-implementation-of-Wow64Transition.patch |   40 +-
  patches/wow64cpu-Wow64Transition/definition   |    1 +
  ...e-client-side-file-descriptor-cache-.patch |   70 +-
- 164 files changed, 9044 insertions(+), 4175 deletions(-)
+ 164 files changed, 9045 insertions(+), 4176 deletions(-)
  rename patches/advapi32-Token_Integrity_Level/{XX10-server-Implement-support-for-creating-processes-usin.patch => 0010-server-Implement-support-for-creating-processes-usin.patch} (83%)
  rename patches/advapi32-Token_Integrity_Level/{XX13-server-Correctly-assign-security-labels-for-tokens.patch => 0013-server-Correctly-assign-security-labels-for-tokens.patch} (80%)
  create mode 100644 patches/kernel32-K32GetPerformanceInfo/0001-kernel32-Make-K32GetPerformanceInfo-faster.patch
@@ -10206,11 +10206,11 @@ index 141319d8..f310a2ac 100644
 +2.6.0
  
 diff --git a/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch b/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
-index 2192a00b..812a54d8 100644
+index 6bfd62d7..812a54d8 100644
 --- a/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
 +++ b/patches/ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
 @@ -1,19 +1,24 @@
--From b1ab7b26620fc62b2a4848a0efbb6c9e116a5adc Mon Sep 17 00:00:00 2001
+-From b91699bc26a89683053a6157f343372d98da2a67 Mon Sep 17 00:00:00 2001
 +From b18e90a92f2e44b5167016c90ea1d49f4d7e3211 Mon Sep 17 00:00:00 2001
  From: Paul Gofman <pgofman@codeweavers.com>
 -Date: Tue, 14 Jul 2020 15:00:34 +0300
@@ -10233,21 +10233,21 @@ index 2192a00b..812a54d8 100644
 + 3 files changed, 119 insertions(+), 2 deletions(-)
  
  diff --git a/configure.ac b/configure.ac
--index 65fa00ff5c6c..4c2c005bca1e 100644
+-index f147d3e845d..74a9119d691 100644
 +index 7b7433efde4..e62daf9e384 100644
  --- a/configure.ac
  +++ b/configure.ac
--@@ -477,6 +477,7 @@ AC_CHECK_HEADERS(\
+-@@ -473,6 +473,7 @@ AC_CHECK_HEADERS(\
 +@@ -474,6 +474,7 @@ AC_CHECK_HEADERS(\
   	linux/joystick.h \
   	linux/major.h \
   	linux/param.h \
-@@ -21,19 +26,19 @@ index 65fa00ff5c6c..4c2c005bca1e 100644
+@@ -21,19 +26,19 @@ index f147d3e845d..74a9119d691 100644
   	linux/serial.h \
   	linux/types.h \
   	linux/ucdrom.h \
 -diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
--index e8e98142a982..1b2d2891ab89 100644
+-index a0d3594e6b8..f693fbe6b9f 100644
 ---- a/dlls/ntdll/unix/signal_x86_64.c
 -+++ b/dlls/ntdll/unix/signal_x86_64.c
 -@@ -28,6 +28,7 @@
@@ -10269,11 +10269,11 @@ index 2192a00b..812a54d8 100644
   # include <mach/mach.h>
   #endif
   
-@@ -47,27 +52,49 @@ index e8e98142a982..1b2d2891ab89 100644
+@@ -47,27 +52,49 @@ index a0d3594e6b8..f693fbe6b9f 100644
   #define NONAMELESSUNION
   #define NONAMELESSSTRUCT
   #include "ntstatus.h"
--@@ -2089,6 +2097,116 @@ static inline DWORD is_privileged_instr( CONTEXT *context )
+-@@ -2157,6 +2165,116 @@ static inline DWORD is_privileged_instr( CONTEXT *context )
 -     return 0;
 +@@ -3096,6 +3104,38 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *ucontext )
 +     restore_context( &context, ucontext );
@@ -10325,7 +10325,7 @@ index 2192a00b..812a54d8 100644
  +#ifdef HAVE_SECCOMP
  +static int sc_seccomp(unsigned int operation, unsigned int flags, void *args)
  +{
-@@ -78,32 +105,6 @@ index e8e98142a982..1b2d2891ab89 100644
+@@ -78,32 +105,6 @@ index a0d3594e6b8..f693fbe6b9f 100644
  +}
  +#endif
  +
@@ -10358,7 +10358,7 @@ index 2192a00b..812a54d8 100644
  +static void install_bpf(struct sigaction *sig_act)
  +{
  +#ifdef HAVE_SECCOMP
-@@ -144,8 +145,6 @@ index e8e98142a982..1b2d2891ab89 100644
+@@ -144,8 +145,6 @@ index a0d3594e6b8..f693fbe6b9f 100644
  +            perror("prctl(PR_SET_SECCOMP, ...)");
  +            exit(1);
  +        }
@@ -10367,14 +10367,14 @@ index 2192a00b..812a54d8 100644
  +    }
  +    else
  +    {
-@@ -161,38 +160,61 @@ index e8e98142a982..1b2d2891ab89 100644
+@@ -161,38 +160,61 @@ index a0d3594e6b8..f693fbe6b9f 100644
  +    WARN("Built without seccomp.\n");
  +#endif
  +}
 - 
 - /***********************************************************************
 -  *           handle_interrupt
--@@ -2538,6 +2656,7 @@ void signal_init_process(void)
+-@@ -2644,6 +2762,7 @@ void signal_init_process(void)
 -     if (sigaction( SIGSEGV, &sig_act, NULL ) == -1) goto error;
 -     if (sigaction( SIGILL, &sig_act, NULL ) == -1) goto error;
 -     if (sigaction( SIGBUS, &sig_act, NULL ) == -1) goto error;
@@ -10393,18 +10393,18 @@ index 2192a00b..812a54d8 100644
   
    error:
 -diff --git a/tools/winebuild/import.c b/tools/winebuild/import.c
--index e8bd141e962b..334278a7e50d 100644
+-index b90d93ca5db..e750ae0ad3f 100644
 ---- a/tools/winebuild/import.c
 -+++ b/tools/winebuild/import.c
--@@ -1501,6 +1501,7 @@ void output_syscalls( DLLSPEC *spec )
+-@@ -1524,6 +1524,7 @@ void output_syscalls( DLLSPEC *spec )
 -             /* Legends of Runeterra hooks the first system call return instruction, and
 -              * depends on us returning to it. Adjust the return address accordingly. */
 -             output( "\tsubq $0xb,0x8(%%rbp)\n" );
 -+            output( "\tsubq $0xf000,%%rax\n" );
+-             output( "\tmovq %%rsp,0x328(%%rcx)\n" );  /* amd64_thread_data()->syscall_frame */
 -             output( "\tcmpq $%u,%%rax\n", count );
 -             output( "\tjae 4f\n" );
--             output( "\tleaq .Lsyscall_args(%%rip),%%rcx\n" );
--@@ -1643,7 +1644,7 @@ void output_syscalls( DLLSPEC *spec )
+-@@ -1703,7 +1704,7 @@ void output_syscalls( DLLSPEC *spec )
 -              * validate that instruction, we can just put a jmp there instead. */
 -             output( "\t.byte 0x4c,0x8b,0xd1\n" ); /* movq %rcx,%r10 */
 -             output( "\t.byte 0xb8\n" );           /* movl $i,%eax */
@@ -10455,7 +10455,8 @@ index 2192a00b..812a54d8 100644
 +                 put_byte( 0x08 ); put_byte( 0x03 ); put_byte( 0xfe );
 +                 put_byte( 0x7f ); put_byte( 0x01 );
  -- 
- 2.26.2
+-2.28.0
++2.26.2
  
 diff --git a/patches/ntdll-Syscall_Emulation/definition b/patches/ntdll-Syscall_Emulation/definition
 index 4b0a9477..035c18c1 100644
@@ -12906,7 +12907,7 @@ index 00bba4bf..ed89575c 100644
  +    if (ret)
  +    {
 diff --git a/patches/patchinstall.sh b/patches/patchinstall.sh
-index c561d626..d99cb109 100755
+index 756082b6..a7d8985f 100755
 --- a/patches/patchinstall.sh
 +++ b/patches/patchinstall.sh
 @@ -88,6 +88,7 @@ patch_enable_all ()
@@ -19879,11 +19880,11 @@ index 7b86a429..5ffc046f 100644
  Fixes: [45650] chromium 32-bit sandbox expects different syscall thunks depending on Windows version
 diff --git a/patches/winebuild-pe_syscall_thunks/0002-winebuild-Call-__wine_syscall_dispatcher-through-the.patch b/patches/winebuild-pe_syscall_thunks/0002-winebuild-Call-__wine_syscall_dispatcher-through-the.patch
 deleted file mode 100644
-index 79796896..00000000
+index 595e4599..00000000
 --- a/patches/winebuild-pe_syscall_thunks/0002-winebuild-Call-__wine_syscall_dispatcher-through-the.patch
 +++ /dev/null
 @@ -1,77 +0,0 @@
--From eb7f9381fb1109c3468047f604b0e57a1cbb4edb Mon Sep 17 00:00:00 2001
+-From 699069081ca58f401501f9fda60ccc6ef6187470 Mon Sep 17 00:00:00 2001
 -From: Paul Gofman <pgofman@codeweavers.com>
 -Date: Tue, 14 Jul 2020 14:43:01 +0300
 -Subject: [PATCH] winebuild: Call __wine_syscall_dispatcher through the fixed
@@ -19902,10 +19903,10 @@ index 79796896..00000000
 - 2 files changed, 8 insertions(+), 6 deletions(-)
 -
 -diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
--index 9b1ca761e9b..0f4fd8d95ee 100644
+-index 3af5241ee30..7b0ebf4dda7 100644
 ---- a/dlls/ntdll/unix/virtual.c
 -+++ b/dlls/ntdll/unix/virtual.c
--@@ -2594,20 +2594,22 @@ TEB *virtual_alloc_first_teb(void)
+-@@ -2815,20 +2815,22 @@ TEB *virtual_alloc_first_teb(void)
 -     PEB *peb;
 -     void *ptr;
 -     NTSTATUS status;
@@ -19931,24 +19932,24 @@ index 79796896..00000000
 -                              MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE );
 -     teb_block_pos = 30;
 -diff --git a/tools/winebuild/import.c b/tools/winebuild/import.c
--index 278de20522e..094b9da0ccf 100644
+-index 461f1851d61..b90d93ca5db 100644
 ---- a/tools/winebuild/import.c
 -+++ b/tools/winebuild/import.c
--@@ -1613,10 +1613,10 @@ void output_syscalls( DLLSPEC *spec )
+-@@ -1710,10 +1710,10 @@ void output_syscalls( DLLSPEC *spec )
 -             output( "\t.byte 0xc3\n" );           /* ret */
 -             output( "\tjmp 1f\n" );
 -             output( "\t.byte 0xc3\n" );           /* ret */
 --            if (target_platform == PLATFORM_WINDOWS)
 -+            if (target_platform == PLATFORM_WINDOWS || target_platform == PLATFORM_APPLE)
 -             {
---                output( "1:\t.byte 0xff,0x14,0x25\n" ); /* 2: callq *(__wine_syscall_dispatcher) */
+--                output( "1:\t.byte 0xff,0x14,0x25\n" ); /* 1: callq *(__wine_syscall_dispatcher) */
 --                output( "\t.long __wine_syscall_dispatcher\n" );
 -+                output( "1:\t.byte 0xff,0x14,0x25\n" ); /* call *(user_shared_data + 0x1000) */
 -+                output( "\t.long 0x7ffe1000\n" );
 -             }
 -             else
 -             {
--@@ -1653,7 +1653,7 @@ void output_syscalls( DLLSPEC *spec )
+-@@ -1754,7 +1754,7 @@ void output_syscalls( DLLSPEC *spec )
 -         output( "\t.align %d\n", get_alignment(16) );
 -         output( "\t%s\n", func_declaration("__wine_syscall") );
 -         output( "%s:\n", asm_name("__wine_syscall") );
@@ -19958,7 +19959,7 @@ index 79796896..00000000
 -     }
 -     output( "\t.data\n" );
 --- 
--2.27.0
+-2.28.0
 -
 diff --git a/patches/winedevice-Default_Drivers/0004-programs-winedevice-Load-some-common-drivers-and-fix.patch b/patches/winedevice-Default_Drivers/0004-programs-winedevice-Load-some-common-drivers-and-fix.patch
 index 8223f94f..21c7373a 100644
