@@ -288,7 +288,7 @@ _pkgnaming() {
 user_patcher() {
 	# To patch the user because all your base are belong to us
 	local _patches=("$_where"/*."${_userpatch_ext}revert")
-	if [ ${#_patches[@]} -ge 2 ] || [ -e "${_patches}" ]; then
+	if [ "${#_patches[@]}" -ge 2 ] || [ -e "${_patches}" ]; then
 	  if [ "$_user_patches_no_confirm" != "true" ]; then
 	    msg2 "Found ${#_patches[@]} 'to revert' userpatches for ${_userpatch_target}:"
 	    printf '%s\n' "${_patches[@]}"
@@ -313,7 +313,7 @@ user_patcher() {
 	fi
 
 	_patches=("$_where"/*."${_userpatch_ext}patch")
-	if [ ${#_patches[@]} -ge 2 ] || [ -e "${_patches}" ]; then
+	if [ "${#_patches[@]}" -ge 2 ] || [ -e "${_patches}" ]; then
 	  if [ "$_user_patches_no_confirm" != "true" ]; then
 	    msg2 "Found ${#_patches[@]} userpatches for ${_userpatch_target}:"
 	    printf '%s\n' "${_patches[@]}"
@@ -398,8 +398,8 @@ _prepare() {
 	    cd "${srcdir}"/"${_winesrcdir}"
 	  fi
 	  _community_patches=($_community_patches)
-	  for _p in ${_community_patches[@]}; do
-	    ln -s "$_where"/../../community-patches/wine-tkg-git/$_p "$_where"/
+	  for _p in "${_community_patches[@]}"; do
+	    ln -s "$_where"/../../community-patches/wine-tkg-git/"$_p" "$_where"/
 	  done
 	fi
 
@@ -456,7 +456,7 @@ _prepare() {
 	    fi
 	  fi
 	  echo "Using esync patchset (version ${_esync_version})" >> "$_where"/last_build_config.log
-	  wget -O "$_where"/esync${_esync_version}.tgz https://github.com/zfigura/wine/releases/download/esync${_esync_version}/esync.tgz && tar zxf "$_where"/esync${_esync_version}.tgz -C "${srcdir}"
+	  wget -O "$_where"/esync"${_esync_version}".tgz https://github.com/zfigura/wine/releases/download/esync"${_esync_version}"/esync.tgz && tar zxf "$_where"/esync"${_esync_version}".tgz -C "${srcdir}"
 	fi
 
 	if [ "$_use_pba" = "true" ]; then
@@ -520,12 +520,12 @@ _prepare() {
 	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
 	  source "$_where"/wine-tkg-patches/hotfixes/hotfixer
 	  msg2 "Hotfixing..."
-	  for _commit in ${_hotfix_mainlinereverts[@]}; do
+	  for _commit in "${_hotfix_mainlinereverts[@]}"; do
 	    cd "${srcdir}"/"${_winesrcdir}"
 	    _committorevert=$_commit _hotfixmsg="(hotfix)" nonuser_reverter
 	    cd "${srcdir}"/"${_winesrcdir}"
 	  done
-	  for _commit in ${_hotfix_stagingreverts[@]}; do
+	  for _commit in "${_hotfix_stagingreverts[@]}"; do
 	    cd "${srcdir}"/"${_stgsrcdir}"
 	    _committorevert=$_commit _hotfixmsg="(staging hotfix)" nonuser_reverter
 	    cd "${srcdir}"/"${_winesrcdir}"
@@ -1187,7 +1187,7 @@ _prepare() {
 	  else
 	    if [ "$_large_address_aware" = "true" ]; then
 	      for _f in "$_where"/LAA-stagin*.patch ; do
-	        patch ${_f} << 'EOM'
+	        patch "${_f}" << 'EOM'
 @@ -220,15 +220,16 @@ diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
  index c008db78066..6163761a466 100644
  --- a/dlls/ntdll/virtual.c
@@ -1314,7 +1314,7 @@ EOM
 	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD ); then
 	  echo -e "\nLegacy Proton Fullscreen inline patching" >> "$_where"/prepare.log
 	  for _f in "$_where"/valve_proton_fullscreen_hack-staging-{938dddf,de64501,82c6ec3,7cc69d7,0cb79db,a4b9460,57bb5cc,6e87235}.patch; do
-	    patch ${_f} >> "$_where"/prepare.log << 'EOM'
+	    patch "${_f}" >> "$_where"/prepare.log << 'EOM'
 @@ -2577,7 +2577,7 @@ index 1209a250b0..077c18ac10 100644
  +    input.u.mi.dx = pt.x;
  +    input.u.mi.dy = pt.y;
