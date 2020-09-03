@@ -1962,7 +1962,7 @@ EOM
 	fi
 
 	# Proton-tkg needs to know if standard dlopen() is in use
-	if git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
+	if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD ); then
 	  _standard_dlopen="true"
 	else
 	  _standard_dlopen="false"

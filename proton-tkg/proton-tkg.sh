@@ -87,6 +87,7 @@ EOF
 
 function build_vrclient {
   cd "$_nowhere"/Proton
+  source "$_nowhere/proton_tkg_token"
   git clone https://github.com/ValveSoftware/openvr.git || true # It'll complain the path already exists on subsequent builds
   cd openvr
   git reset --hard HEAD
@@ -134,6 +135,7 @@ function build_vrclient {
 
 function build_lsteamclient {
   cd "$_nowhere"/Proton
+  source "$_nowhere/proton_tkg_token"
   export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --dll -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/"
   export CFLAGS="-O2 -g"
   export CXXFLAGS="-fpermissive -Wno-attributes -O2 -g"
@@ -171,6 +173,7 @@ function build_lsteamclient {
 
 function build_vkd3d {
   cd "$_nowhere"
+  source "$_nowhere/proton_tkg_token"
   git clone https://github.com/HansKristian-Work/vkd3d-proton.git || true # It'll complain the path already exists on subsequent builds
   cd vkd3d-proton
   git reset --hard HEAD
@@ -214,6 +217,7 @@ function build_dxvk {
 
 function build_steamhelper {
   if [[ $_proton_branch != proton_3.* ]]; then
+    source "$_nowhere/proton_tkg_token"
     rm -rf Proton/build/steam.win32
     mkdir -p Proton/build/steam.win32
     cp -a Proton/steam_helper/* Proton/build/steam.win32
@@ -557,9 +561,9 @@ else
     if [ "$_use_dxvk" != "false" ]; then
       if [ "$_use_dxvk" = "git" ]; then
         build_dxvk
-      elif [ ! -d "$_nowhere"/dxvk ] || [ "$_use_dxvk" = "release" ] || [ "$_use_dxvk" = "latest" ]; then
+      elif ( [ ! -d "$_nowhere"/dxvk ] && [ ! -e "$_nowhere"/dxvk ] ) || [ "$_use_dxvk" = "release" ] || [ "$_use_dxvk" = "latest" ]; then
+        rm -rf "$_nowhere"/dxvk
         if [ "$_use_dxvk" = "latest" ]; then
-          rm -rf "$_nowhere"/dxvk
           # Download it & extract it into a temporary folder so we don't mess up the build in case proton-tkg also has/will have a folder "$_nowhere"/build (that folder is in the artifact zip)
           rm -rf "$_nowhere"/tmp-dxvk-artifact
           mkdir "$_nowhere"/tmp-dxvk-artifact
@@ -571,7 +575,6 @@ else
           cd "$_nowhere"
           rm -rf "$_nowhere"/tmp-dxvk-artifact
         else
-          rm -rf "$_nowhere"/dxvk
           download_dxvk_version
           tar -xvf dxvk-*.tar.gz >/dev/null 2>&1
           rm -f dxvk-*.tar.*
