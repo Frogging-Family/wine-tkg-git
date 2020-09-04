@@ -288,14 +288,14 @@ _pkgnaming() {
 user_patcher() {
 	# To patch the user because all your base are belong to us
 	local _patches=("$_where"/*."${_userpatch_ext}revert")
-	if [ "${#_patches[@]}" -ge 2 ] || [ -e "${_patches}" ]; then
+	if [ ${#_patches[@]} -ge 2 ] || [ -e "${_patches}" ]; then
 	  if [ "$_user_patches_no_confirm" != "true" ]; then
 	    msg2 "Found ${#_patches[@]} 'to revert' userpatches for ${_userpatch_target}:"
 	    printf '%s\n' "${_patches[@]}"
 	    read -rp "Do you want to install it/them? - Be careful with that ;)"$'\n> N/y : ' _CONDITION;
 	  fi
 	  if [[ "$_CONDITION" =~ [yY] ]] || [ "$_user_patches_no_confirm" = "true" ]; then
-	    for _f in "${_patches[@]}"; do
+	    for _f in ${_patches[@]}; do
 	      if [ -e "${_f}" ]; then
 	        msg2 "######################################################"
 	        msg2 ""
@@ -313,14 +313,14 @@ user_patcher() {
 	fi
 
 	_patches=("$_where"/*."${_userpatch_ext}patch")
-	if [ "${#_patches[@]}" -ge 2 ] || [ -e "${_patches}" ]; then
+	if [ ${#_patches[@]} -ge 2 ] || [ -e "${_patches}" ]; then
 	  if [ "$_user_patches_no_confirm" != "true" ]; then
 	    msg2 "Found ${#_patches[@]} userpatches for ${_userpatch_target}:"
 	    printf '%s\n' "${_patches[@]}"
 	    read -rp "Do you want to install it/them? - Be careful with that ;)"$'\n> N/y : ' _CONDITION;
 	  fi
 	  if [[ "$_CONDITION" =~ [yY] ]] || [ "$_user_patches_no_confirm" = "true" ]; then
-	    for _f in "${_patches[@]}"; do
+	    for _f in ${_patches[@]}; do
 	      if [ -e "${_f}" ]; then
 	        msg2 "######################################################"
 	        msg2 ""
@@ -398,7 +398,7 @@ _prepare() {
 	    cd "${srcdir}"/"${_winesrcdir}"
 	  fi
 	  _community_patches=($_community_patches)
-	  for _p in "${_community_patches[@]}"; do
+	  for _p in ${_community_patches[@]}; do
 	    ln -s "$_where"/../../community-patches/wine-tkg-git/"$_p" "$_where"/
 	  done
 	fi
@@ -520,12 +520,12 @@ _prepare() {
 	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
 	  source "$_where"/wine-tkg-patches/hotfixes/hotfixer
 	  msg2 "Hotfixing..."
-	  for _commit in "${_hotfix_mainlinereverts[@]}"; do
+	  for _commit in ${_hotfix_mainlinereverts[@]}; do
 	    cd "${srcdir}"/"${_winesrcdir}"
 	    _committorevert=$_commit _hotfixmsg="(hotfix)" nonuser_reverter
 	    cd "${srcdir}"/"${_winesrcdir}"
 	  done
-	  for _commit in "${_hotfix_stagingreverts[@]}"; do
+	  for _commit in ${_hotfix_stagingreverts[@]}; do
 	    cd "${srcdir}"/"${_stgsrcdir}"
 	    _committorevert=$_commit _hotfixmsg="(staging hotfix)" nonuser_reverter
 	    cd "${srcdir}"/"${_winesrcdir}"

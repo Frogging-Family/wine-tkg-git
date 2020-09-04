@@ -248,7 +248,7 @@ proton_patcher() {
 	    read -rp "Do you want to install it/them? - Be careful with that ;)"$'\n> N/y : ' _CONDITION;
 	  fi
 	  if [[ "$_CONDITION" =~ [yY] ]] || [ "$_user_patches_no_confirm" = "true" ]; then
-	    for _f in "${_patches[@]}"; do
+	    for _f in ${_patches[@]}; do
 	      if [ -e "${_f}" ]; then
 	        echo "######################################################"
 	        echo ""
@@ -269,7 +269,7 @@ proton_patcher() {
 	    read -rp "Do you want to install it/them? - Be careful with that ;)"$'\n> N/y : ' _CONDITION;
 	  fi
 	  if [[ "$_CONDITION" =~ [yY] ]] || [ "$_user_patches_no_confirm" = "true" ]; then
-	    for _f in "${_patches[@]}"; do
+	    for _f in ${_patches[@]}; do
 	      if [ -e "${_f}" ]; then
 	        echo "######################################################"
 	        echo ""
@@ -318,14 +318,14 @@ function proton_tkg_uninstaller {
     echo "What Proton-tkg build do you want to uninstall?"
 
     i=1
-    for build in "${_strip_builds[@]}"; do
+    for build in ${_strip_builds[@]}; do
       echo "  $i - $build" && ((i+=1))
     done
 
     read -rp "choice [1-$(($i-1))]: " _to_uninstall;
 
     i=1
-    for build in "${_strip_builds[@]}"; do
+    for build in ${_strip_builds[@]}; do
       if [ "$_to_uninstall" = "$i" ]; then
         rm -rf "proton_tkg_$build" && _available_builds=( `ls -d proton_tkg_* | sort -V` ) && _newest_build="${_available_builds[-1]//proton_tkg_/}" && sed -i "s/\"Proton-tkg $build\"/\"Proton-tkg ${_newest_build[@]}\"/" "$_config_file"
         echo "###########################################################################################################################"
