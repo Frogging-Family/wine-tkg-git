@@ -904,7 +904,11 @@ _prepare() {
 	# CSMT toggle patch - Corrects the CSMT toggle to be more logical
 	if [ "$_CSMT_toggle" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
-	  _patchname='CSMT-toggle.patch' && _patchmsg="Applied CSMT toggle logic patch" && nonuser_patcher
+	  if git merge-base --is-ancestor 5e685d6df972b658fba296dafb5db189af73c7d5 HEAD; then
+	    _patchname='CSMT-toggle.patch' && _patchmsg="Applied CSMT toggle logic patch" && nonuser_patcher
+	  else
+	    _patchname='CSMT-toggle-5e685d6.patch' && _patchmsg="Applied CSMT toggle logic patch" && nonuser_patcher
+	  fi
 	  cd "${srcdir}"/"${_winesrcdir}"
 	fi
 
