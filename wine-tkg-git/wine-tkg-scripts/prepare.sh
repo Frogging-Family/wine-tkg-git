@@ -1990,7 +1990,7 @@ _polish() {
 
 	echo "" >> "$_where"/last_build_config.log
 
-	if [ -z "$_localbuild" ]; then
+	if [ -z "$_localbuild" ] && [ "$_untag" != "true" ]; then
 	  if [ "$_use_staging" = "true" ] && [ "$_LOCAL_PRESET" != "staging" ]; then
 	    _patchname='wine-tkg-staging.patch' && _patchmsg="Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead." && nonuser_patcher
 	  elif [ "$_use_staging" != "true" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
