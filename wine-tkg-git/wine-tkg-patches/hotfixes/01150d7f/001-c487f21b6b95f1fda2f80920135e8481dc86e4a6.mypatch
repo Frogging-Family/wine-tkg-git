@@ -1,0 +1,747 @@
+From c487f21b6b95f1fda2f80920135e8481dc86e4a6 Mon Sep 17 00:00:00 2001
+From: Alexandre Julliard <julliard@winehq.org>
+Date: Wed, 9 Sep 2020 15:37:49 +0200
+Subject: [PATCH] advapi32: Build with msvcrt.
+
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
+---
+ dlls/advapi32/Makefile.in    |  2 ++
+ dlls/advapi32/advapi.c       |  1 -
+ dlls/advapi32/cred.c         | 57 ++++++++++++++++++------------------
+ dlls/advapi32/crypt.c        | 46 ++++++++---------------------
+ dlls/advapi32/eventlog.c     |  1 -
+ dlls/advapi32/lsa.c          | 21 +++++++------
+ dlls/advapi32/registry.c     |  5 ++--
+ dlls/advapi32/security.c     | 51 +++++++++++++++-----------------
+ dlls/advapi32/service.c      | 13 ++++----
+ dlls/advapi32/wmi.c          |  1 -
+ dlls/kernel32/tests/loader.c |  2 +-
+ 11 files changed, 86 insertions(+), 114 deletions(-)
+
+diff --git a/dlls/advapi32/Makefile.in b/dlls/advapi32/Makefile.in
+index 99bc26572ec..5175563cea1 100644
+--- a/dlls/advapi32/Makefile.in
++++ b/dlls/advapi32/Makefile.in
+@@ -4,6 +4,8 @@ IMPORTLIB = advapi32
+ IMPORTS   = kernelbase sechost
+ DELAYIMPORTS = rpcrt4
+ 
++EXTRADLLFLAGS = -mno-cygwin
++
+ C_SRCS = \
+ 	advapi.c \
+ 	cred.c \
+diff --git a/dlls/advapi32/advapi.c b/dlls/advapi32/advapi.c
+index 589405b59e6..ebf2d234b52 100644
+--- a/dlls/advapi32/advapi.c
++++ b/dlls/advapi32/advapi.c
+@@ -32,7 +32,6 @@
+ #include "wincred.h"
+ #include "wct.h"
+ 
+-#include "wine/unicode.h"
+ #include "wine/debug.h"
+ 
+ #include "advapi32_misc.h"
+diff --git a/dlls/advapi32/cred.c b/dlls/advapi32/cred.c
+index 231330ea35b..86357e6b8f5 100644
+--- a/dlls/advapi32/cred.c
++++ b/dlls/advapi32/cred.c
+@@ -33,7 +33,6 @@
+ 
+ #include "crypt.h"
+ 
+-#include "wine/unicode.h"
+ #include "wine/debug.h"
+ 
+ #include "advapi32_misc.h"
+@@ -272,12 +271,12 @@ static DWORD registry_write_credential(HKEY hkey, const CREDENTIALW *credential,
+                          sizeof(credential->Type));
+     if (ret != ERROR_SUCCESS) return ret;
+     ret = RegSetValueExW(hkey, NULL, 0, REG_SZ, (LPVOID)credential->TargetName,
+-                         sizeof(WCHAR)*(strlenW(credential->TargetName)+1));
++                         sizeof(WCHAR)*(lstrlenW(credential->TargetName)+1));
+     if (ret != ERROR_SUCCESS) return ret;
+     if (credential->Comment)
+     {
+         ret = RegSetValueExW(hkey, wszCommentValue, 0, REG_SZ, (LPVOID)credential->Comment,
+-                             sizeof(WCHAR)*(strlenW(credential->Comment)+1));
++                             sizeof(WCHAR)*(lstrlenW(credential->Comment)+1));
+         if (ret != ERROR_SUCCESS) return ret;
+     }
+     ret = RegSetValueExW(hkey, wszLastWrittenValue, 0, REG_BINARY, (LPVOID)&LastWritten,
+@@ -290,13 +289,13 @@ static DWORD registry_write_credential(HKEY hkey, const CREDENTIALW *credential,
+     if (credential->TargetAlias)
+     {
+         ret = RegSetValueExW(hkey, wszTargetAliasValue, 0, REG_SZ, (LPVOID)credential->TargetAlias,
+-                             sizeof(WCHAR)*(strlenW(credential->TargetAlias)+1));
++                             sizeof(WCHAR)*(lstrlenW(credential->TargetAlias)+1));
+         if (ret != ERROR_SUCCESS) return ret;
+     }
+     if (credential->UserName)
+     {
+         ret = RegSetValueExW(hkey, wszUserNameValue, 0, REG_SZ, (LPVOID)credential->UserName,
+-                             sizeof(WCHAR)*(strlenW(credential->UserName)+1));
++                             sizeof(WCHAR)*(lstrlenW(credential->UserName)+1));
+         if (ret != ERROR_SUCCESS) return ret;
+     }
+     if (!preserve_blob)
+@@ -331,9 +330,9 @@ static DWORD host_write_credential( const CREDENTIALW *credential, BOOL preserve
+                        OPEN_EXISTING, 0, 0 );
+     if (mgr == INVALID_HANDLE_VALUE) return GetLastError();
+ 
+-    size = sizeof(*cred) + (strlenW( credential->TargetName ) + strlenW( credential->UserName ) + 2) * sizeof(WCHAR);
++    size = sizeof(*cred) + (lstrlenW( credential->TargetName ) + lstrlenW( credential->UserName ) + 2) * sizeof(WCHAR);
+     size += credential->CredentialBlobSize;
+-    if (credential->Comment) size += (strlenW( credential->Comment ) + 1) * sizeof(WCHAR);
++    if (credential->Comment) size += (lstrlenW( credential->Comment ) + 1) * sizeof(WCHAR);
+     if (!(cred = heap_alloc( size )))
+     {
+         CloseHandle( mgr );
+@@ -342,13 +341,13 @@ static DWORD host_write_credential( const CREDENTIALW *credential, BOOL preserve
+     ptr = (WCHAR *)(cred + 1);
+ 
+     cred->targetname_offset = sizeof(*cred);
+-    cred->targetname_size   = (strlenW( credential->TargetName ) + 1) * sizeof(WCHAR);
+-    strcpyW( ptr, credential->TargetName );
++    cred->targetname_size   = (lstrlenW( credential->TargetName ) + 1) * sizeof(WCHAR);
++    lstrcpyW( ptr, credential->TargetName );
+     ptr += cred->targetname_size / sizeof(WCHAR);
+ 
+     cred->username_offset = cred->targetname_offset + cred->targetname_size;
+-    cred->username_size   = (strlenW( credential->UserName ) + 1) * sizeof(WCHAR);
+-    strcpyW( ptr, credential->UserName );
++    cred->username_size   = (lstrlenW( credential->UserName ) + 1) * sizeof(WCHAR);
++    lstrcpyW( ptr, credential->UserName );
+     ptr += cred->username_size / sizeof(WCHAR);
+ 
+     cred->blob_offset = cred->username_offset + cred->username_size;
+@@ -364,8 +363,8 @@ static DWORD host_write_credential( const CREDENTIALW *credential, BOOL preserve
+     cred->comment_offset = cred->blob_offset + cred->blob_size;
+     if (credential->Comment)
+     {
+-        cred->comment_size = (strlenW( credential->Comment ) + 1) * sizeof(WCHAR);
+-        strcpyW( ptr, credential->Comment );
++        cred->comment_size = (lstrlenW( credential->Comment ) + 1) * sizeof(WCHAR);
++        lstrcpyW( ptr, credential->Comment );
+     }
+     else cred->comment_size = 0;
+ 
+@@ -439,7 +438,7 @@ static LPWSTR get_key_name_for_target(LPCWSTR target_name, DWORD type)
+     LPCWSTR prefix = NULL;
+     LPWSTR key_name, p;
+ 
+-    len = strlenW(target_name);
++    len = lstrlenW(target_name);
+     if (type == CRED_TYPE_GENERIC)
+     {
+         prefix = wszGenericPrefix;
+@@ -454,8 +453,8 @@ static LPWSTR get_key_name_for_target(LPCWSTR target_name, DWORD type)
+     key_name = heap_alloc(len * sizeof(WCHAR));
+     if (!key_name) return NULL;
+ 
+-    strcpyW(key_name, prefix);
+-    strcatW(key_name, target_name);
++    lstrcpyW(key_name, prefix);
++    lstrcatW(key_name, target_name);
+ 
+     for (p = key_name; *p; p++)
+         if (*p == '\\') *p = '_';
+@@ -492,7 +491,7 @@ static BOOL registry_credential_matches_filter(HKEY hkeyCred, LPCWSTR filter)
+     TRACE("comparing filter %s to target name %s\n", debugstr_w(filter),
+           debugstr_w(target_name));
+ 
+-    p = strchrW(filter, '*');
++    p = wcschr(filter, '*');
+     ret = CompareStringW(GetThreadLocale(), NORM_IGNORECASE, filter,
+                          (p && !p[1] ? p - filter : -1), target_name,
+                          (p && !p[1] ? p - filter : -1)) == CSTR_EQUAL;
+@@ -764,7 +763,7 @@ BOOL WINAPI CredDeleteA(LPCSTR TargetName, DWORD Type, DWORD Flags)
+ static DWORD host_delete_credential( const WCHAR *targetname )
+ {
+     struct mountmgr_credential *cred;
+-    DWORD size, name_size = (strlenW( targetname ) + 1) * sizeof(WCHAR);
++    DWORD size, name_size = (lstrlenW( targetname ) + 1) * sizeof(WCHAR);
+     HANDLE mgr;
+     WCHAR *ptr;
+     BOOL ret;
+@@ -782,7 +781,7 @@ static DWORD host_delete_credential( const WCHAR *targetname )
+     cred->targetname_offset = sizeof(*cred);
+     cred->targetname_size   = name_size;
+     ptr = (WCHAR *)(cred + 1);
+-    strcpyW( ptr, targetname );
++    lstrcpyW( ptr, targetname );
+ 
+     ret = DeviceIoControl( mgr, IOCTL_MOUNTMGR_DELETE_CREDENTIAL, cred, size, NULL, 0, NULL, NULL );
+     heap_free( cred );
+@@ -923,7 +922,7 @@ static DWORD host_enumerate_credentials( const WCHAR *filter, CREDENTIALW **cred
+     HANDLE mgr;
+     WCHAR *ptr;
+ 
+-    if (filter) filter_size = (strlenW( filter ) + 1) * sizeof(WCHAR);
++    if (filter) filter_size = (lstrlenW( filter ) + 1) * sizeof(WCHAR);
+     else
+     {
+         filter = emptyW;
+@@ -945,7 +944,7 @@ static DWORD host_enumerate_credentials( const WCHAR *filter, CREDENTIALW **cred
+         list->filter_offset = sizeof(*list);
+         list->filter_size   = filter_size;
+         ptr = (WCHAR *)((char *)list + list->filter_offset);
+-        strcpyW( ptr, filter );
++        lstrcpyW( ptr, filter );
+ 
+         if (DeviceIoControl( mgr, IOCTL_MOUNTMGR_ENUMERATE_CREDENTIALS, list, size, list, size, NULL, NULL )) break;
+         if ((ret = GetLastError()) != ERROR_MORE_DATA) goto done;
+@@ -1177,7 +1176,7 @@ BOOL WINAPI CredReadA(LPCSTR TargetName, DWORD Type, DWORD Flags, PCREDENTIALA *
+ static DWORD host_read_credential( const WCHAR *targetname, CREDENTIALW **ret_credential )
+ {
+     struct mountmgr_credential *cred_in, *cred_out = NULL, *tmp;
+-    DWORD err = ERROR_OUTOFMEMORY, size_in, size_out, size_name = (strlenW( targetname ) + 1) * sizeof(WCHAR);
++    DWORD err = ERROR_OUTOFMEMORY, size_in, size_out, size_name = (lstrlenW( targetname ) + 1) * sizeof(WCHAR);
+     HANDLE mgr;
+     WCHAR *ptr;
+     BOOL ret;
+@@ -1195,7 +1194,7 @@ static DWORD host_read_credential( const WCHAR *targetname, CREDENTIALW **ret_cr
+     cred_in->targetname_offset = sizeof(*cred_in);
+     cred_in->targetname_size   = size_name;
+     ptr = (WCHAR *)(cred_in + 1);
+-    strcpyW( ptr, targetname );
++    lstrcpyW( ptr, targetname );
+ 
+     size_out = 256;
+     if (!(cred_out = heap_alloc( size_out ))) goto done;
+@@ -1225,12 +1224,12 @@ static DWORD host_read_credential( const WCHAR *targetname, CREDENTIALW **ret_cr
+         credential->Type = CRED_TYPE_DOMAIN_PASSWORD;
+         memcpy( ptr, (char *)cred_out + cred_out->targetname_offset, cred_out->targetname_size );
+         credential->TargetName = ptr;
+-        ptr += strlenW( ptr ) + 1;
++        ptr += lstrlenW( ptr ) + 1;
+         if (cred_out->comment_size)
+         {
+             memcpy( ptr, (char *)cred_out + cred_out->comment_offset, cred_out->comment_size );
+             credential->Comment = ptr;
+-            ptr += strlenW( ptr ) + 1;
++            ptr += lstrlenW( ptr ) + 1;
+         }
+         credential->LastWritten = cred_out->last_written;
+         if ((credential->CredentialBlobSize = cred_out->blob_size))
+@@ -1597,7 +1596,7 @@ BOOL WINAPI CredWriteW(PCREDENTIALW Credential, DWORD Flags)
+     {
+         if (!Credential->UserName ||
+             (Credential->Persist == CRED_PERSIST_ENTERPRISE &&
+-            (!strchrW(Credential->UserName, '\\') && !strchrW(Credential->UserName, '@'))))
++            (!wcschr(Credential->UserName, '\\') && !wcschr(Credential->UserName, '@'))))
+         {
+             ERR("bad username %s\n", debugstr_w(Credential->UserName));
+             SetLastError(ERROR_BAD_USERNAME);
+@@ -1768,7 +1767,7 @@ BOOL WINAPI CredMarshalCredentialW( CRED_MARSHAL_TYPE type, PVOID cred, LPWSTR *
+     }
+     case UsernameTargetCredential:
+     {
+-        len = strlenW( target->UserName );
++        len = lstrlenW( target->UserName );
+         size = (sizeof(DWORD) + len * sizeof(WCHAR) + 2) * 4 / 3;
+         if (!(p = heap_alloc( (size + 4) * sizeof(WCHAR) ))) return FALSE;
+         p[0] = '@';
+@@ -1879,7 +1878,7 @@ BOOL WINAPI CredUnmarshalCredentialW( LPCWSTR cred, PCRED_MARSHAL_TYPE type, PVO
+         SetLastError( ERROR_INVALID_PARAMETER );
+         return FALSE;
+     }
+-    len = strlenW( cred + 3 );
++    len = lstrlenW( cred + 3 );
+     *type = char_decode( cred[2] );
+     switch (*type)
+     {
+@@ -1952,7 +1951,7 @@ BOOL WINAPI CredIsMarshaledCredentialW(LPCWSTR name)
+     if (name && name[0] == '@' && name[1] == '@' && name[2] > 'A' && name[3])
+     {
+         char hash[CERT_HASH_LENGTH];
+-        int len = strlenW(name + 3 );
++        int len = lstrlenW(name + 3 );
+         DWORD size;
+ 
+         if ((name[2] - 'A') == CertCredential && (len == 27) && cred_decode(name + 3, len, hash))
+diff --git a/dlls/advapi32/crypt.c b/dlls/advapi32/crypt.c
+index ab06c14393b..2877c61bf69 100644
+--- a/dlls/advapi32/crypt.c
++++ b/dlls/advapi32/crypt.c
+@@ -24,21 +24,11 @@
+  *  - Thread-safing
+  */
+ 
+-#include "config.h"
+-#include "wine/port.h"
+-
+ #include <limits.h>
+ #include <time.h>
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <sys/types.h>
+-#ifdef HAVE_SYS_STAT_H
+-# include <sys/stat.h>
+-#endif
+-#include <fcntl.h>
+-#ifdef HAVE_UNISTD_H
+-# include <unistd.h>
+-#endif
+ 
+ #include "ntstatus.h"
+ #define WIN32_NO_STATUS
+@@ -47,7 +37,6 @@
+ #include "winreg.h"
+ #include "rpc.h"
+ #include "wine/debug.h"
+-#include "wine/unicode.h"
+ #include "winternl.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(crypt);
+@@ -79,11 +68,11 @@ static inline PWSTR CRYPT_GetProvKeyName(PCWSTR pProvName)
+ 	};
+ 	PWSTR keyname;
+ 
+-	keyname = CRYPT_Alloc((strlenW(KEYSTR) + strlenW(pProvName) +1)*sizeof(WCHAR));
++	keyname = CRYPT_Alloc((lstrlenW(KEYSTR) + lstrlenW(pProvName) +1)*sizeof(WCHAR));
+ 	if (keyname)
+ 	{
+-		strcpyW(keyname, KEYSTR);
+-		strcpyW(keyname + strlenW(KEYSTR), pProvName);
++		lstrcpyW(keyname, KEYSTR);
++		lstrcpyW(keyname + lstrlenW(KEYSTR), pProvName);
+ 	} else
+ 		SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+ 	return keyname;
+@@ -108,11 +97,11 @@ static inline PWSTR CRYPT_GetTypeKeyName(DWORD dwType, BOOL user)
+ 	PWSTR keyname;
+ 	PWSTR ptr;
+ 
+-	keyname = CRYPT_Alloc( ((user ? strlenW(USERSTR) : strlenW(MACHINESTR)) +1)*sizeof(WCHAR));
++	keyname = CRYPT_Alloc( ((user ? lstrlenW(USERSTR) : lstrlenW(MACHINESTR)) +1)*sizeof(WCHAR));
+ 	if (keyname)
+ 	{
+-		user ? strcpyW(keyname, USERSTR) : strcpyW(keyname, MACHINESTR);
+-		ptr = keyname + strlenW(keyname);
++		user ? lstrcpyW(keyname, USERSTR) : lstrcpyW(keyname, MACHINESTR);
++		ptr = keyname + lstrlenW(keyname);
+ 		*(--ptr) = (dwType % 10) + '0';
+ 		*(--ptr) = ((dwType / 10) % 10) + '0';
+ 		*(--ptr) = (dwType / 100) + '0';
+@@ -303,19 +292,10 @@ static void CRYPT_CreateMachineGuid(void)
+ 		{
+                     UUID uuid;
+                     WCHAR buf[37];
+-                    RPC_STATUS rs;
+-                    static const WCHAR uuidFmt[] = {
+-                        '%','0','8','x','-','%','0','4','x','-',
+-                        '%','0','4','x','-','%','0','2','x',
+-                        '%','0','2','x','-','%','0','2','x',
+-                        '%','0','2','x','%','0','2','x',
+-                        '%','0','2','x','%','0','2','x',
+-                        '%','0','2','x',0 };
+-
+-                    rs = UuidCreate(&uuid);
+-                    if (rs == S_OK)
++
++                    if (UuidCreate(&uuid) == S_OK)
+                     {
+-                        sprintfW(buf, uuidFmt,
++                        swprintf(buf, ARRAY_SIZE(buf), L"%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                                  uuid.Data1, uuid.Data2, uuid.Data3,
+                                  uuid.Data4[0], uuid.Data4[1],
+                                  uuid.Data4[2], uuid.Data4[3],
+@@ -445,12 +425,12 @@ BOOL WINAPI CryptAcquireContextW (HCRYPTPROV *phProv, LPCWSTR pszContainer,
+ 		}
+ 		RegCloseKey(key);
+ 	} else {
+-		if ( !(provname = CRYPT_Alloc((strlenW(pszProvider) +1)*sizeof(WCHAR))) )
++		if ( !(provname = CRYPT_Alloc((lstrlenW(pszProvider) +1)*sizeof(WCHAR))) )
+ 		{
+ 			SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+ 			goto error;
+ 		}
+-		strcpyW(provname, pszProvider);
++		lstrcpyW(provname, pszProvider);
+ 	}
+ 
+ 	keyname = CRYPT_GetProvKeyName(provname);
+@@ -1343,7 +1323,7 @@ BOOL WINAPI CryptEnumProviderTypesW (DWORD dwIndex, DWORD *pdwReserved,
+ 	RegOpenKeyW(hKey, keyname, &hSubkey);
+ 	RegCloseKey(hKey);
+ 
+-	ch = keyname + strlenW(keyname);
++	ch = keyname + lstrlenW(keyname);
+ 	/* Convert "Type 000" to 0, etc/ */
+ 	*pdwProvType = *(--ch) - '0';
+ 	*pdwProvType += (*(--ch) - '0') * 10;
+@@ -2135,7 +2115,7 @@ BOOL WINAPI CryptSetProviderExW (LPCWSTR pszProvName, DWORD dwProvType, DWORD *p
+ 		CRYPT_Free(keyname);
+ 		
+ 		if (RegSetValueExW(hTypeKey, nameW, 0, REG_SZ, (const BYTE *)pszProvName,
+-			(strlenW(pszProvName) + 1)*sizeof(WCHAR)))
++			(lstrlenW(pszProvName) + 1)*sizeof(WCHAR)))
+ 		{
+ 			RegCloseKey(hTypeKey);
+ 			RegCloseKey(hProvKey);
+diff --git a/dlls/advapi32/eventlog.c b/dlls/advapi32/eventlog.c
+index c81df3ee29f..c01955e22d5 100644
+--- a/dlls/advapi32/eventlog.c
++++ b/dlls/advapi32/eventlog.c
+@@ -30,7 +30,6 @@
+ #include "evntrace.h"
+ #include "evntprov.h"
+ 
+-#include "wine/unicode.h"
+ #include "wine/debug.h"
+ 
+ #include "advapi32_misc.h"
+diff --git a/dlls/advapi32/lsa.c b/dlls/advapi32/lsa.c
+index d63142f730b..45b82c72c73 100644
+--- a/dlls/advapi32/lsa.c
++++ b/dlls/advapi32/lsa.c
+@@ -33,7 +33,6 @@
+ #include "advapi32_misc.h"
+ 
+ #include "wine/debug.h"
+-#include "wine/unicode.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(advapi);
+ 
+@@ -344,7 +343,7 @@ static LONG lsa_reflist_add_domain(LSA_REFERENCED_DOMAIN_LIST *list, LSA_UNICODE
+     {
+         /* try to reuse index */
+         if ((list->Domains[i].Name.Length == domain->Length) &&
+-            (!strncmpiW(list->Domains[i].Name.Buffer, domain->Buffer, (domain->Length / sizeof(WCHAR)))))
++            (!wcsnicmp(list->Domains[i].Name.Buffer, domain->Buffer, (domain->Length / sizeof(WCHAR)))))
+         {
+             return i;
+         }
+@@ -565,9 +564,9 @@ NTSTATUS WINAPI LsaLookupSids(
+         }
+         else if (ConvertSidToStringSidW(Sids[i], &strsid))
+         {
+-            (*Names)[i].Name.Length = strlenW(strsid) * sizeof(WCHAR);
+-            (*Names)[i].Name.MaximumLength = (strlenW(strsid) + 1) * sizeof(WCHAR);
+-            name_fullsize += (strlenW(strsid) + 1) * sizeof(WCHAR);
++            (*Names)[i].Name.Length = lstrlenW(strsid) * sizeof(WCHAR);
++            (*Names)[i].Name.MaximumLength = (lstrlenW(strsid) + 1) * sizeof(WCHAR);
++            name_fullsize += (lstrlenW(strsid) + 1) * sizeof(WCHAR);
+ 
+             LocalFree(strsid);
+         }
+@@ -616,11 +615,11 @@ NTSTATUS WINAPI LsaLookupSids(
+         }
+         else if (ConvertSidToStringSidW(Sids[i], &strsid))
+         {
+-            strcpyW((*Names)[i].Name.Buffer, strsid);
++            lstrcpyW((*Names)[i].Name.Buffer, strsid);
+             LocalFree(strsid);
+         }
+ 
+-        name_buffer += strlenW(name_buffer) + 1;
++        name_buffer += lstrlenW(name_buffer) + 1;
+     }
+     TRACE("mapped %u out of %u\n", mapped, Count);
+ 
+@@ -806,11 +805,11 @@ NTSTATUS WINAPI LsaQueryInformationPolicy(
+             {
+                 WCHAR *dot;
+ 
+-                dot = strrchrW(xdi->domain_name, '.');
++                dot = wcsrchr(xdi->domain_name, '.');
+                 if (dot) *dot = 0;
+-                struprW(xdi->domain_name);
++                wcsupr(xdi->domain_name);
+                 xdi->info.Name.Buffer = xdi->domain_name;
+-                xdi->info.Name.Length = strlenW(xdi->domain_name) * sizeof(WCHAR);
++                xdi->info.Name.Length = lstrlenW(xdi->domain_name) * sizeof(WCHAR);
+                 xdi->info.Name.MaximumLength = xdi->info.Name.Length + sizeof(WCHAR);
+                 TRACE("setting Name to %s\n", debugstr_w(xdi->info.Name.Buffer));
+             }
+@@ -1064,7 +1063,7 @@ NTSTATUS WINAPI LsaLookupPrivilegeName(LSA_HANDLE handle, LUID *luid, LSA_UNICOD
+     if (!(privnameW = get_wellknown_privilege_name(luid)))
+         return STATUS_NO_SUCH_PRIVILEGE;
+ 
+-    length = strlenW(privnameW);
++    length = lstrlenW(privnameW);
+     *name = heap_alloc(sizeof(**name) + (length + 1) * sizeof(WCHAR));
+     if (!*name)
+         return STATUS_NO_MEMORY;
+diff --git a/dlls/advapi32/registry.c b/dlls/advapi32/registry.c
+index ba24d648ff7..d3d0b19423f 100644
+--- a/dlls/advapi32/registry.c
++++ b/dlls/advapi32/registry.c
+@@ -36,7 +36,6 @@
+ #include "winerror.h"
+ #include "winternl.h"
+ 
+-#include "wine/unicode.h"
+ #include "wine/debug.h"
+ #include "wine/list.h"
+ 
+@@ -365,7 +364,7 @@ LSTATUS WINAPI RegSetValueW( HKEY hkey, LPCWSTR subkey, DWORD type, LPCWSTR data
+ 
+     if (type != REG_SZ || !data) return ERROR_INVALID_PARAMETER;
+ 
+-    return RegSetKeyValueW( hkey, subkey, NULL, type, data, (strlenW(data) + 1)*sizeof(WCHAR) );
++    return RegSetKeyValueW( hkey, subkey, NULL, type, data, (lstrlenW(data) + 1)*sizeof(WCHAR) );
+ }
+ 
+ /******************************************************************************
+@@ -576,7 +575,7 @@ LSTATUS WINAPI RegConnectRegistryW( LPCWSTR lpMachineName, HKEY hKey,
+             lpMachineName += 2;
+         if (GetComputerNameW(compName, &len))
+         {
+-            if (!strcmpiW(lpMachineName, compName))
++            if (!wcsicmp(lpMachineName, compName))
+                 ret = RegOpenKeyW(hKey, NULL, phkResult);
+             else
+             {
+diff --git a/dlls/advapi32/security.c b/dlls/advapi32/security.c
+index fe2f0d92663..943386abe8e 100644
+--- a/dlls/advapi32/security.c
++++ b/dlls/advapi32/security.c
+@@ -19,8 +19,6 @@
+  *
+  */
+ 
+-#include "config.h"
+-
+ #include <stdarg.h>
+ #include <string.h>
+ 
+@@ -43,7 +41,6 @@
+ #include "lmcons.h"
+ 
+ #include "wine/debug.h"
+-#include "wine/unicode.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(advapi);
+ 
+@@ -272,18 +269,18 @@ static inline DWORD get_security_regkey( LPWSTR full_key_name, DWORD access, HAN
+     static const WCHAR current_userW[] = {'C','U','R','R','E','N','T','_','U','S','E','R',0};
+     static const WCHAR machineW[] = {'M','A','C','H','I','N','E',0};
+     static const WCHAR usersW[] = {'U','S','E','R','S',0};
+-    LPWSTR p = strchrW(full_key_name, '\\');
++    LPWSTR p = wcschr(full_key_name, '\\');
+     int len = p-full_key_name;
+     HKEY hParent;
+ 
+     if (!p) return ERROR_INVALID_PARAMETER;
+-    if (strncmpW( full_key_name, classes_rootW, len ) == 0)
++    if (wcsncmp( full_key_name, classes_rootW, len ) == 0)
+         hParent = HKEY_CLASSES_ROOT;
+-    else if (strncmpW( full_key_name, current_userW, len ) == 0)
++    else if (wcsncmp( full_key_name, current_userW, len ) == 0)
+         hParent = HKEY_CURRENT_USER;
+-    else if (strncmpW( full_key_name, machineW, len ) == 0)
++    else if (wcsncmp( full_key_name, machineW, len ) == 0)
+         hParent = HKEY_LOCAL_MACHINE;
+-    else if (strncmpW( full_key_name, usersW, len ) == 0)
++    else if (wcsncmp( full_key_name, usersW, len ) == 0)
+         hParent = HKEY_USERS;
+     else
+         return ERROR_INVALID_PARAMETER;
+@@ -309,7 +306,7 @@ BOOL ADVAPI_IsLocalComputer(LPCWSTR ServerName)
+     Result = GetComputerNameW(buf,  &dwSize);
+     if (Result && (ServerName[0] == '\\') && (ServerName[1] == '\\'))
+         ServerName += 2;
+-    Result = Result && !lstrcmpW(ServerName, buf);
++    Result = Result && !wcscmp(ServerName, buf);
+     heap_free(buf);
+ 
+     return Result;
+@@ -652,7 +649,7 @@ LookupPrivilegeValueW( LPCWSTR lpSystemName, LPCWSTR lpName, PLUID lpLuid )
+     {
+         if( !WellKnownPrivNames[i] )
+             continue;
+-        if( strcmpiW( WellKnownPrivNames[i], lpName) )
++        if( wcsicmp( WellKnownPrivNames[i], lpName) )
+             continue;
+         lpLuid->LowPart = i;
+         lpLuid->HighPart = 0;
+@@ -809,7 +806,7 @@ LookupPrivilegeNameW( LPCWSTR lpSystemName, PLUID lpLuid, LPWSTR lpName,
+         SetLastError(ERROR_NO_SUCH_PRIVILEGE);
+         return FALSE;
+     }
+-    privNameLen = strlenW(WellKnownPrivNames[lpLuid->LowPart]);
++    privNameLen = lstrlenW(WellKnownPrivNames[lpLuid->LowPart]);
+     /* Windows crashes if cchName is NULL, so will I */
+     if (*cchName <= privNameLen)
+     {
+@@ -819,7 +816,7 @@ LookupPrivilegeNameW( LPCWSTR lpSystemName, PLUID lpLuid, LPWSTR lpName,
+     }
+     else
+     {
+-        strcpyW(lpName, WellKnownPrivNames[lpLuid->LowPart]);
++        lstrcpyW(lpName, WellKnownPrivNames[lpLuid->LowPart]);
+         *cchName = privNameLen;
+         return TRUE;
+     }
+@@ -1277,7 +1274,7 @@ static BOOL lookup_user_account_name(PSID Sid, PDWORD cbSid, LPWSTR ReferencedDo
+         ret = FALSE;
+     }
+     else if (ReferencedDomainName)
+-        strcpyW(ReferencedDomainName, domainName);
++        lstrcpyW(ReferencedDomainName, domainName);
+ 
+     *cchReferencedDomainName = nameLen;
+ 
+@@ -1323,7 +1320,7 @@ static BOOL lookup_computer_account_name(PSID Sid, PDWORD cbSid, LPWSTR Referenc
+         ret = FALSE;
+     }
+     else if (ReferencedDomainName)
+-        strcpyW(ReferencedDomainName, domainName);
++        lstrcpyW(ReferencedDomainName, domainName);
+ 
+     *cchReferencedDomainName = nameLen;
+ 
+@@ -1360,9 +1357,9 @@ static void split_domain_account( const LSA_UNICODE_STRING *str, LSA_UNICODE_STR
+ 
+ static BOOL match_domain( ULONG idx, const LSA_UNICODE_STRING *domain )
+ {
+-    ULONG len = strlenW( ACCOUNT_SIDS[idx].domain );
++    ULONG len = lstrlenW( ACCOUNT_SIDS[idx].domain );
+ 
+-    if (len == domain->Length / sizeof(WCHAR) && !strncmpiW( domain->Buffer, ACCOUNT_SIDS[idx].domain, len ))
++    if (len == domain->Length / sizeof(WCHAR) && !wcsnicmp( domain->Buffer, ACCOUNT_SIDS[idx].domain, len ))
+         return TRUE;
+ 
+     return FALSE;
+@@ -1370,15 +1367,15 @@ static BOOL match_domain( ULONG idx, const LSA_UNICODE_STRING *domain )
+ 
+ static BOOL match_account( ULONG idx, const LSA_UNICODE_STRING *account )
+ {
+-    ULONG len = strlenW( ACCOUNT_SIDS[idx].account );
++    ULONG len = lstrlenW( ACCOUNT_SIDS[idx].account );
+ 
+-    if (len == account->Length / sizeof(WCHAR) && !strncmpiW( account->Buffer, ACCOUNT_SIDS[idx].account, len ))
++    if (len == account->Length / sizeof(WCHAR) && !wcsnicmp( account->Buffer, ACCOUNT_SIDS[idx].account, len ))
+         return TRUE;
+ 
+     if (ACCOUNT_SIDS[idx].alias)
+     {
+-        len = strlenW( ACCOUNT_SIDS[idx].alias );
+-        if (len == account->Length / sizeof(WCHAR) && !strncmpiW( account->Buffer, ACCOUNT_SIDS[idx].alias, len ))
++        len = lstrlenW( ACCOUNT_SIDS[idx].alias );
++        if (len == account->Length / sizeof(WCHAR) && !wcsnicmp( account->Buffer, ACCOUNT_SIDS[idx].alias, len ))
+             return TRUE;
+     }
+     return FALSE;
+@@ -1426,7 +1423,7 @@ BOOL lookup_local_wellknown_name( const LSA_UNICODE_STRING *account_and_domain,
+                 *cbSid = sidLen;
+             }
+ 
+-            len = strlenW( ACCOUNT_SIDS[i].domain );
++            len = lstrlenW( ACCOUNT_SIDS[i].domain );
+             if (*cchReferencedDomainName <= len || !ret)
+             {
+                 SetLastError(ERROR_INSUFFICIENT_BUFFER);
+@@ -1435,7 +1432,7 @@ BOOL lookup_local_wellknown_name( const LSA_UNICODE_STRING *account_and_domain,
+             }
+             else if (ReferencedDomainName)
+             {
+-                strcpyW( ReferencedDomainName, ACCOUNT_SIDS[i].domain );
++                lstrcpyW( ReferencedDomainName, ACCOUNT_SIDS[i].domain );
+             }
+ 
+             *cchReferencedDomainName = len;
+@@ -1473,7 +1470,7 @@ BOOL lookup_local_user_name( const LSA_UNICODE_STRING *account_and_domain,
+     {
+         /* check to make sure this account is on this computer */
+         if (GetComputerNameW( userName, &nameLen ) &&
+-            (domain.Length / sizeof(WCHAR) != nameLen || strncmpW( domain.Buffer, userName, nameLen )))
++            (domain.Length / sizeof(WCHAR) != nameLen || wcsncmp( domain.Buffer, userName, nameLen )))
+         {
+             SetLastError(ERROR_NONE_MAPPED);
+             ret = FALSE;
+@@ -1482,7 +1479,7 @@ BOOL lookup_local_user_name( const LSA_UNICODE_STRING *account_and_domain,
+     }
+ 
+     if (GetUserNameW( userName, &nameLen ) &&
+-        account.Length / sizeof(WCHAR) == nameLen - 1 && !strncmpW( account.Buffer, userName, nameLen - 1 ))
++        account.Length / sizeof(WCHAR) == nameLen - 1 && !wcsncmp( account.Buffer, userName, nameLen - 1 ))
+     {
+             ret = lookup_user_account_name( Sid, cbSid, ReferencedDomainName, cchReferencedDomainName, peUse );
+             *handled = TRUE;
+@@ -1491,7 +1488,7 @@ BOOL lookup_local_user_name( const LSA_UNICODE_STRING *account_and_domain,
+     {
+         nameLen = UNLEN + 1;
+         if (GetComputerNameW( userName, &nameLen ) &&
+-            account.Length / sizeof(WCHAR) == nameLen && !strncmpW( account.Buffer, userName , nameLen ))
++            account.Length / sizeof(WCHAR) == nameLen && !wcsncmp( account.Buffer, userName , nameLen ))
+         {
+             ret = lookup_computer_account_name( Sid, cbSid, ReferencedDomainName, cchReferencedDomainName, peUse );
+             *handled = TRUE;
+@@ -1522,7 +1519,7 @@ BOOL WINAPI LookupAccountNameW( LPCWSTR lpSystemName, LPCWSTR lpAccountName, PSI
+         return FALSE;
+     }
+ 
+-    if (!lpAccountName || !strcmpW( lpAccountName, Blank ))
++    if (!lpAccountName || !wcscmp( lpAccountName, Blank ))
+     {
+         lpAccountName = BUILTIN;
+     }
+@@ -2149,7 +2146,7 @@ static DWORD trustee_to_sid( DWORD nDestinationSidLength, PSID pDestinationSid,
+         DWORD sid_size = nDestinationSidLength;
+         DWORD domain_size = MAX_COMPUTERNAME_LENGTH + 1;
+         SID_NAME_USE use;
+-        if (!strcmpW( pTrustee->ptstrName, CURRENT_USER ))
++        if (!wcscmp( pTrustee->ptstrName, CURRENT_USER ))
+         {
+             if (!lookup_user_account_name( pDestinationSid, &sid_size, NULL, &domain_size, &use ))
+             {
+diff --git a/dlls/advapi32/service.c b/dlls/advapi32/service.c
+index 2146ddfb186..846a2b8d456 100644
+--- a/dlls/advapi32/service.c
++++ b/dlls/advapi32/service.c
+@@ -24,7 +24,6 @@
+ #include "windef.h"
+ #include "winbase.h"
+ #include "winsvc.h"
+-#include "wine/unicode.h"
+ #include "wine/debug.h"
+ 
+ #include "advapi32_misc.h"
+@@ -168,9 +167,9 @@ EnumServicesStatusW( SC_HANDLE manager, DWORD type, DWORD state, ENUM_SERVICE_ST
+     for (i = 0; i < count; i++)
+     {
+         *ret_size += sizeof(ENUM_SERVICE_STATUSW);
+-        *ret_size += (strlenW( status_ex[i].lpServiceName ) + 1) * sizeof(WCHAR);
++        *ret_size += (lstrlenW( status_ex[i].lpServiceName ) + 1) * sizeof(WCHAR);
+         if (status_ex[i].lpDisplayName)
+-            *ret_size += (strlenW( status_ex[i].lpDisplayName ) + 1) * sizeof(WCHAR);
++            *ret_size += (lstrlenW( status_ex[i].lpDisplayName ) + 1) * sizeof(WCHAR);
+ 
+         if (*ret_size <= size)
+             ++*ret_count;
+@@ -179,14 +178,14 @@ EnumServicesStatusW( SC_HANDLE manager, DWORD type, DWORD state, ENUM_SERVICE_ST
+     p = (WCHAR *)(status + *ret_count);
+     for (i = 0; i < *ret_count; i++)
+     {
+-        strcpyW( p, status_ex[i].lpServiceName );
++        lstrcpyW( p, status_ex[i].lpServiceName );
+         status[i].lpServiceName = (WCHAR *)p;
+-        p += strlenW( p ) + 1;
++        p += lstrlenW( p ) + 1;
+         if (status_ex[i].lpDisplayName)
+         {
+-            strcpyW( p, status_ex[i].lpDisplayName );
++            lstrcpyW( p, status_ex[i].lpDisplayName );
+             status[i].lpDisplayName = (WCHAR *)p;
+-            p += strlenW( p ) + 1;
++            p += lstrlenW( p ) + 1;
+         }
+         else status[i].lpDisplayName = NULL;
+ 
+diff --git a/dlls/advapi32/wmi.c b/dlls/advapi32/wmi.c
+index b615699230e..0215fbe97dd 100644
+--- a/dlls/advapi32/wmi.c
++++ b/dlls/advapi32/wmi.c
+@@ -29,7 +29,6 @@
+ #define _WMI_SOURCE_
+ #include "wmium.h"
+ 
+-#include "wine/unicode.h"
+ #include "wine/debug.h"
+ 
+ #include "advapi32_misc.h"
+
