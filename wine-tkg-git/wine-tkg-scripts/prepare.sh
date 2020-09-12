@@ -767,8 +767,11 @@ _prepare() {
 	  _staging_args+=(-W dinput-SetActionMap-genre -W dinput-axis-recalc -W dinput-joy-mappings -W dinput-reconnect-joystick -W dinput-remap-joystick)
 	fi
 
+	# Fixes for staging based Proton + steamhelper
 	if ( [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_use_steamhelper" = "true" ] ); then
-	  if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 4e7071e4f14f6ce85b0eb4b88accfb0267d6545b HEAD ); then
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7fc716aa5f8595e5bca9206f86859f1ac70894ad HEAD ); then
+	    _staging_args+=(-W ws2_32-TransmitFile) # Might not be actually required with server-Desktop_Refcount gone - needs testing
+	  elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 4e7071e4f14f6ce85b0eb4b88accfb0267d6545b HEAD ); then
 	    _staging_args+=(-W server-Desktop_Refcount -W ws2_32-TransmitFile)
 	  fi
 	fi
@@ -1280,7 +1283,7 @@ EOM
 	    elif git merge-base --is-ancestor 1d9a3f6d12322891a2af4aadd66a92ea66479233 HEAD; then
 	      _patchname='fsync-staging-cf04b8d.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (staging <cf04b8d)" && nonuser_patcher
 	    fi
-	    if [[ ! ${_staging_args[*]} =~ "server-Desktop_Refcount" ]]; then
+	    if [[ ! ${_staging_args[*]} =~ "server-Desktop_Refcount" ]] && ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 7fc716aa5f8595e5bca9206f86859f1ac70894ad HEAD ); then
 	      _patchname='fsync-staging-no_alloc_handle.patch' && _patchmsg="Added no_alloc_handle object method to fsync" && nonuser_patcher
 	      if ([ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]) || [ "$_protonify" = "true" ] && git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
 	        _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it-no_alloc_handle.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch (no_alloc_handle edition)" && nonuser_patcher
