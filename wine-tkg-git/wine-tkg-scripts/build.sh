@@ -70,7 +70,7 @@ _build() {
 	  msg2 'Building Wine-64...'
 	  cd  "${srcdir}"/"${pkgname}"-64-build
 	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW3" =~ [yY] ]]; then
-	    ../${_winesrcdir}/configure \
+	    ../"${_winesrcdir}"/configure \
 		    --prefix="$_prefix" \
 			--enable-win64 \
 			"${_configure_args64[@]}" \
@@ -115,12 +115,12 @@ _build() {
 	  cd "${srcdir}/${pkgname}"-32-build
 	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW3" =~ [yY] ]]; then
 		 if [ "$_NOLIB64" = "true" ]; then
-	       ../${_winesrcdir}/configure \
+	       ../"${_winesrcdir}"/configure \
 		      --prefix="$_prefix" \
 		      "${_configure_args32[@]}" \
 		      "${_configure_args[@]}"
 		  else
-	        ../${_winesrcdir}/configure \
+	        ../"${_winesrcdir}"/configure \
 		      --prefix="$_prefix" \
 		      "${_configure_args32[@]}" \
 		      "${_configure_args[@]}" \
@@ -138,7 +138,7 @@ _build() {
 }
 
 _generate_debian_package() {
-	_prefix=$1
+	_prefix="$1"
 
 	msg2 'Generating a Debian package'
 	"$_where"/wine-tkg-scripts/package-debian.sh "${pkgdir}" "${_prefix}" "${_where}" "${pkgname}-${pkgver}.deb" "${pkgver}" "${pkgname}"
