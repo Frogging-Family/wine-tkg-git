@@ -509,7 +509,7 @@ _prepare() {
 	nonuser_reverter() {
 	  if git merge-base --is-ancestor $_committorevert HEAD; then
 	    echo -e "\n$_committorevert reverted $_hotfixmsg" >> "$_where"/prepare.log
-	    git revert -n --no-edit $_committorevert >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+	    git revert -n --no-edit $_committorevert >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."; msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"; msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")" && exit 1)
 	    if [ "$_hotfixmsg" != "(hotfix)" ] && [ "$_hotfixmsg" != "(staging hotfix)" ]; then
 	      echo -e "$_committorevert reverted $_hotfixmsg" >> "$_where"/last_build_config.log
 	    fi
