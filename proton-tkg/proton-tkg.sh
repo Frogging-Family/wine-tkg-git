@@ -186,10 +186,10 @@ function build_vkd3d {
   mkdir -p build/lib64-vkd3d
   mkdir -p build/lib32-vkd3d
 
-  export CFLAGS="-pipe -O2 -ftree-vectorize"
-  export CPPFLAGS="-pipe -O2 -ftree-vectorize"
-  export CXXFLAGS="-pipe -O2 -ftree-vectorize"
-  export LDFLAGS="-Wl,-O1,--sort-common,--as-needed"
+  unset CFLAGS
+  unset CPPFLAGS
+  unset CXXFLAGS
+  unset LDFLAGS
 
   meson --cross-file build-win64.txt -Denable_standalone_d3d12=True --buildtype release --strip -Denable_tests=false --prefix "$_nowhere"/vkd3d-proton/build/lib64-vkd3d "$_nowhere"/vkd3d-proton/build/lib64-vkd3d
   cd "$_nowhere"/vkd3d-proton/build/lib64-vkd3d && ninja install
