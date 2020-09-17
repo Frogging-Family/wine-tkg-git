@@ -1610,4 +1610,181 @@ index bead68fc22..4e5efea8f1 100644
 -- 
 2.21.0
 
+From a5e8fd142327229b03205e57c1827376ed643b7f Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Wed, 11 Apr 2018 08:33:39 -0500
+Subject: [PATCH] winevulkan: Add struct unwrappers for vrclient
+
+---
+ dlls/winevulkan/make_vulkan     |  5 +++++
+ dlls/winevulkan/vulkan.c        | 31 +++++++++++++++++++++++++++++++
+ dlls/winevulkan/winevulkan.spec |  5 +++++
+ 3 files changed, 41 insertions(+)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 59472bcef89..9bb30183e1e 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -1307,6 +1307,37 @@ void *native_vkGetInstanceProcAddrWINE(VkInstance instance, const char *name)
+ {
+     return vk_funcs->p_vkGetInstanceProcAddr(instance, name);
+ }
++
++VkDevice WINAPI __wine_get_native_VkDevice(VkDevice device)
++{
++    return device->device;
++}
++
++VkInstance WINAPI __wine_get_native_VkInstance(VkInstance instance)
++{
++    return instance->instance;
++}
++
++VkPhysicalDevice WINAPI __wine_get_native_VkPhysicalDevice(VkPhysicalDevice phys_dev)
++{
++    return phys_dev->phys_dev;
++}
++
++VkQueue WINAPI __wine_get_native_VkQueue(VkQueue queue)
++{
++    return queue->queue;
++}
++
++VkPhysicalDevice WINAPI __wine_get_wrapped_VkPhysicalDevice(VkInstance instance, VkPhysicalDevice native_phys_dev)
++{
++    uint32_t i;
++    for(i = 0; i < instance->phys_dev_count; ++i){
++        if(instance->phys_devs[i]->phys_dev == native_phys_dev)
++            return instance->phys_devs[i];
++    }
++    WARN("Unknown native physical device: %p\n", native_phys_dev);
++    return NULL;
++}
  
+ 
+ static const WCHAR winevulkan_json_resW[] = {'w','i','n','e','v','u','l','k','a','n','_','j','s','o','n',0};
+
+From a5c3bdeaa685200066f7996dbb3f959a78eabb1a Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Mon, 30 Apr 2018 09:40:13 -0500
+Subject: [PATCH] Revert "winevulkan: Get rid of unused "phys_dev" field from
+ VkDevice_T."
+
+This reverts commit 9451a42cf72ba0ba62fb98340d467e028a5c5042.
+---
+ dlls/winevulkan/vulkan.c         | 2 ++
+ dlls/winevulkan/vulkan_private.h | 5 +++--
+ 2 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
+index 17072d23419..d5986b439bc 100644
+--- a/dlls/winevulkan/vulkan_private.h
++++ b/dlls/winevulkan/vulkan_private.h
+@@ -61,7 +61,7 @@ struct wine_vk_base
+ struct VkCommandBuffer_T
+ {
+     struct wine_vk_base base;
+-    struct VkDevice_T *device; /* parent */
++    VkDevice device; /* parent */
+     VkCommandBuffer command_buffer; /* native command buffer */
+ 
+     struct list pool_link;
+@@ -107,7 +108,7 @@ struct VkPhysicalDevice_T
+ struct VkQueue_T
+ {
+     struct wine_vk_base base;
+-    struct VkDevice_T *device; /* parent */
++    VkDevice device; /* parent */
+     VkQueue queue; /* native queue */
+ 
+     VkDeviceQueueCreateFlags flags;
+From 8d908d0aa1f7f3f3d99dbdb5d1678ab5e8fe293c Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Tue, 18 Jun 2019 14:55:34 -0500
+Subject: [PATCH] Revert "winevulkan: Check if instance extensions are
+ supported."
+
+This reverts commit e84999bd7ab859746e893ed2d49b1d42b0323c3a.
+
+Vulkan VR games will try to load some extensions that winevulkan doesn't
+support.
+---
+ dlls/winevulkan/vulkan.c | 18 +++---------------
+ 1 file changed, 3 insertions(+), 15 deletions(-)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 7f706d60486..f2eacb14813 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -345,17 +345,10 @@ static VkResult wine_vk_instance_convert_create_info(const VkInstanceCreateInfo
+     dst->enabledLayerCount = 0;
+     dst->ppEnabledLayerNames = NULL;
+ 
+-    TRACE("Enabled %u instance extensions.\n", dst->enabledExtensionCount);
++    TRACE("Enabled extensions: %u\n", dst->enabledExtensionCount);
+     for (i = 0; i < dst->enabledExtensionCount; i++)
+     {
+-        const char *extension_name = dst->ppEnabledExtensionNames[i];
+-        TRACE("Extension %u: %s.\n", i, debugstr_a(extension_name));
+-        if (!wine_vk_instance_extension_supported(extension_name))
+-        {
+-            WARN("Extension %s is not supported.\n", debugstr_a(extension_name));
+-            free_VkInstanceCreateInfo_struct_chain(dst);
+-            return VK_ERROR_EXTENSION_NOT_PRESENT;
+-        }
++        TRACE("Extension %u: %s\n", i, debugstr_a(dst->ppEnabledExtensionNames[i]));
+     }
+ 
+     return VK_SUCCESS;
+@@ -664,12 +657,7 @@ VkResult WINAPI wine_vkCreateInstance(const VkInstanceCreateInfo *create_info,
+     }
+     object->base.loader_magic = VULKAN_ICD_MAGIC_VALUE;
+ 
+-    res = wine_vk_instance_convert_create_info(create_info, &create_info_host, object);
+-    if (res != VK_SUCCESS)
+-    {
+-        wine_vk_instance_free(object);
+-        return res;
+-    }
++    wine_vk_instance_convert_create_info(create_info, &create_info_host, object);
+ 
+     res = vk_funcs->p_vkCreateInstance(&create_info_host, NULL /* allocator */, &object->instance);
+     free_VkInstanceCreateInfo_struct_chain(&create_info_host);
+From 428121f3bb19601236210c0552bc7ea62b78834d Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Tue, 25 Sep 2018 14:53:05 -0500
+Subject: [PATCH] Revert "winevulkan: Check if device extensions are
+ supported."
+
+This reverts commit 4907ffdf2a15ab3a1e3749def37f4be67b758a35.
+
+Vulkan VR games will try to load some extensions that winevulkan doesn't
+support.
+---
+ dlls/winevulkan/vulkan.c | 11 ++---------
+ 1 file changed, 2 insertions(+), 9 deletions(-)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index f2eacb14813..a430728ae2e 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -256,17 +256,10 @@ static VkResult wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src
+     dst->enabledLayerCount = 0;
+     dst->ppEnabledLayerNames = NULL;
+ 
+-    TRACE("Enabled %u extensions.\n", dst->enabledExtensionCount);
++    TRACE("Enabled extensions: %u.\n", dst->enabledExtensionCount);
+     for (i = 0; i < dst->enabledExtensionCount; i++)
+     {
+-        const char *extension_name = dst->ppEnabledExtensionNames[i];
+-        TRACE("Extension %u: %s.\n", i, debugstr_a(extension_name));
+-        if (!wine_vk_device_extension_supported(extension_name))
+-        {
+-            WARN("Extension %s is not supported.\n", debugstr_a(extension_name));
+-            wine_vk_device_free_create_info(dst);
+-            return VK_ERROR_EXTENSION_NOT_PRESENT;
+-        }
++        TRACE("Extension %u: %s.\n", i, debugstr_a(dst->ppEnabledExtensionNames[i]));
+     }
+ 
+     return VK_SUCCESS;
