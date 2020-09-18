@@ -444,11 +444,11 @@ else
 
   # Now let's build
   cd "$_wine_tkg_git_path"
-  if [ ! -e "/usr/bin/makepkg" ] || [ "$_nomakepkg" = "true" ]; then
+  if [ -e "/usr/bin/makepkg" ] && [ "$_nomakepkg" = "false" ]; then
+    makepkg -s || true
+  else
     rm -f "$_wine_tkg_git_path"/non-makepkg-builds/HL3_confirmed
     ./non-makepkg-build.sh
-  else
-    makepkg -s || true
   fi
 
   # Wine-tkg-git has injected versioning and settings in the token for us, so get the values back
