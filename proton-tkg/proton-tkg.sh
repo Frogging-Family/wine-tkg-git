@@ -101,8 +101,8 @@ function build_vrclient {
   export CXXFLAGS="-Wno-attributes -std=c++0x -O2 -g"
   PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
   if [ "$_standard_dlopen" = "true" ]; then
-    patch -Np1 < "$_nowhere/proton_template/vrclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch"
-    _cxx_addon+=" -ldl"
+    patch -Np1 < "$_nowhere/proton_template/vrclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch" || true
+    WINEMAKERFLAGS+=" -ldl"
   fi
 
   rm -rf build/vrclient.win64
@@ -143,8 +143,8 @@ function build_lsteamclient {
   if [[ "$_proton_branch" != proton_3.* ]] && [[ "$_proton_branch" != proton_4.* ]]; then
     _cxx_addon="-std=gnu++11"
     if [ "$_standard_dlopen" = "true" ]; then
-      patch -Np1 < "$_nowhere/proton_template/steamclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch"
-      _cxx_addon+=" -ldl"
+      patch -Np1 < "$_nowhere/proton_template/steamclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch" || true
+      WINEMAKERFLAGS+=" -ldl"
     fi
   fi
 
