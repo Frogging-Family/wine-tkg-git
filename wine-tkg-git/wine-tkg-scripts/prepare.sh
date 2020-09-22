@@ -1933,7 +1933,11 @@ EOM
 
   # Joshua Ashton's take on making wine dialogs and menus less win95-ish - https://github.com/Joshua-Ashton/wine/tree/wine-better-theme
   if [ "$_use_josh_flat_theme" = "true" ]; then
-    _patchname='josh-flat-theme.patch' && _patchmsg="Add Josh's better-theme" && nonuser_patcher
+    #if git merge-base --is-ancestor 6456973f0a64d326bb54da4675310caffc2588f1 HEAD; then
+    #  _patchname='josh-flat-theme.patch' && _patchmsg="Add Josh's better-theme" && nonuser_patcher
+    #else
+      _patchname='josh-flat-theme-6456973.patch' && _patchmsg="Add Josh's better-theme" && nonuser_patcher
+    #fi
   fi
 
 	# Set the default wine version to win10
