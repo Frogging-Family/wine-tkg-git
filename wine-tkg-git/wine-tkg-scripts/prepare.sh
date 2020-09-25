@@ -304,7 +304,10 @@ user_patcher() {
 	        msg2 "######################################################"
 	        echo -e "\nReverting your own patch ${_f##*/}" >> "$_where"/prepare.log
 	        if ! patch -Np1 -R < "${_f}" >> "$_where"/prepare.log; then
-	          error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1
+	          error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."
+	          msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"
+	          msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")"
+	          exit 1
 	        fi
 	        echo -e "Reverted your own patch ${_f##*/}" >> "$_where"/last_build_config.log
 	      fi
@@ -329,7 +332,10 @@ user_patcher() {
 	        msg2 "######################################################"
 	        echo -e "\nApplying your own patch ${_f##*/}" >> "$_where"/prepare.log
 	        if ! patch -Np1 < "${_f}" >> "$_where"/prepare.log; then
-	          error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1
+	          error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."
+	          msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"
+	          msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")"
+	          exit 1
 	        fi
 	        echo -e "Applied your own patch ${_f##*/}" >> "$_where"/last_build_config.log
 	      fi
@@ -923,7 +929,7 @@ _prepare() {
 
 	if [ "$_use_staging" = "true" ] && [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW2" =~ [yY] ]]; then
 	  msg2 "Applying wine-staging patches..." && echo -e "\nStaging overrides, if any: ${_staging_args[@]}\n" >> "$_where"/last_build_config.log && echo -e "\nApplying wine-staging patches..." >> "$_where"/prepare.log
-	  "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh DESTDIR="${srcdir}/${_winesrcdir}" --all "${_staging_args[@]}" >> "$_where"/prepare.log 2>&1 || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+	  "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh DESTDIR="${srcdir}/${_winesrcdir}" --all "${_staging_args[@]}" >> "$_where"/prepare.log 2>&1 || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."; msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"; msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")" && exit 1)
 
 	  # Remove staging version tag
 	  sed -i "s/  (Staging)//g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
