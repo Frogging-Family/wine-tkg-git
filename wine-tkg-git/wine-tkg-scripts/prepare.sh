@@ -634,6 +634,11 @@ _prepare() {
 	  echo -e "( Kernelbase reverts clean reverts applied )\n" >> "$_where"/last_build_config.log
 	fi
 
+	if [ "$_use_vkd3dlib" = "fork" ]; then
+	  _committorevert=2558f5f218d623772f6d8609a951ea70b3f6f823 && nonuser_reverter
+	  echo -e "( wined3d reverts for vkd3d-proton applied )\n" >> "$_where"/last_build_config.log
+	fi
+
 	_commitmsg="01-reverts" _committer
 
 	# Don't include *.orig and *~ files in the generated staging patchsets
