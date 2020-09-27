@@ -599,6 +599,7 @@ else
 
     # mono
     mkdir -p "$_nowhere"/mono && cd "$_nowhere"/mono
+    rm -rf "$_nowhere"/mono/*
     _mono_bin=$( latest_mono )
     if [ ! -e ${_mono_bin##*/} ]; then
       latest_mono | wget -qi -
