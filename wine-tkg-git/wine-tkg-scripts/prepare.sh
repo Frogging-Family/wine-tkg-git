@@ -1958,11 +1958,17 @@ EOM
 
 	# Set the default wine version to win10
 	if [ "$_win10_default" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
-	  if git merge-base --is-ancestor 87f41e6b408dd01055ff6a378b90d089d61ec370 HEAD; then
+	  if git merge-base --is-ancestor 595600b6c14c957d19f3ef8c0c82acacd7c6827a HEAD; then
 	    if [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-win10-default-staging.patch' && _patchmsg="Enforce win10 as default wine version (staging)" && nonuser_patcher
 	    else
 	      _patchname='proton-win10-default.patch' && _patchmsg="Enforce win10 as default wine version" && nonuser_patcher
+	    fi
+	  elif git merge-base --is-ancestor 87f41e6b408dd01055ff6a378b90d089d61ec370 HEAD; then
+	    if [ "$_use_staging" = "true" ]; then
+	      _patchname='proton-win10-default-staging-595600b.patch' && _patchmsg="Enforce win10 as default wine version (staging)" && nonuser_patcher
+	    else
+	      _patchname='proton-win10-default-595600b.patch' && _patchmsg="Enforce win10 as default wine version" && nonuser_patcher
 	    fi
 	  elif git merge-base --is-ancestor e13d54665765d9dd8829233f0ea748fd685a1913 HEAD; then
 	    if [ "$_use_staging" = "true" ]; then
