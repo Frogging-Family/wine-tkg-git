@@ -1,6 +1,6 @@
-From 81a2fd72d94e83f8972e32defea996cd4475cd3b Mon Sep 17 00:00:00 2001
+From 75c8de46cd09abe9fad90f6ae3b806beccc72914 Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
-Date: Tue, 29 Sep 2020 12:38:36 +0200
+Date: Wed, 30 Sep 2020 21:44:56 +0200
 Subject: [PATCH 1/1] 01-staging-hotfixes
 
 ---
@@ -197,7 +197,8 @@ Subject: [PATCH 1/1] 01-staging-hotfixes
  patches/wow64cpu-Wow64Transition/definition   |    1 +
  .../0001-wpcap-Load-libpcap-dynamically.patch |   47 +-
  patches/ws2_32-TransmitFile/definition        |    2 -
- 194 files changed, 10570 insertions(+), 4952 deletions(-)
+ ...ing-of-empty-string-in-WS_getaddrinf.patch |   69 +-
+ 195 files changed, 10602 insertions(+), 4989 deletions(-)
  create mode 100644 patches/Staging/0003-loader-Add-commandline-option-patches-to-show-the-pa.patch
  delete mode 100644 patches/Staging/definition
  create mode 100644 patches/advapi32-CreateRestrictedToken/0001-ntdll-Implement-NtFilterToken.patch
@@ -23335,6 +23336,143 @@ index a2a8db04..f54cc82d 100644
  # Fixes: [5048] Support for TransmitFile
 -# Broken nontrivially by db8a75312, and I'm working on a proper implementation for this.
 -Disabled: true
+diff --git a/patches/ws2_32-getaddrinfo/0001-ws2_32-Fix-handling-of-empty-string-in-WS_getaddrinf.patch b/patches/ws2_32-getaddrinfo/0001-ws2_32-Fix-handling-of-empty-string-in-WS_getaddrinf.patch
+index 582cece8..743c7272 100644
+--- a/patches/ws2_32-getaddrinfo/0001-ws2_32-Fix-handling-of-empty-string-in-WS_getaddrinf.patch
++++ b/patches/ws2_32-getaddrinfo/0001-ws2_32-Fix-handling-of-empty-string-in-WS_getaddrinf.patch
+@@ -1,18 +1,18 @@
+-From 381a5842063016c8cec8810f81baaa7e07b790ac Mon Sep 17 00:00:00 2001
++From 98db626566f8d4bcc0de8ad17fe0dabb685d69fe Mon Sep 17 00:00:00 2001
+ From: Sebastian Lackner <sebastian@fds-team.de>
+ Date: Thu, 31 Aug 2017 01:15:05 +0200
+ Subject: [PATCH] ws2_32: Fix handling of empty string in WS_getaddrinfo.
+ 
+ Fixes a regression introduced in a2053597cc326e2305c44e1c1a954c2e0ee2853e.
+ ---
+- dlls/ws2_32/socket.c | 46 +++++++++++++++++++++++++++++++++++++-------
+- 1 file changed, 39 insertions(+), 7 deletions(-)
++ dlls/ws2_32/socket.c | 38 ++++++++++++++++++++++++++++++--------
++ 1 file changed, 30 insertions(+), 8 deletions(-)
+ 
+ diff --git a/dlls/ws2_32/socket.c b/dlls/ws2_32/socket.c
+-index 05423d4b90c..71aaf433d1b 100644
++index 4d2afa946b7..ed1ca2f44b9 100644
+ --- a/dlls/ws2_32/socket.c
+ +++ b/dlls/ws2_32/socket.c
+-@@ -6759,6 +6759,22 @@ static int convert_eai_u2w(int unixret) {
++@@ -6673,6 +6673,22 @@ static int convert_eai_u2w(int unixret) {
+      return unixret;
+  }
+  
+@@ -35,56 +35,52 @@ index 05423d4b90c..71aaf433d1b 100644
+  static char *get_fqdn(void)
+  {
+      char *ret;
+-@@ -6784,7 +6800,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
++@@ -6698,9 +6714,8 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+      struct addrinfo *unixaires = NULL;
+      int   result;
+      struct addrinfo unixhints, *punixhints = NULL;
+--    char *nodeV6 = NULL, *fqdn = NULL;
+-+    char *nodeV6 = NULL, *hostname, *fqdn = NULL;
++-    char *dot, *nodeV6 = NULL, *fqdn;
+++    char *nodeV6 = NULL, *hostname, *fqdn;
+      const char *node;
++-    size_t hostname_len = 0;
+  
+      *res = NULL;
+-@@ -6794,13 +6810,20 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
++     if (!nodename && !servname)
++@@ -6709,16 +6724,20 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+          return WSAHOST_NOT_FOUND;
+      }
+  
+ +    hostname = get_hostname();
+ +    if (!hostname) return WSA_NOT_ENOUGH_MEMORY;
+ +
+-+    fqdn = get_fqdn();
++     fqdn = get_fqdn();
++-    if (!fqdn) return WSA_NOT_ENOUGH_MEMORY;
++-    dot = strchr(fqdn, '.');
++-    if (dot)
++-        hostname_len = dot - fqdn;
+ +    if (!fqdn)
+ +    {
+ +        HeapFree(GetProcessHeap(), 0, hostname);
+ +        return WSA_NOT_ENOUGH_MEMORY;
+ +    }
+-+
++ 
+      if (!nodename)
+          node = NULL;
+      else if (!nodename[0])
+--    {
+--        if (!(fqdn = get_fqdn())) return WSA_NOT_ENOUGH_MEMORY;
+ -        node = fqdn;
+--    }
+ +        node = hostname;
+      else
+      {
+          node = nodename;
+-@@ -6813,7 +6836,13 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+-             if (node[0] == '[' && (close_bracket = strchr(node + 1, ']')))
+-             {
++@@ -6733,6 +6752,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+                  nodeV6 = HeapAlloc(GetProcessHeap(), 0, close_bracket - node);
+--                if (!nodeV6) return WSA_NOT_ENOUGH_MEMORY;
+-+                if (!nodeV6)
+-+                {
++                 if (!nodeV6)
++                 {
+ +                    HeapFree(GetProcessHeap(), 0, hostname);
+-+                    HeapFree(GetProcessHeap(), 0, fqdn);
+-+                    return WSA_NOT_ENOUGH_MEMORY;
+-+                }
+-+
+-                 lstrcpynA(nodeV6, node + 1, close_bracket - node);
+-                 node = nodeV6;
+-             }
+-@@ -6840,6 +6869,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
++                     HeapFree(GetProcessHeap(), 0, fqdn);
++                     return WSA_NOT_ENOUGH_MEMORY;
++                 }
++@@ -6762,6 +6782,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+          if (punixhints->ai_socktype < 0)
+          {
+              SetLastError(WSAESOCKTNOSUPPORT);
+@@ -92,18 +88,17 @@ index 05423d4b90c..71aaf433d1b 100644
+              HeapFree(GetProcessHeap(), 0, fqdn);
+              HeapFree(GetProcessHeap(), 0, nodeV6);
+              return SOCKET_ERROR;
+-@@ -6864,7 +6894,8 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+-     /* getaddrinfo(3) is thread safe, no need to wrap in CS */
++@@ -6787,7 +6808,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+      result = getaddrinfo(node, servname, punixhints, &unixaires);
+  
+--    if (result && (!hints || !(hints->ai_flags & WS_AI_NUMERICHOST)) && node)
+-+    if (result && (!hints || !(hints->ai_flags & WS_AI_NUMERICHOST))
++     if (result && (!hints || !(hints->ai_flags & WS_AI_NUMERICHOST))
++-            && node && (!strcmp(fqdn, node) || (!strncmp(fqdn, node, hostname_len) && !node[hostname_len])))
+ +            && node && (!strcmp(node, hostname) || !strcmp(node, fqdn)))
+      {
+-         if (!fqdn && !(fqdn = get_fqdn()))
+-         {
+-@@ -6881,6 +6912,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+-         }
++         /* If it didn't work it means the host name IP is not in /etc/hosts, try again
++         * by sending a NULL host and avoid sending a NULL servname too because that
++@@ -6796,6 +6817,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
++         result = getaddrinfo(NULL, servname ? servname : "0", punixhints, &unixaires);
+      }
+      TRACE("%s, %s %p -> %p %d\n", debugstr_a(nodename), debugstr_a(servname), hints, res, result);
+ +    HeapFree(GetProcessHeap(), 0, hostname);
+@@ -111,5 +106,5 @@ index 05423d4b90c..71aaf433d1b 100644
+      HeapFree(GetProcessHeap(), 0, nodeV6);
+  
+ -- 
+-2.28.0
++2.27.0
+ 
 -- 
 2.28.0
 

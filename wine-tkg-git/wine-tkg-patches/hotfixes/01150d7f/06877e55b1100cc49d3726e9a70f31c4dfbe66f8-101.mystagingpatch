@@ -1,6 +1,6 @@
-From 46c18c85b5293d9d174e57bb6545ae018f6d1ecd Mon Sep 17 00:00:00 2001
+From bae7956b2adc1fc91822adaef5a71a3d6e8539af Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
-Date: Tue, 29 Sep 2020 23:42:42 +0200
+Date: Wed, 30 Sep 2020 21:54:42 +0200
 Subject: [PATCH 1/1] 01-staging-hotfixes
 
 ---
@@ -20,6 +20,7 @@ Subject: [PATCH 1/1] 01-staging-hotfixes
  ...stub-for-TokenLinkedToken-info-class.patch |   35 +-
  .../advapi32-Token_Integrity_Level/definition |    5 +-
  ...-BCryptSecretAgreement-with-libgcryp.patch |   41 +-
+ patches/bcrypt-ECDHSecretAgreement/definition |    5 +-
  ...dd-the-absolute-RPATH-when-linking-a.patch |   30 +
  patches/configure-Absolute_RPATH/definition   |    1 +
  ...d.drv-winemac.drv-winex11.drv-Store-.patch |    2 +-
@@ -75,7 +76,7 @@ Subject: [PATCH 1/1] 01-staging-hotfixes
  ...support-for-deleting-junction-points.patch |  174 +--
  ...est-for-junction-point-advertisement.patch |    6 +-
  ...dd-support-for-deleting-junction-poi.patch |  107 ++
- ...rt-for-deleting-junction-points-with.patch |  206 ----
+ ...rt-for-deleting-junction-points-with.patch |  206 ---
  ...upport-for-absolute-symlink-creation.patch |  159 ++-
  ...upport-for-reading-absolute-symlinks.patch |   96 +-
  ...ll-Add-support-for-deleting-symlinks.patch |   32 +-
@@ -154,7 +155,7 @@ Subject: [PATCH 1/1] 01-staging-hotfixes
  ...lement-cuModuleLoad-wrapper-function.patch |   56 +-
  .../0001-nvcuvid-First-implementation.patch   |   67 +-
  ...001-nvencodeapi-First-implementation.patch |   33 +-
- patches/patchinstall.sh                       | 1083 ++++++++++++-----
+ patches/patchinstall.sh                       | 1102 ++++++++++++-----
  ...-file-which-has-a-memory-mapping-sho.patch |   45 +-
  ...open-files-without-any-permission-bi.patch |   18 +-
  ...-a-helper-function-to-update-the-thr.patch |   30 +-
@@ -197,7 +198,8 @@ Subject: [PATCH 1/1] 01-staging-hotfixes
  patches/wow64cpu-Wow64Transition/definition   |    1 +
  .../0001-wpcap-Load-libpcap-dynamically.patch |   47 +-
  patches/ws2_32-TransmitFile/definition        |    2 -
- 194 files changed, 10570 insertions(+), 4952 deletions(-)
+ ...ing-of-empty-string-in-WS_getaddrinf.patch |   69 +-
+ 196 files changed, 10622 insertions(+), 4993 deletions(-)
  create mode 100644 patches/Staging/0003-loader-Add-commandline-option-patches-to-show-the-pa.patch
  delete mode 100644 patches/Staging/definition
  create mode 100644 patches/advapi32-CreateRestrictedToken/0001-ntdll-Implement-NtFilterToken.patch
@@ -2262,6 +2264,17 @@ index b5516951..19818418 100644
 -2.28.0
 +2.27.0
  
+diff --git a/patches/bcrypt-ECDHSecretAgreement/definition b/patches/bcrypt-ECDHSecretAgreement/definition
+index 25c47b4f..f55871fe 100644
+--- a/patches/bcrypt-ECDHSecretAgreement/definition
++++ b/patches/bcrypt-ECDHSecretAgreement/definition
+@@ -1,5 +1,2 @@
+ Fixes: [47699] Multiple games fail to connect to online services (missing BCryptSecretAgreement / BCryptDeriveKey implementation)
+-# Needs to be moved to the unix lib, but that's a nontrivial amount of work, and
+-# using gcrypt is the wrong way forward (we should expose the missing APIs from
+-# gnutls instead).
+-Disabled: true
++
 diff --git a/patches/configure-Absolute_RPATH/0001-configure-Also-add-the-absolute-RPATH-when-linking-a.patch b/patches/configure-Absolute_RPATH/0001-configure-Also-add-the-absolute-RPATH-when-linking-a.patch
 new file mode 100644
 index 00000000..6d89e574
@@ -15802,7 +15815,7 @@ index e7986a4e..31fb734d 100644
 +2.24.0
  
 diff --git a/patches/patchinstall.sh b/patches/patchinstall.sh
-index 83886b1c..7da41468 100755
+index 83886b1c..b3f20e6c 100755
 --- a/patches/patchinstall.sh
 +++ b/patches/patchinstall.sh
 @@ -34,6 +34,7 @@ usage()
@@ -15813,7 +15826,7 @@ index 83886b1c..7da41468 100755
  	echo "  --upstream-commit    Print the upstream Wine commit SHA1 and exit"
  	echo "  --version            Show version information and exit"
  	echo "  -W patchset          Exclude a specific patchset"
-@@ -85,7 +86,9 @@ patch_enable_all ()
+@@ -85,15 +86,19 @@ patch_enable_all ()
  	enable_Compiler_Warnings="$1"
  	enable_Pipelight="$1"
  	enable_Staging="$1"
@@ -15822,8 +15835,10 @@ index 83886b1c..7da41468 100755
 +	enable_advapi32_Token_Integrity_Level="$1"
  	enable_api_ms_win_Stub_DLLs="$1"
  	enable_atl_AtlAxDialogBox="$1"
++	enable_bcrypt_ECDHSecretAgreement="$1"
  	enable_cmd_launch_association="$1"
-@@ -94,6 +97,7 @@ patch_enable_all ()
+ 	enable_color_sRGB_profile="$1"
+ 	enable_comctl32_Listview_DrawItem="$1"
  	enable_comctl32_rebar_capture="$1"
  	enable_comctl32_version_6="$1"
  	enable_comdlg32_lpstrFileTitle="$1"
@@ -15831,7 +15846,7 @@ index 83886b1c..7da41468 100755
  	enable_crypt32_CMS_Certificates="$1"
  	enable_cryptext_CryptExtOpenCER="$1"
  	enable_d3d11_Deferred_Context="$1"
-@@ -125,6 +129,7 @@ patch_enable_all ()
+@@ -125,6 +130,7 @@ patch_enable_all ()
  	enable_dwrite_FontFallback="$1"
  	enable_dxdiagn_Enumerate_DirectSound="$1"
  	enable_dxdiagn_GetChildContainer_Leaf_Nodes="$1"
@@ -15839,7 +15854,7 @@ index 83886b1c..7da41468 100755
  	enable_explorer_Video_Registry_Key="$1"
  	enable_fonts_Missing_Fonts="$1"
  	enable_gdi32_Lazy_Font_Initialization="$1"
-@@ -139,6 +144,7 @@ patch_enable_all ()
+@@ -139,6 +145,7 @@ patch_enable_all ()
  	enable_kernel32_Debugger="$1"
  	enable_kernel32_FindFirstFile="$1"
  	enable_kernel32_Job_Tests="$1"
@@ -15847,7 +15862,7 @@ index 83886b1c..7da41468 100755
  	enable_kernel32_Processor_Group="$1"
  	enable_kernel32_SetProcessDEPPolicy="$1"
  	enable_krnl386_exe16_GDT_LDT_Emulation="$1"
-@@ -161,6 +167,7 @@ patch_enable_all ()
+@@ -161,6 +168,7 @@ patch_enable_all ()
  	enable_ntdll_CriticalSection="$1"
  	enable_ntdll_DOS_Attributes="$1"
  	enable_ntdll_Dealloc_Thread_Stack="$1"
@@ -15855,7 +15870,7 @@ index 83886b1c..7da41468 100755
  	enable_ntdll_Exception="$1"
  	enable_ntdll_FLS_Callbacks="$1"
  	enable_ntdll_FileDispositionInformation="$1"
-@@ -174,12 +181,15 @@ patch_enable_all ()
+@@ -174,12 +182,15 @@ patch_enable_all ()
  	enable_ntdll_Junction_Points="$1"
  	enable_ntdll_Manifest_Range="$1"
  	enable_ntdll_NtAccessCheck="$1"
@@ -15871,7 +15886,7 @@ index 83886b1c..7da41468 100755
  	enable_ntdll_RtlQueryPackageIdentity="$1"
  	enable_ntdll_RtlQueryRegistryValuesEx="$1"
  	enable_ntdll_Serial_Port_Detection="$1"
-@@ -187,7 +197,11 @@ patch_enable_all ()
+@@ -187,7 +198,11 @@ patch_enable_all ()
  	enable_ntdll_Syscall_Emulation="$1"
  	enable_ntdll_SystemCodeIntegrityInformation="$1"
  	enable_ntdll_SystemExtendedProcessInformation="$1"
@@ -15883,7 +15898,7 @@ index 83886b1c..7da41468 100755
  	enable_ntdll_WRITECOPY="$1"
  	enable_ntdll_Zero_mod_name="$1"
  	enable_ntdll_aarch_TEB="$1"
-@@ -215,11 +229,11 @@ patch_enable_all ()
+@@ -215,11 +230,11 @@ patch_enable_all ()
  	enable_server_FileEndOfFileInformation="$1"
  	enable_server_File_Permissions="$1"
  	enable_server_Inherited_ACLs="$1"
@@ -15896,7 +15911,7 @@ index 83886b1c..7da41468 100755
  	enable_server_Signal_Thread="$1"
  	enable_server_Stored_ACLs="$1"
  	enable_setupapi_DiskSpaceList="$1"
-@@ -282,7 +296,7 @@ patch_enable_all ()
+@@ -282,7 +297,7 @@ patch_enable_all ()
  	enable_wineboot_HKEY_DYN_DATA="$1"
  	enable_wineboot_ProxySettings="$1"
  	enable_wineboot_drivers_etc_Stubs="$1"
@@ -15905,7 +15920,7 @@ index 83886b1c..7da41468 100755
  	enable_winecfg_Libraries="$1"
  	enable_winecfg_Staging="$1"
  	enable_wined3d_Accounting="$1"
-@@ -302,6 +316,7 @@ patch_enable_all ()
+@@ -302,6 +317,7 @@ patch_enable_all ()
  	enable_winemenubuilder_integration="$1"
  	enable_wineps_drv_PostScript_Fixes="$1"
  	enable_winepulse_PulseAudio_Support="$1"
@@ -15913,7 +15928,7 @@ index 83886b1c..7da41468 100755
  	enable_winex11_CandidateWindowPos="$1"
  	enable_winex11_MWM_Decorations="$1"
  	enable_winex11_UpdateLayeredWindow="$1"
-@@ -325,6 +340,7 @@ patch_enable_all ()
+@@ -325,6 +341,7 @@ patch_enable_all ()
  	enable_wpcap_Dynamic_Linking="$1"
  	enable_ws2_32_APC_Performance="$1"
  	enable_ws2_32_Connect_Time="$1"
@@ -15921,7 +15936,7 @@ index 83886b1c..7da41468 100755
  	enable_ws2_32_getaddrinfo="$1"
  	enable_ws2_32_getsockopt="$1"
  	enable_wtsapi32_EnumerateProcesses="$1"
-@@ -346,9 +362,15 @@ patch_enable ()
+@@ -346,15 +363,24 @@ patch_enable ()
  		Staging)
  			enable_Staging="$2"
  			;;
@@ -15937,7 +15952,16 @@ index 83886b1c..7da41468 100755
  		api-ms-win-Stub_DLLs)
  			enable_api_ms_win_Stub_DLLs="$2"
  			;;
-@@ -373,6 +395,9 @@ patch_enable ()
+ 		atl-AtlAxDialogBox)
+ 			enable_atl_AtlAxDialogBox="$2"
+ 			;;
++		bcrypt-ECDHSecretAgreement)
++			enable_bcrypt_ECDHSecretAgreement="$2"
++			;;
+ 		cmd-launch-association)
+ 			enable_cmd_launch_association="$2"
+ 			;;
+@@ -373,6 +399,9 @@ patch_enable ()
  		comdlg32-lpstrFileTitle)
  			enable_comdlg32_lpstrFileTitle="$2"
  			;;
@@ -15947,7 +15971,7 @@ index 83886b1c..7da41468 100755
  		crypt32-CMS_Certificates)
  			enable_crypt32_CMS_Certificates="$2"
  			;;
-@@ -466,6 +491,9 @@ patch_enable ()
+@@ -466,6 +495,9 @@ patch_enable ()
  		dxdiagn-GetChildContainer_Leaf_Nodes)
  			enable_dxdiagn_GetChildContainer_Leaf_Nodes="$2"
  			;;
@@ -15957,7 +15981,7 @@ index 83886b1c..7da41468 100755
  		explorer-Video_Registry_Key)
  			enable_explorer_Video_Registry_Key="$2"
  			;;
-@@ -508,6 +536,9 @@ patch_enable ()
+@@ -508,6 +540,9 @@ patch_enable ()
  		kernel32-Job_Tests)
  			enable_kernel32_Job_Tests="$2"
  			;;
@@ -15967,7 +15991,7 @@ index 83886b1c..7da41468 100755
  		kernel32-Processor_Group)
  			enable_kernel32_Processor_Group="$2"
  			;;
-@@ -574,6 +605,9 @@ patch_enable ()
+@@ -574,6 +609,9 @@ patch_enable ()
  		ntdll-Dealloc_Thread_Stack)
  			enable_ntdll_Dealloc_Thread_Stack="$2"
  			;;
@@ -15977,7 +16001,7 @@ index 83886b1c..7da41468 100755
  		ntdll-Exception)
  			enable_ntdll_Exception="$2"
  			;;
-@@ -613,6 +647,9 @@ patch_enable ()
+@@ -613,6 +651,9 @@ patch_enable ()
  		ntdll-NtAccessCheck)
  			enable_ntdll_NtAccessCheck="$2"
  			;;
@@ -15987,7 +16011,7 @@ index 83886b1c..7da41468 100755
  		ntdll-NtDevicePath)
  			enable_ntdll_NtDevicePath="$2"
  			;;
-@@ -622,6 +659,9 @@ patch_enable ()
+@@ -622,6 +663,9 @@ patch_enable ()
  		ntdll-NtQuerySection)
  			enable_ntdll_NtQuerySection="$2"
  			;;
@@ -15997,7 +16021,7 @@ index 83886b1c..7da41468 100755
  		ntdll-NtSetLdtEntries)
  			enable_ntdll_NtSetLdtEntries="$2"
  			;;
-@@ -631,6 +671,9 @@ patch_enable ()
+@@ -631,6 +675,9 @@ patch_enable ()
  		ntdll-ProcessQuotaLimits)
  			enable_ntdll_ProcessQuotaLimits="$2"
  			;;
@@ -16007,7 +16031,7 @@ index 83886b1c..7da41468 100755
  		ntdll-RtlQueryPackageIdentity)
  			enable_ntdll_RtlQueryPackageIdentity="$2"
  			;;
-@@ -652,9 +695,21 @@ patch_enable ()
+@@ -652,9 +699,21 @@ patch_enable ()
  		ntdll-SystemExtendedProcessInformation)
  			enable_ntdll_SystemExtendedProcessInformation="$2"
  			;;
@@ -16029,7 +16053,7 @@ index 83886b1c..7da41468 100755
  		ntdll-WRITECOPY)
  			enable_ntdll_WRITECOPY="$2"
  			;;
-@@ -736,9 +791,6 @@ patch_enable ()
+@@ -736,9 +795,6 @@ patch_enable ()
  		server-Inherited_ACLs)
  			enable_server_Inherited_ACLs="$2"
  			;;
@@ -16039,7 +16063,7 @@ index 83886b1c..7da41468 100755
  		server-Object_Types)
  			enable_server_Object_Types="$2"
  			;;
-@@ -751,6 +803,9 @@ patch_enable ()
+@@ -751,6 +807,9 @@ patch_enable ()
  		server-Registry_Notifications)
  			enable_server_Registry_Notifications="$2"
  			;;
@@ -16049,7 +16073,7 @@ index 83886b1c..7da41468 100755
  		server-Signal_Thread)
  			enable_server_Signal_Thread="$2"
  			;;
-@@ -937,8 +992,8 @@ patch_enable ()
+@@ -937,8 +996,8 @@ patch_enable ()
  		wineboot-drivers_etc_Stubs)
  			enable_wineboot_drivers_etc_Stubs="$2"
  			;;
@@ -16060,7 +16084,7 @@ index 83886b1c..7da41468 100755
  			;;
  		winecfg-Libraries)
  			enable_winecfg_Libraries="$2"
-@@ -1066,6 +1121,9 @@ patch_enable ()
+@@ -1066,6 +1125,9 @@ patch_enable ()
  		ws2_32-Connect_Time)
  			enable_ws2_32_Connect_Time="$2"
  			;;
@@ -16070,7 +16094,7 @@ index 83886b1c..7da41468 100755
  		ws2_32-getaddrinfo)
  			enable_ws2_32_getaddrinfo="$2"
  			;;
-@@ -1093,7 +1151,9 @@ patch_enable ()
+@@ -1093,7 +1155,9 @@ patch_enable ()
  
  # Default settings
  patch_enable_all 0
@@ -16080,7 +16104,7 @@ index 83886b1c..7da41468 100755
  backend="patch"
  
  # Find location of patches
-@@ -1138,6 +1198,11 @@ while test "$#" -gt 0; do
+@@ -1138,6 +1202,11 @@ while test "$#" -gt 0; do
  			exit 0
  			;;
  
@@ -16092,7 +16116,7 @@ index 83886b1c..7da41468 100755
  		--no-autoconf)
  			enable_autoconf=0
  			shift
-@@ -1409,6 +1474,7 @@ elif test "$backend" = "stg"; then
+@@ -1409,6 +1478,7 @@ elif test "$backend" = "stg"; then
  
  	# Only import the regular patches, no autogenerated ones -
  	# moreover, don't run autoreconf or ./tools/make_requests.
@@ -16100,7 +16124,7 @@ index 83886b1c..7da41468 100755
  	enable_autoconf=0
  
  	patch_apply_file()
-@@ -1431,6 +1497,13 @@ patch_apply()
+@@ -1431,6 +1501,13 @@ patch_apply()
  }
  
  
@@ -16114,7 +16138,7 @@ index 83886b1c..7da41468 100755
  if test "$enable_winex11_WM_WINDOWPOSCHANGING" -eq 1; then
  	if test "$enable_winex11__NET_ACTIVE_WINDOW" -gt 1; then
  		abort "Patchset winex11-_NET_ACTIVE_WINDOW disabled, but winex11-WM_WINDOWPOSCHANGING depends on that."
-@@ -1545,10 +1618,10 @@ if test "$enable_shell32_Progress_Dialog" -eq 1; then
+@@ -1545,10 +1622,10 @@ if test "$enable_shell32_Progress_Dialog" -eq 1; then
  fi
  
  if test "$enable_server_Object_Types" -eq 1; then
@@ -16128,7 +16152,7 @@ index 83886b1c..7da41468 100755
  fi
  
  if test "$enable_server_Inherited_ACLs" -eq 1; then
-@@ -1569,13 +1642,6 @@ if test "$enable_server_Stored_ACLs" -eq 1; then
+@@ -1569,13 +1646,6 @@ if test "$enable_server_Stored_ACLs" -eq 1; then
  	enable_server_File_Permissions=1
  fi
  
@@ -16142,7 +16166,7 @@ index 83886b1c..7da41468 100755
  if test "$enable_oleaut32_OLEPictureImpl_SaveAsFile" -eq 1; then
  	if test "$enable_oleaut32_Load_Save_EMF" -gt 1; then
  		abort "Patchset oleaut32-Load_Save_EMF disabled, but oleaut32-OLEPictureImpl_SaveAsFile depends on that."
-@@ -1605,10 +1671,24 @@ if test "$enable_ntdll_SystemCodeIntegrityInformation" -eq 1; then
+@@ -1605,10 +1675,24 @@ if test "$enable_ntdll_SystemCodeIntegrityInformation" -eq 1; then
  fi
  
  if test "$enable_ntdll_Syscall_Emulation" -eq 1; then
@@ -16170,7 +16194,7 @@ index 83886b1c..7da41468 100755
  fi
  
  if test "$enable_ntdll_NtDevicePath" -eq 1; then
-@@ -1618,15 +1698,29 @@ if test "$enable_ntdll_NtDevicePath" -eq 1; then
+@@ -1618,15 +1702,29 @@ if test "$enable_ntdll_NtDevicePath" -eq 1; then
  	enable_ntdll_Pipe_SpecialCharacters=1
  fi
  
@@ -16207,7 +16231,7 @@ index 83886b1c..7da41468 100755
  fi
  
  if test "$enable_ntdll_Builtin_Prot" -eq 1; then
-@@ -1636,18 +1730,11 @@ if test "$enable_ntdll_Builtin_Prot" -eq 1; then
+@@ -1636,18 +1734,11 @@ if test "$enable_ntdll_Builtin_Prot" -eq 1; then
  	enable_ntdll_WRITECOPY=1
  fi
  
@@ -16229,7 +16253,7 @@ index 83886b1c..7da41468 100755
  fi
  
  if test "$enable_kernel32_Processor_Group" -eq 1; then
-@@ -1664,6 +1751,81 @@ if test "$enable_kernel32_CopyFileEx" -eq 1; then
+@@ -1664,6 +1755,81 @@ if test "$enable_kernel32_CopyFileEx" -eq 1; then
  	enable_ntdll_FileDispositionInformation=1
  fi
  
@@ -16311,7 +16335,7 @@ index 83886b1c..7da41468 100755
  if test "$enable_dxdiagn_GetChildContainer_Leaf_Nodes" -eq 1; then
  	if test "$enable_dxdiagn_Enumerate_DirectSound" -gt 1; then
  		abort "Patchset dxdiagn-Enumerate_DirectSound disabled, but dxdiagn-GetChildContainer_Leaf_Nodes depends on that."
-@@ -1713,11 +1875,30 @@ if test "$enable_nvapi_Stub_DLL" -eq 1; then
+@@ -1713,11 +1879,30 @@ if test "$enable_nvapi_Stub_DLL" -eq 1; then
  	enable_nvcuda_CUDA_Support=1
  fi
  
@@ -16346,7 +16370,7 @@ index 83886b1c..7da41468 100755
  fi
  
  
-@@ -1758,35 +1939,30 @@ if test "$enable_Pipelight" -eq 1; then
+@@ -1758,35 +1943,30 @@ if test "$enable_Pipelight" -eq 1; then
  	patch_apply Pipelight/0004-winex11.drv-Indicate-direct-rendering-through-OpenGL.patch
  fi
  
@@ -16397,7 +16421,7 @@ index 83886b1c..7da41468 100755
  fi
  
  # Patchset advapi32-LsaLookupPrivilegeName
-@@ -1799,6 +1975,38 @@ if test "$enable_advapi32_LsaLookupPrivilegeName" -eq 1; then
+@@ -1799,6 +1979,38 @@ if test "$enable_advapi32_LsaLookupPrivilegeName" -eq 1; then
  	patch_apply advapi32-LsaLookupPrivilegeName/0002-advapi32-Use-TRACE-for-LsaOpenPolicy-LsaClose.patch
  fi
  
@@ -16436,7 +16460,29 @@ index 83886b1c..7da41468 100755
  # Patchset api-ms-win-Stub_DLLs
  # |
  # | Modified files:
-@@ -1900,6 +2108,18 @@ if test "$enable_comdlg32_lpstrFileTitle" -eq 1; then
+@@ -1828,6 +2040,21 @@ if test "$enable_atl_AtlAxDialogBox" -eq 1; then
+ 	patch_apply atl-AtlAxDialogBox/0001-atl-Implement-AtlAxDialogBox-A-W.patch
+ fi
+ 
++# Patchset bcrypt-ECDHSecretAgreement
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#47699] Multiple games fail to connect to online services (missing BCryptSecretAgreement / BCryptDeriveKey
++# | 	implementation)
++# |
++# | Modified files:
++# |   *	configure.ac, dlls/bcrypt/Makefile.in, dlls/bcrypt/bcrypt_internal.h, dlls/bcrypt/bcrypt_main.c, dlls/bcrypt/gcrypt.c,
++# | 	dlls/bcrypt/gnutls.c, dlls/bcrypt/macos.c, dlls/bcrypt/tests/bcrypt.c
++# |
++if test "$enable_bcrypt_ECDHSecretAgreement" -eq 1; then
++	patch_apply bcrypt-ECDHSecretAgreement/0001-bcrypt-Implement-BCryptSecretAgreement-with-libgcryp.patch
++	patch_apply bcrypt-ECDHSecretAgreement/0002-bcrypt-Implement-BCRYPT_KDF_HASH.patch
++fi
++
+ # Patchset cmd-launch-association
+ # |
+ # | This patchset fixes the following Wine bugs:
+@@ -1900,6 +2127,18 @@ if test "$enable_comdlg32_lpstrFileTitle" -eq 1; then
  	patch_apply comdlg32-lpstrFileTitle/0001-comdlg32-Postpone-setting-ofn-lpstrFileTitle-to-work.patch
  fi
  
@@ -16455,7 +16501,7 @@ index 83886b1c..7da41468 100755
  # Patchset crypt32-CMS_Certificates
  # |
  # | This patchset fixes the following Wine bugs:
-@@ -2434,6 +2654,331 @@ if test "$enable_dxdiagn_GetChildContainer_Leaf_Nodes" -eq 1; then
+@@ -2434,6 +2673,331 @@ if test "$enable_dxdiagn_GetChildContainer_Leaf_Nodes" -eq 1; then
  	patch_apply dxdiagn-GetChildContainer_Leaf_Nodes/0001-dxdiagn-Calling-GetChildContainer-with-an-empty-stri.patch
  fi
  
@@ -16787,7 +16833,7 @@ index 83886b1c..7da41468 100755
  # Patchset explorer-Video_Registry_Key
  # |
  # | Modified files:
-@@ -2556,8 +3101,33 @@ if test "$enable_iphlpapi_System_Ping" -eq 1; then
+@@ -2556,8 +3120,33 @@ if test "$enable_iphlpapi_System_Ping" -eq 1; then
  	patch_apply iphlpapi-System_Ping/0001-iphlpapi-Fallback-to-system-ping-when-ICMP-permissio.patch
  fi
  
@@ -16821,7 +16867,7 @@ index 83886b1c..7da41468 100755
  # | Modified files:
  # |   *	dlls/ntdll/tests/file.c, server/fd.c
  # |
-@@ -2569,7 +3139,7 @@ fi
+@@ -2569,7 +3158,7 @@ fi
  # Patchset kernel32-CopyFileEx
  # |
  # | This patchset has the following (direct or indirect) dependencies:
@@ -16830,7 +16876,7 @@ index 83886b1c..7da41468 100755
  # |
  # | This patchset fixes the following Wine bugs:
  # |   *	[#22692] Add support for CopyFileEx progress callback
-@@ -2666,19 +3236,6 @@ if test "$enable_krnl386_exe16_Invalid_Console_Handles" -eq 1; then
+@@ -2666,19 +3255,6 @@ if test "$enable_krnl386_exe16_Invalid_Console_Handles" -eq 1; then
  	patch_apply krnl386.exe16-Invalid_Console_Handles/0001-krnl386.exe16-Really-translate-all-invalid-console-h.patch
  fi
  
@@ -16850,7 +16896,7 @@ index 83886b1c..7da41468 100755
  # Patchset mmsystem.dll16-MIDIHDR_Refcount
  # |
  # | This patchset fixes the following Wine bugs:
-@@ -2804,7 +3361,7 @@ fi
+@@ -2804,7 +3380,7 @@ fi
  # Patchset ntdll-APC_Performance
  # |
  # | Modified files:
@@ -16859,7 +16905,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_ntdll_APC_Performance" -eq 1; then
  	patch_apply ntdll-APC_Performance/0001-ntdll-Reuse-old-async-fileio-structures-if-possible.patch
-@@ -2822,48 +3379,28 @@ fi
+@@ -2822,48 +3398,28 @@ fi
  # Patchset ntdll-ApiSetMap
  # |
  # | This patchset has the following (direct or indirect) dependencies:
@@ -16913,7 +16959,7 @@ index 83886b1c..7da41468 100755
  # | 	dlls/psapi/tests/psapi_main.c
  # |
  if test "$enable_ntdll_WRITECOPY" -eq 1; then
-@@ -2880,13 +3417,13 @@ fi
+@@ -2880,13 +3436,13 @@ fi
  # Patchset ntdll-Builtin_Prot
  # |
  # | This patchset has the following (direct or indirect) dependencies:
@@ -16929,7 +16975,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_ntdll_Builtin_Prot" -eq 1; then
  	patch_apply ntdll-Builtin_Prot/0001-ntdll-Fix-holes-in-ELF-mappings.patch
-@@ -2905,15 +3442,20 @@ fi
+@@ -2905,15 +3461,20 @@ fi
  
  # Patchset ntdll-DOS_Attributes
  # |
@@ -16952,7 +16998,7 @@ index 83886b1c..7da41468 100755
  	patch_apply ntdll-DOS_Attributes/0003-ntdll-Implement-storing-DOS-attributes-in-NtSetInfor.patch
  	patch_apply ntdll-DOS_Attributes/0004-ntdll-Implement-storing-DOS-attributes-in-NtCreateFi.patch
  	patch_apply ntdll-DOS_Attributes/0005-libport-Add-support-for-Mac-OS-X-style-extended-attr.patch
-@@ -2925,12 +3467,24 @@ fi
+@@ -2925,12 +3486,24 @@ fi
  # Patchset ntdll-Dealloc_Thread_Stack
  # |
  # | Modified files:
@@ -16978,7 +17024,7 @@ index 83886b1c..7da41468 100755
  # Patchset ntdll-Exception
  # |
  # | This patchset fixes the following Wine bugs:
-@@ -2943,10 +3497,28 @@ if test "$enable_ntdll_Exception" -eq 1; then
+@@ -2943,10 +3516,28 @@ if test "$enable_ntdll_Exception" -eq 1; then
  	patch_apply ntdll-Exception/0002-ntdll-OutputDebugString-should-throw-the-exception-a.patch
  fi
  
@@ -17008,7 +17054,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_ntdll_FileFsFullSizeInformation" -eq 1; then
  	patch_apply ntdll-FileFsFullSizeInformation/0001-ntdll-Add-support-for-FileFsFullSizeInformation-clas.patch
-@@ -2958,12 +3530,31 @@ fi
+@@ -2958,12 +3549,31 @@ fi
  # |   *	[#33162] Ensure NtProtectVirtualMemory and NtCreateSection are on separate pages
  # |
  # | Modified files:
@@ -17041,7 +17087,7 @@ index 83886b1c..7da41468 100755
  # Patchset ntdll-HashLinks
  # |
  # | Modified files:
-@@ -2989,6 +3580,9 @@ fi
+@@ -2989,6 +3599,9 @@ fi
  
  # Patchset ntdll-Hide_Wine_Exports
  # |
@@ -17051,7 +17097,7 @@ index 83886b1c..7da41468 100755
  # | This patchset fixes the following Wine bugs:
  # |   *	[#38656] Add support for hiding wine version information from applications
  # |
-@@ -3005,63 +3599,12 @@ fi
+@@ -3005,63 +3618,12 @@ fi
  # |   *	[#42647] Implement stub handler for int 0x2e
  # |
  # | Modified files:
@@ -17116,7 +17162,7 @@ index 83886b1c..7da41468 100755
  # Patchset ntdll-Manifest_Range
  # |
  # | This patchset fixes the following Wine bugs:
-@@ -3077,19 +3620,36 @@ fi
+@@ -3077,19 +3639,36 @@ fi
  # Patchset ntdll-NtAccessCheck
  # |
  # | Modified files:
@@ -17155,7 +17201,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_ntdll_Pipe_SpecialCharacters" -eq 1; then
  	patch_apply ntdll-Pipe_SpecialCharacters/0001-ntdll-Allow-special-characters-in-pipe-names.patch
-@@ -3104,12 +3664,24 @@ fi
+@@ -3104,12 +3683,24 @@ fi
  # |   *	[#37487] Resolve \\SystemRoot\\ prefix when opening files
  # |
  # | Modified files:
@@ -17181,7 +17227,7 @@ index 83886b1c..7da41468 100755
  # Patchset ntdll-NtQuerySection
  # |
  # | Modified files:
-@@ -3119,6 +3691,28 @@ if test "$enable_ntdll_NtQuerySection" -eq 1; then
+@@ -3119,6 +3710,28 @@ if test "$enable_ntdll_NtQuerySection" -eq 1; then
  	patch_apply ntdll-NtQuerySection/0002-kernel32-tests-Add-tests-for-NtQuerySection.patch
  fi
  
@@ -17210,7 +17256,7 @@ index 83886b1c..7da41468 100755
  # Patchset ntdll-NtSetLdtEntries
  # |
  # | Modified files:
-@@ -3136,7 +3730,7 @@ fi
+@@ -3136,7 +3749,7 @@ fi
  # | 	2.x)
  # |
  # | Modified files:
@@ -17219,7 +17265,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_ntdll_ProcessQuotaLimits" -eq 1; then
  	patch_apply ntdll-ProcessQuotaLimits/0001-ntdll-Add-fake-data-implementation-for-ProcessQuotaL.patch
-@@ -3178,40 +3772,22 @@ fi
+@@ -3178,40 +3791,22 @@ fi
  # Patchset ntdll-Status_Mapping
  # |
  # | Modified files:
@@ -17263,7 +17309,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_ntdll_Syscall_Emulation" -eq 1; then
  	patch_apply ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
-@@ -3224,7 +3800,7 @@ fi
+@@ -3224,7 +3819,7 @@ fi
  # | 	SystemExtendedProcessInformation)
  # |
  # | Modified files:
@@ -17272,7 +17318,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_ntdll_SystemExtendedProcessInformation" -eq 1; then
  	patch_apply ntdll-SystemExtendedProcessInformation/0001-ntdll-Add-stub-for-NtQuerySystemInformation-SystemEx.patch
-@@ -3239,12 +3815,24 @@ fi
+@@ -3239,12 +3834,24 @@ fi
  # |   *	[#49192] ntdll: NtQuerySystemInformation support SystemCodeIntegrityInformation
  # |
  # | Modified files:
@@ -17298,7 +17344,7 @@ index 83886b1c..7da41468 100755
  # Patchset ntdll-SystemModuleInformation
  # |
  # | This patchset fixes the following Wine bugs:
-@@ -3254,16 +3842,18 @@ fi
+@@ -3254,16 +3861,18 @@ fi
  # | 	NtQuerySystemInformation(SystemModuleInformationEx) in Windows Vista+ mode
  # |
  # | Modified files:
@@ -17319,7 +17365,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_ntdll_Zero_mod_name" -eq 1; then
  	patch_apply ntdll-Zero_mod_name/0001-ntdll-Initialize-mod_name-to-zero.patch
-@@ -3282,22 +3872,10 @@ if test "$enable_ntdll_aarch_TEB" -eq 1; then
+@@ -3282,22 +3891,10 @@ if test "$enable_ntdll_aarch_TEB" -eq 1; then
  	patch_apply ntdll-aarch-TEB/0002-ntdll-Always-restore-TEB-to-x18-on-aarch-64-on-retur.patch
  fi
  
@@ -17343,7 +17389,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_ntdll_set_full_cpu_context" -eq 1; then
  	patch_apply ntdll-set_full_cpu_context/0001-ntdll-Add-back-SS-segment-prefixes-in-set_full_cpu_c.patch
-@@ -3309,7 +3887,7 @@ fi
+@@ -3309,7 +3906,7 @@ fi
  # |   *	[#47970] Legends of Runeterra crashes at launch
  # |
  # | Modified files:
@@ -17352,7 +17398,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_ntdll_x86_64_SegDs" -eq 1; then
  	patch_apply ntdll-x86_64_SegDs/0001-ntdll-Report-SegDs-to-be-identical-to-SegSs-on-x86_6.patch
-@@ -3514,45 +4092,24 @@ fi
+@@ -3514,45 +4111,24 @@ fi
  # Patchset server-FileEndOfFileInformation
  # |
  # | Modified files:
@@ -17402,7 +17448,7 @@ index 83886b1c..7da41468 100755
  # |
  if test "$enable_server_Stored_ACLs" -eq 1; then
  	patch_apply server-Stored_ACLs/0001-server-Unify-the-storage-of-security-attributes-for-.patch
-@@ -3567,7 +4124,7 @@ fi
+@@ -3567,7 +4143,7 @@ fi
  # Patchset server-Inherited_ACLs
  # |
  # | This patchset has the following (direct or indirect) dependencies:
@@ -17411,7 +17457,7 @@ index 83886b1c..7da41468 100755
  # |
  # | Modified files:
  # |   *	dlls/advapi32/tests/security.c, server/file.c
-@@ -3576,31 +4133,14 @@ if test "$enable_server_Inherited_ACLs" -eq 1; then
+@@ -3576,31 +4152,14 @@ if test "$enable_server_Inherited_ACLs" -eq 1; then
  	patch_apply server-Inherited_ACLs/0001-server-Inherit-security-attributes-from-parent-direc.patch
  fi
  
@@ -17444,7 +17490,7 @@ index 83886b1c..7da41468 100755
  # | 	server/completion.c, server/directory.c, server/event.c, server/file.c, server/handle.c, server/mailslot.c,
  # | 	server/main.c, server/mapping.c, server/mutex.c, server/named_pipe.c, server/object.c, server/object.h,
  # | 	server/process.c, server/protocol.def, server/registry.c, server/semaphore.c, server/symlink.c, server/thread.c,
-@@ -3616,27 +4156,6 @@ if test "$enable_server_Object_Types" -eq 1; then
+@@ -3616,27 +4175,6 @@ if test "$enable_server_Object_Types" -eq 1; then
  	patch_apply server-Object_Types/0010-ntdll-Mimic-object-type-behavior-for-different-windo.patch
  fi
  
@@ -17472,7 +17518,7 @@ index 83886b1c..7da41468 100755
  # Patchset server-Registry_Notifications
  # |
  # | Modified files:
-@@ -3647,15 +4166,6 @@ if test "$enable_server_Registry_Notifications" -eq 1; then
+@@ -3647,15 +4185,6 @@ if test "$enable_server_Registry_Notifications" -eq 1; then
  	patch_apply server-Registry_Notifications/0002-server-Introduce-refcounting-for-registry-notificati.patch
  fi
  
@@ -17488,7 +17534,7 @@ index 83886b1c..7da41468 100755
  # Patchset setupapi-DiskSpaceList
  # |
  # | Modified files:
-@@ -3710,7 +4220,8 @@ fi
+@@ -3710,7 +4239,8 @@ fi
  # Patchset shell32-Progress_Dialog
  # |
  # | This patchset has the following (direct or indirect) dependencies:
@@ -17498,7 +17544,7 @@ index 83886b1c..7da41468 100755
  # |
  # | Modified files:
  # |   *	dlls/shell32/shell32.rc, dlls/shell32/shlfileop.c, dlls/shell32/shresdef.h
-@@ -3725,7 +4236,8 @@ fi
+@@ -3725,7 +4255,8 @@ fi
  # Patchset shell32-ACE_Viewer
  # |
  # | This patchset has the following (direct or indirect) dependencies:
@@ -17508,7 +17554,7 @@ index 83886b1c..7da41468 100755
  # |
  # | Modified files:
  # |   *	dlls/aclui/Makefile.in, dlls/aclui/aclui.rc, dlls/aclui/aclui_main.c, dlls/aclui/resource.h, dlls/aclui/user_icons.bmp,
-@@ -4958,6 +5470,9 @@ fi
+@@ -4958,6 +5489,9 @@ fi
  
  # Patchset wow64cpu-Wow64Transition
  # |
@@ -17518,7 +17564,7 @@ index 83886b1c..7da41468 100755
  # | This patchset fixes the following Wine bugs:
  # |   *	[#45567] League of Legends 8.12+ fails to start a game (anticheat engine, validation of WoW64 syscall dispatcher)
  # |
-@@ -4997,6 +5512,16 @@ if test "$enable_ws2_32_Connect_Time" -eq 1; then
+@@ -4997,6 +5531,16 @@ if test "$enable_ws2_32_Connect_Time" -eq 1; then
  	patch_apply ws2_32-Connect_Time/0001-ws2_32-Implement-returning-the-proper-time-with-SO_C.patch
  fi
  
@@ -23335,6 +23381,143 @@ index a2a8db04..f54cc82d 100644
  # Fixes: [5048] Support for TransmitFile
 -# Broken nontrivially by db8a75312, and I'm working on a proper implementation for this.
 -Disabled: true
+diff --git a/patches/ws2_32-getaddrinfo/0001-ws2_32-Fix-handling-of-empty-string-in-WS_getaddrinf.patch b/patches/ws2_32-getaddrinfo/0001-ws2_32-Fix-handling-of-empty-string-in-WS_getaddrinf.patch
+index 582cece8..743c7272 100644
+--- a/patches/ws2_32-getaddrinfo/0001-ws2_32-Fix-handling-of-empty-string-in-WS_getaddrinf.patch
++++ b/patches/ws2_32-getaddrinfo/0001-ws2_32-Fix-handling-of-empty-string-in-WS_getaddrinf.patch
+@@ -1,18 +1,18 @@
+-From 381a5842063016c8cec8810f81baaa7e07b790ac Mon Sep 17 00:00:00 2001
++From 98db626566f8d4bcc0de8ad17fe0dabb685d69fe Mon Sep 17 00:00:00 2001
+ From: Sebastian Lackner <sebastian@fds-team.de>
+ Date: Thu, 31 Aug 2017 01:15:05 +0200
+ Subject: [PATCH] ws2_32: Fix handling of empty string in WS_getaddrinfo.
+ 
+ Fixes a regression introduced in a2053597cc326e2305c44e1c1a954c2e0ee2853e.
+ ---
+- dlls/ws2_32/socket.c | 46 +++++++++++++++++++++++++++++++++++++-------
+- 1 file changed, 39 insertions(+), 7 deletions(-)
++ dlls/ws2_32/socket.c | 38 ++++++++++++++++++++++++++++++--------
++ 1 file changed, 30 insertions(+), 8 deletions(-)
+ 
+ diff --git a/dlls/ws2_32/socket.c b/dlls/ws2_32/socket.c
+-index 05423d4b90c..71aaf433d1b 100644
++index 4d2afa946b7..ed1ca2f44b9 100644
+ --- a/dlls/ws2_32/socket.c
+ +++ b/dlls/ws2_32/socket.c
+-@@ -6759,6 +6759,22 @@ static int convert_eai_u2w(int unixret) {
++@@ -6673,6 +6673,22 @@ static int convert_eai_u2w(int unixret) {
+      return unixret;
+  }
+  
+@@ -35,56 +35,52 @@ index 05423d4b90c..71aaf433d1b 100644
+  static char *get_fqdn(void)
+  {
+      char *ret;
+-@@ -6784,7 +6800,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
++@@ -6698,9 +6714,8 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+      struct addrinfo *unixaires = NULL;
+      int   result;
+      struct addrinfo unixhints, *punixhints = NULL;
+--    char *nodeV6 = NULL, *fqdn = NULL;
+-+    char *nodeV6 = NULL, *hostname, *fqdn = NULL;
++-    char *dot, *nodeV6 = NULL, *fqdn;
+++    char *nodeV6 = NULL, *hostname, *fqdn;
+      const char *node;
++-    size_t hostname_len = 0;
+  
+      *res = NULL;
+-@@ -6794,13 +6810,20 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
++     if (!nodename && !servname)
++@@ -6709,16 +6724,20 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+          return WSAHOST_NOT_FOUND;
+      }
+  
+ +    hostname = get_hostname();
+ +    if (!hostname) return WSA_NOT_ENOUGH_MEMORY;
+ +
+-+    fqdn = get_fqdn();
++     fqdn = get_fqdn();
++-    if (!fqdn) return WSA_NOT_ENOUGH_MEMORY;
++-    dot = strchr(fqdn, '.');
++-    if (dot)
++-        hostname_len = dot - fqdn;
+ +    if (!fqdn)
+ +    {
+ +        HeapFree(GetProcessHeap(), 0, hostname);
+ +        return WSA_NOT_ENOUGH_MEMORY;
+ +    }
+-+
++ 
+      if (!nodename)
+          node = NULL;
+      else if (!nodename[0])
+--    {
+--        if (!(fqdn = get_fqdn())) return WSA_NOT_ENOUGH_MEMORY;
+ -        node = fqdn;
+--    }
+ +        node = hostname;
+      else
+      {
+          node = nodename;
+-@@ -6813,7 +6836,13 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+-             if (node[0] == '[' && (close_bracket = strchr(node + 1, ']')))
+-             {
++@@ -6733,6 +6752,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+                  nodeV6 = HeapAlloc(GetProcessHeap(), 0, close_bracket - node);
+--                if (!nodeV6) return WSA_NOT_ENOUGH_MEMORY;
+-+                if (!nodeV6)
+-+                {
++                 if (!nodeV6)
++                 {
+ +                    HeapFree(GetProcessHeap(), 0, hostname);
+-+                    HeapFree(GetProcessHeap(), 0, fqdn);
+-+                    return WSA_NOT_ENOUGH_MEMORY;
+-+                }
+-+
+-                 lstrcpynA(nodeV6, node + 1, close_bracket - node);
+-                 node = nodeV6;
+-             }
+-@@ -6840,6 +6869,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
++                     HeapFree(GetProcessHeap(), 0, fqdn);
++                     return WSA_NOT_ENOUGH_MEMORY;
++                 }
++@@ -6762,6 +6782,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+          if (punixhints->ai_socktype < 0)
+          {
+              SetLastError(WSAESOCKTNOSUPPORT);
+@@ -92,18 +88,17 @@ index 05423d4b90c..71aaf433d1b 100644
+              HeapFree(GetProcessHeap(), 0, fqdn);
+              HeapFree(GetProcessHeap(), 0, nodeV6);
+              return SOCKET_ERROR;
+-@@ -6864,7 +6894,8 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+-     /* getaddrinfo(3) is thread safe, no need to wrap in CS */
++@@ -6787,7 +6808,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+      result = getaddrinfo(node, servname, punixhints, &unixaires);
+  
+--    if (result && (!hints || !(hints->ai_flags & WS_AI_NUMERICHOST)) && node)
+-+    if (result && (!hints || !(hints->ai_flags & WS_AI_NUMERICHOST))
++     if (result && (!hints || !(hints->ai_flags & WS_AI_NUMERICHOST))
++-            && node && (!strcmp(fqdn, node) || (!strncmp(fqdn, node, hostname_len) && !node[hostname_len])))
+ +            && node && (!strcmp(node, hostname) || !strcmp(node, fqdn)))
+      {
+-         if (!fqdn && !(fqdn = get_fqdn()))
+-         {
+-@@ -6881,6 +6912,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+-         }
++         /* If it didn't work it means the host name IP is not in /etc/hosts, try again
++         * by sending a NULL host and avoid sending a NULL servname too because that
++@@ -6796,6 +6817,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
++         result = getaddrinfo(NULL, servname ? servname : "0", punixhints, &unixaires);
+      }
+      TRACE("%s, %s %p -> %p %d\n", debugstr_a(nodename), debugstr_a(servname), hints, res, result);
+ +    HeapFree(GetProcessHeap(), 0, hostname);
+@@ -111,5 +106,5 @@ index 05423d4b90c..71aaf433d1b 100644
+      HeapFree(GetProcessHeap(), 0, nodeV6);
+  
+ -- 
+-2.28.0
++2.27.0
+ 
 -- 
 2.28.0
 
