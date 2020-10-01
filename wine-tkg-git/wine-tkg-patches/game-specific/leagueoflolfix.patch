@@ -1,25 +1,29 @@
-From 834e7d5da1ff024429c3e8b84ab7201babdd7ebf Mon Sep 17 00:00:00 2001
-From: Tk-Glitch <ti3nou@gmail.com>
-Date: Thu, 9 Apr 2020 12:20:12 +0200
-Subject: Revert "libwine: Remove some no longer needed helper functions."
+From bff63e4de27f2ef1287e7ff3f8c0cd2e13e6875d Mon Sep 17 00:00:00 2001
+From: yuiiio <atbjyk@protonmail.com>
+Date: Thu, 1 Oct 2020 23:35:35 +0900
+Subject: [PATCH 1/2] Revert "libwine: Remove some no longer needed helper
+ functions."
 
 This reverts commit 18273d5e71e25575bdbdba1d252df72be3373f6d.
+---
+ libs/wine/ldt.c | 55 +++++++++++++++++++++++++++++++++++--------------
+ 1 file changed, 40 insertions(+), 15 deletions(-)
 
 diff --git a/libs/wine/ldt.c b/libs/wine/ldt.c
-index a8f4925019b..18b0b9be9bf 100644
+index 30d9b945f73..5e85c1137c8 100644
 --- a/libs/wine/ldt.c
 +++ b/libs/wine/ldt.c
 @@ -45,9 +45,26 @@ struct __wine_ldt_copy
      unsigned char flags[8192]; /* flags (defined below) */
  } wine_ldt_copy_obsolete = { { 0, 0, 0 } };
- 
+
 +#define WINE_LDT_FLAGS_DATA      0x13  /* Data segment */
 +#define WINE_LDT_FLAGS_STACK     0x17  /* Stack segment */
 +#define WINE_LDT_FLAGS_CODE      0x1b  /* Code segment */
 +#define WINE_LDT_FLAGS_TYPE_MASK 0x1f  /* Mask for segment type */
  #define WINE_LDT_FLAGS_32BIT     0x40  /* Segment is 32-bit (code or stack) */
  #define WINE_LDT_FLAGS_ALLOCATED 0x80  /* Segment is allocated (no longer free) */
- 
+
 +/* helper functions to manipulate the LDT_ENTRY structure */
 +static inline void wine_ldt_set_base( LDT_ENTRY *ent, const void *base )
 +{
@@ -36,7 +40,7 @@ index a8f4925019b..18b0b9be9bf 100644
  static inline void *wine_ldt_get_base( const LDT_ENTRY *ent )
  {
      return (void *)(ent->BaseLow |
-@@ -77,6 +60,26 @@ static inline unsigned int wine_ldt_get_limit( const LDT_ENTRY *ent )
+@@ -60,6 +77,26 @@ static inline unsigned int wine_ldt_get_limit( const LDT_ENTRY *ent )
      if (ent->HighWord.Bits.Granularity) limit = (limit << 12) | 0xfff;
      return limit;
  }
@@ -60,16 +64,13 @@ index a8f4925019b..18b0b9be9bf 100644
 +    const DWORD *dw = (const DWORD *)ent;
 +    return (dw[0] | dw[1]) == 0;
 +}
- 
+
  #ifdef __linux__
- 
-@@ -207,21 +170,9 @@ void wine_ldt_get_entry_obsolete( unsigned short sel, LDT_ENTRY *entry )
+
+@@ -170,21 +207,9 @@ void wine_ldt_get_entry_obsolete( unsigned short sel, LDT_ENTRY *entry )
      lock_ldt();
      if (wine_ldt_copy_obsolete.flags[index] & WINE_LDT_FLAGS_ALLOCATED)
      {
-+        wine_ldt_set_base(  entry, wine_ldt_copy_obsolete.base[index] );
-+        wine_ldt_set_limit( entry, wine_ldt_copy_obsolete.limit[index] );
-+        wine_ldt_set_flags( entry, wine_ldt_copy_obsolete.flags[index] );
 -        ULONG_PTR base = (ULONG_PTR)wine_ldt_copy_obsolete.base[index];
 -        ULONG limit = wine_ldt_copy_obsolete.limit[index];
 -
@@ -85,25 +86,35 @@ index a8f4925019b..18b0b9be9bf 100644
 -        entry->HighWord.Bits.Sys         = 0;
 -        entry->HighWord.Bits.Reserved_0  = 0;
 -        entry->HighWord.Bits.Default_Big = !!(wine_ldt_copy_obsolete.flags[index] & WINE_LDT_FLAGS_32BIT);
++        wine_ldt_set_base(  entry, wine_ldt_copy_obsolete.base[index] );
++        wine_ldt_set_limit( entry, wine_ldt_copy_obsolete.limit[index] );
++        wine_ldt_set_flags( entry, wine_ldt_copy_obsolete.flags[index] );
      }
      else *entry = null_entry;
      unlock_ldt();
+--
+2.28.0
 
-From 834e7d5da1ff024429c3e8b84ab7201babdd7ebf Mon Sep 17 00:00:00 2001
-From: Tk-Glitch <ti3nou@gmail.com>
-Date: Sat, 4 Apr 2020 13:05:43 +0200
-Subject: Revert "libwine: Make the LDT functions obsolete."
+From 992d96a7464b533358aa03ea1b616f5402241a99 Mon Sep 17 00:00:00 2001
+From: yuiiio <atbjyk@protonmail.com>
+Date: Thu, 1 Oct 2020 23:41:43 +0900
+Subject: [PATCH 2/2] Revert "libwine: Make the LDT functions obsolete."
 
 This reverts commit 3b16f35413f3a6641df42b782ead294f343e7d5e.
+---
+ include/wine/library.h | 110 ++++++++++++++++++++++++++
+ libs/wine/ldt.c        | 175 +++++++++++------------------------------
+ libs/wine/wine.map     |  38 +++++----
+ 3 files changed, 181 insertions(+), 142 deletions(-)
 
 diff --git a/include/wine/library.h b/include/wine/library.h
-index f338c4da19..a6fe28059f 100644
+index b8a4a2df576..2e0f6dc1bad 100644
 --- a/include/wine/library.h
 +++ b/include/wine/library.h
-@@ -76,6 +76,116 @@ extern int wine_mmap_is_in_reserved_area( void *addr, size_t size );
+@@ -63,6 +63,116 @@ extern int wine_mmap_is_in_reserved_area( void *addr, size_t size );
  extern int wine_mmap_enum_reserved_areas( int (*enum_func)(void *base, size_t size, void *arg),
                                            void *arg, int top_down );
- 
+
 +#ifdef __i386__
 +
 +/* LDT management */
@@ -218,18 +229,18 @@ index f338c4da19..a6fe28059f 100644
  }
  #endif
 diff --git a/libs/wine/ldt.c b/libs/wine/ldt.c
-index a8f4925019..5fabd1968d 100644
+index 5e85c1137c8..15ce11f2074 100644
 --- a/libs/wine/ldt.c
 +++ b/libs/wine/ldt.c
 @@ -31,73 +31,11 @@
- 
+
  #include "windef.h"
  #include "winbase.h"
 +#include "wine/library.h"
  #include "wine/asm.h"
- 
+
  #ifdef __i386__
- 
+
 -#ifdef __ASM_OBSOLETE
 -
 -/* the local copy of the LDT */
@@ -294,12 +305,12 @@ index a8f4925019..5fabd1968d 100644
 -}
 -
  #ifdef __linux__
- 
+
  #ifdef HAVE_SYS_SYSCALL_H
 @@ -164,6 +102,13 @@ static inline int set_thread_area( struct modify_ldt_s *ptr )
  #include <i386/user_ldt.h>
  #endif
- 
+
 +/* local copy of the LDT */
 +#ifdef __APPLE__
 +struct __wine_ldt_copy wine_ldt_copy = { { 0, 0, 0 } };
@@ -308,7 +319,7 @@ index a8f4925019..5fabd1968d 100644
 +#endif
 +
  static const LDT_ENTRY null_entry;  /* all-zeros, used to clear LDT entries */
- 
+
  #define LDT_FIRST_ENTRY 512
 @@ -183,7 +128,7 @@ static inline int is_gdt_sel( unsigned short sel ) { return !(sel & 4); }
   *
@@ -327,7 +338,7 @@ index a8f4925019..5fabd1968d 100644
 +void wine_ldt_get_entry( unsigned short sel, LDT_ENTRY *entry )
  {
      int index = sel >> 3;
- 
+
 @@ -205,11 +150,11 @@ void wine_ldt_get_entry_obsolete( unsigned short sel, LDT_ENTRY *entry )
          return;
      }
@@ -344,8 +355,8 @@ index a8f4925019..5fabd1968d 100644
      }
      else *entry = null_entry;
      unlock_ldt();
-@@ -274,9 +219,9 @@ static int internal_set_entry( unsigned short sel, const LDT_ENTRY *entry )
- 
+@@ -272,9 +217,9 @@ static int internal_set_entry( unsigned short sel, const LDT_ENTRY *entry )
+
      if (ret >= 0)
      {
 -        wine_ldt_copy_obsolete.base[index]  = wine_ldt_get_base(entry);
@@ -357,7 +368,7 @@ index a8f4925019..5fabd1968d 100644
                                   (entry->HighWord.Bits.Default_Big ? WINE_LDT_FLAGS_32BIT : 0) |
                                   WINE_LDT_FLAGS_ALLOCATED);
      }
-@@ -289,7 +234,7 @@ static int internal_set_entry( unsigned short sel, const LDT_ENTRY *entry )
+@@ -287,7 +232,7 @@ static int internal_set_entry( unsigned short sel, const LDT_ENTRY *entry )
   *
   * Set an LDT entry.
   */
@@ -365,8 +376,8 @@ index a8f4925019..5fabd1968d 100644
 +int wine_ldt_set_entry( unsigned short sel, const LDT_ENTRY *entry )
  {
      int ret;
- 
-@@ -305,7 +250,7 @@ int wine_ldt_set_entry_obsolete( unsigned short sel, const LDT_ENTRY *entry )
+
+@@ -303,7 +248,7 @@ int wine_ldt_set_entry_obsolete( unsigned short sel, const LDT_ENTRY *entry )
   *
   * Check if the selector is a system selector (i.e. not managed by Wine).
   */
@@ -375,7 +386,7 @@ index a8f4925019..5fabd1968d 100644
  {
      return is_gdt_sel(sel) || ((sel >> 3) < LDT_FIRST_ENTRY);
  }
-@@ -317,7 +262,7 @@ int wine_ldt_is_system_obsolete( unsigned short sel )
+@@ -315,7 +260,7 @@ int wine_ldt_is_system_obsolete( unsigned short sel )
   * Convert a segment:offset pair to a linear pointer.
   * Note: we don't lock the LDT since this has to be fast.
   */
@@ -383,8 +394,8 @@ index a8f4925019..5fabd1968d 100644
 +void *wine_ldt_get_ptr( unsigned short sel, unsigned long offset )
  {
      int index;
- 
-@@ -325,8 +270,8 @@ void *wine_ldt_get_ptr_obsolete( unsigned short sel, unsigned long offset )
+
+@@ -323,8 +268,8 @@ void *wine_ldt_get_ptr_obsolete( unsigned short sel, unsigned long offset )
          return (void *)offset;
      if ((index = (sel >> 3)) < LDT_FIRST_ENTRY)  /* system selector */
          return (void *)offset;
@@ -393,9 +404,9 @@ index a8f4925019..5fabd1968d 100644
 +    if (!(wine_ldt_copy.flags[index] & WINE_LDT_FLAGS_32BIT)) offset &= 0xffff;
 +    return (char *)wine_ldt_copy.base[index] + offset;
  }
- 
- 
-@@ -336,7 +281,7 @@ void *wine_ldt_get_ptr_obsolete( unsigned short sel, unsigned long offset )
+
+
+@@ -334,7 +279,7 @@ void *wine_ldt_get_ptr_obsolete( unsigned short sel, unsigned long offset )
   * Allocate a number of consecutive ldt entries, without setting the LDT contents.
   * Return a selector for the first entry.
   */
@@ -403,8 +414,8 @@ index a8f4925019..5fabd1968d 100644
 +unsigned short wine_ldt_alloc_entries( int count )
  {
      int i, index, size = 0;
- 
-@@ -344,13 +289,13 @@ unsigned short wine_ldt_alloc_entries_obsolete( int count )
+
+@@ -342,13 +287,13 @@ unsigned short wine_ldt_alloc_entries_obsolete( int count )
      lock_ldt();
      for (i = LDT_FIRST_ENTRY; i < LDT_SIZE; i++)
      {
@@ -413,17 +424,17 @@ index a8f4925019..5fabd1968d 100644
          else if (++size >= count)  /* found a large enough block */
          {
              index = i - size + 1;
- 
+
              /* mark selectors as allocated */
 -            for (i = 0; i < count; i++) wine_ldt_copy_obsolete.flags[index + i] |= WINE_LDT_FLAGS_ALLOCATED;
 +            for (i = 0; i < count; i++) wine_ldt_copy.flags[index + i] |= WINE_LDT_FLAGS_ALLOCATED;
              unlock_ldt();
              return (index << 3) | 7;
          }
-@@ -360,15 +305,13 @@ unsigned short wine_ldt_alloc_entries_obsolete( int count )
+@@ -358,15 +303,13 @@ unsigned short wine_ldt_alloc_entries_obsolete( int count )
  }
- 
- 
+
+
 -void wine_ldt_free_entries_obsolete( unsigned short sel, int count );
 -
  /***********************************************************************
@@ -436,14 +447,14 @@ index a8f4925019..5fabd1968d 100644
 +unsigned short wine_ldt_realloc_entries( unsigned short sel, int oldcount, int newcount )
  {
      int i;
- 
-@@ -381,23 +324,23 @@ unsigned short wine_ldt_realloc_entries_obsolete( unsigned short sel, int oldcou
+
+@@ -379,23 +322,23 @@ unsigned short wine_ldt_realloc_entries_obsolete( unsigned short sel, int oldcou
          if (index + newcount > LDT_SIZE) i = oldcount;
          else
              for (i = oldcount; i < newcount; i++)
 -                if (wine_ldt_copy_obsolete.flags[index+i] & WINE_LDT_FLAGS_ALLOCATED) break;
 +                if (wine_ldt_copy.flags[index+i] & WINE_LDT_FLAGS_ALLOCATED) break;
- 
+
          if (i < newcount)  /* they are not free */
          {
 -            wine_ldt_free_entries_obsolete( sel, oldcount );
@@ -466,7 +477,7 @@ index a8f4925019..5fabd1968d 100644
      }
      return sel;
  }
-@@ -408,7 +351,7 @@ unsigned short wine_ldt_realloc_entries_obsolete( unsigned short sel, int oldcou
+@@ -406,7 +349,7 @@ unsigned short wine_ldt_realloc_entries_obsolete( unsigned short sel, int oldcou
   *
   * Free a number of consecutive ldt entries and clear their contents.
   */
@@ -474,8 +485,8 @@ index a8f4925019..5fabd1968d 100644
 +void wine_ldt_free_entries( unsigned short sel, int count )
  {
      int index;
- 
-@@ -416,7 +359,7 @@ void wine_ldt_free_entries_obsolete( unsigned short sel, int count )
+
+@@ -414,7 +357,7 @@ void wine_ldt_free_entries_obsolete( unsigned short sel, int count )
      for (index = sel >> 3; count > 0; count--, index++)
      {
          internal_set_entry( sel, &null_entry );
@@ -484,7 +495,7 @@ index a8f4925019..5fabd1968d 100644
      }
      unlock_ldt();
  }
-@@ -430,7 +373,7 @@ static int global_fs_sel = -1;  /* global selector for %fs shared among all thre
+@@ -428,7 +371,7 @@ static int global_fs_sel = -1;  /* global selector for %fs shared among all thre
   * Allocate an LDT entry for a %fs selector, reusing a global
   * GDT selector if possible. Return the selector value.
   */
@@ -493,16 +504,16 @@ index a8f4925019..5fabd1968d 100644
  {
      if (global_fs_sel == -1)
      {
-@@ -457,7 +400,7 @@ unsigned short wine_ldt_alloc_fs_obsolete(void)
+@@ -455,7 +398,7 @@ unsigned short wine_ldt_alloc_fs_obsolete(void)
  #endif
      }
      if (global_fs_sel > 0) return global_fs_sel;
 -    return wine_ldt_alloc_entries_obsolete( 1 );
 +    return wine_ldt_alloc_entries( 1 );
  }
- 
- 
-@@ -469,7 +412,7 @@ unsigned short wine_ldt_alloc_fs_obsolete(void)
+
+
+@@ -467,7 +410,7 @@ unsigned short wine_ldt_alloc_fs_obsolete(void)
   *
   * Note: this runs in the context of the new thread, so cannot acquire locks.
   */
@@ -511,7 +522,7 @@ index a8f4925019..5fabd1968d 100644
  {
      if ((sel & ~3) == (global_fs_sel & ~3))
      {
-@@ -497,7 +440,7 @@ void wine_ldt_init_fs_obsolete( unsigned short sel, const LDT_ENTRY *entry )
+@@ -495,7 +438,7 @@ void wine_ldt_init_fs_obsolete( unsigned short sel, const LDT_ENTRY *entry )
   *
   * Free a %fs selector returned by wine_ldt_alloc_fs.
   */
@@ -519,8 +530,8 @@ index a8f4925019..5fabd1968d 100644
 +void wine_ldt_free_fs( unsigned short sel )
  {
      WORD fs;
- 
-@@ -508,46 +451,22 @@ void wine_ldt_free_fs_obsolete( unsigned short sel )
+
+@@ -506,46 +449,22 @@ void wine_ldt_free_fs_obsolete( unsigned short sel )
          /* FIXME: if freeing current %fs we cannot acquire locks */
          __asm__( "mov %0,%%fs" :: "r" (0) );
          internal_set_entry( sel, &null_entry );
@@ -530,8 +541,8 @@ index a8f4925019..5fabd1968d 100644
 -    else wine_ldt_free_entries_obsolete( sel, 1 );
 +    else wine_ldt_free_entries( sel, 1 );
  }
- 
- 
+
+
  /***********************************************************************
   *           selector access functions
   */
@@ -575,85 +586,10 @@ index a8f4925019..5fabd1968d 100644
 +__ASM_GLOBAL_FUNC( wine_get_ss, "movw %ss,%ax\n\tret" )
 +__ASM_GLOBAL_FUNC( wine_set_fs, "movl 4(%esp),%eax\n\tmovw %ax,%fs\n\tret" )
 +__ASM_GLOBAL_FUNC( wine_set_gs, "movl 4(%esp),%eax\n\tmovw %ax,%gs\n\tret" )
- 
+
  #endif /* __i386__ */
-diff --git a/libs/wine/wine.map b/libs/wine/wine.map
-index 7ea849b908..3f2c430fa8 100644
---- a/libs/wine/wine.map
-+++ b/libs/wine/wine.map
-@@ -18,18 +18,38 @@ WINE_1.0
-     wine_dll_set_callback;
-     wine_exec_wine_binary;
-     wine_get_build_id;
-+    wine_get_cs;
-+    wine_get_ds;
-+    wine_get_es;
-+    wine_get_fs;
-+    wine_get_gs;
-+    wine_get_ss;
-     wine_get_version;
-     wine_get_patches;
-     wine_init;
-     wine_init_argv0_path;
-+    wine_ldt_alloc_entries;
-+    wine_ldt_alloc_fs;
-+    wine_ldt_copy;
-+    wine_ldt_free_entries;
-+    wine_ldt_free_fs;
-+    wine_ldt_get_entry;
-+    wine_ldt_get_ptr;
-+    wine_ldt_init_fs;
-+    wine_ldt_init_locking;
-+    wine_ldt_is_system;
-+    wine_ldt_realloc_entries;
-+    wine_ldt_set_entry;
-     wine_mmap_add_reserved_area;
-     wine_mmap_enum_reserved_areas;
-     wine_mmap_is_in_reserved_area;
-     wine_mmap_remove_reserved_area;
-     wine_mmap_add_free_area;
-     wine_mmap_enum_free_areas;
-     wine_mmap_is_in_free_area;
-     wine_mmap_remove_free_area;
-+    wine_set_fs;
-+    wine_set_gs;
-     wine_wctype_table;
- 
-     /* the following functions are obsolete and only exported for backwards compatibility */
-@@ -93,33 +113,13 @@ WINE_1.0
-     wine_fold_string;
-     wine_get_build_dir;
-     wine_get_config_dir;
--    wine_get_cs;
-     wine_get_data_dir;
--    wine_get_ds;
--    wine_get_es;
--    wine_get_fs;
--    wine_get_gs;
-     wine_get_server_dir;
-     wine_get_sortkey;
--    wine_get_ss;
-     wine_get_user_name;
-     wine_is_dbcs_leadbyte;
--    wine_ldt_alloc_entries;
--    wine_ldt_alloc_fs;
--    wine_ldt_copy;
--    wine_ldt_free_entries;
--    wine_ldt_free_fs;
--    wine_ldt_get_entry;
--    wine_ldt_get_ptr;
--    wine_ldt_init_fs;
--    wine_ldt_init_locking;
--    wine_ldt_is_system;
--    wine_ldt_realloc_entries;
--    wine_ldt_set_entry;
-     wine_pthread_get_functions;
-     wine_pthread_set_functions;
--    wine_set_fs;
--    wine_set_gs;
-     wine_switch_to_stack;
-     wine_utf8_mbstowcs;
-     wine_utf8_wcstombs;
+--
+2.28.0
 
 diff --git a/dlls/ntdll/signal_i386.c b/dlls/ntdll/signal_i386.c
 index abdc0efc51..411abb86d8 100644
@@ -662,7 +598,7 @@ index abdc0efc51..411abb86d8 100644
 @@ -437,6 +437,8 @@ static wine_signal_handler handlers[256];
  extern void DECLSPEC_NORETURN __wine_syscall_dispatcher( void );
  extern NTSTATUS WINAPI __syscall_NtGetContextThread( HANDLE handle, CONTEXT *context );
- 
+
 +static int wine_cs;
 +
  static void* WINAPI __wine_fakedll_dispatcher( const char *module, ULONG ord )
@@ -671,7 +607,7 @@ index abdc0efc51..411abb86d8 100644
 @@ -885,7 +887,7 @@ static inline void * SIGNALFUNC init_handler( const ucontext_t *sigcontext, WORD
      }
  #endif
- 
+
 -    if (!ldt_is_system(CS_sig(sigcontext)) || !ldt_is_system(SS_sig(sigcontext)))  /* 16-bit mode */
 +    if ((CS_sig(sigcontext) != wine_cs && !ldt_is_system(CS_sig(sigcontext))) || !ldt_is_system(SS_sig(sigcontext)))
      {
@@ -680,21 +616,21 @@ index abdc0efc51..411abb86d8 100644
 @@ -1576,7 +1578,7 @@ static inline DWORD is_privileged_instr( CONTEXT *context )
      BYTE instr[16];
      unsigned int i, len, prefix_count = 0;
- 
+
 -    if (!ldt_is_system( context->SegCs )) return 0;
 +    if (context->SegCs != wine_cs && !ldt_is_system( context->SegCs )) return 0;
      len = virtual_uninterrupted_read_memory( (BYTE *)context->Eip, instr, sizeof(instr) );
- 
+
      for (i = 0; i < len; i++) switch (instr[i])
 @@ -1674,7 +1676,7 @@ static inline BOOL check_invalid_gs( CONTEXT *context )
      WORD system_gs = x86_thread_data()->gs;
- 
+
      if (context->SegGs == system_gs) return FALSE;
 -    if (!ldt_is_system( context->SegCs )) return FALSE;
 +    if (context->SegCs != wine_cs && !ldt_is_system( context->SegCs )) return 0;
      /* only handle faults in system libraries */
      if (virtual_is_valid_code_address( instr, 1 )) return FALSE;
- 
+
 @@ -1916,7 +1918,7 @@ static EXCEPTION_RECORD *setup_exception_record( ucontext_t *sigcontext, void *s
      EIP_sig(sigcontext) = (DWORD)func;
      /* clear single-step, direction, and align check flag */
@@ -707,7 +643,7 @@ index abdc0efc51..411abb86d8 100644
 @@ -2394,6 +2396,21 @@ static void ldt_unlock(void)
      else RtlLeaveCriticalSection( &ldt_section );
  }
- 
+
 +void signal_init_cs(void)
 +{
 +    LDT_ENTRY entry;
@@ -723,16 +659,16 @@ index abdc0efc51..411abb86d8 100644
 +    wine_set_cs( wine_cs );
 +}
 +
- 
+
  /**********************************************************************
   *		signal_alloc_thread
 @@ -2433,6 +2450,8 @@ NTSTATUS signal_alloc_thread( TEB *teb )
- 
+
      teb->WOW32Reserved = __wine_syscall_dispatcher;
      teb->Spare2 = __wine_fakedll_dispatcher;
 +
 +    signal_init_cs();
- 
+
      return STATUS_SUCCESS;
  }
 diff --git a/include/wine/library.h b/include/wine/library.h
@@ -744,9 +680,9 @@ index 7395a117c7..56e749033e 100644
  #undef __DEFINE_GET_SEG
  #undef __DEFINE_SET_SEG
 +extern void wine_set_cs(unsigned int);
- 
+
  #endif  /* __i386__ */
- 
+
 diff --git a/libs/wine/ldt.c b/libs/wine/ldt.c
 index b9371814ba..21e9f0528b 100644
 --- a/libs/wine/ldt.c
@@ -761,17 +697,16 @@ index b9371814ba..21e9f0528b 100644
 +                                "retf" )
  __ASM_GLOBAL_FUNC( wine_set_fs, "movl 4(%esp),%eax\n\tmovw %ax,%fs\n\tret" )
  __ASM_GLOBAL_FUNC( wine_set_gs, "movl 4(%esp),%eax\n\tmovw %ax,%gs\n\tret" )
- 
+
 diff --git a/libs/wine/wine.map b/libs/wine/wine.map
 index 72ffed80c0..c41f567fb6 100644
 --- a/libs/wine/wine.map
 +++ b/libs/wine/wine.map
-@@ -114,6 +114,7 @@ WINE_1.0
-     wine_mmap_enum_free_areas;
-     wine_mmap_is_in_free_area;
-     wine_mmap_remove_free_area;
+@@ -116,6 +116,7 @@ WINE_1.0
+     wine_ldt_set_entry;
+     wine_pthread_get_functions;
+     wine_pthread_set_functions;
 +    wine_set_cs;
      wine_set_fs;
      wine_set_gs;
      wine_utf8_mbstowcs;
- 
