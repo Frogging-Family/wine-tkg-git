@@ -227,11 +227,6 @@ msg2 ''
     _update_winevulkan="false"
     _unfrog="true"
   fi
-
-  # If _use_vkd3dlib="true", redefine to "mainline"
-  if [ "$_use_vkd3dlib" = "true" ]; then
-    _use_vkd3dlib="mainline"
-  fi
 }
 
 _pkgnaming() {
@@ -266,11 +261,6 @@ _pkgnaming() {
     if [ "$_use_legacy_gallium_nine" = "true" ]; then
       pkgname="${pkgname/%-git/-nine-git}"
       msg2 "Using gallium nine patchset (legacy)"
-    fi
-
-    if [ "$_use_vkd3dlib" = "mainline" ] || [ "$_use_vkd3dlib" = "fork" ]; then
-      pkgname="${pkgname/%-git/-vkd3d-git}"
-      msg2 "Using VKD3D for d3d12 translation"
     fi
   fi
 
@@ -484,15 +474,9 @@ _prepare() {
 	  echo "Using gallium nine patchset (legacy)" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_use_vkd3dlib" = "mainline" ] || [ "$_use_vkd3dlib" = "fork" ]; then
-	  _configure_args+=(--with-vkd3d)
-	  echo "Using VKD3D for d3d12 translation" >> "$_where"/last_build_config.log
-	elif [ -e "$_proton_tkg_path"/proton_tkg_token ] && [ -n "$_proton_tkg_path" ]; then
+	if [ "$_use_vkd3dlib" = "false" ]; then
 	  _configure_args+=(--without-vkd3d)
-	  echo "Using vkd3d-proton standalone for d3d12 translation" >> "$_where"/last_build_config.log
-	else
-	  _configure_args+=(--without-vkd3d)
-	  echo "NOT using VKD3D for d3d12 translation" >> "$_where"/last_build_config.log
+	  echo "Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)" >> "$_where"/last_build_config.log
 	fi
 
 	# mingw-w64-gcc
@@ -634,11 +618,6 @@ _prepare() {
 	  _committorevert=e5354008f46bc0e345c06ac06a7a7780faa9398b && nonuser_reverter
 	  _committorevert=461b5e56f95eb095d97e4af1cb1c5fd64bb2862a && nonuser_reverter
 	  echo -e "( Kernelbase reverts clean reverts applied )\n" >> "$_where"/last_build_config.log
-	fi
-
-	if [ "$_use_vkd3dlib" = "fork" ]; then
-	  _committorevert=2558f5f218d623772f6d8609a951ea70b3f6f823 && nonuser_reverter
-	  echo -e "( wined3d reverts for vkd3d-proton applied )\n" >> "$_where"/last_build_config.log
 	fi
 
 	_commitmsg="01-reverts" _committer
@@ -1983,18 +1962,13 @@ EOM
 	  fi
 	fi
 
-	# Add support for dxvk_config library to Wine's dxgi when vkd3d support is enabled
-	if ( [ "$_use_vkd3dlib" = "mainline" ] || [ "$_use_vkd3dlib" = "fork" ] && [ "$_dxvk_dxgi" != "true" ] ) || ( [ "$_use_vkd3dlib" = "false" ] && [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_protonify" = "true" ] && [ "$_unfrog" != "true" ] ) && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
+	# Add support for dxvk_config library to Wine's dxgi for Proton
+	if ( [ "$_use_vkd3dlib" = "false" ] && [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_protonify" = "true" ] && [ "$_unfrog" != "true" ] ) && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	  if git merge-base --is-ancestor 591068cec06257f3d5ed23e19ee4ad055ad978aa HEAD; then
 	    _patchname='dxvk_config_dxgi_support.patch' && _patchmsg="Add support for dxvk_config library to Wine's dxgi" && nonuser_patcher
 	  else
 	    _patchname='dxvk_config_dxgi_support-591068c.patch' && _patchmsg="Add support for dxvk_config library to Wine's dxgi" && nonuser_patcher
 	  fi
-	fi
-
-	# Add HansKristian's d3d12/vkd3d fixes wwhen vkd3d is enabled - https://www.winehq.org/pipermail/wine-devel/2019-October/152356.html - https://www.winehq.org/pipermail/wine-devel/2019-October/152357.html
-	if [ "$_use_vkd3dlib" = "fork" ]; then
-	  _patchname='d3d12-fixes.patch' && _patchmsg="Add HansKristian's d3d12 fixes" && nonuser_patcher
 	fi
 
 	# Proton-tkg needs to know if standard dlopen() is in use
@@ -2081,11 +2055,9 @@ _polish() {
 	  if [ "$_use_legacy_gallium_nine" = "true" ]; then
 	    _version_tags+=(Nine)
 	  fi
-	  if [ "$_use_vkd3dlib" = "mainline" ] || [ "$_use_vkd3dlib" = "fork" ]; then
+	  if [ "$_use_vkd3dlib" = "false" ]; then
 	    if [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	      _version_tags+=(Vkd3d DXVK-Compatible)
-	    else
-	      _version_tags+=(Vkd3d)
 	    fi
 	  fi
 	  sed -i "s/\"\\\1.*\"/\"\\\1  ( ${_version_tags[*]} )\"/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
