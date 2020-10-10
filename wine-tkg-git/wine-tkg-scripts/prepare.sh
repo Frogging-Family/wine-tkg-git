@@ -474,7 +474,7 @@ _prepare() {
 	  echo "Using gallium nine patchset (legacy)" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_use_vkd3dlib" = "false" ]; then
+	if [ "$_use_vkd3dlib" != "true" ]; then
 	  _configure_args+=(--without-vkd3d)
 	  echo "Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)" >> "$_where"/last_build_config.log
 	fi
