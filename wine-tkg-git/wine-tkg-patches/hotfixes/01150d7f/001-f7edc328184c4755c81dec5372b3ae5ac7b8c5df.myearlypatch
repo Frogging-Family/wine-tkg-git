@@ -1,0 +1,609 @@
+From f7edc328184c4755c81dec5372b3ae5ac7b8c5df Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Sat, 3 Oct 2020 02:44:16 +0300
+Subject: [PATCH] user32: Implement GetMouseMovePointsEx().
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=36873
+Signed-off-by: Arkadiusz Hiler <ahiler@codeweavers.com>
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
+---
+ dlls/user32/input.c            |  58 ++++++++--
+ dlls/user32/tests/input.c      | 200 ++++++++++++++++++++++++++++++++-
+ include/wine/server_protocol.h |  26 ++++-
+ server/protocol.def            |  15 +++
+ server/queue.c                 |  31 ++++-
+ server/request.h               |   4 +
+ server/trace.c                 |  31 +++++
+ 7 files changed, 352 insertions(+), 13 deletions(-)
+
+diff --git a/dlls/user32/input.c b/dlls/user32/input.c
+index 3425a2ea10f..e06f8b4413e 100644
+--- a/dlls/user32/input.c
++++ b/dlls/user32/input.c
+@@ -1267,22 +1267,64 @@ TrackMouseEvent (TRACKMOUSEEVENT *ptme)
+  *     Success: count of point set in the buffer
+  *     Failure: -1
+  */
+-int WINAPI GetMouseMovePointsEx(UINT size, LPMOUSEMOVEPOINT ptin, LPMOUSEMOVEPOINT ptout, int count, DWORD res) {
++int WINAPI GetMouseMovePointsEx( UINT size, LPMOUSEMOVEPOINT ptin, LPMOUSEMOVEPOINT ptout, int count, DWORD resolution )
++{
++    cursor_pos_t *pos, positions[64];
++    int copied;
++    unsigned int i;
+ 
+-    if((size != sizeof(MOUSEMOVEPOINT)) || (count < 0) || (count > 64)) {
+-        SetLastError(ERROR_INVALID_PARAMETER);
++
++    TRACE( "%d, %p, %p, %d, %d\n", size, ptin, ptout, count, resolution );
++
++    if ((size != sizeof(MOUSEMOVEPOINT)) || (count < 0) || (count > ARRAY_SIZE( positions )))
++    {
++        SetLastError( ERROR_INVALID_PARAMETER );
+         return -1;
+     }
+ 
+-    if(!ptin || (!ptout && count)) {
+-        SetLastError(ERROR_NOACCESS);
++    if (!ptin || (!ptout && count))
++    {
++        SetLastError( ERROR_NOACCESS );
+         return -1;
+     }
+ 
+-    FIXME("(%d %p %p %d %d) stub\n", size, ptin, ptout, count, res);
++    if (resolution != GMMP_USE_DISPLAY_POINTS)
++    {
++        FIXME( "only GMMP_USE_DISPLAY_POINTS is supported for now\n" );
++        SetLastError( ERROR_POINT_NOT_FOUND );
++        return -1;
++    }
++
++    SERVER_START_REQ( get_cursor_history )
++    {
++        wine_server_set_reply( req, &positions, sizeof(positions) );
++        if (wine_server_call_err( req )) return -1;
++    }
++    SERVER_END_REQ;
++
++    for (i = 0; i < ARRAY_SIZE( positions ); i++)
++    {
++        pos = &positions[i];
++        if (ptin->x == pos->x && ptin->y == pos->y && (!ptin->time || ptin->time == pos->time))
++            break;
++    }
++
++    if (i == ARRAY_SIZE( positions ))
++    {
++        SetLastError( ERROR_POINT_NOT_FOUND );
++        return -1;
++    }
++
++    for (copied = 0; copied < count && i < ARRAY_SIZE( positions ); copied++, i++)
++    {
++        pos = &positions[i];
++        ptout[copied].x = pos->x;
++        ptout[copied].y = pos->y;
++        ptout[copied].time = pos->time;
++        ptout[copied].dwExtraInfo = pos->info;
++    }
+ 
+-    SetLastError(ERROR_POINT_NOT_FOUND);
+-    return -1;
++    return copied;
+ }
+ 
+ /***********************************************************************
+diff --git a/dlls/user32/tests/input.c b/dlls/user32/tests/input.c
+index 1809c147cbd..ce272ed73f4 100644
+--- a/dlls/user32/tests/input.c
++++ b/dlls/user32/tests/input.c
+@@ -1473,14 +1473,18 @@ static void test_mouse_ll_hook(void)
+     SetCursorPos(pt_org.x, pt_org.y);
+ }
+ 
+-static void test_GetMouseMovePointsEx(void)
++static void test_GetMouseMovePointsEx(const char *argv0)
+ {
+ #define BUFLIM  64
+ #define MYERROR 0xdeadbeef
+-    int count, retval;
++    PROCESS_INFORMATION process_info;
++    STARTUPINFOA startup_info;
++    char path[MAX_PATH];
++    int i, count, retval;
+     MOUSEMOVEPOINT in;
+     MOUSEMOVEPOINT out[200];
+     POINT point;
++    TEST_INPUT input;
+ 
+     /* Get a valid content for the input struct */
+     if(!GetCursorPos(&point)) {
+@@ -1605,10 +1609,194 @@ static void test_GetMouseMovePointsEx(void)
+     ok(GetLastError() == ERROR_INVALID_PARAMETER || GetLastError() == MYERROR,
+        "expected error ERROR_INVALID_PARAMETER, got %u\n", GetLastError());
+ 
++    /* more than 64 to be sure we wrap around */
++    for (i = 0; i < 67; i++)
++    {
++        in.x = i;
++        in.y = i*2;
++        SetCursorPos( in.x, in.y );
++    }
++
++    SetLastError( MYERROR );
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, BUFLIM, GMMP_USE_DISPLAY_POINTS );
++    ok( retval == 64, "expected to get 64 mouse move points but got %d\n", retval );
++    ok( GetLastError() == MYERROR, "expected error to stay %x, got %x\n", MYERROR, GetLastError() );
++
++    for (i = 0; i < retval; i++)
++    {
++        ok( out[i].x == in.x && out[i].y == in.y, "wrong position %d, expected %dx%d got %dx%d\n", i, in.x, in.y, out[i].x, out[i].y );
++        in.x--;
++        in.y -= 2;
++    }
++
++    in.x = 1500;
++    in.y = 1500;
++    SetLastError( MYERROR );
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, BUFLIM, GMMP_USE_DISPLAY_POINTS );
++    ok( retval == -1, "expected to get -1 but got %d\n", retval );
++    ok( GetLastError() == ERROR_POINT_NOT_FOUND, "expected error to be set to %x, got %x\n", ERROR_POINT_NOT_FOUND, GetLastError() );
++
++    /* make sure there's no deduplication */
++    in.x = 6;
++    in.y = 6;
++    SetCursorPos( in.x, in.y );
++    SetCursorPos( in.x, in.y );
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, BUFLIM, GMMP_USE_DISPLAY_POINTS );
++    ok( retval == 64, "expected to get 64 mouse move points but got %d\n", retval );
++    ok( out[0].x == 6 && out[0].y == 6, "expected cursor position to be 6x6 but got %d %d\n", out[0].x, out[0].y );
++    ok( out[1].x == 6 && out[1].y == 6, "expected cursor position to be 6x6 but got %d %d\n", out[1].x, out[1].y );
++
++    /* make sure 2 events are distinguishable by their timestamps */
++    in.x = 150;
++    in.y = 75;
++    SetCursorPos( 30, 30 );
++    SetCursorPos( in.x, in.y );
++    SetCursorPos( 150, 150 );
++    Sleep( 3 );
++    SetCursorPos( in.x, in.y );
++
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, BUFLIM, GMMP_USE_DISPLAY_POINTS );
++    ok( retval == 64, "expected to get 64 mouse move points but got %d\n", retval );
++    ok( out[0].x == 150 && out[0].y == 75, "expected cursor position to be 150x75 but got %d %d\n", out[0].x, out[0].y );
++    ok( out[1].x == 150 && out[1].y == 150, "expected cursor position to be 150x150 but got %d %d\n", out[1].x, out[1].y );
++    ok( out[2].x == 150 && out[2].y == 75, "expected cursor position to be 150x75 but got %d %d\n", out[2].x, out[2].y );
++
++    in.time = out[2].time;
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, BUFLIM, GMMP_USE_DISPLAY_POINTS );
++    ok( retval == 62, "expected to get 62 mouse move points but got %d\n", retval );
++    ok( out[0].x == 150 && out[0].y == 75, "expected cursor position to be 150x75 but got %d %d\n", out[0].x, out[0].y );
++    ok( out[1].x == 30 && out[1].y == 30, "expected cursor position to be 30x30 but got %d %d\n", out[1].x, out[1].y );
++
++    /* events created through other means should also be on the list with correct extra info */
++    mouse_event( MOUSEEVENTF_MOVE, -13, 17, 0, 0xcafecafe );
++    ok( GetCursorPos( &point ), "failed to get cursor position\n" );
++    ok( in.x != point.x && in.y != point.y, "cursor didn't change position after mouse_event()\n" );
++    in.time = 0;
++    in.x = point.x;
++    in.y = point.y;
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, BUFLIM, GMMP_USE_DISPLAY_POINTS );
++    ok( retval == 64, "expected to get 64 mouse move points but got %d\n", retval );
++    ok( out[0].dwExtraInfo == 0xcafecafe, "wrong extra info, got 0x%lx expected 0xcafecafe\n", out[0].dwExtraInfo );
++
++    input.type = INPUT_MOUSE;
++    memset( &input, 0, sizeof(input) );
++    input.u.mi.dwFlags = MOUSEEVENTF_MOVE;
++    input.u.mi.dwExtraInfo = 0xdeadbeef;
++    input.u.mi.dx = -17;
++    input.u.mi.dy = 13;
++    SendInput( 1, (INPUT *)&input, sizeof(INPUT) );
++    ok( GetCursorPos( &point ), "failed to get cursor position\n" );
++    ok( in.x != point.x && in.y != point.y, "cursor didn't change position after mouse_event()\n" );
++    in.time = 0;
++    in.x = point.x;
++    in.y = point.y;
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, BUFLIM, GMMP_USE_DISPLAY_POINTS );
++    ok( retval == 64, "expected to get 64 mouse move points but got %d\n", retval );
++    ok( out[0].dwExtraInfo == 0xdeadbeef, "wrong extra info, got 0x%lx expected 0xdeadbeef\n", out[0].dwExtraInfo );
++
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, BUFLIM, GMMP_USE_HIGH_RESOLUTION_POINTS );
++    todo_wine ok( retval == 64, "expected to get 64 high resolution mouse move points but got %d\n", retval );
++
++    sprintf(path, "%s input get_mouse_move_points_test", argv0);
++    memset(&startup_info, 0, sizeof(startup_info));
++    startup_info.cb = sizeof(startup_info);
++    startup_info.dwFlags = STARTF_USESHOWWINDOW;
++    startup_info.wShowWindow = SW_SHOWNORMAL;
++    retval = CreateProcessA(NULL, path, NULL, NULL, TRUE, 0, NULL, NULL, &startup_info, &process_info );
++    ok(retval, "CreateProcess \"%s\" failed err %u.\n", path, GetLastError());
++    winetest_wait_child_process(process_info.hProcess);
++    CloseHandle(process_info.hProcess);
++    CloseHandle(process_info.hThread);
+ #undef BUFLIM
+ #undef MYERROR
+ }
+ 
++static void test_GetMouseMovePointsEx_process(void)
++{
++    int retval;
++    MOUSEMOVEPOINT in;
++    MOUSEMOVEPOINT out[64], out2[64];
++    POINT point;
++    HDESK desk0, desk1;
++    HWINSTA winstation0, winstation1;
++
++    memset( out, 0, sizeof(out) );
++    memset( out2, 0, sizeof(out2) );
++
++    /* move point history is shared between desktops within the same windowstation */
++    ok( GetCursorPos( &point ), "failed to get cursor position\n" );
++    in.time = 0;
++    in.x = point.x;
++    in.y = point.y;
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, ARRAY_SIZE(out), GMMP_USE_DISPLAY_POINTS );
++    ok( retval == 64, "expected to get 64 mouse move points but got %d\n", retval );
++
++    desk0 = OpenInputDesktop( 0, FALSE, DESKTOP_ALL_ACCESS );
++    ok( desk0 != NULL, "OpenInputDesktop has failed with %d\n", GetLastError() );
++    desk1 = CreateDesktopA( "getmousemovepointsex_test_desktop", NULL, NULL, 0, DESKTOP_ALL_ACCESS, NULL );
++    ok( desk1 != NULL, "CreateDesktopA failed with %d\n", GetLastError() );
++
++    ok( SetThreadDesktop( desk1 ), "SetThreadDesktop failed!\n" );
++    ok( SwitchDesktop( desk1 ), "SwitchDesktop failed\n" );
++
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out2, ARRAY_SIZE(out2), GMMP_USE_DISPLAY_POINTS );
++    ok( retval == 64, "expected to get 64 mouse move points but got %d\n", retval );
++
++    ok( memcmp( out, out2, sizeof(out2) ) == 0, "expected to get exact same history on the new desktop\n" );
++
++    in.time = 0;
++    in.x = 38;
++    in.y = 27;
++    SetCursorPos( in.x, in.y );
++
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out2, ARRAY_SIZE(out2), GMMP_USE_DISPLAY_POINTS );
++    ok( retval == 64, "expected to get 64 mouse move points but got %d\n", retval );
++
++    ok( SetThreadDesktop( desk0 ), "SetThreadDesktop failed!\n" );
++    ok( SwitchDesktop( desk0 ), "SwitchDesktop failed\n" );
++
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, ARRAY_SIZE(out), GMMP_USE_DISPLAY_POINTS );
++    ok( retval == 64, "expected to get 64 mouse move points but got %d\n", retval );
++    ok( memcmp( out, out2, sizeof( out2 ) ) == 0, "expected to get exact same history on the old desktop\n" );
++
++    CloseDesktop( desk1 );
++    CloseDesktop( desk0 );
++
++    /* non-default windowstations are non-interactive */
++    winstation0 = GetProcessWindowStation();
++    ok( winstation0 != NULL, "GetProcessWindowStation has failed with %d\n", GetLastError() );
++    desk0 = OpenInputDesktop( 0, FALSE, DESKTOP_ALL_ACCESS );
++    ok( desk0 != NULL, "OpenInputDesktop has failed with %d\n", GetLastError() );
++    winstation1 = CreateWindowStationA( "test_winstation", 0, WINSTA_ALL_ACCESS, NULL );
++
++    if (winstation1 == NULL && GetLastError() == ERROR_ACCESS_DENIED)
++    {
++        win_skip("not enough priviledges for CreateWindowStation\n");
++        CloseDesktop( desk0 );
++        CloseWindowStation( winstation0 );
++        return;
++    }
++
++    ok( winstation1 != NULL, "CreateWindowStationA has failed with %d\n", GetLastError() );
++    ok( SetProcessWindowStation( winstation1 ), "SetProcessWindowStation has failed\n" );
++
++    desk1 = CreateDesktopA( "getmousemovepointsex_test_desktop", NULL, NULL, 0, DESKTOP_ALL_ACCESS, NULL );
++    ok( desk1 != NULL, "CreateDesktopA failed with %d\n", GetLastError() );
++    ok( SetThreadDesktop( desk1 ), "SetThreadDesktop failed!\n" );
++
++    SetLastError( 0xDEADBEEF );
++    retval = pGetMouseMovePointsEx( sizeof(MOUSEMOVEPOINT), &in, out, ARRAY_SIZE(out), GMMP_USE_DISPLAY_POINTS );
++    todo_wine ok( retval == -1, "expected to get -1 mouse move points but got %d\n", retval );
++    todo_wine ok( GetLastError() == ERROR_ACCESS_DENIED, "expected ERROR_ACCESS_DENIED got %d\n", GetLastError() );
++
++    ok( SetProcessWindowStation( winstation0 ), "SetProcessWindowStation has failed\n" );
++    ok( SetThreadDesktop( desk0 ), "SetThreadDesktop failed!\n" );
++    CloseDesktop( desk1 );
++    CloseWindowStation( winstation1 );
++    CloseDesktop( desk0 );
++    CloseWindowStation( winstation0 );
++}
++
+ static void test_GetRawInputDeviceList(void)
+ {
+     RAWINPUTDEVICELIST devices[32];
+@@ -3807,6 +3995,12 @@ START_TEST(input)
+         return;
+     }
+ 
++    if (argc >= 3 && strcmp(argv[2], "get_mouse_move_points_test") == 0)
++    {
++        test_GetMouseMovePointsEx_process();
++        return;
++    }
++
+     test_Input_blackbox();
+     test_Input_whitebox();
+     test_Input_unicode();
+@@ -3828,7 +4022,7 @@ START_TEST(input)
+     test_rawinput(argv[0]);
+ 
+     if(pGetMouseMovePointsEx)
+-        test_GetMouseMovePointsEx();
++        test_GetMouseMovePointsEx(argv[0]);
+     else
+         win_skip("GetMouseMovePointsEx is not available\n");
+ 
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index 5e8d2c6c0a3..501b016b0a8 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -771,6 +771,15 @@ struct rawinput_device
+     user_handle_t  target;
+ };
+ 
++typedef struct
++{
++    int x;
++    int y;
++    unsigned int time;
++    int __pad;
++    lparam_t info;
++} cursor_pos_t;
++
+ 
+ 
+ 
+@@ -5158,6 +5167,18 @@ struct set_cursor_reply
+ #define SET_CURSOR_NOCLIP 0x10
+ 
+ 
++struct get_cursor_history_request
++{
++    struct request_header __header;
++    char __pad_12[4];
++};
++struct get_cursor_history_reply
++{
++    struct reply_header __header;
++    /* VARARG(history,cursor_positions); */
++};
++
++
+ 
+ struct get_rawinput_buffer_request
+ {
+@@ -5604,6 +5625,7 @@ enum request
+     REQ_alloc_user_handle,
+     REQ_free_user_handle,
+     REQ_set_cursor,
++    REQ_get_cursor_history,
+     REQ_get_rawinput_buffer,
+     REQ_update_rawinput_devices,
+     REQ_get_rawinput_devices,
+@@ -5885,6 +5907,7 @@ union generic_request
+     struct alloc_user_handle_request alloc_user_handle_request;
+     struct free_user_handle_request free_user_handle_request;
+     struct set_cursor_request set_cursor_request;
++    struct get_cursor_history_request get_cursor_history_request;
+     struct get_rawinput_buffer_request get_rawinput_buffer_request;
+     struct update_rawinput_devices_request update_rawinput_devices_request;
+     struct get_rawinput_devices_request get_rawinput_devices_request;
+@@ -6164,6 +6187,7 @@ union generic_reply
+     struct alloc_user_handle_reply alloc_user_handle_reply;
+     struct free_user_handle_reply free_user_handle_reply;
+     struct set_cursor_reply set_cursor_reply;
++    struct get_cursor_history_reply get_cursor_history_reply;
+     struct get_rawinput_buffer_reply get_rawinput_buffer_reply;
+     struct update_rawinput_devices_reply update_rawinput_devices_reply;
+     struct get_rawinput_devices_reply get_rawinput_devices_reply;
+diff --git a/server/protocol.def b/server/protocol.def
+index 0226d8a70f7..846d2e15602 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -787,6 +787,15 @@ struct rawinput_device
+     user_handle_t  target;
+ };
+ 
++typedef struct
++{
++    int x;
++    int y;
++    unsigned int time;
++    int __pad;
++    lparam_t info;
++} cursor_pos_t;
++
+ /****************************************************************/
+ /* Request declarations */
+ 
+@@ -3551,6 +3560,12 @@ struct handle_info
+ #define SET_CURSOR_CLIP   0x08
+ #define SET_CURSOR_NOCLIP 0x10
+ 
++/* Get the history of the 64 last cursor positions */
++@REQ(get_cursor_history)
++@REPLY
++    VARARG(history,cursor_positions);
++@END
++
+ 
+ /* Batch read rawinput message data */
+ @REQ(get_rawinput_buffer)
+diff --git a/server/queue.c b/server/queue.c
+index 2c780a94e2c..7e7e6fbdf29 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -227,6 +227,9 @@ static const struct object_ops thread_input_ops =
+ /* pointer to input structure of foreground thread */
+ static unsigned int last_input_time;
+ 
++static cursor_pos_t cursor_history[64];
++static unsigned int cursor_history_latest;
++
+ static void queue_hardware_message( struct desktop *desktop, struct message *msg, int always_queue );
+ static void free_message( struct message *msg );
+ 
+@@ -1520,12 +1523,23 @@ static void update_rawinput_device(const struct rawinput_device *device)
+     e->device.target = get_user_full_handle( e->device.target );
+ }
+ 
++static void prepend_cursor_history( int x, int y, unsigned int time, lparam_t info )
++{
++    cursor_pos_t *pos = &cursor_history[--cursor_history_latest % ARRAY_SIZE(cursor_history)];
++
++    pos->x = x;
++    pos->y = y;
++    pos->time = time;
++    pos->info = info;
++}
++
+ /* queue a hardware message into a given thread input */
+ static void queue_hardware_message( struct desktop *desktop, struct message *msg, int always_queue )
+ {
+     user_handle_t win;
+     struct thread *thread;
+     struct thread_input *input;
++    struct hardware_msg_data *msg_data = msg->data;
+     unsigned int msg_code;
+ 
+     update_input_key_state( desktop, desktop->keystate, msg->msg, msg->wparam );
+@@ -1541,7 +1555,11 @@ static void queue_hardware_message( struct desktop *desktop, struct message *msg
+     }
+     else if (msg->msg != WM_INPUT)
+     {
+-        if (msg->msg == WM_MOUSEMOVE && update_desktop_cursor_pos( desktop, msg->x, msg->y )) always_queue = 1;
++        if (msg->msg == WM_MOUSEMOVE)
++        {
++            prepend_cursor_history( msg->x, msg->y, msg->time, msg_data->info );
++            if (update_desktop_cursor_pos( desktop, msg->x, msg->y )) always_queue = 1;
++        }
+         if (desktop->keystate[VK_LBUTTON] & 0x80)  msg->wparam |= MK_LBUTTON;
+         if (desktop->keystate[VK_MBUTTON] & 0x80)  msg->wparam |= MK_MBUTTON;
+         if (desktop->keystate[VK_RBUTTON] & 0x80)  msg->wparam |= MK_RBUTTON;
+@@ -3222,6 +3240,17 @@ DECL_HANDLER(set_cursor)
+     reply->last_change = input->desktop->cursor.last_change;
+ }
+ 
++/* Get the history of the 64 last cursor positions */
++DECL_HANDLER(get_cursor_history)
++{
++    cursor_pos_t *pos;
++    unsigned int i, count = min( 64, get_reply_max_size() / sizeof(*pos) );
++
++    if ((pos = set_reply_data_size( count * sizeof(*pos) )))
++        for (i = 0; i < count; i++)
++            pos[i] = cursor_history[(i + cursor_history_latest) % ARRAY_SIZE(cursor_history)];
++}
++
+ DECL_HANDLER(get_rawinput_buffer)
+ {
+     struct thread_input *input = current->queue->input;
+diff --git a/server/request.h b/server/request.h
+index 88339bb13a7..a3c49634490 100644
+--- a/server/request.h
++++ b/server/request.h
+@@ -380,6 +380,7 @@ DECL_HANDLER(set_window_layered_info);
+ DECL_HANDLER(alloc_user_handle);
+ DECL_HANDLER(free_user_handle);
+ DECL_HANDLER(set_cursor);
++DECL_HANDLER(get_cursor_history);
+ DECL_HANDLER(get_rawinput_buffer);
+ DECL_HANDLER(update_rawinput_devices);
+ DECL_HANDLER(get_rawinput_devices);
+@@ -660,6 +661,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+     (req_handler)req_alloc_user_handle,
+     (req_handler)req_free_user_handle,
+     (req_handler)req_set_cursor,
++    (req_handler)req_get_cursor_history,
+     (req_handler)req_get_rawinput_buffer,
+     (req_handler)req_update_rawinput_devices,
+     (req_handler)req_get_rawinput_devices,
+@@ -2191,6 +2193,8 @@ C_ASSERT( FIELD_OFFSET(struct set_cursor_reply, new_y) == 28 );
+ C_ASSERT( FIELD_OFFSET(struct set_cursor_reply, new_clip) == 32 );
+ C_ASSERT( FIELD_OFFSET(struct set_cursor_reply, last_change) == 48 );
+ C_ASSERT( sizeof(struct set_cursor_reply) == 56 );
++C_ASSERT( sizeof(struct get_cursor_history_request) == 16 );
++C_ASSERT( sizeof(struct get_cursor_history_reply) == 8 );
+ C_ASSERT( FIELD_OFFSET(struct get_rawinput_buffer_request, rawinput_size) == 12 );
+ C_ASSERT( FIELD_OFFSET(struct get_rawinput_buffer_request, buffer_size) == 16 );
+ C_ASSERT( sizeof(struct get_rawinput_buffer_request) == 24 );
+diff --git a/server/trace.c b/server/trace.c
+index 86b78a3a66d..74baea7f89c 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -893,6 +893,24 @@ static void dump_varargs_rectangles( const char *prefix, data_size_t size )
+     remove_data( size );
+ }
+ 
++static void dump_varargs_cursor_positions( const char *prefix, data_size_t size )
++{
++    const cursor_pos_t *pos = cur_data;
++    data_size_t len = size / sizeof(*pos);
++
++    fprintf( stderr, "%s{", prefix );
++    while (len > 0)
++    {
++        fprintf( stderr, "{x=%d,y=%d,time=%u", pos->x, pos->y, pos->time );
++        dump_uint64( ",info=", &pos->info );
++        fputc( '}', stderr );
++        pos++;
++        if (--len) fputc( ',', stderr );
++    }
++    fputc( '}', stderr );
++    remove_data( size );
++}
++
+ static void dump_varargs_message_data( const char *prefix, data_size_t size )
+ {
+     /* FIXME: dump the structured data */
+@@ -4261,6 +4279,15 @@ static void dump_set_cursor_reply( const struct set_cursor_reply *req )
+     fprintf( stderr, ", last_change=%08x", req->last_change );
+ }
+ 
++static void dump_get_cursor_history_request( const struct get_cursor_history_request *req )
++{
++}
++
++static void dump_get_cursor_history_reply( const struct get_cursor_history_reply *req )
++{
++    dump_varargs_cursor_positions( " history=", cur_size );
++}
++
+ static void dump_get_rawinput_buffer_request( const struct get_rawinput_buffer_request *req )
+ {
+     fprintf( stderr, " rawinput_size=%u", req->rawinput_size );
+@@ -4627,6 +4654,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_alloc_user_handle_request,
+     (dump_func)dump_free_user_handle_request,
+     (dump_func)dump_set_cursor_request,
++    (dump_func)dump_get_cursor_history_request,
+     (dump_func)dump_get_rawinput_buffer_request,
+     (dump_func)dump_update_rawinput_devices_request,
+     (dump_func)dump_get_rawinput_devices_request,
+@@ -4904,6 +4932,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_alloc_user_handle_reply,
+     NULL,
+     (dump_func)dump_set_cursor_reply,
++    (dump_func)dump_get_cursor_history_reply,
+     (dump_func)dump_get_rawinput_buffer_reply,
+     NULL,
+     (dump_func)dump_get_rawinput_devices_reply,
+@@ -5181,6 +5210,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
+     "alloc_user_handle",
+     "free_user_handle",
+     "set_cursor",
++    "get_cursor_history",
+     "get_rawinput_buffer",
+     "update_rawinput_devices",
+     "get_rawinput_devices",
+@@ -5248,6 +5278,7 @@ static const struct
+     { "INFO_LENGTH_MISMATCH",        STATUS_INFO_LENGTH_MISMATCH },
+     { "INSTANCE_NOT_AVAILABLE",      STATUS_INSTANCE_NOT_AVAILABLE },
+     { "INSUFFICIENT_RESOURCES",      STATUS_INSUFFICIENT_RESOURCES },
++    { "INVALID_BUFFER_SIZE",         STATUS_INVALID_BUFFER_SIZE },
+     { "INVALID_CID",                 STATUS_INVALID_CID },
+     { "INVALID_DEVICE_REQUEST",      STATUS_INVALID_DEVICE_REQUEST },
+     { "INVALID_FILE_FOR_SECTION",    STATUS_INVALID_FILE_FOR_SECTION },
+ 
