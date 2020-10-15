@@ -1,7 +1,7 @@
 From 33529f06c4edd37e6061d70da1fb007f929931d4 Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
 Date: Mon, 10 Feb 2020 13:03:57 +0100
-Subject: Proton fs hack patchset, 5.0 rebased edition
+Subject: Proton fs hack patchset, 5.0 staging rebased edition
 
 
 diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
@@ -1780,10 +1780,16 @@ diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
 index 17072d2341..41fe5dadd1 100644
 --- a/dlls/winevulkan/vulkan_private.h
 +++ b/dlls/winevulkan/vulkan_private.h
-@@ -72,6 +72,12 @@ struct VkDevice_T
+@@ -72,11 +72,18 @@ struct VkDevice_T
+     struct wine_vk_base base;
+     struct vulkan_device_funcs funcs;
+     VkDevice device; /* native device */
++    struct VkPhysicalDevice_T *phys_dev; /* parent */
+ 
+     struct VkQueue_T **queues;
+     uint32_t max_queue_families;
+ 
      unsigned int quirks;
-
-     struct wine_vk_mapping mapping;
 +
 +    uint32_t num_swapchains;
 +    struct VkSwapchainKHR_T **swapchains;
@@ -1792,7 +1798,7 @@ index 17072d2341..41fe5dadd1 100644
 +    CRITICAL_SECTION swapchain_lock;
  };
  
- struct wine_debug_utils_messenger;
+ struct VkInstance_T
 @@ -130,6 +137,40 @@ static inline VkCommandPool wine_cmd_pool_to_handle(struct wine_cmd_pool *cmd_po
      return (VkCommandPool)(uintptr_t)cmd_pool;
  }
@@ -2047,7 +2053,7 @@ index fecf9ab502..e53154d1ef 100644
 -
  static void WINAPI wine_vkCmdPreprocessGeneratedCommandsNV(VkCommandBuffer commandBuffer, const VkGeneratedCommandsInfoNV *pGeneratedCommandsInfo)
  {
-     #if defined(USE_STRUCT_CONVERSION)
+ #if defined(USE_STRUCT_CONVERSION)
 @@ -3561,23 +3512,6 @@ VkResult WINAPI wine_vkCreateShaderModule(VkDevice device, const VkShaderModuleC
      return device->funcs.p_vkCreateShaderModule(device->device, pCreateInfo, NULL, pShaderModule);
  }
@@ -2127,8 +2133,8 @@ diff --git a/dlls/winevulkan/vulkan_thunks.h b/dlls/winevulkan/vulkan_thunks.h
 index 01c1efb277..a262f01388 100644
 --- a/dlls/winevulkan/vulkan_thunks.h
 +++ b/dlls/winevulkan/vulkan_thunks.h
-@@ -41,15 +41,19 @@
- #define WINE_VK_VERSION VK_API_VERSION_1_2
+@@ -41,13 +41,17 @@
+ #define WINE_VK_VERSION VK_API_VERSION_1_1
  
  /* Functions for which we have custom implementations outside of the thunks. */
 +VkResult WINAPI wine_vkAcquireNextImageKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t *pImageIndex);
@@ -2136,11 +2142,9 @@ index 01c1efb277..a262f01388 100644
  void WINAPI wine_vkCmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCount, const VkCommandBuffer *pCommandBuffers);
 +void WINAPI wine_vkCmdPipelineBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask, VkDependencyFlags dependencyFlags, uint32_t memoryBarrierCount, const VkMemoryBarrier *pMemoryBarriers, uint32_t bufferMemoryBarrierCount, const VkBufferMemoryBarrier *pBufferMemoryBarriers, uint32_t imageMemoryBarrierCount, const VkImageMemoryBarrier *pImageMemoryBarriers);
  VkResult WINAPI wine_vkCreateCommandPool(VkDevice device, const VkCommandPoolCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkCommandPool *pCommandPool);
- VkResult WINAPI wine_vkCreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkDebugUtilsMessengerEXT *pMessenger) DECLSPEC_HIDDEN;
  VkResult WINAPI wine_vkCreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkDevice *pDevice);
 +VkResult WINAPI wine_vkCreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkSwapchainKHR *pSwapchain);
  void WINAPI wine_vkDestroyCommandPool(VkDevice device, VkCommandPool commandPool, const VkAllocationCallbacks *pAllocator);
- void WINAPI wine_vkDestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT messenger, const VkAllocationCallbacks *pAllocator) DECLSPEC_HIDDEN;
  void WINAPI wine_vkDestroyDevice(VkDevice device, const VkAllocationCallbacks *pAllocator);
  void WINAPI wine_vkDestroyInstance(VkInstance instance, const VkAllocationCallbacks *pAllocator);
 +void WINAPI wine_vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain, const VkAllocationCallbacks *pAllocator);
