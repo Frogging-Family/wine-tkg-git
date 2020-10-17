@@ -1864,6 +1864,9 @@ EOM
 	    else
 	      _patchname='proton-vr-c736321.patch' && _patchmsg="Enable Proton vr-related wined3d additions (<c736321)" && nonuser_patcher
 	    fi
+	  elif [ "$_steamvr_support" = "true" ] && [ "$_proton_fs_hack" != "true" ]; then
+	    _steamvr_support="false"
+	    echo "SteamVR support disabled as it requires proton_fs_hack" >> "$_where"/last_build_config.log
 	  fi
 	fi
 
