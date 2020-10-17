@@ -749,7 +749,7 @@ _prepare() {
 	fi
 
 	# Specifically for proton-tkg, our meta patchset breaks with stock staging rawinput patchset, so disable for now, and apply a corresponding fixed winex11-key_translation patchset at a later stage
-	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_fs_hack" != "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD ); then
+	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_fs_hack" != "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD ) && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
 	    _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-nolegacy -W user32-rawinput-mouse-experimental -W user32-rawinput-hid -W winex11-key_translation)
 	  elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor f904ca32a3f678bf829a325dc66699a21e510857 HEAD ); then
