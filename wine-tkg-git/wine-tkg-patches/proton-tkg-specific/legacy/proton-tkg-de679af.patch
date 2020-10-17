@@ -109,7 +109,7 @@ index 20d3c48c4d9..aca8738c4c0 100644
  
  /* parse-line args */
 
-From ba15ba1c9b8ee40e13ef1bd7f018924259f36c1b Mon Sep 17 00:00:00 2001
+From 971dc3c4225b33fb5346187cd37e8355f265800f Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Mon, 18 Jun 2018 07:56:35 -0500
 Subject: [PATCH] ntdll: Notice THREADNAME_INFO exceptions and set thread name
@@ -117,24 +117,24 @@ Subject: [PATCH] ntdll: Notice THREADNAME_INFO exceptions and set thread name
 
 Patch by Zeb.
 ---
- dlls/ntdll/unix/thread.c | 28 ++++++++++++++++++++++++++++
+ dlls/ntdll/exception.c | 28 ++++++++++++++++++++++++++++
  1 file changed, 28 insertions(+)
 
-diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
-index 3b451a22577..ca5dac43bb0 100644
---- a/dlls/ntdll/unix/thread.c
-+++ b/dlls/ntdll/unix/thread.c
-@@ -43,6 +43,9 @@
- #ifdef HAVE_SYS_SYSCALL_H
- #include <sys/syscall.h>
- #endif
+diff --git a/dlls/ntdll/exception.c b/dlls/ntdll/exception.c
+index f85381079a2..ffe048de8c0 100644
+--- a/dlls/ntdll/exception.c
++++ b/dlls/ntdll/exception.c
+@@ -26,6 +26,9 @@
+ #include <errno.h>
+ #include <signal.h>
+ #include <stdarg.h>
 +#ifdef HAVE_PRCTL
 +#include <sys/prctl.h>
 +#endif
  
- #define NONAMELESSUNION
  #include "ntstatus.h"
-@@ -344,6 +347,16 @@ void wait_suspend( CONTEXT *context )
+ #define WIN32_NO_STATUS
+@@ -143,6 +146,16 @@ void wait_suspend( CONTEXT *context )
  }
  
  
@@ -151,7 +151,7 @@ index 3b451a22577..ca5dac43bb0 100644
  /**********************************************************************
   *           send_debug_event
   *
-@@ -366,6 +379,21 @@ NTSTATUS send_debug_event( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL first_c
+@@ -162,6 +175,21 @@ NTSTATUS send_debug_event( EXCEPTION_RECORD *rec, int first_chance, CONTEXT *con
      for (i = 0; i < min( rec->NumberParameters, EXCEPTION_MAXIMUM_PARAMETERS ); i++)
          params[i] = rec->ExceptionInformation[i];
  
@@ -700,6 +700,67 @@ index d2fc629c843..5a97590dbce 100644
  
      desc->VendorId = adapter_id.vendor_id;
      desc->DeviceId = adapter_id.device_id;
+From 304683886016ec940a9b331ce33fcbaf47e893c3 Mon Sep 17 00:00:00 2001
+From: Sven Baars <sbaars@codeweavers.com>
+Date: Thu, 5 Dec 2019 13:48:38 +0100
+Subject: [PATCH] HACK: ntdll: Return a handle to kernel32 when being asked for
+ mfc42.
+
+For some applications mfc42 is loaded, but never actually used. We can
+add Steam game IDs when we find more of such applications.
+---
+ dlls/ntdll/loader.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 431c247a072..c9fcad79316 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -159,6 +159,18 @@ static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
+     while (len--) *dst++ = (unsigned char)*src++;
+ }
+ 
++static WCHAR *strcasestrW( const WCHAR *str, const WCHAR *sub )
++{
++    while (*str)
++    {
++        const WCHAR *p1 = str, *p2 = sub;
++        while (*p1 && *p2 && RtlDowncaseUnicodeChar(*p1) == RtlDowncaseUnicodeChar(*p2)) { p1++; p2++; }
++        if (!*p2) return (WCHAR *)str;
++        str++;
++    }
++    return NULL;
++}
++
+ #define RTL_UNLOAD_EVENT_TRACE_NUMBER 64
+ 
+ typedef struct _RTL_UNLOAD_EVENT_TRACE
+@@ -2869,6 +2881,25 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname,
+ done:
+     RtlFreeHeap( GetProcessHeap(), 0, dllname );
+     if (wow64_old_value) RtlWow64EnableFsRedirectionEx( 1, &wow64_old_value );
++
++    if (status != STATUS_SUCCESS)
++    {
++        /* HACK for Proton issue #17
++         *
++         * Some games try to load mfc42.dll, but then proceed to not use it.
++         * Just return a handle to kernel32 in that case.
++         */
++        static const WCHAR mfc42W[] = {'m','f','c','4','2',0};
++        static const WCHAR kernel32W[] = {'k','e','r','n','e','l','3','2','.','d','l','l',0};
++        const char *sgi = getenv( "SteamGameId" );
++        if (sgi &&
++            !strcmp( sgi, "105450" ) && /* AoE3 */
++            strcasestrW( libname, mfc42W ))
++        {
++            WARN_(loaddll)( "Using a fake mfc42 handle\n" );
++            status = find_dll_file( load_path, kernel32W, nt_name, pwm, mfc42W, module, image_info, st );
++        }
++    }
+     return status;
+ }
+ 
 From 4aa052e0c8ae276fc07afcd93d6e290a88214837 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Wed, 15 Jan 2020 10:17:23 -0600
@@ -1299,28 +1360,28 @@ index a5235b69a8d..4b2c9bd41ae 100644
          /* forward request to the foreground window if it's in a different thread */
          tid = GetWindowThreadProcessId( foreground, &pid );
          if (tid && tid != GetCurrentThreadId() && pid == GetCurrentProcessId())
-From 4dbaef46678173fc63b833d24d2e63bc03b24c59 Mon Sep 17 00:00:00 2001
+From 02951753970f5b2a0dafe41aee9fe96bc1a24301 Mon Sep 17 00:00:00 2001
 From: Piotr Caban <piotr@codeweavers.com>
 Date: Wed, 4 Mar 2020 18:49:37 +0100
 Subject: [PATCH] HACK: ntdll: Mark first gta5.exe page as copied.
 
 ---
- dlls/ntdll/unix/virtual.c | 29 +++++++++++++++++++++++++++--
- 1 file changed, 27 insertions(+), 2 deletions(-)
+ dlls/ntdll/virtual.c | 30 +++++++++++++++++++++++++++---
+ 1 file changed, 27 insertions(+), 3 deletions(-)
 
-diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index fbb26d65046..7ea80852090 100644
---- a/dlls/ntdll/unix/virtual.c
-+++ b/dlls/ntdll/unix/virtual.c
-@@ -62,6 +62,7 @@
+diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
+index dbcbd52c6d6..90a790241a9 100644
+--- a/dlls/ntdll/virtual.c
++++ b/dlls/ntdll/virtual.c
+@@ -58,6 +58,7 @@
+ #include "wine/exception.h"
  #include "wine/rbtree.h"
- #include "unix_private.h"
  #include "wine/debug.h"
 +#include "wine/unicode.h"
+ #include "ntdll_misc.h"
  
  WINE_DEFAULT_DEBUG_CHANNEL(virtual);
- WINE_DECLARE_DEBUG_CHANNEL(module);
-@@ -97,6 +98,7 @@ struct file_view
+@@ -84,6 +85,7 @@ struct file_view
  #define VPROT_GUARD      0x10
  #define VPROT_COMMITTED  0x20
  #define VPROT_WRITEWATCH 0x40
@@ -1328,7 +1389,7 @@ index fbb26d65046..7ea80852090 100644
  /* per-mapping protection flags */
  #define VPROT_SYSTEM     0x0200  /* system view (underlying mmap not under our control) */
  
-@@ -782,7 +784,8 @@ static const char *get_prot_str( BYTE prot )
+@@ -304,7 +306,8 @@ static const char *VIRTUAL_GetProtStr( BYTE prot )
      buffer[0] = (prot & VPROT_COMMITTED) ? 'c' : '-';
      buffer[1] = (prot & VPROT_GUARD) ? 'g' : ((prot & VPROT_WRITEWATCH) ? 'H' : '-');
      buffer[2] = (prot & VPROT_READ) ? 'r' : '-';
@@ -1338,22 +1399,23 @@ index fbb26d65046..7ea80852090 100644
      buffer[4] = (prot & VPROT_EXEC) ? 'x' : '-';
      buffer[5] = 0;
      return buffer;
-@@ -1380,7 +1383,11 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
+@@ -901,8 +904,11 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
   */
- static DWORD get_win32_prot( BYTE vprot, unsigned int map_prot )
+ static DWORD VIRTUAL_GetWin32Prot( BYTE vprot, unsigned int map_prot )
  {
 -    DWORD ret = VIRTUAL_Win32Flags[vprot & 0x0f];
+-    if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
 +    DWORD ret;
 +
 +    if ((vprot & (VPROT_COPIED | VPROT_WRITECOPY)) == (VPROT_COPIED | VPROT_WRITECOPY))
 +        vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
 +    ret = VIRTUAL_Win32Flags[vprot & 0x0f];
-     if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
      if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
      return ret;
-@@ -3674,6 +3681,24 @@ NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T
+ }
+@@ -2957,6 +2963,24 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH NtProtectVirtualMemory( HANDLE process, PVOID
          {
-             old = get_win32_prot( vprot, view->protect );
+             old = VIRTUAL_GetWin32Prot( vprot, view->protect );
              status = set_protection( view, base, size, new_prot );
 +
 +            /* GTA5 HACK: Mark first page as copied. */
@@ -1376,6 +1438,77 @@ index fbb26d65046..7ea80852090 100644
          }
          else status = STATUS_NOT_COMMITTED;
      }
+From 5e8fedb161bae24ecf6d9425e90e3c595ec2505c Mon Sep 17 00:00:00 2001
+From: Piotr Caban <piotr@codeweavers.com>
+Date: Wed, 11 Mar 2020 09:17:05 -0500
+Subject: [PATCH] ntdll: Restore PAGE_GUARD flag
+
+On rebase, squash into 'HACK: ntdll: Mark first gta5.exe page as
+copied.'
+---
+ dlls/ntdll/virtual.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
+index 90a790241a9..d0cd2639ee9 100644
+--- a/dlls/ntdll/virtual.c
++++ b/dlls/ntdll/virtual.c
+@@ -909,6 +909,7 @@ static DWORD VIRTUAL_GetWin32Prot( BYTE vprot, unsigned int map_prot )
+     if ((vprot & (VPROT_COPIED | VPROT_WRITECOPY)) == (VPROT_COPIED | VPROT_WRITECOPY))
+         vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
+     ret = VIRTUAL_Win32Flags[vprot & 0x0f];
++    if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
+     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
+     return ret;
+ }
+From 24a8f709ec8fcf8fa4fcc349a7885c02cc184d74 Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 26 Feb 2020 13:09:48 -0600
+Subject: [PATCH] ntdll: Don't support reading/writing debug registers
+
+Monster Hunter World continually retrieves these registers, so fast-path
+this code. This will break setting debug registers on other threads.
+---
+ dlls/ntdll/signal_x86_64.c | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/dlls/ntdll/signal_x86_64.c b/dlls/ntdll/signal_x86_64.c
+index 04f3854388c..9752c3889b6 100644
+--- a/dlls/ntdll/signal_x86_64.c
++++ b/dlls/ntdll/signal_x86_64.c
+@@ -2115,13 +2115,13 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
+     BOOL self = (handle == GetCurrentThread());
+ 
+     /* debug registers require a server call */
+-    if (self && (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64)))
++    /*if (self && (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64)))
+         self = (amd64_thread_data()->dr0 == context->Dr0 &&
+                 amd64_thread_data()->dr1 == context->Dr1 &&
+                 amd64_thread_data()->dr2 == context->Dr2 &&
+                 amd64_thread_data()->dr3 == context->Dr3 &&
+                 amd64_thread_data()->dr6 == context->Dr6 &&
+-                amd64_thread_data()->dr7 == context->Dr7);
++                amd64_thread_data()->dr7 == context->Dr7);*/
+ 
+     if (!self)
+     {
+@@ -2149,7 +2149,15 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
+     needed_flags = context->ContextFlags;
+ 
+     /* debug registers require a server call */
+-    if (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64)) self = FALSE;
++    if (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64)) //self = FALSE;
++    {
++        context->Dr0 = amd64_thread_data()->dr0;
++        context->Dr1 = amd64_thread_data()->dr1;
++        context->Dr2 = amd64_thread_data()->dr2;
++        context->Dr3 = amd64_thread_data()->dr3;
++        context->Dr6 = amd64_thread_data()->dr6;
++        context->Dr7 = amd64_thread_data()->dr7;
++    }
+ 
+     if (!self)
+     {
 From 8fd9d6bd3d567893f933b7d55615446476745654 Mon Sep 17 00:00:00 2001
 From: Vincent Povirk <vincent@codeweavers.com>
 Date: Wed, 1 Apr 2020 11:47:05 -0500
@@ -1496,66 +1629,26 @@ index 0ae3aadde92..e95ede8aed5 100644
      return FALSE;
  }
 
-From 0255dbc3afd3ff673fa701e7802474483252fcb2 Mon Sep 17 00:00:00 2001
+From 9cffda4856b5e5057008d165dd38ec971b9af712 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
-Date: Mon, 13 Jul 2020 10:21:49 -0500
+Date: Fri, 24 Apr 2020 19:48:20 +0300
 Subject: [PATCH] ntdll: Handle NULL object name buffer in
  nt_to_unix_file_name_attr().
 
+Signed-off-by: Paul Gofman <pgofman@codeweavers.com>
+Signed-off-by: Paul Gofman <gofmanp@gmail.com>
 ---
+ dlls/ntdll/directory.c  |  8 ++++++++
  dlls/ntdll/tests/file.c | 22 +++++++++++++++++++++-
- dlls/ntdll/unix/file.c  |  8 ++++++++
  2 files changed, 29 insertions(+), 1 deletion(-)
 
-diff --git a/dlls/ntdll/tests/file.c b/dlls/ntdll/tests/file.c
-index 6164b0c4bde..031be95e233 100644
---- a/dlls/ntdll/tests/file.c
-+++ b/dlls/ntdll/tests/file.c
-@@ -144,16 +144,36 @@ static void create_file_test(void)
-     static const WCHAR pathInvalidDosW[] = {'\\','D','o','s','D','e','v','i','c','e','s','\\',0};
-     static const char testdata[] = "Hello World";
-     FILE_NETWORK_OPEN_INFORMATION info;
-+    UNICODE_STRING nameW, null_string;
+diff --git a/dlls/ntdll/directory.c b/dlls/ntdll/directory.c
+index 784e720edf8..56f9be0f06e 100644
+--- a/dlls/ntdll/directory.c
++++ b/dlls/ntdll/directory.c
+@@ -2701,8 +2701,16 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
      NTSTATUS status;
-     HANDLE dir, file;
-     WCHAR path[MAX_PATH];
-     OBJECT_ATTRIBUTES attr;
-     IO_STATUS_BLOCK io;
--    UNICODE_STRING nameW;
-     LARGE_INTEGER offset;
-     char buf[32];
-     DWORD ret;
- 
-+    attr.Length = sizeof(attr);
-+    attr.RootDirectory = NULL;
-+    attr.ObjectName = &null_string;
-+    attr.Attributes = 0;
-+    attr.SecurityDescriptor = NULL;
-+    attr.SecurityQualityOfService = NULL;
-+
-+    null_string.Buffer = NULL;
-+    null_string.Length = 256;
-+
-+    /* try various open modes and options on directories */
-+    status = pNtCreateFile( &dir, GENERIC_READ|GENERIC_WRITE, &attr, &io, NULL, 0,
-+                            FILE_SHARE_READ|FILE_SHARE_WRITE, FILE_OPEN, FILE_DIRECTORY_FILE, NULL, 0 );
-+    ok( status == STATUS_ACCESS_VIOLATION, "Got unexpected status %#x.\n",  status );
-+
-+    null_string.Length = 0;
-+    status = pNtCreateFile( &dir, GENERIC_READ|GENERIC_WRITE, &attr, &io, NULL, 0,
-+                            FILE_SHARE_READ|FILE_SHARE_WRITE, FILE_OPEN, FILE_DIRECTORY_FILE, NULL, 0 );
-+    ok( status == STATUS_OBJECT_PATH_SYNTAX_BAD, "Got unexpected status %#x.\n",  status );
-+
-     GetCurrentDirectoryW( MAX_PATH, path );
-     pRtlDosPathNameToNtPathName_U( path, &nameW, NULL, NULL );
-     attr.Length = sizeof(attr);
-diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
-index 20eb6a05922..d99c6b462b2 100644
---- a/dlls/ntdll/unix/file.c
-+++ b/dlls/ntdll/unix/file.c
-@@ -3185,8 +3185,16 @@ static NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, char *
-     int name_len, unix_len;
-     NTSTATUS status;
+     BOOLEAN check_case = !(attr->Attributes & OBJ_CASE_INSENSITIVE);
  
 +    if (!attr->ObjectName->Buffer && attr->ObjectName->Length)
 +        return STATUS_ACCESS_VIOLATION;
@@ -1565,11 +1658,12 @@ index 20eb6a05922..d99c6b462b2 100644
 +        if (!attr->ObjectName->Buffer)
 +            return STATUS_OBJECT_PATH_SYNTAX_BAD;
 +
-         return nt_to_unix_file_name( attr->ObjectName, name_ret, disposition );
+         return wine_nt_to_unix_file_name( attr->ObjectName, unix_name_ret, disposition, check_case );
 +    }
  
      name     = attr->ObjectName->Buffer;
      name_len = attr->ObjectName->Length / sizeof(WCHAR);
+
 From cb427c70056654bf12fb0d7d6dcb13386d193ff4 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
 Date: Fri, 24 Apr 2020 14:37:58 +0300
@@ -1673,7 +1767,7 @@ index 0e43a8170df..7d614569a16 100644
                                   unsigned int options );
  extern struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsigned int sharing );
 
-From 514d3e11c999b11a95ab35df5b4ab454d34fe791 Mon Sep 17 00:00:00 2001
+From aa34cb2167da7685bc550f2073ebc4c610f28eda Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Wed, 13 May 2020 13:55:55 +0300
 Subject: [PATCH] ntdll: Add WINE_DISABLE_WRITE_WATCH env var to disable write
@@ -1682,16 +1776,16 @@ Subject: [PATCH] ntdll: Add WINE_DISABLE_WRITE_WATCH env var to disable write
 Massively improves performance for corert games (Streets of Rage 4).
 Could be fixed properly with Linux kernel changes.
 ---
- dlls/ntdll/unix/virtual.c | 16 ++++++++++++++++
+ dlls/ntdll/virtual.c | 16 ++++++++++++++++
  1 file changed, 16 insertions(+)
 
-diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index 7ea80852090..272e1c5b176 100644
---- a/dlls/ntdll/unix/virtual.c
-+++ b/dlls/ntdll/unix/virtual.c
-@@ -3425,6 +3425,22 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
-     if (zero_bits > 21 && zero_bits < 32) return STATUS_INVALID_PARAMETER_3;
-     if (!is_win64 && !is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
+diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
+index d0cd2639ee9..d2eb7bcc341 100644
+--- a/dlls/ntdll/virtual.c
++++ b/dlls/ntdll/virtual.c
+@@ -2684,6 +2684,22 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
+ 
+     TRACE("%p %p %08lx %x %08x\n", process, *ret, size, type, protect );
  
 +    if (type & MEM_WRITE_WATCH)
 +    {
@@ -1709,9 +1803,10 @@ index 7ea80852090..272e1c5b176 100644
 +            return STATUS_NOT_SUPPORTED;
 +    }
 +
-     if (process != NtCurrentProcess())
-     {
-         apc_call_t call;
+     if (!size) return STATUS_INVALID_PARAMETER;
+     if (zero_bits > 21 && zero_bits < 32) return STATUS_INVALID_PARAMETER_3;
+     if (!is_win64 && !is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
+
 From 912701cb515acdc8e0ff263552f656cd49f60714 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Fri, 15 May 2020 13:01:26 +0200
