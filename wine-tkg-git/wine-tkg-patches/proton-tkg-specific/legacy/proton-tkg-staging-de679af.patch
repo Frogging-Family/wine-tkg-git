@@ -109,7 +109,7 @@ index 20d3c48c4d9..aca8738c4c0 100644
  
  /* parse-line args */
 
-From ba15ba1c9b8ee40e13ef1bd7f018924259f36c1b Mon Sep 17 00:00:00 2001
+From 971dc3c4225b33fb5346187cd37e8355f265800f Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Mon, 18 Jun 2018 07:56:35 -0500
 Subject: [PATCH] ntdll: Notice THREADNAME_INFO exceptions and set thread name
@@ -117,24 +117,24 @@ Subject: [PATCH] ntdll: Notice THREADNAME_INFO exceptions and set thread name
 
 Patch by Zeb.
 ---
- dlls/ntdll/unix/thread.c | 28 ++++++++++++++++++++++++++++
+ dlls/ntdll/exception.c | 28 ++++++++++++++++++++++++++++
  1 file changed, 28 insertions(+)
 
-diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
-index 3b451a22577..ca5dac43bb0 100644
---- a/dlls/ntdll/unix/thread.c
-+++ b/dlls/ntdll/unix/thread.c
-@@ -43,6 +43,9 @@
- #ifdef HAVE_SYS_SYSCALL_H
- #include <sys/syscall.h>
- #endif
+diff --git a/dlls/ntdll/exception.c b/dlls/ntdll/exception.c
+index f85381079a2..ffe048de8c0 100644
+--- a/dlls/ntdll/exception.c
++++ b/dlls/ntdll/exception.c
+@@ -26,6 +26,9 @@
+ #include <errno.h>
+ #include <signal.h>
+ #include <stdarg.h>
 +#ifdef HAVE_PRCTL
 +#include <sys/prctl.h>
 +#endif
  
- #define NONAMELESSUNION
  #include "ntstatus.h"
-@@ -344,6 +347,16 @@ void wait_suspend( CONTEXT *context )
+ #define WIN32_NO_STATUS
+@@ -143,6 +146,16 @@ void wait_suspend( CONTEXT *context )
  }
  
  
@@ -151,7 +151,7 @@ index 3b451a22577..ca5dac43bb0 100644
  /**********************************************************************
   *           send_debug_event
   *
-@@ -366,6 +379,21 @@ NTSTATUS send_debug_event( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL first_c
+@@ -162,6 +175,21 @@ NTSTATUS send_debug_event( EXCEPTION_RECORD *rec, int first_chance, CONTEXT *con
      for (i = 0; i < min( rec->NumberParameters, EXCEPTION_MAXIMUM_PARAMETERS ); i++)
          params[i] = rec->ExceptionInformation[i];
  
@@ -760,6 +760,67 @@ index d2fc629c843..5a97590dbce 100644
  
      desc->VendorId = adapter_id.vendor_id;
      desc->DeviceId = adapter_id.device_id;
+From 304683886016ec940a9b331ce33fcbaf47e893c3 Mon Sep 17 00:00:00 2001
+From: Sven Baars <sbaars@codeweavers.com>
+Date: Thu, 5 Dec 2019 13:48:38 +0100
+Subject: [PATCH] HACK: ntdll: Return a handle to kernel32 when being asked for
+ mfc42.
+
+For some applications mfc42 is loaded, but never actually used. We can
+add Steam game IDs when we find more of such applications.
+---
+ dlls/ntdll/loader.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 431c247a072..c9fcad79316 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -159,6 +159,18 @@ static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
+     while (len--) *dst++ = (unsigned char)*src++;
+ }
+ 
++static WCHAR *strcasestrW( const WCHAR *str, const WCHAR *sub )
++{
++    while (*str)
++    {
++        const WCHAR *p1 = str, *p2 = sub;
++        while (*p1 && *p2 && RtlDowncaseUnicodeChar(*p1) == RtlDowncaseUnicodeChar(*p2)) { p1++; p2++; }
++        if (!*p2) return (WCHAR *)str;
++        str++;
++    }
++    return NULL;
++}
++
+ #define RTL_UNLOAD_EVENT_TRACE_NUMBER 64
+ 
+ typedef struct _RTL_UNLOAD_EVENT_TRACE
+@@ -2869,6 +2881,25 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname,
+ done:
+     RtlFreeHeap( GetProcessHeap(), 0, dllname );
+     if (wow64_old_value) RtlWow64EnableFsRedirectionEx( 1, &wow64_old_value );
++
++    if (status != STATUS_SUCCESS)
++    {
++        /* HACK for Proton issue #17
++         *
++         * Some games try to load mfc42.dll, but then proceed to not use it.
++         * Just return a handle to kernel32 in that case.
++         */
++        static const WCHAR mfc42W[] = {'m','f','c','4','2',0};
++        static const WCHAR kernel32W[] = {'k','e','r','n','e','l','3','2','.','d','l','l',0};
++        const char *sgi = getenv( "SteamGameId" );
++        if (sgi &&
++            !strcmp( sgi, "105450" ) && /* AoE3 */
++            strcasestrW( libname, mfc42W ))
++        {
++            WARN_(loaddll)( "Using a fake mfc42 handle\n" );
++            status = find_dll_file( load_path, kernel32W, nt_name, pwm, mfc42W, module, image_info, st );
++        }
++    }
+     return status;
+ }
+ 
 From 4aa052e0c8ae276fc07afcd93d6e290a88214837 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Wed, 15 Jan 2020 10:17:23 -0600
@@ -1359,6 +1420,54 @@ index a5235b69a8d..4b2c9bd41ae 100644
          /* forward request to the foreground window if it's in a different thread */
          tid = GetWindowThreadProcessId( foreground, &pid );
          if (tid && tid != GetCurrentThreadId() && pid == GetCurrentProcessId())
+From 24a8f709ec8fcf8fa4fcc349a7885c02cc184d74 Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 26 Feb 2020 13:09:48 -0600
+Subject: [PATCH] ntdll: Don't support reading/writing debug registers
+
+Monster Hunter World continually retrieves these registers, so fast-path
+this code. This will break setting debug registers on other threads.
+---
+ dlls/ntdll/signal_x86_64.c | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/dlls/ntdll/signal_x86_64.c b/dlls/ntdll/signal_x86_64.c
+index 04f3854388c..9752c3889b6 100644
+--- a/dlls/ntdll/signal_x86_64.c
++++ b/dlls/ntdll/signal_x86_64.c
+@@ -2115,13 +2115,13 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
+     BOOL self = (handle == GetCurrentThread());
+ 
+     /* debug registers require a server call */
+-    if (self && (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64)))
++    /*if (self && (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64)))
+         self = (amd64_thread_data()->dr0 == context->Dr0 &&
+                 amd64_thread_data()->dr1 == context->Dr1 &&
+                 amd64_thread_data()->dr2 == context->Dr2 &&
+                 amd64_thread_data()->dr3 == context->Dr3 &&
+                 amd64_thread_data()->dr6 == context->Dr6 &&
+-                amd64_thread_data()->dr7 == context->Dr7);
++                amd64_thread_data()->dr7 == context->Dr7);*/
+ 
+     if (!self)
+     {
+@@ -2149,7 +2149,15 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
+     needed_flags = context->ContextFlags;
+ 
+     /* debug registers require a server call */
+-    if (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64)) self = FALSE;
++    if (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64)) //self = FALSE;
++    {
++        context->Dr0 = amd64_thread_data()->dr0;
++        context->Dr1 = amd64_thread_data()->dr1;
++        context->Dr2 = amd64_thread_data()->dr2;
++        context->Dr3 = amd64_thread_data()->dr3;
++        context->Dr6 = amd64_thread_data()->dr6;
++        context->Dr7 = amd64_thread_data()->dr7;
++    }
+ 
+     if (!self)
+     {
 From 8fd9d6bd3d567893f933b7d55615446476745654 Mon Sep 17 00:00:00 2001
 From: Vincent Povirk <vincent@codeweavers.com>
 Date: Wed, 1 Apr 2020 11:47:05 -0500
@@ -1574,66 +1683,26 @@ index d6bde700e42..4f03e3881f0 100644
      if (!unix_table.CodePage)
          RtlUnicodeToUTF8N( dst, dstlen, &reslen, src, srclen * sizeof(WCHAR) );
 
-From 0255dbc3afd3ff673fa701e7802474483252fcb2 Mon Sep 17 00:00:00 2001
+From 9cffda4856b5e5057008d165dd38ec971b9af712 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
-Date: Mon, 13 Jul 2020 10:21:49 -0500
+Date: Fri, 24 Apr 2020 19:48:20 +0300
 Subject: [PATCH] ntdll: Handle NULL object name buffer in
  nt_to_unix_file_name_attr().
 
+Signed-off-by: Paul Gofman <pgofman@codeweavers.com>
+Signed-off-by: Paul Gofman <gofmanp@gmail.com>
 ---
+ dlls/ntdll/directory.c  |  8 ++++++++
  dlls/ntdll/tests/file.c | 22 +++++++++++++++++++++-
- dlls/ntdll/unix/file.c  |  8 ++++++++
  2 files changed, 29 insertions(+), 1 deletion(-)
 
-diff --git a/dlls/ntdll/tests/file.c b/dlls/ntdll/tests/file.c
-index 6164b0c4bde..031be95e233 100644
---- a/dlls/ntdll/tests/file.c
-+++ b/dlls/ntdll/tests/file.c
-@@ -144,16 +144,36 @@ static void create_file_test(void)
-     static const char testdata[] = "Hello World";
-     static const WCHAR sepW[] = {'\\',0};
-     FILE_NETWORK_OPEN_INFORMATION info;
-+    UNICODE_STRING nameW, null_string;
+diff --git a/dlls/ntdll/directory.c b/dlls/ntdll/directory.c
+index 784e720edf8..56f9be0f06e 100644
+--- a/dlls/ntdll/directory.c
++++ b/dlls/ntdll/directory.c
+@@ -2701,8 +2701,16 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
      NTSTATUS status;
-     HANDLE dir, file;
-     WCHAR path[MAX_PATH], temp[MAX_PATH];
-     OBJECT_ATTRIBUTES attr;
-     IO_STATUS_BLOCK io;
--    UNICODE_STRING nameW;
-     LARGE_INTEGER offset;
-     char buf[32];
-     DWORD ret;
- 
-+    attr.Length = sizeof(attr);
-+    attr.RootDirectory = NULL;
-+    attr.ObjectName = &null_string;
-+    attr.Attributes = 0;
-+    attr.SecurityDescriptor = NULL;
-+    attr.SecurityQualityOfService = NULL;
-+
-+    null_string.Buffer = NULL;
-+    null_string.Length = 256;
-+
-+    /* try various open modes and options on directories */
-+    status = pNtCreateFile( &dir, GENERIC_READ|GENERIC_WRITE, &attr, &io, NULL, 0,
-+                            FILE_SHARE_READ|FILE_SHARE_WRITE, FILE_OPEN, FILE_DIRECTORY_FILE, NULL, 0 );
-+    ok( status == STATUS_ACCESS_VIOLATION, "Got unexpected status %#x.\n",  status );
-+
-+    null_string.Length = 0;
-+    status = pNtCreateFile( &dir, GENERIC_READ|GENERIC_WRITE, &attr, &io, NULL, 0,
-+                            FILE_SHARE_READ|FILE_SHARE_WRITE, FILE_OPEN, FILE_DIRECTORY_FILE, NULL, 0 );
-+    ok( status == STATUS_OBJECT_PATH_SYNTAX_BAD, "Got unexpected status %#x.\n",  status );
-+
-     GetCurrentDirectoryW( MAX_PATH, path );
-     pRtlDosPathNameToNtPathName_U( path, &nameW, NULL, NULL );
-     attr.Length = sizeof(attr);
-diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
-index 20eb6a05922..d99c6b462b2 100644
---- a/dlls/ntdll/unix/file.c
-+++ b/dlls/ntdll/unix/file.c
-@@ -3185,8 +3185,16 @@ static NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, char *
-     int name_len, unix_len;
-     NTSTATUS status;
+     BOOLEAN check_case = !(attr->Attributes & OBJ_CASE_INSENSITIVE);
  
 +    if (!attr->ObjectName->Buffer && attr->ObjectName->Length)
 +        return STATUS_ACCESS_VIOLATION;
@@ -1643,11 +1712,203 @@ index 20eb6a05922..d99c6b462b2 100644
 +        if (!attr->ObjectName->Buffer)
 +            return STATUS_OBJECT_PATH_SYNTAX_BAD;
 +
-         return nt_to_unix_file_name( attr->ObjectName, name_ret, disposition );
+         return wine_nt_to_unix_file_name( attr->ObjectName, unix_name_ret, disposition, check_case );
 +    }
  
      name     = attr->ObjectName->Buffer;
      name_len = attr->ObjectName->Length / sizeof(WCHAR);
+
+From 48f7cb8e0cdec072ed6e2164946239fde5ecb722 Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Fri, 26 Jun 2020 18:57:35 +0200
+Subject: [PATCH] Import rebased against hotfixed staging -tkg fca69733
+ Paul Gofman's proton patchset.
+
+ ntdll: Use case sensitive search for \??\unix file names
+
+diff --git a/dlls/kernel32/path.c b/dlls/kernel32/path.c
+index 0f075d0af1c..db2c1fb0240 100644
+--- a/dlls/kernel32/path.c
++++ b/dlls/kernel32/path.c
+@@ -263,7 +263,7 @@ BOOL WINAPI RemoveDirectoryW( LPCWSTR path )
+         return FALSE;
+     }
+ 
+-    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN );
+     if (status == STATUS_SUCCESS)
+     {
+         status = NtQueryAttributesFile( &attr, &info );
+@@ -342,7 +342,7 @@ char * CDECL wine_get_unix_file_name( LPCWSTR dosW )
+     NTSTATUS status;
+ 
+     if (!RtlDosPathNameToNtPathName_U( dosW, &nt_name, NULL, NULL )) return NULL;
+-    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF );
+     RtlFreeUnicodeString( &nt_name );
+     if (status && status != STATUS_NO_SUCH_FILE)
+     {
+diff --git a/dlls/ntdll/directory.c b/dlls/ntdll/directory.c
+index 56f9be0f06e..92d96ad582e 100644
+--- a/dlls/ntdll/directory.c
++++ b/dlls/ntdll/directory.c
+@@ -2699,7 +2699,6 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+     char *unix_name;
+     int name_len, unix_len;
+     NTSTATUS status;
+-    BOOLEAN check_case = !(attr->Attributes & OBJ_CASE_INSENSITIVE);
+ 
+     if (!attr->ObjectName->Buffer && attr->ObjectName->Length)
+         return STATUS_ACCESS_VIOLATION;
+@@ -2709,7 +2708,7 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+         if (!attr->ObjectName->Buffer)
+             return STATUS_OBJECT_PATH_SYNTAX_BAD;
+ 
+-        return wine_nt_to_unix_file_name( attr->ObjectName, unix_name_ret, disposition, check_case );
++        return wine_nt_to_unix_file_name( attr->ObjectName, unix_name_ret, disposition );
+     }
+ 
+     name     = attr->ObjectName->Buffer;
+@@ -2740,7 +2739,7 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+             if ((old_cwd = open( ".", O_RDONLY )) != -1 && fchdir( root_fd ) != -1)
+             {
+                 status = lookup_unix_name( name, name_len, &unix_name, unix_len, 1,
+-                                           disposition, check_case );
++                                           disposition, FALSE );
+                 if (fchdir( old_cwd ) == -1) chdir( "/" );
+             }
+             else status = FILE_GetNtStatus();
+@@ -2747,7 +2746,7 @@ static NTSTATUS nt_to_unix_file_name_internal( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+  *           nt_to_unix_file_name_internal
+  */
+ static NTSTATUS nt_to_unix_file_name_internal( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+-                                               UINT disposition, BOOLEAN check_case )
++                                               UINT disposition )
+ {
+     static const WCHAR unixW[] = {'u','n','i','x'};
+     static const WCHAR pipeW[] = {'p','i','p','e'};
+@@ -2777,6 +2776,7 @@ static NTSTATUS nt_to_unix_file_name_internal( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+     char *unix_name;
+     int pos, ret, name_len, unix_len, prefix_len;
+     WCHAR prefix[MAX_DIR_ENTRY_LEN + 1];
++    BOOLEAN check_case = FALSE;
+     BOOLEAN is_unix = FALSE;
+     BOOLEAN is_pipe = FALSE;
+ 
+@@ -2789,7 +2788,7 @@ NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, ANSI_STRING *
+  * returned, but the unix name is still filled in properly.
+  */
+ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+-                                          UINT disposition, BOOLEAN check_case )
++                                          UINT disposition )
+ {
+     static const WCHAR unixW[] = {'u','n','i','x'};
+     static const WCHAR invalid_charsW[] = { INVALID_NT_CHARS, 0 };
+@@ -2915,7 +2915,7 @@ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+         prefix = user_shared_data->NtSystemRoot;
+     }
+     else
+-        return nt_to_unix_file_name_internal( nameW, unix_name_ret, disposition, check_case );
++        return nt_to_unix_file_name_internal( nameW, unix_name_ret, disposition );
+ 
+     name_len = sizeof(dosprefixW) + wcslen(prefix) * sizeof(WCHAR) +
+                nameW->Length - offset * sizeof(WCHAR) + sizeof(WCHAR);
+@@ -2931,7 +2931,7 @@ NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+     ptr[ nameW->Length / sizeof(WCHAR) - offset ] = 0;
+ 
+     RtlInitUnicodeString( &dospathW, name );
+-    status = nt_to_unix_file_name_internal( &dospathW, unix_name_ret, disposition, check_case );
++    status = nt_to_unix_file_name_internal( &dospathW, unix_name_ret, disposition );
+ 
+     RtlFreeHeap( GetProcessHeap(), 0, name );
+     return status;
+diff --git a/dlls/ntdll/file.c b/dlls/ntdll/file.c
+index 1cb45fa0d8c..1a36d75a76c 100644
+--- a/dlls/ntdll/file.c
++++ b/dlls/ntdll/file.c
+@@ -1726,7 +1726,7 @@ NTSTATUS FILE_CreateSymlink(HANDLE handle, REPARSE_DATA_BUFFER *buffer)
+     }
+ 
+     nt_dest_allocated = TRUE;
+-    status = wine_nt_to_unix_file_name( &nt_dest, &unix_dest, FILE_WINE_PATH, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_dest, &unix_dest, FILE_WINE_PATH );
+     if (status != STATUS_SUCCESS && status != STATUS_NO_SUCH_FILE)
+         goto cleanup;
+     dest_allocated = TRUE;
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 6ef10d6c18a..2979061a5e2 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -3079,7 +3079,7 @@ static NTSTATUS load_so_dll( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+ 
+     if (!so_name)
+     {
+-        if (wine_nt_to_unix_file_name( nt_name, &unix_name, FILE_OPEN, FALSE ))
++        if (wine_nt_to_unix_file_name( nt_name, &unix_name, FILE_OPEN ))
+             return STATUS_DLL_NOT_FOUND;
+ 
+         /* remove .so extension from Windows name */
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index 1a8bd4e11e1..ba0776073fb 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -1575,7 +1575,7 @@
+ @ cdecl __wine_set_signal_handler(long ptr)
+ 
+ # Filesystem
+-@ cdecl wine_nt_to_unix_file_name(ptr ptr long long)
++@ cdecl wine_nt_to_unix_file_name(ptr ptr long)
+ @ cdecl wine_unix_to_nt_file_name(ptr ptr)
+ 
+ @ cdecl __wine_esync_set_queue_fd(long)
+diff --git a/dlls/ntdll/process.c b/dlls/ntdll/process.c
+index d7ff7fa2c6f..0f4f42a240f 100644
+--- a/dlls/ntdll/process.c
++++ b/dlls/ntdll/process.c
+@@ -1458,7 +1458,7 @@ static char *get_unix_curdir( const RTL_USER_PROCESS_PARAMETERS *params )
+ 
+     if (!RtlDosPathNameToNtPathName_U( params->CurrentDirectory.DosPath.Buffer, &nt_name, NULL, NULL ))
+         return NULL;
+-    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF, FALSE );
++    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF );
+     RtlFreeUnicodeString( &nt_name );
+     if (status && status != STATUS_NO_SUCH_FILE) return NULL;
+     return unix_name.Buffer;
+@@ -1479,7 +1479,7 @@ static NTSTATUS fork_and_exec( UNICODE_STRING *path, const RTL_USER_PROCESS_PARA
+     ANSI_STRING unix_name;
+     NTSTATUS status;
+ 
+-    status = wine_nt_to_unix_file_name( path, &unix_name, FILE_OPEN, FALSE );
++    status = wine_nt_to_unix_file_name( path, &unix_name, FILE_OPEN );
+     if (status) return status;
+ 
+ #ifdef HAVE_PIPE2
+diff --git a/dlls/ntdll/tests/file.c b/dlls/ntdll/tests/file.c
+index 9ebe41ac7d8..b7a2979506c 100644
+--- a/dlls/ntdll/tests/file.c
++++ b/dlls/ntdll/tests/file.c
+@@ -370,7 +370,7 @@ static void open_file_test(void)
+     attr.Length = sizeof(attr);
+     attr.RootDirectory = 0;
+     attr.ObjectName = &nameW;
+-    attr.Attributes = OBJ_CASE_INSENSITIVE;
++    attr.Attributes = 0;
+     attr.SecurityDescriptor = NULL;
+     attr.SecurityQualityOfService = NULL;
+     status = pNtOpenFile( &dir, SYNCHRONIZE|FILE_LIST_DIRECTORY, &attr, &io,
+diff --git a/include/winternl.h b/include/winternl.h
+index e67fcabb6a2..ecaf2af7f80 100644
+--- a/include/winternl.h
++++ b/include/winternl.h
+@@ -3021,7 +3021,7 @@ NTSYSAPI void      WINAPI TpWaitForWork(TP_WORK *,BOOL);
+ /* Wine internal functions */
+ 
+ NTSYSAPI NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, ANSI_STRING *unix_name_ret,
+-                                                   UINT disposition, BOOLEAN check_case );
++                                                   UINT disposition );
+ NTSYSAPI NTSTATUS CDECL wine_unix_to_nt_file_name( const ANSI_STRING *name, UNICODE_STRING *nt );
+ 
+ 
 From cb427c70056654bf12fb0d7d6dcb13386d193ff4 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
 Date: Fri, 24 Apr 2020 14:37:58 +0300
@@ -1751,7 +2012,7 @@ index 0e43a8170df..7d614569a16 100644
                                   unsigned int options );
  extern struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsigned int sharing );
 
-From 514d3e11c999b11a95ab35df5b4ab454d34fe791 Mon Sep 17 00:00:00 2001
+From aa34cb2167da7685bc550f2073ebc4c610f28eda Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Wed, 13 May 2020 13:55:55 +0300
 Subject: [PATCH] ntdll: Add WINE_DISABLE_WRITE_WATCH env var to disable write
@@ -1760,16 +2021,16 @@ Subject: [PATCH] ntdll: Add WINE_DISABLE_WRITE_WATCH env var to disable write
 Massively improves performance for corert games (Streets of Rage 4).
 Could be fixed properly with Linux kernel changes.
 ---
- dlls/ntdll/unix/virtual.c | 16 ++++++++++++++++
+ dlls/ntdll/virtual.c | 16 ++++++++++++++++
  1 file changed, 16 insertions(+)
 
-diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index 7ea80852090..272e1c5b176 100644
---- a/dlls/ntdll/unix/virtual.c
-+++ b/dlls/ntdll/unix/virtual.c
-@@ -3425,6 +3425,22 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
-     if (zero_bits > 21 && zero_bits < 32) return STATUS_INVALID_PARAMETER_3;
-     if (!is_win64 && !is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
+diff --git a/dlls/ntdll/virtual.c b/dlls/ntdll/virtual.c
+index d0cd2639ee9..d2eb7bcc341 100644
+--- a/dlls/ntdll/virtual.c
++++ b/dlls/ntdll/virtual.c
+@@ -2684,6 +2684,22 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
+ 
+     TRACE("%p %p %08lx %x %08x\n", process, *ret, size, type, protect );
  
 +    if (type & MEM_WRITE_WATCH)
 +    {
@@ -1787,9 +2048,10 @@ index 7ea80852090..272e1c5b176 100644
 +            return STATUS_NOT_SUPPORTED;
 +    }
 +
-     if (process != NtCurrentProcess())
-     {
-         apc_call_t call;
+     if (!size) return STATUS_INVALID_PARAMETER;
+     if (zero_bits > 21 && zero_bits < 32) return STATUS_INVALID_PARAMETER_3;
+     if (!is_win64 && !is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
+
 From 912701cb515acdc8e0ff263552f656cd49f60714 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Fri, 15 May 2020 13:01:26 +0200

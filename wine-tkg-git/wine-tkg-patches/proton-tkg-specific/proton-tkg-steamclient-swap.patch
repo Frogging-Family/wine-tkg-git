@@ -1,590 +1,307 @@
-From a7858a380032403bac2f52a0245cb28ee6d19592 Mon Sep 17 00:00:00 2001
+From c9c923a600e0dc7bdee5b108bcc655129f8a1c55 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
-Date: Fri, 22 Nov 2019 20:19:25 +0100
-Subject: [PATCH] HACK: steam: Add PE wrapper DLL for lsteamclient.
+Date: Sun, 28 Jun 2020 02:18:54 +0200
+Subject: [PATCH] HACK: steam: ntdll: Setup steamclient trampolines to
+ lsteamclient.
 
-This is used to pass several Denuvo DRM checks that are picky about
-the nature of the module from which Steam procedures are loaded as well
-as its basename.
+This uses exec page faults to jump from native steamclient into our
+lsteamclient entry points.
 ---
- configure                             |   3 +
- configure.ac                          |   2 +
- dlls/steamclient/Makefile.in          |   5 ++
- dlls/steamclient/steamclient.spec     |  56 +++++++++++++
- dlls/steamclient/steamclient_main.c   | 112 ++++++++++++++++++++++++++
- dlls/steamclient64/Makefile.in        |   6 ++
- dlls/steamclient64/steamclient64.spec |  56 +++++++++++++
- 7 files changed, 240 insertions(+)
- create mode 100644 dlls/steamclient/Makefile.in
- create mode 100644 dlls/steamclient/steamclient.spec
- create mode 100644 dlls/steamclient/steamclient_main.c
- create mode 100644 dlls/steamclient64/Makefile.in
- create mode 100644 dlls/steamclient64/steamclient64.spec
-
-diff --git a/configure b/configure
-index 7f7329a007e..231ce6ce103 100755
---- a/configure
-+++ b/configure
-@@ -1573,6 +1573,7 @@ enable_sspicli
- enable_stdole2_tlb
- enable_stdole32_tlb
- enable_sti
-+enable_steamclient
- enable_strmbase
- enable_strmdll
- enable_strmiids
-@@ -20926,6 +20927,8 @@ wine_fn_config_makefile dlls/stdole32.tlb enable_stdole32_tlb
- wine_fn_config_makefile dlls/sti enable_sti
- wine_fn_config_makefile dlls/sti/tests enable_tests
- wine_fn_config_makefile dlls/storage.dll16 enable_win16
-+test "x$enable_win64" = xyes || wine_fn_config_makefile dlls/steamclient enable_steamclient
-+test "x$enable_win64" = xno || wine_fn_config_makefile dlls/steamclient64 enable_steamclient
- wine_fn_config_makefile dlls/stress.dll16 enable_win16
- wine_fn_config_makefile dlls/strmbase enable_strmbase
- wine_fn_config_makefile dlls/strmdll enable_strmdll
-diff --git a/configure.ac b/configure.ac
-index 5c77251c9c2..152107d7f15 100644
---- a/configure.ac
-+++ b/configure.ac
-@@ -3681,6 +3681,8 @@ WINE_CONFIG_MAKEFILE(dlls/stdole32.tlb)
- WINE_CONFIG_MAKEFILE(dlls/sti)
- WINE_CONFIG_MAKEFILE(dlls/sti/tests)
- WINE_CONFIG_MAKEFILE(dlls/storage.dll16,enable_win16)
-+WINE_CONFIG_MAKEFILE(dlls/steamclient,enable_steamclient,[test "x$enable_win64" = xyes])
-+WINE_CONFIG_MAKEFILE(dlls/steamclient64,enable_steamclient,[test "x$enable_win64" = xno])
- WINE_CONFIG_MAKEFILE(dlls/stress.dll16,enable_win16)
- WINE_CONFIG_MAKEFILE(dlls/strmbase)
- WINE_CONFIG_MAKEFILE(dlls/strmdll)
-diff --git a/dlls/steamclient/Makefile.in b/dlls/steamclient/Makefile.in
-new file mode 100644
-index 00000000000..ad44fb3cc72
---- /dev/null
-+++ b/dlls/steamclient/Makefile.in
-@@ -0,0 +1,5 @@
-+MODULE        = steamclient.dll
-+EXTRADLLFLAGS = -mno-cygwin
-+
-+C_SRCS = \
-+	steamclient_main.c
-diff --git a/dlls/steamclient/steamclient.spec b/dlls/steamclient/steamclient.spec
-new file mode 100644
-index 00000000000..2b6e52e032b
---- /dev/null
-+++ b/dlls/steamclient/steamclient.spec
-@@ -0,0 +1,56 @@
-+1 cdecl Breakpad_SteamMiniDumpInit(long ptr ptr) STEAMCLIENT_Breakpad_SteamMiniDumpInit
-+2 cdecl Breakpad_SteamSetAppID(long) STEAMCLIENT_Breakpad_SteamSetAppID
-+3 cdecl Breakpad_SteamSetSteamID(int64) STEAMCLIENT_Breakpad_SteamSetSteamID
-+4 cdecl Breakpad_SteamWriteMiniDumpSetComment(ptr) STEAMCLIENT_Breakpad_SteamWriteMiniDumpSetComment
-+5 cdecl Breakpad_SteamWriteMiniDumpUsingExceptionInfoWithBuildId(long long) STEAMCLIENT_Breakpad_SteamWriteMiniDumpUsingExceptionInfoWithBuildId
-+6 cdecl CreateInterface(ptr ptr) STEAMCLIENT_CreateInterface
-+7 stub Steam_BConnected
-+8 cdecl Steam_BGetCallback(long ptr ptr) STEAMCLIENT_Steam_BGetCallback
-+9 stub Steam_BLoggedOn
-+10 stub Steam_BReleaseSteamPipe
-+11 stub Steam_ConnectToGlobalUser
-+12 stub Steam_CreateGlobalUser
-+13 stub Steam_CreateLocalUser
-+14 stub Steam_CreateSteamPipe
-+15 cdecl Steam_FreeLastCallback(long) STEAMCLIENT_Steam_FreeLastCallback
-+16 stub Steam_GSBLoggedOn
-+17 stub Steam_GSBSecure
-+18 stub Steam_GSGetSteam2GetEncryptionKeyToSendToNewClient
-+19 stub Steam_GSGetSteamID
-+20 stub Steam_GSLogOff
-+21 stub Steam_GSLogOn
-+22 stub Steam_GSRemoveUserConnect
-+23 stub Steam_GSSendSteam2UserConnect
-+24 stub Steam_GSSendSteam3UserConnect
-+25 stub Steam_GSSendUserDisconnect
-+26 stub Steam_GSSendUserStatusResponse
-+27 stub Steam_GSSetServerType
-+28 stub Steam_GSSetSpawnCount
-+29 stub Steam_GSUpdateStatus
-+30 cdecl Steam_GetAPICallResult(long int64 ptr long long ptr) STEAMCLIENT_Steam_GetAPICallResult
-+31 stub Steam_GetGSHandle
-+32 stub Steam_InitiateGameConnection
-+33 stub Steam_LogOff
-+34 stub Steam_LogOn
-+35 cdecl Steam_ReleaseThreadLocalMemory(long) STEAMCLIENT_Steam_ReleaseThreadLocalMemory
-+36 stub Steam_ReleaseUser
-+37 stub Steam_SetLocalIPBinding
-+38 stub Steam_TerminateGameConnection
-+39 stub hid_close
-+40 stub hid_enumerate
-+41 stub hid_error
-+42 stub hid_exit
-+43 stub hid_free_enumeration
-+44 stub hid_get_feature_report
-+45 stub hid_get_indexed_string
-+46 stub hid_get_manufacturer_string
-+47 stub hid_get_product_string
-+48 stub hid_get_serial_number_string
-+49 stub hid_init
-+50 stub hid_open
-+51 stub hid_open_path
-+52 stub hid_read
-+53 stub hid_read_timeout
-+54 stub hid_send_feature_report
-+55 stub hid_set_nonblocking
-+56 stub hid_write
-diff --git a/dlls/steamclient/steamclient_main.c b/dlls/steamclient/steamclient_main.c
-new file mode 100644
-index 00000000000..de9e62c8322
---- /dev/null
-+++ b/dlls/steamclient/steamclient_main.c
-@@ -0,0 +1,112 @@
-+#include <stdarg.h>
-+
-+#include "windef.h"
-+#include "winbase.h"
-+#include "wine/debug.h"
-+
-+WINE_DEFAULT_DEBUG_CHANNEL(steamclient);
-+
-+static HMODULE lsteamclient;
-+static void (CDECL *pBreakpad_SteamMiniDumpInit)(UINT32, char *, char *);
-+static void (CDECL *pBreakpad_SteamSetAppID)(UINT32);
-+static int (CDECL *pBreakpad_SteamSetSteamID)(UINT64);
-+static int (CDECL *pBreakpad_SteamWriteMiniDumpSetComment)(char *);
-+static void (CDECL *pBreakpad_SteamWriteMiniDumpUsingExceptionInfoWithBuildId)(int, int);
-+static void *(CDECL *pCreateInterface)(char *, int *);
-+static BOOL (CDECL *pSteam_BGetCallback)(INT32, void *, INT32 *);
-+static BOOL (CDECL *pSteam_FreeLastCallback)(INT32);
-+static BOOL (CDECL *pSteam_GetAPICallResult)(INT32, UINT64, void *, int, int, BOOL *);
-+static void (CDECL *pSteam_ReleaseThreadLocalMemory)(int);
-+
-+BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
-+{
-+    TRACE("(%p, %u, %p)\n", instance, reason, reserved);
-+
-+    switch (reason)
-+    {
-+        case DLL_PROCESS_ATTACH:
-+            lsteamclient = LoadLibraryA("lsteamclient");
-+            if (!lsteamclient)
-+                return FALSE;
-+
-+            pBreakpad_SteamMiniDumpInit = (void*)GetProcAddress(lsteamclient,"Breakpad_SteamMiniDumpInit");
-+            pBreakpad_SteamSetAppID = (void*)GetProcAddress(lsteamclient,"Breakpad_SteamSetAppID");
-+            pBreakpad_SteamSetSteamID = (void*)GetProcAddress(lsteamclient,"Breakpad_SteamSetSteamID");
-+            pBreakpad_SteamWriteMiniDumpSetComment = (void*)GetProcAddress(lsteamclient,"Breakpad_SteamWriteMiniDumpSetComment");
-+            pBreakpad_SteamWriteMiniDumpUsingExceptionInfoWithBuildId = (void*)GetProcAddress(lsteamclient,"Breakpad_SteamWriteMiniDumpUsingExceptionInfoWithBuildId");
-+            pCreateInterface = (void*)GetProcAddress(lsteamclient,"CreateInterface");
-+            pSteam_BGetCallback = (void*)GetProcAddress(lsteamclient,"Steam_BGetCallback");
-+            pSteam_FreeLastCallback = (void*)GetProcAddress(lsteamclient,"Steam_FreeLastCallback");
-+            pSteam_GetAPICallResult = (void*)GetProcAddress(lsteamclient,"Steam_GetAPICallResult");
-+            pSteam_ReleaseThreadLocalMemory = (void*)GetProcAddress(lsteamclient,"Steam_ReleaseThreadLocalMemory");
-+
-+            TRACE("Forwarding DLL (lsteamclient) loaded (%p)\n", lsteamclient);
-+            break;
-+        case DLL_PROCESS_DETACH:
-+            FreeLibrary(lsteamclient);
-+            TRACE("Forwarding DLL (lsteamclient) freed\n");
-+            break;
-+    }
-+
-+    return TRUE;
-+}
-+
-+void CDECL STEAMCLIENT_Breakpad_SteamMiniDumpInit(UINT32 a, char *b, char *c)
-+{
-+    TRACE("\n");
-+    pBreakpad_SteamMiniDumpInit(a, b, c);
-+}
-+
-+void CDECL STEAMCLIENT_Breakpad_SteamSetAppID(UINT32 a)
-+{
-+    TRACE("\n");
-+    pBreakpad_SteamSetAppID(a);
-+}
-+
-+int CDECL STEAMCLIENT_Breakpad_SteamSetSteamID(UINT64 a)
-+{
-+    TRACE("\n");
-+    return pBreakpad_SteamSetSteamID(a);
-+}
-+
-+int CDECL STEAMCLIENT_Breakpad_SteamWriteMiniDumpSetComment(char *a)
-+{
-+    TRACE("\n");
-+    return pBreakpad_SteamWriteMiniDumpSetComment(a);
-+}
-+
-+void CDECL STEAMCLIENT_Breakpad_SteamWriteMiniDumpUsingExceptionInfoWithBuildId(int a, int b)
-+{
-+    TRACE("\n");
-+    pBreakpad_SteamWriteMiniDumpUsingExceptionInfoWithBuildId(a, b);
-+}
-+
-+void *CDECL STEAMCLIENT_CreateInterface(char *a, int *b)
-+{
-+    TRACE("\n");
-+    return pCreateInterface(a, b);
-+}
-+
-+BOOL CDECL STEAMCLIENT_Steam_BGetCallback(INT32 a, void *b, INT32 *c)
-+{
-+    TRACE("\n");
-+    return pSteam_BGetCallback(a, b, c);
-+}
-+
-+BOOL CDECL STEAMCLIENT_Steam_FreeLastCallback(INT32 a)
-+{
-+    TRACE("\n");
-+    return pSteam_FreeLastCallback(a);
-+}
-+
-+BOOL CDECL STEAMCLIENT_Steam_GetAPICallResult(INT32 a, UINT64 b, void *c, int d, int e, BOOL *f)
-+{
-+    TRACE("\n");
-+    return pSteam_GetAPICallResult(a, b, c, d, e, f);
-+}
-+
-+void CDECL STEAMCLIENT_Steam_ReleaseThreadLocalMemory(int a)
-+{
-+    TRACE("\n");
-+    pSteam_ReleaseThreadLocalMemory(a);
-+}
-diff --git a/dlls/steamclient64/Makefile.in b/dlls/steamclient64/Makefile.in
-new file mode 100644
-index 00000000000..ff2feff56a7
---- /dev/null
-+++ b/dlls/steamclient64/Makefile.in
-@@ -0,0 +1,6 @@
-+MODULE        = steamclient64.dll
-+PARENTSRC     = ../steamclient
-+EXTRADLLFLAGS = -mno-cygwin
-+
-+C_SRCS = \
-+	steamclient_main.c
-diff --git a/dlls/steamclient64/steamclient64.spec b/dlls/steamclient64/steamclient64.spec
-new file mode 100644
-index 00000000000..2b6e52e032b
---- /dev/null
-+++ b/dlls/steamclient64/steamclient64.spec
-@@ -0,0 +1,56 @@
-+1 cdecl Breakpad_SteamMiniDumpInit(long ptr ptr) STEAMCLIENT_Breakpad_SteamMiniDumpInit
-+2 cdecl Breakpad_SteamSetAppID(long) STEAMCLIENT_Breakpad_SteamSetAppID
-+3 cdecl Breakpad_SteamSetSteamID(int64) STEAMCLIENT_Breakpad_SteamSetSteamID
-+4 cdecl Breakpad_SteamWriteMiniDumpSetComment(ptr) STEAMCLIENT_Breakpad_SteamWriteMiniDumpSetComment
-+5 cdecl Breakpad_SteamWriteMiniDumpUsingExceptionInfoWithBuildId(long long) STEAMCLIENT_Breakpad_SteamWriteMiniDumpUsingExceptionInfoWithBuildId
-+6 cdecl CreateInterface(ptr ptr) STEAMCLIENT_CreateInterface
-+7 stub Steam_BConnected
-+8 cdecl Steam_BGetCallback(long ptr ptr) STEAMCLIENT_Steam_BGetCallback
-+9 stub Steam_BLoggedOn
-+10 stub Steam_BReleaseSteamPipe
-+11 stub Steam_ConnectToGlobalUser
-+12 stub Steam_CreateGlobalUser
-+13 stub Steam_CreateLocalUser
-+14 stub Steam_CreateSteamPipe
-+15 cdecl Steam_FreeLastCallback(long) STEAMCLIENT_Steam_FreeLastCallback
-+16 stub Steam_GSBLoggedOn
-+17 stub Steam_GSBSecure
-+18 stub Steam_GSGetSteam2GetEncryptionKeyToSendToNewClient
-+19 stub Steam_GSGetSteamID
-+20 stub Steam_GSLogOff
-+21 stub Steam_GSLogOn
-+22 stub Steam_GSRemoveUserConnect
-+23 stub Steam_GSSendSteam2UserConnect
-+24 stub Steam_GSSendSteam3UserConnect
-+25 stub Steam_GSSendUserDisconnect
-+26 stub Steam_GSSendUserStatusResponse
-+27 stub Steam_GSSetServerType
-+28 stub Steam_GSSetSpawnCount
-+29 stub Steam_GSUpdateStatus
-+30 cdecl Steam_GetAPICallResult(long int64 ptr long long ptr) STEAMCLIENT_Steam_GetAPICallResult
-+31 stub Steam_GetGSHandle
-+32 stub Steam_InitiateGameConnection
-+33 stub Steam_LogOff
-+34 stub Steam_LogOn
-+35 cdecl Steam_ReleaseThreadLocalMemory(long) STEAMCLIENT_Steam_ReleaseThreadLocalMemory
-+36 stub Steam_ReleaseUser
-+37 stub Steam_SetLocalIPBinding
-+38 stub Steam_TerminateGameConnection
-+39 stub hid_close
-+40 stub hid_enumerate
-+41 stub hid_error
-+42 stub hid_exit
-+43 stub hid_free_enumeration
-+44 stub hid_get_feature_report
-+45 stub hid_get_indexed_string
-+46 stub hid_get_manufacturer_string
-+47 stub hid_get_product_string
-+48 stub hid_get_serial_number_string
-+49 stub hid_init
-+50 stub hid_open
-+51 stub hid_open_path
-+52 stub hid_read
-+53 stub hid_read_timeout
-+54 stub hid_send_feature_report
-+55 stub hid_set_nonblocking
-+56 stub hid_write
-
-From f1a778c4f1c854be135b8bd9e320dde98fcca78a Mon Sep 17 00:00:00 2001
-From: Derek Lesho <dlesho@codeweavers.com>
-Date: Tue, 12 Nov 2019 11:44:07 -0600
-Subject: [PATCH] HACK: steam: ntdll: Load both native and builtin steamclient.
-
-This loads both libraries and swap between them whenever useful in
-ordet to pass the various DRM checks.
----
- dlls/ntdll/loader.c | 97 ++++++++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 96 insertions(+), 1 deletion(-)
+ dlls/ntdll/loader.c             | 22 +++++++++++
+ dlls/ntdll/unix/loader.c        | 66 +++++++++++++++++++++++++++++++++
+ dlls/ntdll/unix/signal_i386.c   |  7 ++++
+ dlls/ntdll/unix/signal_x86_64.c |  7 ++++
+ dlls/ntdll/unix/unix_private.h  |  2 +
+ dlls/ntdll/unixlib.h            |  3 ++
+ 6 files changed, 107 insertions(+)
 
 diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
-index 8dfabde44c3..b25c48b52ca 100644
+index 955bd186b56..fe9e9fd2315 100644
 --- a/dlls/ntdll/loader.c
 +++ b/dlls/ntdll/loader.c
-@@ -1541,6 +1541,75 @@ static void thread_attach(void)
-     }
+@@ -1913,10 +1913,14 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+                               const pe_image_info_t *image_info, const struct file_id *id,
+                               DWORD flags, WINE_MODREF **pwm )
+ {
++    static HMODULE lsteamclient = NULL;
++    UNICODE_STRING lsteamclient_us;
+     IMAGE_NT_HEADERS *nt;
+     WINE_MODREF *wm;
+     NTSTATUS status;
+     SIZE_T map_size;
++    WCHAR *basename, *tmp;
++    ULONG basename_len;
+ 
+     if (!(nt = RtlImageNtHeader( *module ))) return STATUS_INVALID_IMAGE_FORMAT;
+ 
+@@ -1932,6 +1936,24 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+ 
+     set_security_cookie( *module, image_info->map_size );
+ 
++    basename = nt_name->Buffer;
++    if ((tmp = wcsrchr(basename, '\\'))) basename = tmp + 1;
++    if ((tmp = wcsrchr(basename, '/'))) basename = tmp + 1;
++    basename_len = wcslen(basename);
++    if (basename_len >= 4 && !wcscmp(basename + basename_len - 4, L".dll")) basename_len -= 4;
++
++    if ((!RtlCompareUnicodeStrings(basename, basename_len, L"steamclient", 11, TRUE) ||
++         !RtlCompareUnicodeStrings(basename, basename_len, L"steamclient64", 13, TRUE) ||
++         !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer", 19, TRUE) ||
++         !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer64", 21, TRUE)) &&
++        RtlCreateUnicodeStringFromAsciiz(&lsteamclient_us, "lsteamclient.dll") &&
++        (lsteamclient || LdrLoadDll(load_path, 0, &lsteamclient_us, &lsteamclient) == STATUS_SUCCESS))
++    {
++        unix_funcs->steamclient_setup_trampolines( *module, lsteamclient );
++        wm->ldr.Flags |= LDR_DONT_RESOLVE_REFS;
++        flags |= DONT_RESOLVE_DLL_REFERENCES;
++    }
++
+     /* fixup imports */
+ 
+     if (!(flags & DONT_RESOLVE_DLL_REFERENCES) &&
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 0fe79ee499c..adaaa6acaf6 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1385,6 +1385,71 @@ ULONG_PTR get_image_address(void)
  }
  
-+#define LDR_STEAM_INTERNAL 0x20000000
+ 
++static void *steamclient_srcs[128];
++static void *steamclient_tgts[128];
++static int steamclient_count;
 +
-+#ifdef _WIN64
-+static WCHAR builtin_steamclient_w[] = {'C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','t','e','m','3','2','\\',
-+                                        's','t','e','a','m','c','l','i','e','n','t','6','4','.','d','l','l',0};
-+static WCHAR native_steamclient_w[] = {'C',':','\\','P','r','o','g','r','a','m',' ','F','i','l','e','s',' ','(','x','8','6',')','\\','S','t','e','a','m','\\',
-+                                       's','t','e','a','m','c','l','i','e','n','t','6','4','.','d','l','l',0};
-+static WCHAR steamclient_w[] = {'s','t','e','a','m','c','l','i','e','n','t','6','4',0};
-+#else
-+static WCHAR builtin_steamclient_w[] = {'C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','t','e','m','3','2','\\',
-+                                        's','t','e','a','m','c','l','i','e','n','t','.','d','l','l',0};
-+static WCHAR native_steamclient_w[] = {'C',':','\\','P','r','o','g','r','a','m',' ','F','i','l','e','s',' ','(','x','8','6',')','\\','S','t','e','a','m','\\',
-+                                       's','t','e','a','m','c','l','i','e','n','t','.','d','l','l',0};
-+static WCHAR steamclient_w[] = {'s','t','e','a','m','c','l','i','e','n','t',0};
-+#endif
-+static WCHAR lsteamclient_w[] = {'l','s','t','e','a','m','c','l','i','e','n','t',0};
-+
-+static WCHAR *strstriW( const WCHAR *str, const WCHAR *sub )
++void *steamclient_handle_fault( LPCVOID addr, DWORD err )
 +{
-+    while (*str)
++    int i;
++
++    if (!(err & EXCEPTION_EXECUTE_FAULT)) return NULL;
++
++    for (i = 0; i < steamclient_count; ++i)
 +    {
-+        const WCHAR *p1 = str, *p2 = sub;
-+        while (*p1 && *p2 && RtlDowncaseUnicodeChar(*p1) == RtlDowncaseUnicodeChar(*p2)) { p1++; p2++; }
-+        if (!*p2) return (WCHAR *)str;
-+        str++;
++        if (addr == steamclient_srcs[i])
++            return steamclient_tgts[i];
 +    }
++
 +    return NULL;
 +}
 +
-+static HMODULE get_builtin_steamclient_mod(BOOL load_module)
++static void CDECL steamclient_setup_trampolines(HMODULE src_mod, HMODULE tgt_mod)
 +{
-+    HMODULE module = 0;
-+    UNICODE_STRING steamclient_us;
++    SYSTEM_BASIC_INFORMATION info;
++    IMAGE_NT_HEADERS *src_nt = (IMAGE_NT_HEADERS *)((UINT_PTR)src_mod + ((IMAGE_DOS_HEADER *)src_mod)->e_lfanew);
++    IMAGE_NT_HEADERS *tgt_nt = (IMAGE_NT_HEADERS *)((UINT_PTR)tgt_mod + ((IMAGE_DOS_HEADER *)tgt_mod)->e_lfanew);
++    IMAGE_SECTION_HEADER *src_sec = (IMAGE_SECTION_HEADER *)(src_nt + 1);
++    const IMAGE_EXPORT_DIRECTORY *src_exp = get_export_dir(src_mod), *tgt_exp = get_export_dir(tgt_mod);
++    const DWORD *names;
++    SIZE_T size;
++    void *addr, *src_addr, *tgt_addr;
++    char *name;
++    UINT_PTR page_mask;
++    int i;
 +
-+    RtlInitUnicodeString(&steamclient_us, builtin_steamclient_w);
-+    LdrGetDllHandle(NULL, LDR_STEAM_INTERNAL, &steamclient_us, &module);
-+    if (!module && load_module) LdrLoadDll(NULL, LDR_STEAM_INTERNAL, &steamclient_us, &module);
-+    return module;
-+}
++    virtual_get_system_info(&info);
++    page_mask = info.PageSize - 1;
 +
-+static HMODULE get_native_steamclient_mod(BOOL load_module)
-+{
-+    HMODULE module = 0;
-+    UNICODE_STRING steamclient_us;
-+
-+    RtlInitUnicodeString(&steamclient_us, native_steamclient_w);
-+    LdrGetDllHandle(NULL, LDR_STEAM_INTERNAL, &steamclient_us, &module);
-+    if (!module && load_module) LdrLoadDll(NULL, LDR_STEAM_INTERNAL, &steamclient_us, &module);
-+    return module;
-+}
-+
-+static void swap_native_to_builtin_steamclient_hack(HMODULE *module)
-+{
-+    if (*module && *module == get_native_steamclient_mod(FALSE))
++    for (i = 0; i < src_nt->FileHeader.NumberOfSections; ++i)
 +    {
-+        WARN("HACK: Swapping native to builtin steamclient module.\n");
-+        *module = get_builtin_steamclient_mod(TRUE);
++        if (memcmp(src_sec[i].Name, ".text", 5)) continue;
++        addr = (void *)(((UINT_PTR)src_mod + src_sec[i].VirtualAddress) & ~page_mask);
++        size = (src_sec[i].Misc.VirtualSize + page_mask) & ~page_mask;
++        mprotect(addr, size, PROT_READ);
 +    }
-+}
 +
-+static void swap_builtin_to_native_steamclient_hack(HMODULE *module)
-+{
-+    if (*module && *module == get_builtin_steamclient_mod(FALSE))
++    names = (const DWORD *)((UINT_PTR)src_mod + src_exp->AddressOfNames);
++    for (i = 0; i < src_exp->NumberOfNames; ++i)
 +    {
-+        WARN("HACK: Swapping builtin to native steamclient module.\n");
-+        *module = get_native_steamclient_mod(TRUE);
++        if (!names[i] || !(name = (char *)((UINT_PTR)src_mod + names[i]))) continue;
++        if (!(src_addr = (void *)find_named_export(src_mod, src_exp, name))) continue;
++        if (!(tgt_addr = (void *)find_named_export(tgt_mod, tgt_exp, name))) continue;
++        assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
++        steamclient_srcs[steamclient_count] = src_addr;
++        steamclient_tgts[steamclient_count] = tgt_addr;
++        steamclient_count++;
 +    }
++
++    src_addr = (void *)((UINT_PTR)src_mod + src_nt->OptionalHeader.AddressOfEntryPoint);
++    tgt_addr = (void *)((UINT_PTR)tgt_mod + tgt_nt->OptionalHeader.AddressOfEntryPoint);
++    assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
++    steamclient_srcs[steamclient_count] = src_addr;
++    steamclient_tgts[steamclient_count] = tgt_addr;
++    steamclient_count++;
 +}
 +
- /******************************************************************
-  *		LdrDisableThreadCalloutsForDll (NTDLL.@)
-  *
-@@ -1573,6 +1642,8 @@ NTSTATUS WINAPI LdrFindEntryForAddress(const void* addr, PLDR_MODULE* pmod)
-     PLIST_ENTRY mark, entry;
-     PLDR_MODULE mod;
- 
-+    swap_builtin_to_native_steamclient_hack((HMODULE*)&addr);
 +
-     mark = &NtCurrentTeb()->Peb->LdrData->InMemoryOrderModuleList;
-     for (entry = mark->Flink; entry != mark; entry = entry->Flink)
+ /* math function wrappers */
+ static double CDECL ntdll_atan( double d )  { return atan( d ); }
+ static double CDECL ntdll_ceil( double d )  { return ceil( d ); }
+@@ -1470,6 +1535,7 @@ static struct unix_funcs unix_funcs =
+     __wine_dbg_strdup,
+     __wine_dbg_output,
+     __wine_dbg_header,
++    steamclient_setup_trampolines,
+ };
+ 
+ 
+diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
+index 162a0b6a701..7a710f59f5e 100644
+--- a/dlls/ntdll/unix/signal_i386.c
++++ b/dlls/ntdll/unix/signal_i386.c
+@@ -1601,6 +1601,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+     struct xcontext xcontext;
+     ucontext_t *ucontext = sigcontext;
+     void *stack = setup_exception_record( sigcontext, &rec, &xcontext );
++    void *steamclient_addr = NULL;
+ 
+     switch (TRAP_sig(ucontext))
      {
-@@ -1711,7 +1782,6 @@ NTSTATUS WINAPI LdrUnlockLoaderLock( ULONG flags, ULONG_PTR magic )
-     return STATUS_SUCCESS;
- }
- 
--
- /******************************************************************
-  *		LdrGetProcedureAddress  (NTDLL.@)
-  */
-@@ -1723,6 +1793,7 @@ NTSTATUS WINAPI LdrGetProcedureAddress(HMODULE module, const ANSI_STRING *name,
-     NTSTATUS ret = STATUS_PROCEDURE_NOT_FOUND;
- 
-     RtlEnterCriticalSection( &loader_section );
-+    swap_native_to_builtin_steamclient_hack(&module);
- 
-     /* check if the module itself is invalid to return the proper error */
-     if (!get_modref( module )) ret = STATUS_DLL_NOT_FOUND;
-@@ -2331,6 +2402,12 @@ static NTSTATUS open_dll_file( UNICODE_STRING *nt_name, WINE_MODREF **pwm,
-     }
-     if (!status && !is_valid_binary( *module, image_info ))
-     {
-+        if (strstriW(nt_name->Buffer, native_steamclient_w))
+@@ -1635,6 +1636,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+         }
+         break;
+     case TRAP_x86_PAGEFLT:  /* Page fault */
++        if ((steamclient_addr = steamclient_handle_fault( siginfo->si_addr, (ERROR_sig(ucontext) >> 1) & 0x09 )))
 +        {
-+            WARN("HACK: Accepting native steamclient module from %s, even though it's the wrong arch.\n", debugstr_us(nt_name));
-+            return STATUS_SUCCESS;
++            EIP_sig(ucontext) = (intptr_t)steamclient_addr;
++            return;
 +        }
 +
-         TRACE( "%s is for arch %x, continuing search\n", debugstr_us(nt_name), image_info->machine );
-         NtUnmapViewOfSection( NtCurrentProcess(), *module );
-         *module = NULL;
-@@ -2970,6 +3047,14 @@ static NTSTATUS load_dll( const WCHAR *load_path, const WCHAR *libname, const WC
-         return STATUS_SUCCESS;
+         rec.NumberParameters = 2;
+         rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
+         rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index befdf9fbd4f..7bea7dd937c 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -2168,6 +2168,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+     EXCEPTION_RECORD rec = { 0 };
+     struct xcontext context;
+     ucontext_t *ucontext = sigcontext;
++    void *steamclient_addr = NULL;
+ 
+     rec.ExceptionAddress = (void *)RIP_sig(ucontext);
+     save_context( &context, sigcontext );
+@@ -2199,6 +2200,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+         }
+         break;
+     case TRAP_x86_PAGEFLT:  /* Page fault */
++        if ((steamclient_addr = steamclient_handle_fault( siginfo->si_addr, (ERROR_sig(ucontext) >> 1) & 0x09 )))
++        {
++            RIP_sig(ucontext) = (intptr_t)steamclient_addr;
++            return;
++        }
++
+         rec.NumberParameters = 2;
+         rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
+         rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 8d6ab030adb..a3a418cfaa5 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -188,6 +188,8 @@ extern NTSTATUS get_thread_context( HANDLE handle, context_t *context, unsigned
+ extern NTSTATUS alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, struct object_attributes **ret,
+                                          data_size_t *ret_len ) DECLSPEC_HIDDEN;
+ 
++extern void *steamclient_handle_fault( LPCVOID addr, DWORD err ) DECLSPEC_HIDDEN;
++
+ extern void *anon_mmap_fixed( void *start, size_t size, int prot, int flags ) DECLSPEC_HIDDEN;
+ extern void *anon_mmap_alloc( size_t size, int prot ) DECLSPEC_HIDDEN;
+ extern void virtual_init(void) DECLSPEC_HIDDEN;
+diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
+index 98f19346f77..ecd48427868 100644
+--- a/dlls/ntdll/unixlib.h
++++ b/dlls/ntdll/unixlib.h
+@@ -134,6 +134,9 @@ struct unix_funcs
+     int           (CDECL *dbg_output)( const char *str );
+     int           (CDECL *dbg_header)( enum __wine_debug_class cls, struct __wine_debug_channel *channel,
+                                        const char *function );
++
++    /* steamclient HACK */
++    void          (CDECL *steamclient_setup_trampolines)( HMODULE src_mod, HMODULE tgt_mod );
+ };
+ 
+ #endif /* __NTDLL_UNIXLIB_H */
+From 762405d42e29a60e6eb5620cbb6693c43777268f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 5 Aug 2020 10:35:50 +0200
+Subject: [PATCH] HACK: steam: ntdll: Patch entry points with jumps.
+
+As a preferred alternative to noexec pages which makes debugging
+painful. The noexec can be enabled with WINESTEAMNOEXEC=1 environmnent
+variable.
+---
+ dlls/ntdll/unix/loader.c | 29 +++++++++++++++++++++++++----
+ 1 file changed, 25 insertions(+), 4 deletions(-)
+
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index adaaa6acaf6..3f983244c42 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1404,8 +1404,23 @@ void *steamclient_handle_fault( LPCVOID addr, DWORD err )
+     return NULL;
+ }
+ 
++static void steamclient_write_jump(void *src_addr, void *tgt_addr)
++{
++#ifdef _WIN64
++    static const char mov[] = {0x48, 0xb8};
++#else
++    static const char mov[] = {0xb8};
++#endif
++    static const char jmp[] = {0xff, 0xe0};
++    memcpy(src_addr, mov, sizeof(mov));
++    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
++    memcpy((char *)src_addr + sizeof(mov) + sizeof(tgt_addr), jmp, sizeof(jmp));
++}
++
+ static void CDECL steamclient_setup_trampolines(HMODULE src_mod, HMODULE tgt_mod)
+ {
++    static int noexec_cached = -1;
++
+     SYSTEM_BASIC_INFORMATION info;
+     IMAGE_NT_HEADERS *src_nt = (IMAGE_NT_HEADERS *)((UINT_PTR)src_mod + ((IMAGE_DOS_HEADER *)src_mod)->e_lfanew);
+     IMAGE_NT_HEADERS *tgt_nt = (IMAGE_NT_HEADERS *)((UINT_PTR)tgt_mod + ((IMAGE_DOS_HEADER *)tgt_mod)->e_lfanew);
+@@ -1414,10 +1429,13 @@ static void CDECL steamclient_setup_trampolines(HMODULE src_mod, HMODULE tgt_mod
+     const DWORD *names;
+     SIZE_T size;
+     void *addr, *src_addr, *tgt_addr;
+-    char *name;
++    char *name, *wsne;
+     UINT_PTR page_mask;
+     int i;
+ 
++    if (noexec_cached == -1)
++        noexec_cached = (wsne = getenv("WINESTEAMNOEXEC")) && atoi(wsne);
++
+     virtual_get_system_info(&info);
+     page_mask = info.PageSize - 1;
+ 
+@@ -1426,7 +1444,8 @@ static void CDECL steamclient_setup_trampolines(HMODULE src_mod, HMODULE tgt_mod
+         if (memcmp(src_sec[i].Name, ".text", 5)) continue;
+         addr = (void *)(((UINT_PTR)src_mod + src_sec[i].VirtualAddress) & ~page_mask);
+         size = (src_sec[i].Misc.VirtualSize + page_mask) & ~page_mask;
+-        mprotect(addr, size, PROT_READ);
++        if (noexec_cached) mprotect(addr, size, PROT_READ);
++        else mprotect(addr, size, PROT_READ|PROT_WRITE|PROT_EXEC);
      }
  
-+    if (nts != STATUS_DLL_NOT_FOUND && strstriW(libname, native_steamclient_w))
-+    {
-+        WARN("HACK: Allocating native steamclient module from %s, but not loading dll.\n", debugstr_w(libname));
-+        if (!(*pwm = alloc_module( module, &nt_name, FALSE )))
-+            return STATUS_NO_MEMORY;
-+        return STATUS_SUCCESS;
-+    }
-+
-     if (nts && nts != STATUS_DLL_NOT_FOUND && nts != STATUS_INVALID_IMAGE_NOT_MZ) goto done;
- 
-     main_exe = get_modref( NtCurrentTeb()->Peb->ImageBaseAddress );
-@@ -3088,6 +3173,14 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrLoadDll(LPCWSTR path_name, DWORD flags,
- 
-     RtlEnterCriticalSection( &loader_section );
- 
-+    if (!(flags & LDR_STEAM_INTERNAL) && strstriW(libname->Buffer, steamclient_w) && !strstriW(libname->Buffer, lsteamclient_w))
-+    {
-+        *hModule = get_builtin_steamclient_mod(TRUE);
-+        swap_builtin_to_native_steamclient_hack(hModule);
-+        RtlLeaveCriticalSection( &loader_section );
-+        return *hModule ? STATUS_SUCCESS : STATUS_DLL_NOT_FOUND;
-+    }
-+
-     if (!path_name) path_name = NtCurrentTeb()->Peb->ProcessParameters->DllPath.Buffer;
-     nts = load_dll( path_name, libname->Buffer, dllW, flags, &wm );
- 
-@@ -3133,6 +3226,7 @@ NTSTATUS WINAPI LdrGetDllHandle( LPCWSTR load_path, ULONG flags, const UNICODE_S
+     names = (const DWORD *)((UINT_PTR)src_mod + src_exp->AddressOfNames);
+@@ -1438,7 +1457,8 @@ static void CDECL steamclient_setup_trampolines(HMODULE src_mod, HMODULE tgt_mod
+         assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
+         steamclient_srcs[steamclient_count] = src_addr;
+         steamclient_tgts[steamclient_count] = tgt_addr;
+-        steamclient_count++;
++        if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
++        else steamclient_count++;
      }
-     RtlFreeUnicodeString( &nt_name );
  
-+    if (!(flags & LDR_STEAM_INTERNAL)) swap_builtin_to_native_steamclient_hack(base);
-     RtlLeaveCriticalSection( &loader_section );
-     TRACE( "%s -> %p (load path %s)\n", debugstr_us(name), status ? NULL : *base, debugstr_w(load_path) );
-     return status;
-@@ -3953,6 +4047,7 @@ PVOID WINAPI RtlPcToFileHeader( PVOID pc, PVOID *address )
+     src_addr = (void *)((UINT_PTR)src_mod + src_nt->OptionalHeader.AddressOfEntryPoint);
+@@ -1446,7 +1466,8 @@ static void CDECL steamclient_setup_trampolines(HMODULE src_mod, HMODULE tgt_mod
+     assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
+     steamclient_srcs[steamclient_count] = src_addr;
+     steamclient_tgts[steamclient_count] = tgt_addr;
+-    steamclient_count++;
++    if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
++    else steamclient_count++;
+ }
  
-     RtlEnterCriticalSection( &loader_section );
-     if (!LdrFindEntryForAddress( pc, &module )) ret = module->DllBase;
-+    swap_builtin_to_native_steamclient_hack((HMODULE*)&ret);
-     RtlLeaveCriticalSection( &loader_section );
-     *address = ret;
-     return ret;
-
-From cb95c72878a011d59e8d6f91f84cd0539d899661 Mon Sep 17 00:00:00 2001
-From: Jan Sikorski <jsikorski@codeweavers.com>
-Date: Mon, 20 Apr 2020 16:41:52 +0200
-Subject: [PATCH] steam: ntdll: When swapping steamclient.dll, match basename
- exactly
-
----
- dlls/ntdll/loader.c | 7 +++----
- 1 file changed, 3 insertions(+), 4 deletions(-)
-
-diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
-index 2979061a5e2..360b43dc382 100644
---- a/dlls/ntdll/loader.c
-+++ b/dlls/ntdll/loader.c
-@@ -1604,15 +1604,14 @@ static WCHAR builtin_steamclient_w[] = {'C',':','\\','w','i','n','d','o','w','s'
-                                         's','t','e','a','m','c','l','i','e','n','t','6','4','.','d','l','l',0};
- static WCHAR native_steamclient_w[] = {'C',':','\\','P','r','o','g','r','a','m',' ','F','i','l','e','s',' ','(','x','8','6',')','\\','S','t','e','a','m','\\',
-                                        's','t','e','a','m','c','l','i','e','n','t','6','4','.','d','l','l',0};
--static WCHAR steamclient_w[] = {'s','t','e','a','m','c','l','i','e','n','t','6','4',0};
-+static WCHAR steamclient_w[] = {'s','t','e','a','m','c','l','i','e','n','t','6','4','.','d','l','l',0};
- #else
- static WCHAR builtin_steamclient_w[] = {'C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','t','e','m','3','2','\\',
-                                         's','t','e','a','m','c','l','i','e','n','t','.','d','l','l',0};
- static WCHAR native_steamclient_w[] = {'C',':','\\','P','r','o','g','r','a','m',' ','F','i','l','e','s',' ','(','x','8','6',')','\\','S','t','e','a','m','\\',
-                                        's','t','e','a','m','c','l','i','e','n','t','.','d','l','l',0};
--static WCHAR steamclient_w[] = {'s','t','e','a','m','c','l','i','e','n','t',0};
-+static WCHAR steamclient_w[] = {'s','t','e','a','m','c','l','i','e','n','t','.','d','l','l',0};
- #endif
--static WCHAR lsteamclient_w[] = {'l','s','t','e','a','m','c','l','i','e','n','t',0};
  
- static WCHAR *strstriW( const WCHAR *str, const WCHAR *sub )
- {
-@@ -3254,10 +3264,13 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrLoadDll(LPCWSTR path_name, DWORD flags,
- {
-     WINE_MODREF *wm;
-     NTSTATUS nts;
-+    const WCHAR *basename;
- 
-     RtlEnterCriticalSection( &loader_section );
- 
--    if (!(flags & LDR_STEAM_INTERNAL) && strstriW(libname->Buffer, steamclient_w) && !strstriW(libname->Buffer, lsteamclient_w))
-+    if (!(flags & LDR_STEAM_INTERNAL) && (basename = get_basename(libname->Buffer)) &&
-+        !RtlCompareUnicodeStrings(steamclient_w, wcslen(steamclient_w),
-+                                  basename, wcslen(basename), TRUE))
-     {
-         *hModule = get_builtin_steamclient_mod(TRUE);
-         swap_builtin_to_native_steamclient_hack(hModule);
-
-From 5a2cff762dc8ddabff4503347108d3970cd6a273 Mon Sep 17 00:00:00 2001
-From: Jan Sikorski <jsikorski@codeweavers.com>
-Date: Mon, 8 Jun 2020 12:23:16 +0200
-Subject: [PATCH] ntdll: Look for both steamclient and steamclient.dll to swap
-
----
- dlls/ntdll/loader.c | 9 ++++++---
- 1 file changed, 6 insertions(+), 3 deletions(-)
-
-diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
-index 360b43dc382..f0a83fed5a6 100644
---- a/dlls/ntdll/loader.c
-+++ b/dlls/ntdll/loader.c
-@@ -1604,13 +1604,15 @@ static WCHAR builtin_steamclient_w[] = {'C',':','\\','w','i','n','d','o','w','s'
-                                         's','t','e','a','m','c','l','i','e','n','t','6','4','.','d','l','l',0};
- static WCHAR native_steamclient_w[] = {'C',':','\\','P','r','o','g','r','a','m',' ','F','i','l','e','s',' ','(','x','8','6',')','\\','S','t','e','a','m','\\',
-                                        's','t','e','a','m','c','l','i','e','n','t','6','4','.','d','l','l',0};
--static WCHAR steamclient_w[] = {'s','t','e','a','m','c','l','i','e','n','t','6','4','.','d','l','l',0};
-+static WCHAR steamclient_w[] = {'s','t','e','a','m','c','l','i','e','n','t','6','4',0};
-+static WCHAR steamclient_dll_w[] = {'s','t','e','a','m','c','l','i','e','n','t','6','4','.','d','l','l',0};
- #else
- static WCHAR builtin_steamclient_w[] = {'C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','t','e','m','3','2','\\',
-                                         's','t','e','a','m','c','l','i','e','n','t','.','d','l','l',0};
- static WCHAR native_steamclient_w[] = {'C',':','\\','P','r','o','g','r','a','m',' ','F','i','l','e','s',' ','(','x','8','6',')','\\','S','t','e','a','m','\\',
-                                        's','t','e','a','m','c','l','i','e','n','t','.','d','l','l',0};
--static WCHAR steamclient_w[] = {'s','t','e','a','m','c','l','i','e','n','t','.','d','l','l',0};
-+static WCHAR steamclient_w[] = {'s','t','e','a','m','c','l','i','e','n','t',0};
-+static WCHAR steamclient_dll_w[] = {'s','t','e','a','m','c','l','i','e','n','t','.','d','l','l',0};
- #endif
- 
- static WCHAR *strstriW( const WCHAR *str, const WCHAR *sub )
-@@ -3368,7 +3370,9 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrLoadDll(LPCWSTR path_name, DWORD flags,
- 
-     if (!(flags & LDR_STEAM_INTERNAL) && (basename = get_basename(libname->Buffer)) &&
--        !RtlCompareUnicodeStrings(steamclient_w, wcslen(steamclient_w),
-+        (!RtlCompareUnicodeStrings(steamclient_w, wcslen(steamclient_w),
--                                  basename, wcslen(basename), TRUE))
-+                                  basename, wcslen(basename), TRUE) ||
-+        !RtlCompareUnicodeStrings(steamclient_w, wcslen(steamclient_dll_w),
-+                                  basename, wcslen(basename), TRUE)))
-     {
-         *hModule = get_builtin_steamclient_mod(TRUE);
-         swap_builtin_to_native_steamclient_hack(hModule);
