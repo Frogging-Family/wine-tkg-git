@@ -295,8 +295,10 @@ user_patcher() {
 	        echo -e "\nReverting your own patch ${_f##*/}" >> "$_where"/prepare.log
 	        if ! patch -Np1 -R < "${_f}" >> "$_where"/prepare.log; then
 	          error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."
-	          msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"
-	          msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")"
+	          if [ -n "$_last_known_good_mainline" ] || [ -n "$_last_known_good_staging" ]; then
+	            msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"
+	            msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")"
+	          fi
 	          exit 1
 	        fi
 	        echo -e "Reverted your own patch ${_f##*/}" >> "$_where"/last_build_config.log
@@ -323,8 +325,10 @@ user_patcher() {
 	        echo -e "\nApplying your own patch ${_f##*/}" >> "$_where"/prepare.log
 	        if ! patch -Np1 < "${_f}" >> "$_where"/prepare.log; then
 	          error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."
-	          msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"
-	          msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")"
+	          if [ -n "$_last_known_good_mainline" ] || [ -n "$_last_known_good_staging" ]; then
+	            msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"
+	            msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")"
+	          fi
 	          exit 1
 	        fi
 	        echo -e "Applied your own patch ${_f##*/}" >> "$_where"/last_build_config.log
