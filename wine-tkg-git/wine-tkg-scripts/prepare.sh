@@ -933,8 +933,12 @@ _prepare() {
 	fi
 
 	# esync
-	if [ "$_use_esync" = "true" ]; then
-	  if git merge-base --is-ancestor 2600ecd4edfdb71097105c74312f83845305a4f2 HEAD; then # Esync ce79346
+	if [ "$_staging_esync" = "true" ]; then
+	  _patchname='esync-unix-staging.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	elif [ "$_use_esync" = "true" ]; then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	    _patchname='esync-unix-mainline.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	  elif git merge-base --is-ancestor 2600ecd4edfdb71097105c74312f83845305a4f2 HEAD; then # Esync ce79346
 	    if [ "$_use_staging" = "true" ]; then
 	      # fixes for esync patches to apply to staging
 	      cd "${srcdir}"/"${_esyncsrcdir}"
@@ -1095,15 +1099,17 @@ _prepare() {
 	  fi
 
 	  # apply esync patches
-	  echo -e "\nEsync-mainline" >> "$_where"/prepare.log
-	  msg2 "Applying Esync patchset"
-	  for _f in "${srcdir}"/"${_esyncsrcdir}"/*.patch; do
-	    #msg2 "Applying ${_f}"
-	    echo -e "\nApplying ${_f}" >> "$_where"/prepare.log
-	    git apply -C1 --verbose < "${_f}" >> "$_where"/prepare.log 2>&1
-	  done
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	    echo -e "\nEsync-mainline" >> "$_where"/prepare.log
+	    msg2 "Applying Esync patchset"
+	    for _f in "${srcdir}"/"${_esyncsrcdir}"/*.patch; do
+	      #msg2 "Applying ${_f}"
+	      echo -e "\nApplying ${_f}" >> "$_where"/prepare.log
+	      git apply -C1 --verbose < "${_f}" >> "$_where"/prepare.log 2>&1
+	    done
+	  fi
 
-	  if git merge-base --is-ancestor b2a546c92dabee8ab1c3d5b9fecc84d99caf0e76 HEAD; then #  server: Introduce kernel_object struct for generic association between server and kernel objects.
+	  if git merge-base --is-ancestor b2a546c92dabee8ab1c3d5b9fecc84d99caf0e76 HEAD && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then #  server: Introduce kernel_object struct for generic association between server and kernel objects.
 	    _patchname='esync-no_kernel_obj_list.patch' && _patchmsg="Add no_kernel_obj_list object method to esync. (4.5+)" && nonuser_patcher
 	  fi
 
@@ -1112,12 +1118,6 @@ _prepare() {
 	    if ! git merge-base --is-ancestor b2a546c92dabee8ab1c3d5b9fecc84d99caf0e76 HEAD; then #  server: Introduce kernel_object struct for generic association between server and kernel objects.
 	      _patchname='esync-no_alloc_handle.patch' && _patchmsg="Using esync-no_alloc_handle patch to fix server-Desktop_Refcount ws2_32-WSACleanup ws2_32-TransmitFile server-Pipe_ObjectName with Esync enabled" && nonuser_patcher
 	    fi
-	  fi
-	fi
-
-	if [ "$_staging_esync" = "true" ]; then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
-	    _patchname='esync-unix-staging.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
 	  fi
 	fi
 	# /esync
@@ -1307,7 +1307,9 @@ EOM
 	      _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch" && nonuser_patcher
 	    fi
 	  elif [ "$_use_esync" = "true" ]; then
-	    if git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	      _patchname='fsync-unix-mainline.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
+	    elif git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
 	      _patchname='fsync-mainline.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
 	    elif git merge-base --is-ancestor e5030a4ac0a303d6788ae79ffdcd88e66cf78bd2 HEAD; then
 	      _patchname='fsync-mainline-2633a5c.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
