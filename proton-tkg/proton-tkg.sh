@@ -223,7 +223,7 @@ function build_steamhelper {
     cp -a Proton/steam_helper/* Proton/build/steam.win32
     cd Proton/build/steam.win32
 
-    if [ "$_proton_branch" = "proton_4.2" ] || [ "$_proton_branch" = "proton_5.0" ]; then
+    if [ "$_proton_branch" = "proton_4.2" ] || [ "$_proton_branch" = "proton_5.0" ] || [ "$_proton_branch" = "proton_5.13" ]; then
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -L$_nowhere/proton_dist_tmp/lib/ -L$_nowhere/proton_dist_tmp/lib/wine/"
     else
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/wine/msvcrt/ -I$_nowhere/proton_dist_tmp/include/ -L$_nowhere/proton_dist_tmp/lib/ -L$_nowhere/proton_dist_tmp/lib/wine/"
@@ -271,12 +271,16 @@ proton_patcher() {
 	  if [[ "$_CONDITION" =~ [yY] ]] || [ "$_user_patches_no_confirm" = "true" ]; then
 	    for _f in ${_patches[@]}; do
 	      if [ -e "${_f}" ]; then
-	        echo "######################################################"
-	        echo ""
-	        echo "Applying your own ${_userpatch_target} patch ${_f}"
-	        echo ""
-	        echo "######################################################"
-	        patch -Np1 < "${_f}"
+	        if [[ "${_f}" = */3886.myprotonpatch ]] && [ "$_proton_branch" != "proton_5.0" ]; then
+	          echo "Skipping 3886.myprotonpatch as it only applies to proton_5.0 branch"
+	        else
+	          echo "######################################################"
+	          echo ""
+	          echo "Applying your own ${_userpatch_target} patch ${_f}"
+	          echo ""
+	          echo "######################################################"
+	          patch -Np1 < "${_f}"
+	        fi
 	      fi
 	    done
 	  fi
