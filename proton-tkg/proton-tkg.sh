@@ -147,11 +147,11 @@ function build_lsteamclient {
   if [[ "$_proton_branch" != proton_3.* ]] && [[ "$_proton_branch" != proton_4.* ]]; then
     _cxx_addon="-std=gnu++11"
     if [ "$_standard_dlopen" = "true" ] && [ "$_proton_branch" != "proton_5.13" ]; then
-      patch -Np1 < "$_nowhere/proton_template/steamclient-remove-library.h-dep" || true
+      patch -Np1 < "$_nowhere/proton_template/steamclient-remove-library.h-dep.patch" || true
       patch -Np1 < "$_nowhere/proton_template/steamclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch" || true
       WINEMAKERFLAGS+=" -ldl"
     elif [ "$_proton_branch" = "proton_5.13" ]; then
-      patch -Np1 < "$_nowhere/proton_template/steamclient-remove-library.h-dep" || true
+      patch -Np1 < "$_nowhere/proton_template/steamclient-remove-library.h-dep.patch" || true
       WINEMAKERFLAGS+=" -ldl"
     fi
   fi
