@@ -767,6 +767,9 @@ _prepare() {
 	    cd "${srcdir}"/"${_stgsrcdir}" && _patchname='staging-44d1a45-localreverts.patch' _patchmsg="Applied local reverts for staging 44d1a45 proton-nofshack" nonuser_patcher && cd "${srcdir}"/"${_winesrcdir}"
 	  fi
 	fi
+	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" != "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
+	    _staging_args+=(-W dinput-remap-joystick -W dinput-reconnect-joystick -W dinput-axis-recalc)
+	fi
 
 	# Disable some staging patchsets to prevent bad interactions with proton gamepad additions
 	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_gamepad_additions" = "true" ]; then
@@ -1474,6 +1477,10 @@ EOM
 	      _patchname='0002-winex11-Fix-more-key-translation.patch' && _patchmsg="Applied proton friendly winex11-Fix-more-key-translation" && nonuser_patcher
 	      _patchname='0003-winex11.drv-Fix-main-Russian-keyboard-layout.patch' && _patchmsg="Applied proton friendly winex11.drv-Fix-main-Russian-keyboard-layout" && nonuser_patcher
 	  fi
+	elif [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" != "true" ] && git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
+	  if git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
+	    _patchname='proton-rawinput-nofshack.patch' && _patchmsg="Using rawinput nofshack patchset" && nonuser_patcher
+	  fi
 	fi
 
 	# Update winevulkan
@@ -1853,7 +1860,7 @@ EOM
 
 	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	  # SDL Joystick support - from Proton
-	  if [ "$_sdl_joy_support" = "true" ]; then
+	  if ( [ "$_sdl_joy_support" = "true" ] && cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD ) || ( [ "$_sdl_joy_support" = "true" ] && [ "$_proton_rawinput" != "true" ] && cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD ); then
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	      _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	    elif git merge-base --is-ancestor 306c40e67319cae8e4c448ec8fc8d3996f87943f HEAD; then
