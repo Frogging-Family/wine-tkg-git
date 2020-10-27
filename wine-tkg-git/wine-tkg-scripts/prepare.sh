@@ -1477,7 +1477,7 @@ EOM
 	      _patchname='0002-winex11-Fix-more-key-translation.patch' && _patchmsg="Applied proton friendly winex11-Fix-more-key-translation" && nonuser_patcher
 	      _patchname='0003-winex11.drv-Fix-main-Russian-keyboard-layout.patch' && _patchmsg="Applied proton friendly winex11.drv-Fix-main-Russian-keyboard-layout" && nonuser_patcher
 	  fi
-	elif [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" != "true" ] && git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
+	elif [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" != "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
 	  if git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
 	    _patchname='proton-rawinput-nofshack.patch' && _patchmsg="Using rawinput nofshack patchset" && nonuser_patcher
 	  fi
