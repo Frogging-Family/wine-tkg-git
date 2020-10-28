@@ -4,7 +4,10 @@ pkgname=proton-tkg-git
 pkgver=5.20.r10.g495ae4e9
 pkgrel=1
 _frogwhere="$PWD"
-export BUILDDIR="${_frogwhere}" # Override makepkg BUILDDIR path and use PKGBUILDs dirs instead
+# Arch chroot workaround
+if [[ "${_frogwhere}" != "/startdir" ]]; then
+  export BUILDDIR="${_frogwhere}" # Override makepkg BUILDDIR path and use PKGBUILDs dirs instead
+fi
 arch=('x86_64')
 pkgdesc='Custom Proton build with even more frog spice'
 url='https://github.com/Tk-Glitch/PKGBUILDS/tree/master/proton-tkg'
@@ -110,8 +113,6 @@ recursive_installer() {
 }
 
 pkgver() {
-  warning "This step might take some time, please be patient..."
-
   # overcomplicated BS
   source "${_frogwhere}"/proton-tkg.cfg
   source "${_frogwhere}"/proton-tkg-profiles/advanced-customization.cfg
@@ -163,6 +164,19 @@ pkgver() {
 }
 
 prepare() {
+  # Arch chroot workaround
+  if [[ "${_frogwhere}" = "/startdir" ]]; then
+    msg2 "Arch chroot detected!"
+    export _frogwhere=/build/proton-tkg-git
+    git clone https://github.com/Frogging-Family/wine-tkg-git.git || true
+    if [ -d wine-tkg-git/wine-tkg-git ]; then
+      mv wine-tkg-git/wine-tkg-git /build/wine-tkg-git
+    fi
+    if [ -d wine-tkg-git/proton-tkg ]; then
+      mv wine-tkg-git/proton-tkg/* /build/proton-tkg-git/
+    fi
+  fi
+
   cd "${_frogwhere}"
   if [ ! -d "${_frogwhere}/external-ressources" ]; then
     mkdir -p "${_frogwhere}/external-ressources"
@@ -173,6 +187,9 @@ prepare() {
   ln -s -f "${_frogwhere}/proton-tkg.sh" "${srcdir}/"
   ln -s -f "${_frogwhere}/proton-tkg-userpatches" "${srcdir}/"
   ln -s -f "${_frogwhere}/proton-tkg-profiles" "${srcdir}/"
+
+  # Issue the pkgver warning here as Arch chroot will think the warning output is the pkgver string and fail
+  warning "The next step might take some time, please be patient..."
 }
 
 build() {
