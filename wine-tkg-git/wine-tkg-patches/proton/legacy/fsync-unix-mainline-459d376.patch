@@ -1,7 +1,7 @@
 From 1d3dadfd7707ac176b67b50a0dc573f799778836 Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
 Date: Fri, 16 Oct 2020 20:53:31 +0200
-Subject: Fsync rebased 5.13+ staging
+Subject: Fsync rebased 5.13+ mainline
 
 
 diff --git a/dlls/ntdll/Makefile.in b/dlls/ntdll/Makefile.in
@@ -1746,8 +1746,8 @@ index 78635f3fae1..824b930bba0 100644
  struct screen_buffer;
  
 @@ -82,6 +83,7 @@ static const struct object_ops console_input_ops =
-     remove_queue,                     /* remove_queue */
-     console_input_signaled,           /* signaled */
+     NULL,                             /* remove_queue */
+     NULL,                             /* signaled */
      NULL,                             /* get_esync_fd */
 +    NULL,                             /* get_fsync_idx */
      no_satisfied,                     /* satisfied */
@@ -1756,19 +1756,19 @@ index 78635f3fae1..824b930bba0 100644
 @@ -136,6 +138,7 @@ struct console_server
      int                   term_fd;     /* UNIX terminal fd */
      struct termios        termios;     /* original termios */
-     int                   esync_fd;
+     int                   esync_fd;    /* esync file descriptor */
 +    unsigned int          fsync_idx;
  };
  
  static void console_server_dump( struct object *obj, int verbose );
 @@ -146,6 +149,7 @@ static struct object *console_server_lookup_name( struct object *obj, struct uni
- static void console_server_destroy( struct object *obj );
- static int console_server_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static struct object *console_server_open_file( struct object *obj, unsigned int access,
+                                                 unsigned int sharing, unsigned int options );
  static int console_server_get_esync_fd( struct object *obj, enum esync_type *type );
 +static unsigned int console_server_get_fsync_idx( struct object *obj, enum fsync_type *type );
- static struct fd *console_server_get_fd( struct object *obj );
- static struct object *console_server_lookup_name( struct object *obj, struct unicode_str *name, unsigned int attr );
- static struct object *console_server_open_file( struct object *obj, unsigned int access,
+ 
+ static const struct object_ops console_server_ops =
+ {
 @@ -156,6 +160,7 @@ static const struct object_ops console_server_ops =
      remove_queue,                     /* remove_queue */
      console_server_signaled,          /* signaled */
@@ -3221,7 +3221,7 @@ index a78748b96ca..dccf43197cf 100644
          list_init( &queue->pending_timers );
          list_init( &queue->expired_timers );
          for (i = 0; i < NB_MSG_KINDS; i++) list_init( &queue->msg_list[i] );
- 
+  
 +        if (do_fsync())
 +            queue->fsync_idx = fsync_alloc_shm( 0, 0 );
 + 
