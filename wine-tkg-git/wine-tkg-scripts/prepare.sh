@@ -2132,7 +2132,9 @@ _polish() {
 	tools/make_requests
 	autoreconf -f
 
-	if [ -z "$_localbuild" ]; then
+	if [ -n "$_localbuild" ] && [ -n "$_localbuild_versionoverride" ]; then
+	  sed -i "s/GIT_DIR=\$(top_srcdir)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_localbuild_versionoverride\"/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
+	elif [ -z "$_localbuild" ]; then
 	  # Set custom version so that it reports the same as pkgver
 	  sed -i "s/GIT_DIR=\$(top_srcdir)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_realwineversion\"/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
 
