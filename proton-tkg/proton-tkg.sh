@@ -698,6 +698,11 @@ else
     else
       sed -i 's/.*PROTON_WINEDBG_DISABLE.*/#     "PROTON_WINEDBG_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
     fi
+    if [ "$_proton_conhost_disable" = "true" ]; then
+      sed -i 's/.*PROTON_CONHOST_DISABLE.*/     "PROTON_CONHOST_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+    else
+      sed -i 's/.*PROTON_CONHOST_DISABLE.*/#     "PROTON_CONHOST_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+    fi
     if [ "$_proton_force_LAA" = "true" ]; then
       sed -i 's/.*PROTON_DISABLE_LARGE_ADDRESS_AWARE.*/#     "PROTON_DISABLE_LARGE_ADDRESS_AWARE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
     else

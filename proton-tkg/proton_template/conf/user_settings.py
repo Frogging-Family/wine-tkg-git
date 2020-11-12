@@ -31,6 +31,9 @@ user_settings = {
     #Disable winedbg
     "PROTON_WINEDBG_DISABLE": "1",
 
+    #Disable conhost
+    "PROTON_CONHOST_DISABLE": "1",
+
     #Disable IMAGE_FILE_LARGE_ADDRESS_AWARE override - In case it breaks your (32-bit) game - System Shock 2 is known to break with LAA enabled
 #    "PROTON_DISABLE_LARGE_ADDRESS_AWARE": "1",
 
