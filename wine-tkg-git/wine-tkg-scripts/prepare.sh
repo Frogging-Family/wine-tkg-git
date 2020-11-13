@@ -767,9 +767,6 @@ _prepare() {
 	    cd "${srcdir}"/"${_stgsrcdir}" && _patchname='staging-44d1a45-localreverts.patch' _patchmsg="Applied local reverts for staging 44d1a45 proton-nofshack" nonuser_patcher && cd "${srcdir}"/"${_winesrcdir}"
 	  fi
 	fi
-	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" != "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
-	    _staging_args+=(-W dinput-remap-joystick -W dinput-reconnect-joystick -W dinput-axis-recalc)
-	fi
 
 	# Disable some staging patchsets to prevent bad interactions with proton gamepad additions
 	if ( ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_gamepad_additions" = "true" ] ) || ( git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_sdl_joy_support" = "true" ] ) && ( [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] ); then
@@ -1482,10 +1479,6 @@ EOM
 	      _patchname='0001-winex11-Match-keyboard-in-Unicode.patch' && _patchmsg="Applied proton friendly winex11-Match-keyboard-in-Unicode" && nonuser_patcher
 	      _patchname='0002-winex11-Fix-more-key-translation.patch' && _patchmsg="Applied proton friendly winex11-Fix-more-key-translation" && nonuser_patcher
 	      _patchname='0003-winex11.drv-Fix-main-Russian-keyboard-layout.patch' && _patchmsg="Applied proton friendly winex11.drv-Fix-main-Russian-keyboard-layout" && nonuser_patcher
-	  fi
-	elif [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" != "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
-	  if git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
-	    _patchname='proton-rawinput-nofshack.patch' && _patchmsg="Using rawinput nofshack patchset" && nonuser_patcher
 	  fi
 	fi
 
