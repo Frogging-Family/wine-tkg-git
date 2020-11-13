@@ -529,7 +529,7 @@ _prepare() {
 
 	echo "" >> "$_where"/last_build_config.log
 
-	if [ "$_mtga_fix" = "true" ] && git merge-base --is-ancestor e5a9c256ce08868f65ed730c00cf016a97369ce3 HEAD; then
+	if [ "$_mtga_fix" = "true" ] && git merge-base --is-ancestor e5a9c256ce08868f65ed730c00cf016a97369ce3 HEAD && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD; then
 	  _committorevert=341068aa61a71afecb712feda9aabb3dc1c3ab5f && nonuser_reverter
 	  _committorevert=e5a9c256ce08868f65ed730c00cf016a97369ce3 && nonuser_reverter
 	  echo -e "( MTGA bandaid reverts applied )\n" >> "$_where"/last_build_config.log
