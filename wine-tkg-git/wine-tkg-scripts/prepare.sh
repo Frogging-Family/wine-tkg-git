@@ -2132,11 +2132,21 @@ _polish() {
 	tools/make_requests
 	autoreconf -f
 
+	# The versioning string has moved with 1dd3051cca5cafe90ce44460731df61abb680b3b
+	# Since this is reverted by the hotfixer path, only use the new path on 0c249e6+ (deprecation of the hotfixer path)
+	if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	  _versioning_path="${srcdir}/${_winesrcdir}/libs/wine/Makefile.in"
+	  _versioning_string="top_srcdir"
+	else
+	  _versioning_path="${srcdir}/${_winesrcdir}/Makefile.in"
+	  _versioning_string="srcdir"
+	fi
+
 	if [ -n "$_localbuild" ] && [ -n "$_localbuild_versionoverride" ]; then
-	  sed -i "s/GIT_DIR=\$(top_srcdir)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_localbuild_versionoverride\"/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
+	  sed -i "s/GIT_DIR=\$($_versioning_string)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_localbuild_versionoverride\"/g" "$_versioning_path"
 	elif [ -z "$_localbuild" ]; then
 	  # Set custom version so that it reports the same as pkgver
-	  sed -i "s/GIT_DIR=\$(top_srcdir)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_realwineversion\"/g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
+	  sed -i "s/GIT_DIR=\$($_versioning_string)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_realwineversion\"/g" "$_versioning_path"
 
 	  # Set custom version tags
 	  local _version_tags=()
