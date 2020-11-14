@@ -279,16 +279,12 @@ proton_patcher() {
 	  if [[ "$_CONDITION" =~ [yY] ]] || [ "$_user_patches_no_confirm" = "true" ]; then
 	    for _f in ${_patches[@]}; do
 	      if [ -e "${_f}" ]; then
-	        if [[ "${_f}" = */3886.myprotonpatch ]] && [ "$_proton_branch" != "proton_5.0" ]; then
-	          echo "Skipping 3886.myprotonpatch as it only applies to proton_5.0 branch"
-	        else
-	          echo "######################################################"
-	          echo ""
-	          echo "Applying your own ${_userpatch_target} patch ${_f}"
-	          echo ""
-	          echo "######################################################"
-	          patch -Np1 < "${_f}"
-	        fi
+	        echo "######################################################"
+	        echo ""
+	        echo "Applying your own ${_userpatch_target} patch ${_f}"
+	        echo ""
+	        echo "######################################################"
+	        patch -Np1 < "${_f}"
 	      fi
 	    done
 	  fi
