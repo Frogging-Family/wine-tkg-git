@@ -3282,3 +3282,219 @@ index 00000000000..cd6df5bcf41
 +    FIXME("stub!");
 +    return 0;
 +}
+From 8a0f4add2096d213999d9be7a04229d288f1af75 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Fri, 24 Aug 2018 14:41:44 -0500
+Subject: [PATCH] HACK: winex11: Grab mouse in fullscreen windows by default
+
+---
+ dlls/winex11.drv/x11drv_main.c | 2 +-
+ programs/winecfg/x11drvdlg.c   | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+index af2094a96f0..9c98209d43d 100644
+--- a/dlls/winex11.drv/x11drv_main.c
++++ b/dlls/winex11.drv/x11drv_main.c
+@@ -76,7 +76,7 @@ BOOL use_primary_selection = FALSE;
+ BOOL use_system_cursors = TRUE;
+ BOOL show_systray = TRUE;
+ BOOL grab_pointer = TRUE;
+-BOOL grab_fullscreen = FALSE;
++BOOL grab_fullscreen = TRUE;
+ BOOL managed_mode = TRUE;
+ BOOL decorated_mode = TRUE;
+ BOOL private_color_map = FALSE;
+diff --git a/programs/winecfg/x11drvdlg.c b/programs/winecfg/x11drvdlg.c
+index fbc6716e94e..1ca8c3ed0fd 100644
+--- a/programs/winecfg/x11drvdlg.c
++++ b/programs/winecfg/x11drvdlg.c
+@@ -123,7 +123,7 @@ static void init_dialog(HWND dialog)
+     SendDlgItemMessageW(dialog, IDC_DESKTOP_WIDTH, EM_LIMITTEXT, RES_MAXLEN, 0);
+     SendDlgItemMessageW(dialog, IDC_DESKTOP_HEIGHT, EM_LIMITTEXT, RES_MAXLEN, 0);
+ 
+-    buf = get_reg_key(config_key, keypath("X11 Driver"), "GrabFullscreen", "N");
++    buf = get_reg_key(config_key, keypath("X11 Driver"), "GrabFullscreen", "Y");
+     if (IS_OPTION_TRUE(*buf))
+ 	CheckDlgButton(dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED);
+     else
+From 625a473504e0f55cc62db6dad96bf09c4c7e59cf Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Wed, 27 Jun 2018 10:06:48 -0500
+Subject: [PATCH] HACK: winex11: Let the WM focus our windows by default
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This should fix game windows not being in focus when first started
+and when exiting, which can cause surprising keyboard behavior (e.g.
+accidentally Alt-F4ing Steam itself, which is in the background).
+
+This may break modal dialogs in some WMs (fvwm2?) which do not respect
+our responses to WM_TAKE_FOCUS. For games that show that issue, we can
+re-enable UseTakeFocus.
+
+From Zeb:
+
+"""
+The basic problem, if I understand it correctly, is that Wine uses the
+"globally active" focus model by default. This means that the window
+manager won't focus our windows unless we respond in the affirmative to
+a WM_TAKE_FOCUS event. Since the GUI thread isn't processing messages,
+this doesn't happen.
+
+Luckily, there is a very easy workaround: create the registry key
+HKCU\Software\Wine\X11 Driver and set the somewhat inaptly named value
+"UseTakeFocus" to "N" (i.e. No). This causes Wine to use the "locally
+active" model instead, which means that the window manager will focus
+our windows when it sees fit—i.e. when the user clicks on them, or when
+they are created.
+"""
+---
+ dlls/winex11.drv/x11drv_main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+index 9456caba088..af2094a96f0 100644
+--- a/dlls/winex11.drv/x11drv_main.c
++++ b/dlls/winex11.drv/x11drv_main.c
+@@ -71,7 +71,7 @@ BOOL usexvidmode = FALSE;
+ BOOL usexrandr = FALSE;
+ BOOL usexcomposite = TRUE;
+ BOOL use_xkb = TRUE;
+-BOOL use_take_focus = TRUE;
++BOOL use_take_focus = FALSE;
+ BOOL use_primary_selection = FALSE;
+ BOOL use_system_cursors = TRUE;
+ BOOL show_systray = TRUE;
+ 
+From a58fde69e0ac1945d2e2733d9506cfe4bfe145e7 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Wed, 26 Jun 2019 08:09:27 -0500
+Subject: [PATCH] Revert "winex11.drv: Activate window when restoring from
+ iconic state."
+
+This reverts commit 82c6ec3a32f44e8b3e0cc88b7f10e0c0d7fa1b89.
+
+Causes alt-tab problems with several games.
+---
+ dlls/winex11.drv/event.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+index 236c9f862af..d1c15b1de94 100644
+--- a/dlls/winex11.drv/event.c
++++ b/dlls/winex11.drv/event.c
+@@ -1342,8 +1342,6 @@ static void handle_wm_state_notify( HWND hwnd, XPropertyEvent *event, BOOL updat
+             {
+                 TRACE( "restoring win %p/%lx\n", data->hwnd, data->whole_window );
+                 release_win_data( data );
+-                if ((style & (WS_MINIMIZE | WS_VISIBLE)) == (WS_MINIMIZE | WS_VISIBLE))
+-                    SetActiveWindow( hwnd );
+                 SendMessageW( hwnd, WM_SYSCOMMAND, SC_RESTORE, 0 );
+                 return;
+             }
+From: "Rémi Bernon" <rbernon@codeweavers.com>
+Subject: [PATCH] server: Only allocate the required size in get_rawinput_buffer.
+Message-Id: <20201110133651.553337-1-rbernon@codeweavers.com>
+Date: Tue, 10 Nov 2020 14:36:51 +0100
+
+Instead of allocating the maximum reply size.
+
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+---
+
+CoD: WWII calls this with large buffer and it causes a high load on
+wineserver, although there may not even be any message to return.
+
+ server/queue.c | 60 ++++++++++++++++++++++++++++++++------------------
+ 1 file changed, 38 insertions(+), 22 deletions(-)
+
+diff --git a/server/queue.c b/server/queue.c
+index 7e7e6fbdf29..3de4d241b8e 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -3251,19 +3251,13 @@ DECL_HANDLER(get_cursor_history)
+             pos[i] = cursor_history[(i + cursor_history_latest) % ARRAY_SIZE(cursor_history)];
+ }
+ 
+-DECL_HANDLER(get_rawinput_buffer)
++static void copy_rawinput_buffer( struct thread_input *input, char *reply_buf, data_size_t reply_buf_size, data_size_t *reply_size,
++                                  data_size_t client_buf_size, data_size_t client_elt_size, data_size_t *next_size, unsigned int *count )
+ {
+-    struct thread_input *input = current->queue->input;
+-    data_size_t size = 0, next_size = 0;
++    unsigned int n = 0;
+     struct list *ptr;
+-    char *buf, *cur;
+-    int count = 0;
++    char *reply_ptr = reply_buf;
+ 
+-    if (!req->buffer_size) buf = NULL;
+-    else if (!(buf = mem_alloc( get_reply_max_size() )))
+-        return;
+-
+-    cur = buf;
+     ptr = list_head( &input->msg_list );
+     while (ptr)
+     {
+@@ -3459,22 +3459,44 @@ static void copy_rawinput_buffer( struct thread_input *input, char *reply_buf, d
+         ptr = list_next( &input->msg_list, ptr );
+         if (msg->msg != WM_INPUT) continue;
+ 
+-        next_size = req->rawinput_size;
+-        if (size + next_size > req->buffer_size) break;
+-        if (cur + msg_size > buf + get_reply_max_size()) break;
++        if (next_size) *next_size = client_elt_size;
++        if (client_buf_size < client_elt_size) break;
++        if (reply_buf_size < sizeof(*data)) break;
+ 
+-        memcpy(cur, data, msg_size);
+-        list_remove( &msg->entry );
+-        free_message( msg );
++        if (reply_buf)
++        {
++            memcpy( reply_ptr, data, sizeof(*data) );
++            list_remove( &msg->entry );
++            free_message( msg );
++        }
+ 
+-        size += next_size;
+-        cur += msg_size;
+-        count++;
++        client_buf_size -= client_elt_size;
++        reply_buf_size -= sizeof(*data);
++        reply_ptr += sizeof(*data);
++        n++;
+     }
+ 
+-    reply->next_size = next_size;
+-    reply->count = count;
+-    set_reply_data_ptr( buf, cur - buf );
++    if (reply_size) *reply_size = reply_ptr - reply_buf;
++    if (count) *count = n;
++}
++
++DECL_HANDLER(get_rawinput_buffer)
++{
++    struct thread_input *input = current->queue->input;
++    data_size_t reply_size;
++    char *reply_buf;
++
++    reply->next_size = 0;
++    reply->count = 0;
++
++    copy_rawinput_buffer( input, NULL, get_reply_max_size(), &reply_size, req->buffer_size,
++                          req->rawinput_size, &reply->next_size, &reply->count );
++
++    if (!req->buffer_size || !reply_size) return;
++    if (!(reply_buf = set_reply_data_size( reply_size ))) return;
++
++    copy_rawinput_buffer( input, reply_buf, reply_size, NULL, req->buffer_size,
++                          req->rawinput_size, NULL, NULL );
+ }
+ 
+ DECL_HANDLER(update_rawinput_devices)
+
+-- 
+2.29.2
