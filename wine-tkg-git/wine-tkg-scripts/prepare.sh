@@ -729,8 +729,10 @@ _prepare() {
 	fi
 
 	# Disable winex11-WM_WINDOWPOSCHANGING and winex11-_NET_ACTIVE_WINDOW patchsets on proton-tkg staging
-	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] || [ "$_proton_fs_hack" = "true" ]; then
-	  _staging_args+=(-W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW)
+	if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	  if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] || [ "$_proton_fs_hack" = "true" ]; then
+	    _staging_args+=(-W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW)
+	  fi
 	fi
 
 	# Disable winex11.drv-mouse-coorrds and winex11-MWM_Decorations patchsets on staging for proton FS hack
