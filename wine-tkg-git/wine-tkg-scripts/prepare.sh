@@ -399,8 +399,14 @@ _prepare() {
 	    cd "${srcdir}"/"${_winesrcdir}"
 	  fi
 	  _community_patches=($_community_patches)
+	  _community_patches_repo_path="$_where/../../community-patches/wine-tkg-git"
 	  for _p in ${_community_patches[@]}; do
-	    ln -s "$_where"/../../community-patches/wine-tkg-git/"$_p" "$_where"/
+	    if [ -e "$_community_patches_repo_path/$_p" ]; then
+	      ln -s "$_community_patches_repo_path/$_p" "$_where"/
+	    else
+	      warning "The requested community patch \"$_p\" wasn't found in the community-patches repo."
+	      msg2 "You can check https://github.com/Frogging-Family/community-patches.git for available patches."
+	    fi
 	  done
 	fi
 
