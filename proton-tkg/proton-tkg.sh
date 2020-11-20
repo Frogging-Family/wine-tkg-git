@@ -189,6 +189,11 @@ function build_vkd3d {
   git pull origin master
   git submodule update --init --recursive
 
+  _user_patches_no_confirm="true"
+  _userpatch_target="vkd3d-proton"
+  _userpatch_ext="vkd3d"
+  proton_patcher
+
   rm -rf build/lib64-vkd3d
   rm -rf build/lib32-vkd3d
   mkdir -p build/lib64-vkd3d
@@ -216,6 +221,8 @@ function build_dxvk {
   git reset --hard HEAD
   git clean -xdf
   git pull origin master
+
+  cp "$_nowhere"/proton-tkg-userpatches/*.dxvk* DXVKBUILD/patches/
 
   ./updxvk build
   export _proton_tkg_path="proton-tkg" && ./updxvk proton-tkg
