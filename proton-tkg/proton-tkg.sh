@@ -595,7 +595,7 @@ else
           download_dxvk_version
           tar -xvf dxvk-*.tar.gz >/dev/null 2>&1
           rm -f dxvk-*.tar.*
-          mv "$_nowhere"/dxvk-* "$_nowhere"/dxvk
+          mv "$_nowhere"/dxvk-*.* "$_nowhere"/dxvk
         fi
       fi
       # Remove d3d10.dll and d3d10_1.dll when using a 5.3 base or newer - https://github.com/doitsujin/dxvk/releases/tag/v1.6
