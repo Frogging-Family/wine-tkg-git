@@ -1648,6 +1648,109 @@ index 20eb6a05922..d99c6b462b2 100644
  
      name     = attr->ObjectName->Buffer;
      name_len = attr->ObjectName->Length / sizeof(WCHAR);
+From cb427c70056654bf12fb0d7d6dcb13386d193ff4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
+Date: Fri, 24 Apr 2020 14:37:58 +0300
+Subject: [PATCH] server: Try to retrieve the unix name on handles created from
+ file descriptors.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=46070
+Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
+
+Fixes Unity of Command II, and possibly other games that use
+Python38.dll.
+---
+ server/fd.c   | 39 +++++++++++++++++++++++++++++++++++++++
+ server/file.c |  1 +
+ server/file.h |  2 ++
+ 3 files changed, 42 insertions(+)
+
+diff --git a/server/fd.c b/server/fd.c
+index 904c99029ca..990a1a708a0 100644
+--- a/server/fd.c
++++ b/server/fd.c
+@@ -2079,6 +2079,45 @@ struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops, int unix_fd, s
+     return NULL;
+ }
+ 
++void set_unix_name_of_fd( struct fd *fd, const struct stat *fd_st )
++{
++#ifdef __linux__
++    static const char procfs_fmt[] = "/proc/self/fd/%d";
++
++    char path[PATH_MAX], procfs_path[sizeof(procfs_fmt) - 2 /* %d */ + 11];
++    struct stat path_st;
++    ssize_t len;
++
++    sprintf( procfs_path, procfs_fmt, fd->unix_fd );
++    len = readlink( procfs_path, path, sizeof(path) );
++    if (len == -1 || len >= sizeof(path) )
++        return;
++    path[len] = '\0';
++
++    /* Make sure it's an absolute path, has at least one hardlink, and the same inode */
++    if (path[0] != '/' || stat( path, &path_st ) || path_st.st_nlink < 1 ||
++        path_st.st_dev != fd_st->st_dev || path_st.st_ino != fd_st->st_ino)
++        return;
++
++    if (!(fd->unix_name = mem_alloc( len + 1 )))
++        return;
++    memcpy( fd->unix_name, path, len + 1 );
++
++#elif defined(F_GETPATH)
++    char path[PATH_MAX];
++    size_t size;
++
++    if (fcntl( fd->unix_fd, F_GETPATH, path ) == -1 || path[0] != '/')
++        return;
++
++    size = strlen(path) + 1;
++    if (!(fd->unix_name = mem_alloc( size )))
++        return;
++    memcpy( fd->unix_name, path, size );
++
++#endif
++}
++
+ /* retrieve the object that is using an fd */
+ void *get_fd_user( struct fd *fd )
+ {
+diff --git a/server/file.c b/server/file.c
+index e5e367478ce..e469341c746 100644
+--- a/server/file.c
++++ b/server/file.c
+@@ -147,6 +147,7 @@ struct file *create_file_for_fd( int fd, unsigned int access, unsigned int shari
+         release_object( file );
+         return NULL;
+     }
++    set_unix_name_of_fd( file->fd, &st );
+     allow_fd_caching( file->fd );
+     return file;
+ }
+diff --git a/server/file.h b/server/file.h
+index 0e43a8170df..7d614569a16 100644
+--- a/server/file.h
++++ b/server/file.h
+@@ -22,6 +22,7 @@
+ #define __WINE_SERVER_FILE_H
+ 
+ #include <sys/types.h>
++#include <sys/stat.h>
+ 
+ #include "object.h"
+ 
+@@ -82,6 +83,7 @@ extern struct fd *open_fd( struct fd *root, const char *name, int flags, mode_t
+                            unsigned int access, unsigned int sharing, unsigned int options );
+ extern struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops,
+                                        int unix_fd, struct object *user, unsigned int options );
++extern void set_unix_name_of_fd( struct fd *fd, const struct stat *fd_st );
+ extern struct fd *dup_fd_object( struct fd *orig, unsigned int access, unsigned int sharing,
+                                  unsigned int options );
+ extern struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsigned int sharing );
+
 From 514d3e11c999b11a95ab35df5b4ab454d34fe791 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Wed, 13 May 2020 13:55:55 +0300
