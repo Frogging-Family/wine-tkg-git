@@ -96,4 +96,57 @@ EOM
         _use_fsync="false"
       fi
     fi
+
+    # Broken esync on staging dc77e28 (breaking fsync as a result) - some hunks are getting unordered due to similar contexts. So let's add a bit more context as a fix.
+    if ( cd "${srcdir}"/"${_stgsrcdir}" && [ "$(git rev-parse HEAD)" = "dc77e28b0f7d6fdb11dafacb73b9889545359572" ] ); then
+      warning "Fix eventfd_synchronization on staging dc77e28"
+      patch "${srcdir}"/"${_stgsrcdir}"/patches/eventfd_synchronization/0008-ntdll-Implement-NtSetEvent.patch << 'EOM'
+@@ -49,18 +49,20 @@ index d9c7df967f8..b585af047ee 100644
+                                      BOOLEAN alertable, const LARGE_INTEGER *timeout ) DECLSPEC_HIDDEN;
+ diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+ index 51f77b1015f..60be9a0885a 100644
+ --- a/dlls/ntdll/unix/sync.c
+ +++ b/dlls/ntdll/unix/sync.c
+-@@ -486,6 +486,9 @@ NTSTATUS WINAPI NtSetEvent( HANDLE handle, LONG *prev_state )
++@@ -458,8 +458,11 @@ NTSTATUS WINAPI NtSetEvent( HANDLE handle, LONG *prev_state )
++ NTSTATUS WINAPI NtSetEvent( HANDLE handle, LONG *prev_state )
+  {
+      NTSTATUS ret;
+  
+ +    if (do_esync())
+ +        return esync_set_event( handle );
+ +
+      SERVER_START_REQ( event_op )
+      {
+          req->handle = wine_server_obj_handle( handle );
++         req->op     = SET_EVENT;
+ -- 
+ 2.28.0
+ 
+EOM
+      patch "${srcdir}"/"${_stgsrcdir}"/patches/eventfd_synchronization/0009-ntdll-Implement-NtResetEvent.patch << 'EOM'
+@@ -49,18 +49,20 @@ index b585af047ee..8480a213b2a 100644
+  extern NTSTATUS esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
+ diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+ index 60be9a0885a..1d2e831964f 100644
+ --- a/dlls/ntdll/unix/sync.c
+ +++ b/dlls/ntdll/unix/sync.c
+-@@ -508,6 +508,9 @@ NTSTATUS WINAPI NtResetEvent( HANDLE handle, LONG *prev_state )
++@@ -508,8 +508,11 @@ NTSTATUS WINAPI NtResetEvent( HANDLE handle, LONG *prev_state )
++ NTSTATUS WINAPI NtResetEvent( HANDLE handle, LONG *prev_state )
+  {
+      NTSTATUS ret;
+  
+ +    if (do_esync())
+ +        return esync_reset_event( handle );
+ +
+      SERVER_START_REQ( event_op )
+      {
+          req->handle = wine_server_obj_handle( handle );
++         req->op     = RESET_EVENT;
+ -- 
+ 2.28.0
+ 
+EOM
+    fi
 fi
