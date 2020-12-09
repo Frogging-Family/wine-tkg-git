@@ -2565,25 +2565,25 @@ index 1ff56632496..e7033932bcb 100644
 --- a/dlls/ntdll/unix/unix_private.h
 +++ b/dlls/ntdll/unix/unix_private.h
 @@ -58,6 +58,7 @@ struct ntdll_thread_data
-     void              *cpu_data[16];  /* reserved for CPU-specific data */
-     struct debug_info *debug_info;    /* info for debugstr functions */
-     void              *start_stack;   /* stack for thread startup */
+     struct list        entry;         /* entry in TEB list */
+     PRTL_THREAD_START_ROUTINE start;  /* thread entry point */
+     void              *param;         /* thread entry point parameter */
 +    int                esync_apc_fd;  /* fd to wait on for user APCs */
-     int                request_fd;    /* fd for sending server requests */
-     int                reply_fd;      /* fd for receiving server replies */
-     int                wait_fd[2];    /* fd for sleeping server requests */
+ };
+ 
+ C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 index cac8ce4d368..bd89649e769 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
 @@ -2682,6 +2682,7 @@ static void init_teb( TEB *teb, PEB *peb )
-     InitializeListHead( &teb->ActivationContextStack.FrameListCache );
-     teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
-     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
-+    thread_data->esync_apc_fd = -1;
-     thread_data->request_fd = -1;
      thread_data->reply_fd   = -1;
      thread_data->wait_fd[0] = -1;
+     thread_data->wait_fd[1] = -1;
++    thread_data->esync_apc_fd = -1;
+     list_add_head( &teb_list, &thread_data->entry );
+ }
+ 
 diff --git a/dlls/rpcrt4/rpc_server.c b/dlls/rpcrt4/rpc_server.c
 index 12260b7298b..a7cad5e273f 100644
 --- a/dlls/rpcrt4/rpc_server.c

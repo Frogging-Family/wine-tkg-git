@@ -1634,25 +1634,25 @@ index e7033932bcb..a2f485d892f 100644
 --- a/dlls/ntdll/unix/unix_private.h
 +++ b/dlls/ntdll/unix/unix_private.h
 @@ -59,6 +59,7 @@ struct ntdll_thread_data
-     struct debug_info *debug_info;    /* info for debugstr functions */
-     void              *start_stack;   /* stack for thread startup */
+     PRTL_THREAD_START_ROUTINE start;  /* thread entry point */
+     void              *param;         /* thread entry point parameter */
      int                esync_apc_fd;  /* fd to wait on for user APCs */
 +    int               *fsync_apc_futex;
-     int                request_fd;    /* fd for sending server requests */
-     int                reply_fd;      /* fd for receiving server replies */
-     int                wait_fd[2];    /* fd for sleeping server requests */
+ };
+ 
+ C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 index bd89649e769..608c83b579c 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
 @@ -2683,6 +2683,7 @@ static void init_teb( TEB *teb, PEB *peb )
-     teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
-     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
+     thread_data->wait_fd[0] = -1;
+     thread_data->wait_fd[1] = -1;
      thread_data->esync_apc_fd = -1;
 +    thread_data->fsync_apc_futex = NULL;
-     thread_data->request_fd = -1;
-     thread_data->reply_fd   = -1;
-     thread_data->wait_fd[0] = -1;
+     list_add_head( &teb_list, &thread_data->entry );
+ }
+ 
 diff --git a/server/Makefile.in b/server/Makefile.in
 index 8bd612b4728..6dc5c465e52 100644
 --- a/server/Makefile.in

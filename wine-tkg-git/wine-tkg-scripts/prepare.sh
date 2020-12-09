@@ -951,6 +951,8 @@ _prepare() {
 	if [ "$_use_esync" = "true" ]; then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2a132a18390e848b90c0273e891cbeb6d140bc70 HEAD ); then
 	    _patchname='esync-unix-mainline.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2a132a18390e848b90c0273e891cbeb6d140bc70 HEAD ); then
+	    _patchname='esync-unix-mainline-3100197.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor cf49617c1a378dd4a37ab7226187708c501b046f HEAD ); then
 	    _patchname='esync-unix-mainline-2a132a1.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 459d37643ef72d284eec0dc50573eff59935ae69 HEAD ); then
@@ -1302,8 +1304,10 @@ EOM
 	# fsync - experimental replacement for esync introduced with Proton 4.11-1
 	if [ "$_use_fsync" = "true" ]; then
 	  if [ "$_staging_esync" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7bdc1d6bacaba02b914ca3b66ee239103201617d HEAD ); then
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor dc77e28b0f7d6fdb11dafacb73b9889545359572 HEAD ); then
 	      _patchname='fsync-unix-staging.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7bdc1d6bacaba02b914ca3b66ee239103201617d HEAD ); then
+	      _patchname='fsync-unix-staging-3100197.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 459d37643ef72d284eec0dc50573eff59935ae69 HEAD ); then
 	      _patchname='fsync-unix-staging-7bdc1d6.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
@@ -1336,10 +1340,12 @@ EOM
 	      _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch" && nonuser_patcher
 	    fi
 	  elif [ "$_use_esync" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor cf49617c1a378dd4a37ab7226187708c501b046f HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 310019789f7bde12ae3f25f723957c975fb2f804 HEAD ); then
 	      _patchname='fsync-unix-mainline.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor cf49617c1a378dd4a37ab7226187708c501b046f HEAD ); then
+	      _patchname='fsync-unix-mainline-3100197.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 459d37643ef72d284eec0dc50573eff59935ae69 HEAD ); then
-	      _patchname='fsync-unix-mainline.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
+	      _patchname='fsync-unix-mainline-7bdc1d6.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	      _patchname='fsync-unix-mainline-459d376.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
 	    elif git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then

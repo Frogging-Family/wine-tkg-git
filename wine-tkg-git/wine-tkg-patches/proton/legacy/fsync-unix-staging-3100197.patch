@@ -1,7 +1,7 @@
 From 1d3dadfd7707ac176b67b50a0dc573f799778836 Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
 Date: Fri, 16 Oct 2020 20:53:31 +0200
-Subject: Fsync rebased 5.13+ mainline
+Subject: Fsync rebased 5.13+ staging
 
 
 diff --git a/dlls/ntdll/Makefile.in b/dlls/ntdll/Makefile.in
@@ -1634,25 +1634,25 @@ index e7033932bcb..a2f485d892f 100644
 --- a/dlls/ntdll/unix/unix_private.h
 +++ b/dlls/ntdll/unix/unix_private.h
 @@ -59,6 +59,7 @@ struct ntdll_thread_data
-     struct debug_info *debug_info;    /* info for debugstr functions */
-     void              *start_stack;   /* stack for thread startup */
+     PRTL_THREAD_START_ROUTINE start;  /* thread entry point */
+     void              *param;         /* thread entry point parameter */
      int                esync_apc_fd;  /* fd to wait on for user APCs */
 +    int               *fsync_apc_futex;
-     int                request_fd;    /* fd for sending server requests */
-     int                reply_fd;      /* fd for receiving server replies */
-     int                wait_fd[2];    /* fd for sleeping server requests */
+ };
+ 
+ C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 index bd89649e769..608c83b579c 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
 @@ -2683,6 +2683,7 @@ static void init_teb( TEB *teb, PEB *peb )
-     teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
-     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
+     thread_data->wait_fd[0] = -1;
+     thread_data->wait_fd[1] = -1;
      thread_data->esync_apc_fd = -1;
 +    thread_data->fsync_apc_futex = NULL;
-     thread_data->request_fd = -1;
-     thread_data->reply_fd   = -1;
-     thread_data->wait_fd[0] = -1;
+     list_add_head( &teb_list, &thread_data->entry );
+ }
+ 
 diff --git a/server/Makefile.in b/server/Makefile.in
 index 8bd612b4728..6dc5c465e52 100644
 --- a/server/Makefile.in
@@ -1756,19 +1756,19 @@ index 78635f3fae1..824b930bba0 100644
 @@ -136,6 +138,7 @@ struct console_server
      int                   term_fd;     /* UNIX terminal fd */
      struct termios        termios;     /* original termios */
-     int                   esync_fd;    /* esync file descriptor */
+     int                   esync_fd;
 +    unsigned int          fsync_idx;
  };
  
  static void console_server_dump( struct object *obj, int verbose );
 @@ -146,6 +149,7 @@ static struct object *console_server_lookup_name( struct object *obj, struct uni
- static struct object *console_server_open_file( struct object *obj, unsigned int access,
-                                                 unsigned int sharing, unsigned int options );
+ static void console_server_destroy( struct object *obj );
+ static int console_server_signaled( struct object *obj, struct wait_queue_entry *entry );
  static int console_server_get_esync_fd( struct object *obj, enum esync_type *type );
 +static unsigned int console_server_get_fsync_idx( struct object *obj, enum fsync_type *type );
- 
- static const struct object_ops console_server_ops =
- {
+ static struct fd *console_server_get_fd( struct object *obj );
+ static struct object *console_server_lookup_name( struct object *obj, struct unicode_str *name, unsigned int attr );
+ static struct object *console_server_open_file( struct object *obj, unsigned int access,
 @@ -156,6 +160,7 @@ static const struct object_ops console_server_ops =
      remove_queue,                     /* remove_queue */
      console_server_signaled,          /* signaled */
@@ -3237,7 +3237,7 @@ index a78748b96ca..dccf43197cf 100644
          list_init( &queue->pending_timers );
          list_init( &queue->expired_timers );
          for (i = 0; i < NB_MSG_KINDS; i++) list_init( &queue->msg_list[i] );
-  
+ 
 +        if (do_fsync())
 +            queue->fsync_idx = fsync_alloc_shm( 0, 0 );
 + 
