@@ -120,26 +120,22 @@ _nomakepkgsrcinit() {
     git clone --mirror "${_winesrctarget}" "$_winesrcdir" || true
 
     # Wine staging source
-    if [ "$_use_staging" = "true" ]; then
-      git clone --mirror https://github.com/wine-staging/wine-staging.git "$_stgsrcdir" || true
-    fi
+    git clone --mirror https://github.com/wine-staging/wine-staging.git "$_stgsrcdir" || true
 
     pushd "$srcdir" &>/dev/null
 
     # Wine staging update and checkout
-    if [ "$_use_staging" = "true" ]; then
-      cd "$_where"/"${_stgsrcdir}"
-      if [[ "https://github.com/wine-staging/wine-staging.git" != "$(git config --get remote.origin.url)" ]] ; then
-        echo "${_stgsrcdir} is not a clone of ${_stgsrcdir}. Please delete ${_winesrcdir} and src dirs and try again."
-        exit 1
-      fi
-      git fetch --all -p
-      rm -rf "${srcdir}/${_stgsrcdir}" && git clone "$_where"/"${_stgsrcdir}" "${srcdir}/${_stgsrcdir}"
-      cd "${srcdir}"/"${_stgsrcdir}"
-      git checkout --force --no-track -B makepkg origin/HEAD
-      if [ -n "$_staging_version" ] && [ "$_use_staging" = "true" ]; then
-        git checkout "${_staging_version}"
-      fi
+    cd "$_where"/"${_stgsrcdir}"
+    if [[ "https://github.com/wine-staging/wine-staging.git" != "$(git config --get remote.origin.url)" ]] ; then
+      echo "${_stgsrcdir} is not a clone of ${_stgsrcdir}. Please delete ${_winesrcdir} and src dirs and try again."
+      exit 1
+    fi
+    git fetch --all -p
+    rm -rf "${srcdir}/${_stgsrcdir}" && git clone "$_where"/"${_stgsrcdir}" "${srcdir}/${_stgsrcdir}"
+    cd "${srcdir}"/"${_stgsrcdir}"
+    git checkout --force --no-track -B makepkg origin/HEAD
+    if [ -n "$_staging_version" ] && [ "$_use_staging" = "true" ]; then
+      git checkout "${_staging_version}"
     fi
 
     # Wine update and checkout
