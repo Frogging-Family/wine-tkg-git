@@ -1940,6 +1940,11 @@ EOM
 	  fi
 	fi
 
+	# Proton CPU topology override - depends on protonify and fsync
+	if [ "$_use_fsync" = "true" ] && [ "$_protonify" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 6f158754435f403864052e595ab627dadac2666f HEAD ); then
+	  _patchname='proton-cpu-topology-overrides.patch' && _patchmsg="Enable Proton's CPU topology override support" && nonuser_patcher
+	fi
+
 	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	  # SDL Joystick support - from Proton
 	  if [ "$_sdl_joy_support" = "true" ]; then
