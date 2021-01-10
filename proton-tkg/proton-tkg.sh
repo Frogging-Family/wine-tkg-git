@@ -380,47 +380,36 @@ function setup_dxvk_version_url {
 
 function download_dxvk_version {
   while true ; do
-      if [ "$_use_dxvk" = "latest" ]; then
+      setup_dxvk_version_url
+      # If anything goes wrong we get exit code 22 from "curl -f"
+      set +e
+      _dxvk_version_response=$(curl -s -f "$_dxvk_version_url")
+      _dxvk_version_response_status=$?
+      set -e
+      if [ $_dxvk_version_response_status -eq 0 ]; then
         echo "#######################################################"
         echo ""
-        echo " Downloading latest DXVK artifact from git.froggi.es for you..."
+        echo " Downloading ${_dxvk_version} DXVK release from github for you..."
         echo ""
         echo "#######################################################"
         echo ""
-        wget -q -O dxvk-latest-artifact.zip "https://git.froggi.es/doitsujin/dxvk/-/jobs/artifacts/master/download?job=dxvk"
+        echo "$_dxvk_version_response" \
+        | grep "browser_download_url.*tar.gz" \
+        | cut -d : -f 2,3 \
+        | tr -d \" \
+        | wget -qi -
         break
       else
-        setup_dxvk_version_url
-        # If anything goes wrong we get exit code 22 from "curl -f"
-        set +e
-        _dxvk_version_response=$(curl -s -f "$_dxvk_version_url")
-        _dxvk_version_response_status=$?
-        set -e
-        if [ $_dxvk_version_response_status -eq 0 ]; then
-          echo "#######################################################"
-          echo ""
-          echo " Downloading ${_dxvk_version} DXVK release from github for you..."
-          echo ""
-          echo "#######################################################"
-          echo ""
-          echo "$_dxvk_version_response" \
-          | grep "browser_download_url.*tar.gz" \
-          | cut -d : -f 2,3 \
-          | tr -d \" \
-          | wget -qi -
-          break
-        else
-          echo ""
-          echo "#######################################################"
-          echo ""
-          echo " Could not download specified DXVK version (${_dxvk_version})"
-          echo ""
-          echo "#######################################################"
-          echo ""
-          echo "Please select DXVK release version (ex: v1.6.1)"
-          read -rp "> [latest]: " _dxvk_version
-          echo ""
-        fi
+        echo ""
+        echo "#######################################################"
+        echo ""
+        echo " Could not download specified DXVK version (${_dxvk_version})"
+        echo ""
+        echo "#######################################################"
+        echo ""
+        echo "Please select DXVK release version (ex: v1.6.1)"
+        read -rp "> [latest]: " _dxvk_version
+        echo ""
       fi
   done
 }
