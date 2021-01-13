@@ -1989,6 +1989,8 @@ EOM
 	      elif git merge-base --is-ancestor 6a610a325809d47f48bc72f3a757e1a62b193ea8 HEAD; then
 	        _patchname='proton-gamepad-additions-50b9456.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
 	      fi
+        elif ( [ "$_gamepad_additions" = "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD ); then
+          _patchname='proton-gamepad-additions-exp.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton exp)" && nonuser_patcher
 	    fi
 	  fi
 	  #if git merge-base --is-ancestor 0ffb1535517301d28c7c004eac639a9a0cc26c00 HEAD; then
