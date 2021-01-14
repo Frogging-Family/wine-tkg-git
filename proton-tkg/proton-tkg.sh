@@ -627,17 +627,18 @@ else
 
     # gecko
     _gecko_ver="2.47.2"
+    _gecko_compression=".tar.xz"
     mkdir -p "$_nowhere"/gecko && cd "$_nowhere"/gecko
-    if [ ! -e "wine-gecko-$_gecko_ver-x86_64.tar.bz2" ]; then
-      wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86_64.tar.bz2
+    if [ ! -e "wine-gecko-$_gecko_ver-x86_64$_gecko_compression" ]; then
+      wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86_64$_gecko_compression
     fi
-    if [ ! -e "wine-gecko-$_gecko_ver-x86.tar.bz2" ]; then
-      wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86.tar.bz2
+    if [ ! -e "wine-gecko-$_gecko_ver-x86$_gecko_compression" ]; then
+      wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86$_gecko_compression
     fi
     cd "$_nowhere"
     mkdir -p proton_dist_tmp/share/wine/gecko
-    tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86_64.tar.* -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
-    tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86.tar.* -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
+    tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86_64$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
+    tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
 
     echo ''
     echo "Packaging..."
