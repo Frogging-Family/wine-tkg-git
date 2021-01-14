@@ -626,7 +626,7 @@ else
     tar -xvJf "$_nowhere"/mono/wine-mono-*.tar.xz -C proton_dist_tmp/share/wine/mono >/dev/null 2>&1
 
     # gecko
-    _gecko_ver="2.47.1"
+    _gecko_ver="2.47.2"
     mkdir -p "$_nowhere"/gecko && cd "$_nowhere"/gecko
     if [ ! -e "wine-gecko-$_gecko_ver-x86_64.tar.bz2" ]; then
       wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86_64.tar.bz2
