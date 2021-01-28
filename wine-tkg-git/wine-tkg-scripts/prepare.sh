@@ -940,8 +940,14 @@ _prepare() {
 	_commitmsg="02-pre-staging" _committer
 
 	if [ "$_use_staging" = "true" ] && [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW2" =~ [yY] ]]; then
-	  msg2 "Applying wine-staging patches..." && echo -e "\nStaging overrides, if any: ${_staging_args[@]}\n" >> "$_where"/last_build_config.log && echo -e "\nApplying wine-staging patches..." >> "$_where"/prepare.log
-	  "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh DESTDIR="${srcdir}/${_winesrcdir}" --all "${_staging_args[@]}" >> "$_where"/prepare.log 2>&1 || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."; msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"; msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")" && exit 1)
+	  # We're converting our array to string to allow manipulation
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor b8ca0eae9f47491ba257c422a2bc03fc37d13c22 HEAD ); then
+	    _staging_args=$( printf "%s" "${_staging_args[*]}" | sed 's/-W ntdll-NtAlertThreadByThreadId //' )
+	  else
+	    _staging_args=$( printf "%s" "${_staging_args[*]}" )
+	  fi
+	  msg2 "Applying wine-staging patches..." && echo -e "\nStaging overrides, if any: ${_staging_args}\n" >> "$_where"/last_build_config.log && echo -e "\nApplying wine-staging patches..." >> "$_where"/prepare.log
+	  "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh DESTDIR="${srcdir}/${_winesrcdir}" --all $_staging_args >> "$_where"/prepare.log 2>&1 || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."; msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"; msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")" && exit 1)
 
 	  # Remove staging version tag
 	  sed -i "s/  (Staging)//g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
