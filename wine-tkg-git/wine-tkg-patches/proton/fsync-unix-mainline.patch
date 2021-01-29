@@ -1817,7 +1817,21 @@ index 78635f3fae1..824b930bba0 100644
      no_satisfied,                     /* satisfied */
      no_signal,                        /* signal */
      console_connection_get_fd,        /* get_fd */
-@@ -774,6 +782,13 @@ static int console_server_get_esync_fd( struct object *obj, enum esync_type *typ
+@@ -587,8 +587,13 @@ static void disconnect_console_server( struct console_server *server )
+         list_remove( &call->entry );
+         console_host_ioctl_terminate( call, STATUS_CANCELLED );
+     }
++
++    if (do_fsync())
++        fsync_clear_futex( server->fsync_idx );
++
+     if (do_esync())
+         esync_clear( server->esync_fd );
++
+     while (!list_empty( &server->read_queue ))
+     {
+         struct console_host_ioctl *call = LIST_ENTRY( list_head( &server->read_queue ), struct console_host_ioctl, entry );
+@@ -774,6 +787,13 @@ static int console_server_get_esync_fd( struct object *obj, enum esync_type *typ
      return server->esync_fd;
  }
  
@@ -1831,7 +1845,7 @@ index 78635f3fae1..824b930bba0 100644
  static struct fd *console_server_get_fd( struct object* obj )
  {
      struct console_server *server = (struct console_server*)obj;
-@@ -806,6 +821,9 @@ static struct object *create_console_server( void )
+@@ -806,6 +828,9 @@ static struct object *create_console_server( void )
      }
      allow_fd_caching(server->fd);
  
@@ -1840,6 +1854,28 @@ index 78635f3fae1..824b930bba0 100644
 +
      if (do_esync())
          server->esync_fd = esync_create_fd( 0, 0 );
+ 
+@@ -1545,6 +1560,10 @@ DECL_HANDLER(get_next_console_request)
+         /* set result of previous ioctl */
+         ioctl = LIST_ENTRY( list_head( &server->queue ), struct console_host_ioctl, entry );
+         list_remove( &ioctl->entry );
++
++        if (do_fsync() && list_empty( &server->queue ))
++            fsync_clear_futex( server->fsync_idx );
++
+         if (do_esync() && list_empty( &server->queue ))
+             esync_clear( server->esync_fd );
+     }
+@@ -1645,6 +1664,10 @@ DECL_HANDLER(get_next_console_request)
+     {
+         set_error( STATUS_PENDING );
+     }
++
++    if (do_fsync() && list_empty( &server->queue ))
++        fsync_clear_futex( server->fsync_idx );
++
+     if (do_esync() && list_empty( &server->queue ))
+         esync_clear( server->esync_fd );
  
 diff --git a/server/debugger.c b/server/debugger.c
 index c37f97aa0b6..b7d88cfd2f2 100644
