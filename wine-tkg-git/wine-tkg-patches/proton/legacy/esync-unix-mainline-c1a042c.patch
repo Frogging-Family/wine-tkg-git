@@ -2443,9 +2443,9 @@ index bba7af7e34f..051c672bd12 100644
 +    if (do_esync())
 +        return esync_create_event( handle, access, attr, type, state );
 +
-     if (type != NotificationEvent && type != SynchronizationEvent) return STATUS_INVALID_PARAMETER;
      if ((ret = alloc_object_attributes( attr, &objattr, &len ))) return ret;
  
+     SERVER_START_REQ( create_event )
 @@ -454,6 +470,9 @@ NTSTATUS WINAPI NtOpenEvent( HANDLE *handle, ACCESS_MASK access, const OBJECT_AT
  
      if ((ret = validate_open_object_attributes( attr ))) return ret;
@@ -2456,11 +2456,8 @@ index bba7af7e34f..051c672bd12 100644
      SERVER_START_REQ( open_event )
      {
          req->access     = access;
-@@ -476,8 +476,12 @@ NTSTATUS WINAPI NtOpenEvent( HANDLE *handle, ACCESS_MASK access, const OBJECT_AT
-  */
- NTSTATUS WINAPI NtSetEvent( HANDLE handle, LONG *prev_state )
+@@ -476,6 +495,9 @@ NTSTATUS WINAPI NtSetEvent( HANDLE handle, LONG *prev_state )
  {
-+    /* This comment is a dummy to make sure this patch applies in the right place. */
      NTSTATUS ret;
  
 +    if (do_esync())
@@ -2469,11 +2466,8 @@ index bba7af7e34f..051c672bd12 100644
      SERVER_START_REQ( event_op )
      {
          req->handle = wine_server_obj_handle( handle );
-@@ -495,8 +495,12 @@ NTSTATUS WINAPI NtSetEvent( HANDLE handle, LONG *prev_state )
-  */
- NTSTATUS WINAPI NtResetEvent( HANDLE handle, LONG *prev_state )
+@@ -495,6 +517,9 @@ NTSTATUS WINAPI NtResetEvent( HANDLE handle, LONG *prev_state )
  {
-+    /* This comment is a dummy to make sure this patch applies in the right place. */
      NTSTATUS ret;
  
 +    if (do_esync())
@@ -2822,15 +2816,6 @@ index d1e3cae8919..78635f3fae1 100644
      no_satisfied,                     /* satisfied */
      no_signal,                        /* signal */
      console_connection_get_fd,        /* get_fd */
-@@ -526,6 +529,8 @@ static void disconnect_console_server( struct console_server *server )
-         list_remove( &call->entry );
-         console_host_ioctl_terminate( call, STATUS_CANCELLED );
-     }
-+    if (do_esync())
-+        esync_clear( server->esync_fd );
-     while (!list_empty( &server->read_queue ))
-     {
-         struct console_host_ioctl *call = LIST_ENTRY( list_head( &server->read_queue ), struct console_host_ioctl, entry );
 @@ -759,6 +767,13 @@ static int console_server_signaled( struct object *obj, struct wait_queue_entry
      return !server->console || !list_empty( &server->queue );
  }
@@ -2853,35 +2838,16 @@ index d1e3cae8919..78635f3fae1 100644
      if (!server->fd)
      {
          release_object( server );
-@@ -790,6 +806,10 @@ static struct object *create_console_server( void )
-         return NULL;
+@@ -790,6 +806,9 @@ static struct object *create_console_server( void )
      }
      allow_fd_caching(server->fd);
-+    server->esync_fd = -1;
-+
+ 
 +    if (do_esync())
 +        server->esync_fd = esync_create_fd( 0, 0 );
- 
++
      return &server->obj;
  }
-@@ -1388,6 +1404,8 @@ DECL_HANDLER(get_next_console_request)
-         /* set result of previous ioctl */
-         ioctl = LIST_ENTRY( list_head( &server->queue ), struct console_host_ioctl, entry );
-         list_remove( &ioctl->entry );
-+        if (do_esync() && list_empty( &server->queue ))
-+            esync_clear( server->esync_fd );
-     }
  
-     if (ioctl)
-@@ -1486,6 +1504,8 @@ DECL_HANDLER(get_next_console_request)
-     {
-         set_error( STATUS_PENDING );
-     }
-+    if (do_esync() && list_empty( &server->queue ))
-+        esync_clear( server->esync_fd );
- 
-     release_object( server );
- }
 diff --git a/server/debugger.c b/server/debugger.c
 index e4a6c1e43a8..c37f97aa0b6 100644
 --- a/server/debugger.c
@@ -2897,7 +2863,7 @@ index e4a6c1e43a8..c37f97aa0b6 100644
 @@ -101,6 +102,7 @@ static const struct object_ops debug_ctx_ops =
      add_queue,                     /* add_queue */
      remove_queue,                  /* remove_queue */
-     debug_obj_signaled,            /* signaled */
+     debug_ctx_signaled,            /* signaled */
 +    NULL,                          /* get_esync_fd */
      no_satisfied,                  /* satisfied */
      no_signal,                     /* signal */
@@ -4560,7 +4526,7 @@ index 0e916e181bc..1a245c58396 100644
      thread->entry_point     = 0;
 +    thread->esync_fd        = -1;
 +    thread->esync_apc_fd    = -1;
-     thread->debug_obj       = NULL;
+     thread->debug_ctx       = NULL;
      thread->system_regs     = 0;
      thread->queue           = NULL;
 @@ -357,6 +364,12 @@ struct thread *create_thread( int fd, struct process *process, const struct secu
@@ -4654,7 +4620,7 @@ index 78ca4c201b2..0f6108b684a 100644
      struct list            mutex_list;    /* list of currently owned mutexes */
 +    int                    esync_fd;      /* esync file descriptor (signalled on exit) */
 +    int                    esync_apc_fd;  /* esync apc fd (signalled when APCs are present) */
-     struct debug_obj      *debug_obj;     /* debugger context if this thread is a debugger */
+     struct debug_ctx      *debug_ctx;     /* debugger context if this thread is a debugger */
      unsigned int           system_regs;   /* which system regs have been set */
      struct msg_queue      *queue;         /* message queue */
 diff --git a/server/timer.c b/server/timer.c
