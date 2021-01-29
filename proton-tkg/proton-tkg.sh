@@ -222,8 +222,8 @@ function build_dxvk {
   git clean -xdf
   git pull origin master
 
-  if [ -e "$_nowhere"/proton-tkg-userpatches/*.dxvk* ]; then
-    cp "$_nowhere"/proton-tkg-userpatches/*.dxvk* DXVKBUILD/patches/
+  if [ -e "$_nowhere"/proton-tkg-userpatches/*.mydxvk* ]; then
+    cp "$_nowhere"/proton-tkg-userpatches/*.mydxvk* DXVKBUILD/patches/
   fi
 
   ./updxvk build
