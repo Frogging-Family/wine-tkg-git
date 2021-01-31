@@ -1,26 +1,20 @@
 diff --git a/lsteamclient/steamclient_main.c b/lsteamclient/steamclient_main.c
-index 1322eaa..3e2b86e 100644
+index 26efcbc..780081e 100644
 --- a/lsteamclient/steamclient_main.c
 +++ b/lsteamclient/steamclient_main.c
-@@ -1,3 +1,4 @@
-+#define _GNU_SOURCE
- #include <stdarg.h>
- #include <stdlib.h>
- #include <stdio.h>
-@@ -4,6 +4,12 @@
+@@ -4,6 +4,11 @@
  #include <dlfcn.h>
  #include <limits.h>
  #include <stdint.h>
 +#include <fcntl.h>
 +#include <dirent.h>
 +#include <string.h>
-+#include <unistd.h>
 +#include <sys/ioctl.h>
 +#include <linux/joystick.h>
  
  #include "windef.h"
  #include "winbase.h"
-@@ -402,11 +406,65 @@ void *create_win_interface(const char *name, void *linux_side)
+@@ -407,12 +412,66 @@ void *create_win_interface(const char *name, void *linux_side)
      struct steamclient_interface *e;
      void *ret = NULL;
      int i;
@@ -30,8 +24,8 @@ index 1322eaa..3e2b86e 100644
  
      if (!linux_side)
          return NULL;
-+    
-+    if(sgi && !strcmp(sgi, "230410") && (!strcmp(name,"SteamController007")))
+ 
++    if((sgi && !strcmp(sgi, "230410")) && (!strcmp(name,"SteamController007")))
 +    {
 +        DIR *d;
 +        struct dirent *dir;
@@ -55,18 +49,19 @@ index 1322eaa..3e2b86e 100644
 +                    if(fd>0)
 +                    {
 +                        TRACE("%s successfully read, checking for device name\n", jsdevice);
-+                        char jsname[512];
++                        char jsname[128];
 +
 +                        if (ioctl(fd, JSIOCGNAME(sizeof(jsname)), jsname) < 0)
 +                        {
-+		             strncpy(jsname, "Unknown", sizeof(jsname));
++                            strncpy(jsname, "Unknown", sizeof(jsname));
 +                        }
 +
 +                        TRACE("Verifying if %s is joystick\n", jsname);
-+                        if (!strcasestr(jsname,"mouse") || !strcasestr(jsname,"keyboard") )
++                        if (strcasestr(jsname,"controller") || strcasestr(jsname,"pad"))
 +                        {
 +                            TRACE("Joystick device verified, loading %s\n", name);
 +                            js++;
++                            close(fd);
 +                            break;
 +                        }
 +                    }
@@ -83,6 +78,6 @@ index 1322eaa..3e2b86e 100644
 +        }
 +    }
 +
- 
      EnterCriticalSection(&steamclient_cs);
  
+     LIST_FOR_EACH_ENTRY(e, &steamclient_interfaces, struct steamclient_interface, entry)
