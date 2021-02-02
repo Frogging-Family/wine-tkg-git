@@ -4560,9 +4560,9 @@ index 0e916e181bc..1a245c58396 100644
      thread->entry_point     = 0;
 +    thread->esync_fd        = -1;
 +    thread->esync_apc_fd    = -1;
+     thread->debug_obj       = NULL;
      thread->system_regs     = 0;
      thread->queue           = NULL;
-     thread->wait            = NULL;
 @@ -357,6 +364,12 @@ struct thread *create_thread( int fd, struct process *process, const struct secu
          return NULL;
      }
@@ -4636,8 +4636,8 @@ index 0e916e181bc..1a245c58396 100644
  }
  
 @@ -1292,6 +1327,8 @@ void kill_thread( struct thread *thread, int violent_death )
-     }
      kill_console_processes( thread, 0 );
+     debug_exit_thread( thread );
      abandon_mutexes( thread );
 +    if (do_esync())
 +        esync_abandon_mutexes( thread );
@@ -4654,9 +4654,9 @@ index 78ca4c201b2..0f6108b684a 100644
      struct list            mutex_list;    /* list of currently owned mutexes */
 +    int                    esync_fd;      /* esync file descriptor (signalled on exit) */
 +    int                    esync_apc_fd;  /* esync apc fd (signalled when APCs are present) */
+     struct debug_obj      *debug_obj;     /* debugger context if this thread is a debugger */
      unsigned int           system_regs;   /* which system regs have been set */
      struct msg_queue      *queue;         /* message queue */
-     struct thread_wait    *wait;          /* current wait condition if sleeping */
 diff --git a/server/timer.c b/server/timer.c
 index 9aba550fd93..dcbc9e2ece5 100644
 --- a/server/timer.c
