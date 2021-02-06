@@ -508,17 +508,19 @@ _prepare() {
 
 	# Reverts
 	nonuser_reverter() {
-	  if git merge-base --is-ancestor $_committorevert HEAD; then
-	    echo -e "\n$_committorevert reverted $_hotfixmsg" >> "$_where"/prepare.log
-	    git revert -n --no-edit $_committorevert >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."; msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"; msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")" && exit 1)
-	    if [ "$_hotfixmsg" != "(hotfix)" ] && [ "$_hotfixmsg" != "(staging hotfix)" ]; then
-	      echo -e "$_committorevert reverted $_hotfixmsg" >> "$_where"/last_build_config.log
+	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
+	    if git merge-base --is-ancestor $_committorevert HEAD; then
+	      echo -e "\n$_committorevert reverted $_hotfixmsg" >> "$_where"/prepare.log
+	      git revert -n --no-edit $_committorevert >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."; msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"; msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")" && exit 1)
+	      if [ "$_hotfixmsg" != "(hotfix)" ] && [ "$_hotfixmsg" != "(staging hotfix)" ]; then
+	        echo -e "$_committorevert reverted $_hotfixmsg" >> "$_where"/last_build_config.log
+	      fi
 	    fi
 	  fi
 	}
 
 	# Hotfixer
-	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
+	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
 	  source "$_where"/wine-tkg-patches/hotfixes/hotfixer
 	  msg2 "Hotfixing..."
 	  for _commit in ${_hotfix_mainlinereverts[@]}; do
@@ -644,15 +646,19 @@ _prepare() {
 	fi
 
 	# Hotfixer-staging
-	if [ "$_use_staging" = "true" ]; then
-	  if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
-	    cd "${srcdir}"/"${_stgsrcdir}" && _userpatch_target="wine-staging" _userpatch_ext="mystaging" hotfixer && _commitmsg="01-staging-hotfixes" _committer && cd "${srcdir}"/"${_winesrcdir}"
+	if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW2" =~ [yY] ]]; then
+	  if [ "$_use_staging" = "true" ]; then
+	    if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
+	      cd "${srcdir}"/"${_stgsrcdir}" && _userpatch_target="wine-staging" _userpatch_ext="mystaging" hotfixer && _commitmsg="01-staging-hotfixes" _committer && cd "${srcdir}"/"${_winesrcdir}"
+	    fi
 	  fi
 	fi
 
 	# Hotfixer early mainline
-	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
-	  _userpatch_target="wine-mainline" _userpatch_ext="myearly" hotfixer
+	if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
+	  if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
+	    _userpatch_target="wine-mainline" _userpatch_ext="myearly" hotfixer
+	  fi
 	fi
 
 	# wine-staging user patches
@@ -2225,8 +2231,10 @@ _polish() {
 	_userpatch_target="plain-wine"
 	_userpatch_ext="my"
 	cd "${srcdir}"/"${_winesrcdir}"
-	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ -z "$_localbuild" ]; then
-	  hotfixer && _commitmsg="05-hotfixes" _committer
+	if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
+	  if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ -z "$_localbuild" ]; then
+	    hotfixer && _commitmsg="05-hotfixes" _committer
+	  fi
 	fi
 	if [ "$_user_patches" = "true" ]; then
 	  user_patcher && _commitmsg="06-userpatches" _committer
