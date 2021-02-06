@@ -60,7 +60,6 @@ _exit_cleanup() {
   fi
 
   rm -f "$_where"/BIG_UGLY_FROGMINER && msg2 'Removed BIG_UGLY_FROGMINER - Ribbit' # state tracker end
-  rm -f "$_where"/proton_tkg_token && msg2 'Removed Proton-tkg token - Valve Ribbit' # state tracker end
 
   if [ "$_NUKR" = "true" ]; then
     # Sanitization
@@ -70,6 +69,7 @@ _exit_cleanup() {
     rm -rf "$srcdir"/*.conf
     rm -f "$srcdir"/wine-tkg
     rm -f "$srcdir"/wine-tkg-interactive
+    rm -f "$_where"/proton_tkg_token && msg2 'Removed Proton-tkg token - Valve Ribbit' # state tracker end
     msg2 'exit cleanup done'
   fi
 
