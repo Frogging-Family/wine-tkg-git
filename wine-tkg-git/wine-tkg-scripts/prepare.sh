@@ -959,8 +959,10 @@ _prepare() {
 	#    _patchname='esync-unix-staging.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
 	#  fi
 	if [ "$_use_esync" = "true" ]; then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor d6ef9401b3ef05e87e0cadd31992a6809008331e HEAD ); then
 	    _patchname='esync-unix-mainline.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD ); then
+	    _patchname='esync-unix-mainline-d6ef940.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 44699c324f20690f9d6836919534ca1b5bcc3efe HEAD ); then
 	    _patchname='esync-unix-mainline-c6f2aac.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2b6426da6550c50787eeb2b39affcb766e07ec11 HEAD ); then
@@ -1322,8 +1324,10 @@ EOM
 	# fsync - experimental replacement for esync introduced with Proton 4.11-1
 	if [ "$_use_fsync" = "true" ]; then
 	  if [ "$_staging_esync" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor d6ef9401b3ef05e87e0cadd31992a6809008331e HEAD ); then
 	      _patchname='fsync-unix-staging.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD ); then
+	      _patchname='fsync-unix-staging-d6ef940.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 44699c324f20690f9d6836919534ca1b5bcc3efe HEAD ); then
 	      _patchname='fsync-unix-staging-c6f2aac.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2b6426da6550c50787eeb2b39affcb766e07ec11 HEAD ); then
@@ -1360,22 +1364,28 @@ EOM
 	    if [[ ! ${_staging_args[*]} =~ "server-Desktop_Refcount" ]] && ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 7fc716aa5f8595e5bca9206f86859f1ac70894ad HEAD ); then
 	      _patchname='fsync-staging-no_alloc_handle.patch' && _patchmsg="Added no_alloc_handle object method to fsync" && nonuser_patcher
 	      if ([ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]) || [ "$_protonify" = "true" ] && git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
-	        if git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD; then
+	        if git merge-base --is-ancestor d6ef9401b3ef05e87e0cadd31992a6809008331e HEAD; then
 	          _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it-no_alloc_handle.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch (no_alloc_handle edition)" && nonuser_patcher
+	        elif git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD; then
+	          _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it-no_alloc_handle-d6ef940.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch (no_alloc_handle edition)" && nonuser_patcher
 	        else
 	          _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it-no_alloc_handle-c6f2aac.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch (no_alloc_handle edition)" && nonuser_patcher
 	        fi
 	      fi
 	    elif [ "$_protonify" = "true" ] && git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
-	      if git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD; then
+	      if git merge-base --is-ancestor d6ef9401b3ef05e87e0cadd31992a6809008331e HEAD; then
 	        _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch" && nonuser_patcher
+	      elif git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD; then
+	        _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it-d6ef940.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch" && nonuser_patcher
 	      else
 	        _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it-c6f2aac.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch" && nonuser_patcher
 	      fi
 	    fi
 	  elif [ "$_use_esync" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor d6ef9401b3ef05e87e0cadd31992a6809008331e HEAD ); then
 	      _patchname='fsync-unix-mainline.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD ); then
+	      _patchname='fsync-unix-mainline-d6ef940.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 44699c324f20690f9d6836919534ca1b5bcc3efe HEAD ); then
 	      _patchname='fsync-unix-mainline-c6f2aac.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2b6426da6550c50787eeb2b39affcb766e07ec11 HEAD ); then

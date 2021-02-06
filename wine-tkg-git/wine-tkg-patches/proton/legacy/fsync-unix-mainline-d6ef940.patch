@@ -2073,9 +2073,9 @@ index 8607b494b6d..28a52e61d00 100644
  static void event_satisfied( struct object *obj, struct wait_queue_entry *entry );
  static int event_get_esync_fd( struct object *obj, enum esync_type *type );
 +static unsigned int event_get_fsync_idx( struct object *obj, enum fsync_type *type );
+ static unsigned int event_map_access( struct object *obj, unsigned int access );
  static int event_signal( struct object *obj, unsigned int access);
  static struct list *event_get_kernel_obj_list( struct object *obj );
- static void event_destroy( struct object *obj );
 @@ -65,6 +68,7 @@ static const struct object_ops event_ops =
      remove_queue,              /* remove_queue */
      event_signaled,            /* signaled */
@@ -2283,9 +2283,9 @@ index bbc2462163d..c558229c3c8 100644
 +    return ret;
 +}
 +
- int default_fd_get_poll_events( struct fd *fd )
+ /* default map_access() routine for objects that behave like an fd */
+ unsigned int default_fd_map_access( struct object *obj, unsigned int access )
  {
-     int events = 0;
 diff --git a/server/file.c b/server/file.c
 index 49c4ba32b42..829c8685d63 100644
 --- a/server/file.c
@@ -2307,9 +2307,9 @@ index cae0ac1e395..ed030af8d8f 100644
  extern int default_fd_signaled( struct object *obj, struct wait_queue_entry *entry );
  extern int default_fd_get_esync_fd( struct object *obj, enum esync_type *type );
 +extern unsigned int default_fd_get_fsync_idx( struct object *obj, enum fsync_type *type );
+ extern unsigned int default_fd_map_access( struct object *obj, unsigned int access );
  extern int default_fd_get_poll_events( struct fd *fd );
  extern void default_poll_event( struct fd *fd, int event );
- extern void fd_queue_async( struct fd *fd, struct async *async, int type );
 diff --git a/server/fsync.c b/server/fsync.c
 new file mode 100644
 index 00000000000..0a88ecdd3f6
@@ -3142,7 +3142,7 @@ index df50955f621..c4f51dcad30 100644
 +
  static unsigned int process_map_access( struct object *obj, unsigned int access )
  {
-     access = default_map_access( obj, access );
+     if (access & GENERIC_READ)    access |= STANDARD_RIGHTS_READ | PROCESS_QUERY_INFORMATION | PROCESS_VM_READ;
 diff --git a/server/process.h b/server/process.h
 index eec69ddbcaf..abb4ed31b48 100644
 --- a/server/process.h
@@ -3521,7 +3521,7 @@ index 1a245c58396..1fb3603f2a7 100644
 +
  static unsigned int thread_map_access( struct object *obj, unsigned int access )
  {
-     access = default_map_access( obj, access );
+     if (access & GENERIC_READ)    access |= STANDARD_RIGHTS_READ | THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT;
 @@ -533,6 +552,7 @@ static struct thread_apc *create_apc( struct object *owner, const apc_call_t *ca
          apc->result.type = APC_NONE;
          if (owner) grab_object( owner );
@@ -3606,8 +3606,8 @@ index dcbc9e2ece5..9d9d7b8b40c 100644
  static int timer_get_esync_fd( struct object *obj, enum esync_type *type );
 +static unsigned int timer_get_fsync_idx( struct object *obj, enum fsync_type *type );
  static void timer_satisfied( struct object *obj, struct wait_queue_entry *entry );
+ static unsigned int timer_map_access( struct object *obj, unsigned int access );
  static void timer_destroy( struct object *obj );
- 
 @@ -69,6 +72,7 @@ static const struct object_ops timer_ops =
      remove_queue,              /* remove_queue */
      timer_signaled,            /* signaled */
