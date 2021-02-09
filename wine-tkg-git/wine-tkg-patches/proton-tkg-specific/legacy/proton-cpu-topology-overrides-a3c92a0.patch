@@ -65,20 +65,20 @@ index b1d3e863240..7b0c7c32f58 100644
 @@ -1467,6 +1467,7 @@ void CDECL server_init_process_done( void *relay )
      PEB *peb = NtCurrentTeb()->Peb;
      IMAGE_NT_HEADERS *nt = get_exe_nt_header();
-     void *entry;
+     void *entry = (char *)peb->ImageBaseAddress + nt->OptionalHeader.AddressOfEntryPoint;
 +    struct cpu_topology_override *cpu_override = get_cpu_topology_override();
      NTSTATUS status;
      int suspend;
  
 @@ -1488,6 +1489,8 @@ void CDECL server_init_process_done( void *relay )
-     /* Signal the parent process to continue */
-     SERVER_START_REQ( init_process_done )
-     {
+ #endif
+         req->entry    = wine_server_client_ptr( entry );
+         req->gui      = (nt->OptionalHeader.Subsystem != IMAGE_SUBSYSTEM_WINDOWS_CUI);
 +        if (cpu_override)
 +            wine_server_add_data( req, cpu_override, sizeof(*cpu_override) );
          status = wine_server_call( req );
          suspend = reply->suspend;
-         entry = wine_server_get_ptr( reply->entry );
+     }
 diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
 index bf3d6c34f14..fc8165f2828 100644
 --- a/dlls/ntdll/unix/system.c
@@ -456,9 +456,9 @@ index 97e074a5261..d1f9ab764f7 100644
      struct process *process = current->process;
 +    const struct cpu_topology_override *cpu_override = get_req_data();
 +    unsigned int have_cpu_override = get_req_data_size() / sizeof(*cpu_override);
-     struct memory_view *view;
-     client_ptr_t base;
-     const pe_image_info_t *image_info;
+ 
+     if (is_process_init_done(process))
+     {
 @@ -1397,6 +1401,9 @@ DECL_HANDLER(init_process_done)
      if (req->gui) process->idle_event = create_event( NULL, NULL, 0, 1, 0, NULL );
      if (process->debugger) set_process_debug_flag( process, 1 );
@@ -499,9 +499,9 @@ index 48f9f4fae90..0f2fe077b80 100644
  /* Request declarations */
  
 @@ -877,6 +883,7 @@ typedef struct
- 
- /* Signal the end of the process initialization */
- @REQ(init_process_done)
+     mod_handle_t module;       /* main module base address */
+     client_ptr_t ldt_copy;     /* address of LDT copy (in thread address space) */
+     client_ptr_t entry;        /* process entry point */
 +    VARARG(cpu_override,cpu_topology_override); /* Overridden CPUs to host CPUs mapping. */
  @REPLY
      int          suspend;      /* is process suspended? */
