@@ -1067,6 +1067,46 @@ index 1ed41bdcec5..0af6e1ded5f 100644
      *out = NULL;
  
      fimpl = CoTaskMemAlloc(sizeof(*fimpl));
+From aa6ab7464758508b3348b3ce390c1524c9ce32a2 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Thu, 30 Jan 2020 10:16:19 -0600
+Subject: [PATCH] winegstreamer: HACK: Use a different gst registry file per
+ architecture
+
+---
+ dlls/winegstreamer/main.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/dlls/winegstreamer/main.c b/dlls/winegstreamer/main.c
+index 379f54ab4ec..0fb6b0b5ad3 100644
+--- a/dlls/winegstreamer/main.c
++++ b/dlls/winegstreamer/main.c
+@@ -421,9 +421,25 @@ static BOOL CALLBACK init_gstreamer_proc(INIT_ONCE *once, void *param, void **ct
+     char **argv = args;
+     int argc = 2;
+     GError *err = NULL;
++    const char *e;
+ 
+     TRACE("Initializing...\n");
+ 
++    if ((e = getenv("WINE_GST_REGISTRY_DIR")))
++    {
++        char gst_reg[PATH_MAX];
++#if defined(__x86_64__)
++        const char *arch = "/registry.x86_64.bin";
++#elif defined(__i386__)
++        const char *arch = "/registry.i386.bin";
++#else
++#error Bad arch
++#endif
++        strcpy(gst_reg, e);
++        strcat(gst_reg, arch);
++        setenv("GST_REGISTRY_1_0", gst_reg, 1);
++    }
++
+     argv[0] = argv0;
+     argv[1] = argv1;
+     argv[2] = NULL;
 From a4310c0cf1e27f0a90f737c2e7cfe9cdbde07522 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Mon, 20 Jan 2020 10:36:48 -0600
@@ -2253,11 +2293,11 @@ index e578d194f7f..435b691fb74 100644
 --- a/dlls/winegstreamer/Makefile.in
 +++ b/dlls/winegstreamer/Makefile.in
 @@ -15,7 +15,8 @@ C_SRCS = \
+ 	mfplat.c \
  	pin.c \
  	qualitycontrol.c \
- 	seeking.c \
--	wg_parser.c
-+	wg_parser.c \
+-	seeking.c
++	seeking.c \
 +	yuvfixup.c
  
  IDL_SRCS = \
@@ -2272,11 +2312,11 @@ index 28e424439d8..08d16496394 100644
  
 +gboolean gst_wine_yuvfixup_plugin_init(void) DECLSPEC_HIDDEN;
  #endif /* __GST_PRIVATE_INCLUDED__ */
-diff --git a/dlls/winegstreamer/wg_parser.c b/dlls/winegstreamer/wg_parser.c
+diff --git a/dlls/winegstreamer/gstdemux.c b/dlls/winegstreamer/gstdemux.c
 index 9f5e147b7ed..e986bac2205 100644
---- a/dlls/winegstreamer/wg_parser.c
-+++ b/dlls/winegstreamer/wg_parser.c
-@@ -591,7 +591,7 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
+--- a/dlls/winegstreamer/gstdemux.c
++++ b/dlls/winegstreamer/gstdemux.c
+@@ -1003,7 +1003,7 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
  
      if (!strcmp(typename, "video/x-raw"))
      {
@@ -2285,7 +2325,7 @@ index 9f5e147b7ed..e986bac2205 100644
  
          /* DirectShow can express interlaced video, but downstream filters can't
           * necessarily consume it. In particular, the video renderer can't. */
-@@ -1012,6 +1012,13 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
+@@ -1024,6 +1024,13 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
              goto out;
          }
  
@@ -2299,7 +2339,7 @@ index 9f5e147b7ed..e986bac2205 100644
          /* GStreamer outputs RGB video top-down, but DirectShow expects bottom-up. */
          if (!(flip = gst_element_factory_make("videoflip", NULL)))
          {
-@@ -1022,22 +1024,35 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
+@@ -1044,22 +1048,35 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
              goto out;
          }
  
