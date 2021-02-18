@@ -1427,6 +1427,11 @@ EOM
 	  if [ "$_fsync_spincounts" = "true" ] && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8b2fd051c97187c68dee2ba2f0df7aca65c4cca6 HEAD ) && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then # Temporarily only allow on staging - we depend on esync mutexes abandonment
 	    _patchname='fsync-spincounts.patch' && _patchmsg="Add a configurable spin count to fsync" && nonuser_patcher
 	  fi
+
+	  # futex2
+	  if [ "$_fsync_futex2" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	    _patchname='fsync_futex2.patch' && _patchmsg="Add futex2 support to fsync" && nonuser_patcher
+	  fi
 	fi
 
 	echo -e "" >> "$_where"/last_build_config.log
