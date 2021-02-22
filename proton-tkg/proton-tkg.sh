@@ -191,7 +191,7 @@ function build_vkd3d {
 
   _user_patches_no_confirm="true"
   _userpatch_target="vkd3d-proton"
-  _userpatch_ext="vkd3d"
+  _userpatch_ext="myvkd3d"
   proton_patcher
 
   rm -rf build/lib64-vkd3d
