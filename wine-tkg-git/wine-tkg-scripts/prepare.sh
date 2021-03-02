@@ -960,33 +960,29 @@ _prepare() {
 	fi
 
 	# esync
-	#if [ "$_staging_esync" = "true" ]; then
-	#  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
-	#    _patchname='esync-unix-staging.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
-	#  fi
 	if [ "$_use_esync" = "true" ]; then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a0a62463e3d1d053459a194e2e1bcc91bfbec0f5 HEAD ); then
-	    _patchname='esync-unix-mainline.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor d6ef9401b3ef05e87e0cadd31992a6809008331e HEAD ); then
-	    _patchname='esync-unix-mainline-a0a6246.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline-a0a6246.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD ); then
-	    _patchname='esync-unix-mainline-d6ef940.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline-d6ef940.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 44699c324f20690f9d6836919534ca1b5bcc3efe HEAD ); then
-	    _patchname='esync-unix-mainline-c6f2aac.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline-c6f2aac.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2b6426da6550c50787eeb2b39affcb766e07ec11 HEAD ); then
-	    _patchname='esync-unix-mainline-44699c3.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline-44699c3.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c1a042cefbc38eae6e0824a460a0657148e6745a HEAD ); then
-	    _patchname='esync-unix-mainline-2b6426d.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline-2b6426d.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2a132a18390e848b90c0273e891cbeb6d140bc70 HEAD ); then
-	    _patchname='esync-unix-mainline-c1a042c.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline-c1a042c.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2a132a18390e848b90c0273e891cbeb6d140bc70 HEAD ); then
-	    _patchname='esync-unix-mainline-3100197.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline-3100197.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor cf49617c1a378dd4a37ab7226187708c501b046f HEAD ); then
-	    _patchname='esync-unix-mainline-2a132a1.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline-2a132a1.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 459d37643ef72d284eec0dc50573eff59935ae69 HEAD ); then
-	    _patchname='esync-unix-mainline-7bdc1d6.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline-7bdc1d6.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
-	    _patchname='esync-unix-mainline-459d376.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	    _patchname='esync-unix-mainline-459d376.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif git merge-base --is-ancestor 2600ecd4edfdb71097105c74312f83845305a4f2 HEAD; then # Esync ce79346
 	    if [ "$_use_staging" = "true" ]; then
 	      # fixes for esync patches to apply to staging
@@ -1391,23 +1387,23 @@ EOM
 	    fi
 	  elif [ "$_use_esync" = "true" ]; then
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor d6ef9401b3ef05e87e0cadd31992a6809008331e HEAD ); then
-	      _patchname='fsync-unix-mainline.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	      _patchname='fsync-unix-mainline.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, mainline)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD ); then
-	      _patchname='fsync-unix-mainline-d6ef940.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	      _patchname='fsync-unix-mainline-d6ef940.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, mainline)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 44699c324f20690f9d6836919534ca1b5bcc3efe HEAD ); then
-	      _patchname='fsync-unix-mainline-c6f2aac.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	      _patchname='fsync-unix-mainline-c6f2aac.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, mainline)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2b6426da6550c50787eeb2b39affcb766e07ec11 HEAD ); then
-	      _patchname='fsync-unix-mainline-44699c3.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	      _patchname='fsync-unix-mainline-44699c3.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, mainline)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c1a042cefbc38eae6e0824a460a0657148e6745a HEAD ); then
-	      _patchname='fsync-unix-mainline-2b6426d.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	      _patchname='fsync-unix-mainline-2b6426d.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, mainline)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 310019789f7bde12ae3f25f723957c975fb2f804 HEAD ); then
-	      _patchname='fsync-unix-mainline-c1a042c.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	      _patchname='fsync-unix-mainline-c1a042c.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, mainline)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor cf49617c1a378dd4a37ab7226187708c501b046f HEAD ); then
-	      _patchname='fsync-unix-mainline-3100197.patch' && _patchmsg="Using Esync staging (unix) patchset" && nonuser_patcher
+	      _patchname='fsync-unix-mainline-3100197.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, mainline)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 459d37643ef72d284eec0dc50573eff59935ae69 HEAD ); then
-	      _patchname='fsync-unix-mainline-7bdc1d6.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
+	      _patchname='fsync-unix-mainline-7bdc1d6.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, mainline)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
-	      _patchname='fsync-unix-mainline-459d376.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
+	      _patchname='fsync-unix-mainline-459d376.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, mainline)" && nonuser_patcher
 	    elif git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
 	      _patchname='fsync-mainline.patch' && _patchmsg="Applied fsync, an experimental replacement for esync" && nonuser_patcher
 	    elif git merge-base --is-ancestor e5030a4ac0a303d6788ae79ffdcd88e66cf78bd2 HEAD; then
