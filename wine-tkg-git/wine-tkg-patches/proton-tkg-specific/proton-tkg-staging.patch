@@ -2538,3 +2538,258 @@ index a33440107b6..397aa64dce2 100644
          };
  
          WCHAR cur_exe[MAX_PATH];
+From a1970123784a1ef886c032fa6e8c57805b056985 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 1 Mar 2021 22:17:25 +0300
+Subject: [PATCH] mprapi: Add stub for MprConfigServerConnect().
+
+---
+ dlls/mprapi/mprapi.c    | 7 +++++++
+ dlls/mprapi/mprapi.spec | 2 +-
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/mprapi/mprapi.c b/dlls/mprapi/mprapi.c
+index 715f1b8cada..f6798d4fd32 100644
+--- a/dlls/mprapi/mprapi.c
++++ b/dlls/mprapi/mprapi.c
+@@ -79,3 +79,10 @@ BOOL APIENTRY MprAdminIsServiceRunning(LPWSTR server)
+ 
+     return FALSE;
+ }
++
++DWORD APIENTRY MprConfigServerConnect(LPWSTR server_name, HANDLE *hmprconfig)
++{
++    FIXME("server_name %s, hmprconfig %p.\n", debugstr_w(server_name), hmprconfig);
++
++    return ERROR_NOT_ENOUGH_MEMORY;
++}
+diff --git a/dlls/mprapi/mprapi.spec b/dlls/mprapi/mprapi.spec
+index 4b5937b8806..21d39841db5 100644
+--- a/dlls/mprapi/mprapi.spec
++++ b/dlls/mprapi/mprapi.spec
+@@ -82,7 +82,7 @@
+ @ stub MprConfigInterfaceTransportRemove
+ @ stub MprConfigInterfaceTransportSetInfo
+ @ stub MprConfigServerBackup
+-@ stub MprConfigServerConnect
++@ stdcall MprConfigServerConnect(wstr ptr)
+ @ stub MprConfigServerDisconnect
+ @ stub MprConfigServerGetInfo
+ @ stub MprConfigServerInstall
+From 8f0d2b8cbc2ebaa16d1879b3f2dc592a139cee50 Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Tue, 2 Mar 2021 19:22:38 +0200
+Subject: [PATCH] kernelbase: Fix GetFileVersionInfo*() crashes with malformed
+ resources.
+
+Some Unity games ship with an encrypted Assembly-CSharp.dll, including
+the resources directory, yet the engine still calls GetFileVersionInfoSizeW()
+on those files. This may results in a page fault when trying to find the
+version resource and takes the whole process down.
+
+The change fixes crashes when launching Home Behind 2 and Crown Trick.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=50075
+Signed-off-by: Arkadiusz Hiler <ahiler@codeweavers.com>
+---
+ dlls/kernelbase/version.c | 28 ++++++++++++++++++++--------
+ 1 file changed, 20 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/kernelbase/version.c b/dlls/kernelbase/version.c
+index 58c49aa148b..04c15372c97 100644
+--- a/dlls/kernelbase/version.c
++++ b/dlls/kernelbase/version.c
+@@ -240,19 +240,29 @@ static BOOL CALLBACK init_current_version(PINIT_ONCE init_once, PVOID parameter,
+  * Copied from loader/pe_resource.c
+  */
+ static const IMAGE_RESOURCE_DIRECTORY *find_entry_by_id( const IMAGE_RESOURCE_DIRECTORY *dir,
+-                                                         WORD id, const void *root )
++                                                         WORD id, const void *root,
++                                                         DWORD root_size )
+ {
+     const IMAGE_RESOURCE_DIRECTORY_ENTRY *entry;
+     int min, max, pos;
++    DWORD offset;
+ 
+     entry = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
+     min = dir->NumberOfNamedEntries;
+     max = min + dir->NumberOfIdEntries - 1;
++
++    if (max >= (root_size - ((INT_PTR)dir - (INT_PTR)root) - sizeof(*dir)) / sizeof(*entry))
++        return NULL;
++
+     while (min <= max)
+     {
+         pos = (min + max) / 2;
+         if (entry[pos].u.Id == id)
+-            return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry[pos].u2.s2.OffsetToDirectory);
++        {
++            offset = entry[pos].u2.s2.OffsetToDirectory;
++            if (offset >= root_size) return NULL;
++            return (const IMAGE_RESOURCE_DIRECTORY *)((char *)root + offset);
++        }
+         if (entry[pos].u.Id > id) max = pos - 1;
+         else min = pos + 1;
+     }
+@@ -294,7 +304,8 @@ static inline int push_language( WORD *list, int pos, WORD lang )
+  *  find_entry_language
+  */
+ static const IMAGE_RESOURCE_DIRECTORY *find_entry_language( const IMAGE_RESOURCE_DIRECTORY *dir,
+-                                                            const void *root, DWORD flags )
++                                                            const void *root, DWORD root_size,
++                                                            DWORD flags )
+ {
+     const IMAGE_RESOURCE_DIRECTORY *ret;
+     WORD list[9];
+@@ -319,7 +330,7 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_language( const IMAGE_RESOURCE
+         pos = push_language( list, pos, MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT ) );
+     }
+ 
+-    for (i = 0; i < pos; i++) if ((ret = find_entry_by_id( dir, list[i], root ))) return ret;
++    for (i = 0; i < pos; i++) if ((ret = find_entry_by_id( dir, list[i], root, root_size ))) return ret;
+     return find_entry_default( dir, root );
+ }
+ 
+@@ -413,7 +424,7 @@ static BOOL find_pe_resource( HANDLE handle, DWORD *resLen, DWORD *resOff, DWORD
+     PIMAGE_DATA_DIRECTORY resDataDir;
+     PIMAGE_SECTION_HEADER sections;
+     LPBYTE resSection;
+-    DWORD len, section_size, data_size;
++    DWORD len, section_size, data_size, resDirSize;
+     const void *resDir;
+     const IMAGE_RESOURCE_DIRECTORY *resPtr;
+     const IMAGE_RESOURCE_DATA_ENTRY *resData;
+@@ -486,21 +497,22 @@ static BOOL find_pe_resource( HANDLE handle, DWORD *resLen, DWORD *resOff, DWORD
+ 
+     /* Find resource */
+     resDir = resSection + (resDataDir->VirtualAddress - sections[i].VirtualAddress);
++    resDirSize = section_size - (resDataDir->VirtualAddress - sections[i].VirtualAddress);
+ 
+     resPtr = resDir;
+-    resPtr = find_entry_by_id( resPtr, VS_FILE_INFO, resDir );
++    resPtr = find_entry_by_id( resPtr, VS_FILE_INFO, resDir, resDirSize );
+     if ( !resPtr )
+     {
+         TRACE("No typeid entry found\n" );
+         goto done;
+     }
+-    resPtr = find_entry_by_id( resPtr, VS_VERSION_INFO, resDir );
++    resPtr = find_entry_by_id( resPtr, VS_VERSION_INFO, resDir, resDirSize );
+     if ( !resPtr )
+     {
+         TRACE("No resid entry found\n" );
+         goto done;
+     }
+-    resPtr = find_entry_language( resPtr, resDir, flags );
++    resPtr = find_entry_language( resPtr, resDir, resDirSize, flags );
+     if ( !resPtr )
+     {
+         TRACE("No default language entry found\n" );
+From d4f662b14da9f926dc282090406428f05ad88699 Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Tue, 23 Feb 2021 14:41:58 +0200
+Subject: [PATCH] ntoskrnl: Implement IoSetDevicePropertyData().
+
+---
+ dlls/ntoskrnl.exe/ntoskrnl.exe.spec |  1 +
+ dlls/ntoskrnl.exe/pnp.c             | 45 +++++++++++++++++++++++++++++
+ include/ddk/wdm.h                   |  4 +++
+ 3 files changed, 50 insertions(+)
+
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+index 0f65490b487..5ff04af794d 100644
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -465,6 +465,7 @@
+ @ stdcall IoReuseIrp(ptr long)
+ @ stub IoSetCompletionRoutineEx
+ @ stdcall IoSetDeviceInterfaceState(ptr long)
++@ stdcall IoSetDevicePropertyData(ptr ptr long long long long ptr)
+ @ stub IoSetDeviceToVerify
+ @ stub IoSetFileOrigin
+ @ stub IoSetHardErrorOrVerifyDevice
+diff --git a/dlls/ntoskrnl.exe/pnp.c b/dlls/ntoskrnl.exe/pnp.c
+index 6a0e82ec0e2..7f1e900cc42 100644
+--- a/dlls/ntoskrnl.exe/pnp.c
++++ b/dlls/ntoskrnl.exe/pnp.c
+@@ -793,6 +793,51 @@ NTSTATUS WINAPI IoSetDeviceInterfaceState( UNICODE_STRING *name, BOOLEAN enable
+     return ret;
+ }
+ 
++/***********************************************************************
++ *           IoSetDevicePropertyData (NTOSKRNL.EXE.@)
++ */
++NTSTATUS WINAPI IoSetDevicePropertyData( DEVICE_OBJECT *device, const DEVPROPKEY *property_key,
++                                         LCID lcid, ULONG flags, DEVPROPTYPE type, ULONG size,
++                                         PVOID data)
++{
++    SP_DEVINFO_DATA sp_device = {sizeof(sp_device)};
++    WCHAR device_instance_id[MAX_DEVICE_ID_LEN];
++    NTSTATUS status;
++    HDEVINFO set;
++
++    /* flags is always treated as PLUGPLAY_PROPERTY_PERSISTENT starting with Win 8 / 2012 */
++
++    if (lcid != LOCALE_NEUTRAL)
++        FIXME("only LOCALE_NEUTRAL is supported\n");
++
++    if ((status = get_device_instance_id( device, device_instance_id )))
++        return status;
++
++    if ((set = SetupDiCreateDeviceInfoList( &GUID_NULL, NULL )) == INVALID_HANDLE_VALUE)
++    {
++        ERR("Failed to create device list, error %#x.\n", GetLastError());
++        return GetLastError();
++    }
++
++    if (!SetupDiOpenDeviceInfoW( set, device_instance_id, NULL, 0, &sp_device ))
++    {
++        ERR("Failed to open device, error %#x.\n", GetLastError());
++        SetupDiDestroyDeviceInfoList( set );
++        return GetLastError();
++    }
++
++    if (!SetupDiSetDevicePropertyW(set, &sp_device, property_key, type, data, size, 0))
++    {
++        ERR("Failed to set property, error %#x.\n", GetLastError());
++        SetupDiDestroyDeviceInfoList( set );
++        return GetLastError();
++    }
++
++    SetupDiDestroyDeviceInfoList( set );
++
++    return STATUS_SUCCESS;
++}
++
+ /***********************************************************************
+  *           IoRegisterDeviceInterface (NTOSKRNL.EXE.@)
+  */
+diff --git a/include/ddk/wdm.h b/include/ddk/wdm.h
+index 59af860708b..c7b7b92e279 100644
+--- a/include/ddk/wdm.h
++++ b/include/ddk/wdm.h
+@@ -21,6 +21,7 @@
+ #define _NTDDK_
+ 
+ #include <ntstatus.h>
++#include <devpropdef.h>
+ 
+ #ifdef _WIN64
+ #define POINTER_ALIGNMENT DECLSPEC_ALIGN(8)
+@@ -1681,6 +1682,8 @@ void      WINAPI ExReleaseResourceForThreadLite(ERESOURCE*,ERESOURCE_THREAD);
+ ULONG     WINAPI ExSetTimerResolution(ULONG,BOOLEAN);
+ void      WINAPI ExUnregisterCallback(void*);
+ 
++#define PLUGPLAY_PROPERTY_PERSISTENT 0x0001
++
+ void      WINAPI IoAcquireCancelSpinLock(KIRQL*);
+ NTSTATUS  WINAPI IoAcquireRemoveLockEx(IO_REMOVE_LOCK*,void*,const char*,ULONG, ULONG);
+ NTSTATUS  WINAPI IoAllocateDriverObjectExtension(PDRIVER_OBJECT,PVOID,ULONG,PVOID*);
+@@ -1728,6 +1731,7 @@ void      WINAPI IoReleaseRemoveLockAndWaitEx(IO_REMOVE_LOCK*,void*,ULONG);
+ void      WINAPI IoReleaseRemoveLockEx(IO_REMOVE_LOCK*,void*,ULONG);
+ void      WINAPI IoReuseIrp(IRP*,NTSTATUS);
+ NTSTATUS  WINAPI IoSetDeviceInterfaceState(UNICODE_STRING*,BOOLEAN);
++NTSTATUS  WINAPI IoSetDevicePropertyData(DEVICE_OBJECT*,const DEVPROPKEY*,LCID,ULONG,DEVPROPTYPE,ULONG,PVOID);
+ NTSTATUS  WINAPI IoWMIRegistrationControl(PDEVICE_OBJECT,ULONG);
+ 
+ void    FASTCALL KeAcquireInStackQueuedSpinLockAtDpcLevel(KSPIN_LOCK*,KLOCK_QUEUE_HANDLE*);
