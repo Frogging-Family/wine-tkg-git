@@ -228,6 +228,7 @@ msg2 ''
     _update_winevulkan="false"
     _mtga_fix="false"
     _protonify="false"
+    _childwindow_fix="false"
     _unfrog="true"
   fi
 }
