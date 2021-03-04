@@ -226,6 +226,8 @@ msg2 ''
     _large_address_aware="false"
     _proton_mf_hacks="false"
     _update_winevulkan="false"
+    _mtga_fix="false"
+    _protonify="false"
     _unfrog="true"
   fi
 }
@@ -508,7 +510,7 @@ _prepare() {
 
 	# Reverts
 	nonuser_reverter() {
-	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
+	  if [ "$_NUKR" != "debug" ] && [ "$_unfrog" != "true" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
 	    if git merge-base --is-ancestor $_committorevert HEAD; then
 	      echo -e "\n$_committorevert reverted $_hotfixmsg" >> "$_where"/prepare.log
 	      git revert -n --no-edit $_committorevert >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."; msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"; msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")" && exit 1)
@@ -520,7 +522,7 @@ _prepare() {
 	}
 
 	# Hotfixer
-	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
+	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ "$_NUKR" != "debug" ] && [ "$_unfrog" != "true" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
 	  source "$_where"/wine-tkg-patches/hotfixes/hotfixer
 	  msg2 "Hotfixing..."
 	  for _commit in ${_hotfix_mainlinereverts[@]}; do
@@ -646,7 +648,7 @@ _prepare() {
 	fi
 
 	# Hotfixer-staging
-	if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW2" =~ [yY] ]]; then
+	if [ "$_NUKR" != "debug" ] && [ "$_unfrog" != "true" ] || [[ "$_DEBUGANSW2" =~ [yY] ]]; then
 	  if [ "$_use_staging" = "true" ]; then
 	    if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
 	      cd "${srcdir}"/"${_stgsrcdir}" && _userpatch_target="wine-staging" _userpatch_ext="mystaging" hotfixer && _commitmsg="01-staging-hotfixes" _committer && cd "${srcdir}"/"${_winesrcdir}"
@@ -655,7 +657,7 @@ _prepare() {
 	fi
 
 	# Hotfixer early mainline
-	if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
+	if [ "$_NUKR" != "debug" ] && [ "$_unfrog" != "true" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
 	  if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
 	    _userpatch_target="wine-mainline" _userpatch_ext="myearly" hotfixer
 	  fi
@@ -1453,7 +1455,7 @@ EOM
 	fi
 
 	# Proton Fullscreen patch - Allows resolution changes for fullscreen games without changing desktop resolution
-	if [ "$_proton_fs_hack" = "true" ]; then
+	if [ "$_proton_fs_hack" = "true" ] && [ "$_unfrog" != "true" ]; then
 	  if [ "$_FS_bypass_compositor" != "true" ]; then
 	    _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	  fi
@@ -2139,61 +2141,63 @@ EOM
 	fi
 
 	# Proton fs hack additions
-	if git merge-base --is-ancestor 1e074c39f635c585595e9f3ece99aa290a7f9cf8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
-	  _patchname='proton-vk-bits-4.5.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
-	elif git merge-base --is-ancestor 408a5a86ec30e293bf9e6eec4890d552073a82e8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
-	  _patchname='proton-vk-bits-4.5-1e074c3.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
-	elif git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
-	  _patchname='proton-vk-bits-4.5-408a5a8.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
-	fi
-	if git merge-base --is-ancestor 458e0ad5133c9a449e22688a89183f3a6ab286e4 HEAD && [ "$_proton_fs_hack" = "true" ]; then
-	  _patchname='proton_fs_hack_integer_scaling.patch' && _patchmsg="Enable Proton fs hack integer scaling" && nonuser_patcher
-	fi
-	if [ "$_update_winevulkan" = "true" ] && git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
-	  if git merge-base --is-ancestor c681a0732fc3c6466b228417bb5e0d518d26b819 HEAD; then
-	    if [ "$_proton_fs_hack" = "true" ]; then
-	      _patchname='proton-winevulkan.patch' && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
-	    else
-	      _patchname='proton-winevulkan-nofshack.patch' && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
-	    fi
-	  else
-	    if git merge-base --is-ancestor eb9f3dd3ad07aae3c9588bcff376ed2a7a8ef8d2 HEAD; then
-	      _lastcommit="c681a07"
-	    elif git merge-base --is-ancestor 7d8c50e4371f2fc5300b90b323210c922d80d4e9 HEAD; then
-	      _lastcommit="eb9f3dd"
-	    elif git merge-base --is-ancestor fc893489fe89c9fbd22f0cbe1c4327c64f05e0dc HEAD; then
-	      _lastcommit="7d8c50e"
-	    elif git merge-base --is-ancestor bff6bc6a79ffc3a915219a6dfe64c9bcabaaeceb HEAD; then
-	      _lastcommit="fc89348"
-	    elif git merge-base --is-ancestor 1e074c39f635c585595e9f3ece99aa290a7f9cf8 HEAD; then
-	      _lastcommit="bff6bc6"
-	    elif git merge-base --is-ancestor 8bd62231c3ab222c07063cb340e26c3c76ff4229 HEAD; then
-	      _lastcommit="1e074c3"
-	    elif git merge-base --is-ancestor 380b7f28253c048d04c1fbd0cfbc7e804bb1b0e1 HEAD; then
-	      _lastcommit="8bd6223"
-	    elif git merge-base --is-ancestor 408a5a86ec30e293bf9e6eec4890d552073a82e8 HEAD; then
-	      _lastcommit="380b7f2"
-	    elif git merge-base --is-ancestor d2f552d1508dbabb595eae23db9e5c157eaf9b41 HEAD; then
-	      _lastcommit="408a5a8"
-	    elif git merge-base --is-ancestor 594814c00ab059d9686ed836b1865f8a94859c8a HEAD; then
-	      _lastcommit="d2f552d"
-	    elif git merge-base --is-ancestor 086c686e817a596e35c41dd5b37f3c28587af9d5 HEAD; then
-	      _lastcommit="594814c"
-	    elif git merge-base --is-ancestor bdeae71bc129ac83c44753672d110b06a480c93c HEAD; then
-	      _lastcommit="086c686"
-	    elif git merge-base --is-ancestor 7b1622d1ab90f01fdb3a2bc24e12ab4990f07f68 HEAD; then
-	      _lastcommit="bdeae71"
-	    #elif git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
-	    #  _lastcommit="7b1622d"
-	    else
-	      _lastcommit="none"
-	    fi
-	    if [ "$_lastcommit" != "none" ]; then
+	if [ "$_unfrog" != "true" ]; then
+	  if git merge-base --is-ancestor 1e074c39f635c585595e9f3ece99aa290a7f9cf8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
+	    _patchname='proton-vk-bits-4.5.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
+	  elif git merge-base --is-ancestor 408a5a86ec30e293bf9e6eec4890d552073a82e8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
+	    _patchname='proton-vk-bits-4.5-1e074c3.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
+	  elif git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
+	    _patchname='proton-vk-bits-4.5-408a5a8.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
+	  fi
+	  if git merge-base --is-ancestor 458e0ad5133c9a449e22688a89183f3a6ab286e4 HEAD && [ "$_proton_fs_hack" = "true" ]; then
+	    _patchname='proton_fs_hack_integer_scaling.patch' && _patchmsg="Enable Proton fs hack integer scaling" && nonuser_patcher
+	  fi
+	  if [ "$_update_winevulkan" = "true" ] && git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
+	    if git merge-base --is-ancestor c681a0732fc3c6466b228417bb5e0d518d26b819 HEAD; then
 	      if [ "$_proton_fs_hack" = "true" ]; then
-	        _patchname="proton-winevulkan-$_lastcommit.patch" && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
+	        _patchname='proton-winevulkan.patch' && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
 	      else
-	        _patchname="proton-winevulkan-nofshack-$_lastcommit.patch" && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
+	        _patchname='proton-winevulkan-nofshack.patch' && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
 	      fi
+	    else
+	      if git merge-base --is-ancestor eb9f3dd3ad07aae3c9588bcff376ed2a7a8ef8d2 HEAD; then
+	        _lastcommit="c681a07"
+	      elif git merge-base --is-ancestor 7d8c50e4371f2fc5300b90b323210c922d80d4e9 HEAD; then
+	        _lastcommit="eb9f3dd"
+	      elif git merge-base --is-ancestor fc893489fe89c9fbd22f0cbe1c4327c64f05e0dc HEAD; then
+	        _lastcommit="7d8c50e"
+	      elif git merge-base --is-ancestor bff6bc6a79ffc3a915219a6dfe64c9bcabaaeceb HEAD; then
+	        _lastcommit="fc89348"
+	      elif git merge-base --is-ancestor 1e074c39f635c585595e9f3ece99aa290a7f9cf8 HEAD; then
+	        _lastcommit="bff6bc6"
+	      elif git merge-base --is-ancestor 8bd62231c3ab222c07063cb340e26c3c76ff4229 HEAD; then
+	        _lastcommit="1e074c3"
+	      elif git merge-base --is-ancestor 380b7f28253c048d04c1fbd0cfbc7e804bb1b0e1 HEAD; then
+	        _lastcommit="8bd6223"
+	      elif git merge-base --is-ancestor 408a5a86ec30e293bf9e6eec4890d552073a82e8 HEAD; then
+	        _lastcommit="380b7f2"
+	      elif git merge-base --is-ancestor d2f552d1508dbabb595eae23db9e5c157eaf9b41 HEAD; then
+	        _lastcommit="408a5a8"
+	      elif git merge-base --is-ancestor 594814c00ab059d9686ed836b1865f8a94859c8a HEAD; then
+	        _lastcommit="d2f552d"
+	      elif git merge-base --is-ancestor 086c686e817a596e35c41dd5b37f3c28587af9d5 HEAD; then
+	        _lastcommit="594814c"
+	      elif git merge-base --is-ancestor bdeae71bc129ac83c44753672d110b06a480c93c HEAD; then
+	        _lastcommit="086c686"
+	      elif git merge-base --is-ancestor 7b1622d1ab90f01fdb3a2bc24e12ab4990f07f68 HEAD; then
+	        _lastcommit="bdeae71"
+	      #elif git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
+	      #  _lastcommit="7b1622d"
+	      else
+	        _lastcommit="none"
+	      fi
+	      if [ "$_lastcommit" != "none" ]; then
+	        if [ "$_proton_fs_hack" = "true" ]; then
+	          _patchname="proton-winevulkan-$_lastcommit.patch" && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
+	        else
+	          _patchname="proton-winevulkan-nofshack-$_lastcommit.patch" && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
+	        fi
+          fi
 	    fi
 	  fi
 	fi
@@ -2225,7 +2229,7 @@ EOM
   fi
 
 	# Set the default wine version to win10
-	if [ "$_win10_default" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
+	if [ "$_win10_default" = "true" ] && [ "$_unfrog" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	  if git merge-base --is-ancestor 595600b6c14c957d19f3ef8c0c82acacd7c6827a HEAD; then
 	    if [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-win10-default-staging.patch' && _patchmsg="Enforce win10 as default wine version (staging)" && nonuser_patcher
@@ -2274,13 +2278,18 @@ _polish() {
 	_userpatch_target="plain-wine"
 	_userpatch_ext="my"
 	cd "${srcdir}"/"${_winesrcdir}"
-	if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
+	if [ "$_NUKR" != "debug" ] && [ "$_unfrog" != "true" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
 	  if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ -z "$_localbuild" ]; then
 	    hotfixer && _commitmsg="05-hotfixes" _committer
 	  fi
 	fi
 	if [ "$_user_patches" = "true" ]; then
 	  user_patcher && _commitmsg="06-userpatches" _committer
+	fi
+
+	# UNFROG HOTFIX - Autoconf 2.70 fix for legacy trees - https://github.com/wine-mirror/wine/commit/d7645b67c350f7179a1eba749ec4524c74948d86
+	if [ "$_unfrog" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor d7645b67c350f7179a1eba749ec4524c74948d86 HEAD ); then
+	  patch -Np1 < "$_where"/wine-tkg-patches/hotfixes/autoconf-legacy-fix/autoconf-legacy-fix.mypatch
 	fi
 
 	echo "" >> "$_where"/last_build_config.log
