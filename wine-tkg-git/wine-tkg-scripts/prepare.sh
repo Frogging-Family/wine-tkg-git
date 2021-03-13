@@ -962,6 +962,17 @@ _prepare() {
 	  _commitmsg="03-staging" _committer
 	fi
 
+	# winesync / fastsync
+	if [ "$_use_fastsync" = "true" ]; then
+	  if [ "$_use_staging" != "true" ]
+	    _use_esync="false"
+	    _use_fsync="false"
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3c9b5379d1a57f69fa14f87f64f2079171becb6c HEAD ); then
+	      _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
+	    fi
+	  fi
+	fi
+
 	# esync
 	if [ "$_use_esync" = "true" ]; then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3c9b5379d1a57f69fa14f87f64f2079171becb6c HEAD ); then
