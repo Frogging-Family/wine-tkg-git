@@ -964,7 +964,7 @@ _prepare() {
 
 	# winesync / fastsync
 	if [ "$_use_fastsync" = "true" ]; then
-	  if [ "$_use_staging" != "true" ]
+	  if [ "$_use_staging" != "true" ]; then
 	    _use_esync="false"
 	    _use_fsync="false"
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3c9b5379d1a57f69fa14f87f64f2079171becb6c HEAD ); then
