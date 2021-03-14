@@ -684,7 +684,7 @@ _prepare() {
 	fi
 
 	# use CLOCK_MONOTONIC instead of CLOCK_MONOTONIC_RAW in ntdll/server - lowers overhead
-	if [ "$_clock_monotonic" = "true" ]; then
+	if [ "$_clock_monotonic" = "true" ] && [ "$_use_fastsync" != "true" ]; then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	    _patchname='use_clock_monotonic.patch' && _patchmsg="Applied clock_monotonic patch" && nonuser_patcher
 	  else
