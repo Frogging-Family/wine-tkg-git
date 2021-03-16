@@ -972,6 +972,7 @@ _prepare() {
 	    fi
 	  else
 	    warning "! _use_fastsync is enabled, but _use_staging disables it. Please disable _use_staging in your .cfg to use fastsync !"
+	    _use_fastsync="false"
 	  fi
 	fi
 
