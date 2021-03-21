@@ -2894,6 +2894,15 @@ index c45c093e9d3..857bc1ab23b 100644
          }
      }
      return event;
+@@ -160,7 +169,7 @@ struct event *get_event_obj( struct process *process, obj_handle_t handle, unsig
+     return (struct event *)get_handle_obj( process, handle, access, &event_ops );
+ }
+ 
+-void pulse_event( struct event *event )
++static void pulse_event( struct event *event )
+ {
+     event->signaled = 1;
+     /* wake up all waiters if manual reset, a single one otherwise */
 @@ -173,11 +182,13 @@ void set_event( struct event *event )
      event->signaled = 1;
      /* wake up all waiters if manual reset, a single one otherwise */
@@ -3798,6 +3807,14 @@ index 5b2c309f0b2..c306a19c719 100644
      /* close a handle to this object */
      int (*close_handle)(struct object *,struct process *,obj_handle_t);
      /* destroy on refcount == 0 */
+@@ -215,7 +218,6 @@ extern struct keyed_event *create_keyed_event( struct object *root, const struct
+                                                unsigned int attr, const struct security_descriptor *sd );
+ extern struct event *get_event_obj( struct process *process, obj_handle_t handle, unsigned int access );
+ extern struct keyed_event *get_keyed_event_obj( struct process *process, obj_handle_t handle, unsigned int access );
+-extern void pulse_event( struct event *event );
+ extern void set_event( struct event *event );
+ extern void reset_event( struct event *event );
+ 
 @@ -223,6 +225,18 @@ extern void reset_event( struct event *event );
  
  extern void abandon_mutexes( struct thread *thread );
@@ -4018,8 +4035,12 @@ index 7f3b785df51..23b516dc42f 100644
      {
          enum apc_type    type;      /* APC_BREAK_PROCESS */
          unsigned int     status;    /* status returned by call */
-@@ -1116,8 +1132,6 @@ typedef struct
-     unsigned int options;      /* duplicate options */
+@@ -1116,11 +1132,9 @@ typedef struct
+     obj_handle_t dst_process;  /* dst process handle */
+     unsigned int access;       /* wanted access rights */
+     unsigned int attributes;   /* object attributes */
+-    unsigned int options;      /* duplicate options (see below) */
++    unsigned int options;      /* duplicate options */
  @REPLY
      obj_handle_t handle;       /* duplicated handle in dst process */
 -    int          self;         /* is the source the current process? */
@@ -4468,6 +4489,23 @@ diff --git a/server/sock.c b/server/sock.c
 index 3aed5494612..26969059bfe 100644
 --- a/server/sock.c
 +++ b/server/sock.c
+@@ -163,7 +163,6 @@ struct sock
+ };
+ 
+ static void sock_dump( struct object *obj, int verbose );
+-static int sock_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static struct fd *sock_get_fd( struct object *obj );
+ static int sock_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
+ static void sock_destroy( struct object *obj );
+@@ -189,7 +188,7 @@ static const struct object_ops sock_ops =
+     sock_dump,                    /* dump */
+     add_queue,                    /* add_queue */
+     remove_queue,                 /* remove_queue */
+-    sock_signaled,                /* signaled */
++    default_fd_signaled,          /* signaled */
+     no_satisfied,                 /* satisfied */
+     no_signal,                    /* signal */
+     sock_get_fd,                  /* get_fd */
 @@ -202,6 +201,7 @@ static const struct object_ops sock_ops =
      NULL,                         /* unlink_name */
      no_open_file,                 /* open_file */
@@ -4476,6 +4514,32 @@ index 3aed5494612..26969059bfe 100644
      sock_close_handle,            /* close_handle */
      sock_destroy                  /* destroy */
  };
+@@ -773,10 +773,6 @@ static void sock_poll_event( struct fd *fd, int event )
+     event = sock_dispatch_asyncs( sock, event, error );
+     sock_dispatch_events( sock, prevstate, event, error );
+ 
+-    /* if anyone is stupid enough to wait on the socket object itself,
+-     * maybe we should wake them up too, just in case? */
+-    wake_up( &sock->obj, 0 );
+-
+     sock_reselect( sock );
+ }
+ 
+@@ -789,14 +785,6 @@ static void sock_dump( struct object *obj, int verbose )
+             sock->mask, sock->pmask, sock->hmask );
+ }
+ 
+-static int sock_signaled( struct object *obj, struct wait_queue_entry *entry )
+-{
+-    struct sock *sock = (struct sock *)obj;
+-    assert( obj->ops == &sock_ops );
+-
+-    return check_fd_events( sock->fd, sock_get_poll_events( sock->fd ) ) != 0;
+-}
+-
+ static int sock_get_poll_events( struct fd *fd )
+ {
+     struct sock *sock = get_fd_user( fd );
 @@ -902,7 +890,7 @@ static int sock_close_handle( struct object *obj, struct process *process, obj_h
              async_terminate( req->async, STATUS_CANCELLED );
      }
@@ -4485,6 +4549,15 @@ index 3aed5494612..26969059bfe 100644
  }
  
  static void sock_destroy( struct object *obj )
+@@ -1536,7 +1524,7 @@ static const struct object_ops ifchange_ops =
+     sizeof(struct ifchange), /* size */
+     &no_type,                /* type */
+     ifchange_dump,           /* dump */
+-    add_queue,               /* add_queue */
++    no_add_queue,            /* add_queue */
+     NULL,                    /* remove_queue */
+     NULL,                    /* signaled */
+     no_satisfied,            /* satisfied */
 @@ -1551,6 +1539,7 @@ static const struct object_ops ifchange_ops =
      NULL,                    /* unlink_name */
      no_open_file,            /* open_file */

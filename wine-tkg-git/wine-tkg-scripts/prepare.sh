@@ -967,8 +967,10 @@ _prepare() {
 	  if [ "$_use_staging" != "true" ]; then
 	    _use_esync="false"
 	    _use_fsync="false"
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3c9b5379d1a57f69fa14f87f64f2079171becb6c HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 340cc46287d7861ce6cae19401752e65f4089ae9 HEAD ); then
 	      _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3c9b5379d1a57f69fa14f87f64f2079171becb6c HEAD ); then
+	      _patchname='fastsync-mainline-340cc46.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
 	    fi
 	  else
 	    warning "! _use_fastsync is enabled, but _use_staging disables it. Please disable _use_staging in your .cfg to use fastsync !"
