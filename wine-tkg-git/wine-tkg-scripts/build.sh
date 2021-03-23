@@ -161,19 +161,17 @@ _package_nomakepkg() {
 	# External install
 	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
 	  _lib32name="lib" && _lib64name="lib64"
-	  if [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
-	    if [ "$_EXTERNAL_NOVER" = "true" ]; then
-	      _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
+	  if [ "$_EXTERNAL_NOVER" = "true" ]; then
+	    _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
+	  else
+	    # $_realwineversion doesn't carry over into the fakeroot environment
+	    if [ "$_use_staging" = "true" ]; then
+	      cd "$srcdir/$_stgsrcdir"
 	    else
-	      # $_realwineversion doesn't carry over into the fakeroot environment
-	      if [ "$_use_staging" = "true" ]; then
-	        cd "$srcdir/$_stgsrcdir"
-	      else
-	        cd "$srcdir/$_winesrcdir"
-	      fi
-	      _realwineversion=$(_describe_wine)
-	      _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion"
+	      cd "$srcdir/$_winesrcdir"
 	    fi
+	    _realwineversion=$(_describe_wine)
+	    _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion"
 	  fi
 	fi
 
@@ -229,7 +227,7 @@ _package_nomakepkg() {
 	  pkgdir="${_nomakepkg_prefix_path}/${_nomakepkg_pkgname}"
 	fi
 
-	if [ "$_GENERATE_DEBIAN_PACKAGE" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+	if [ "$_GENERATE_DEBIAN_PACKAGE" = "true" ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
 		_generate_debian_package "$_prefix"
 	fi
 
@@ -254,10 +252,10 @@ _package_nomakepkg() {
 	fi
 
 	# External install
-	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
 	  msg2 "### This wine will be installed to: $_prefix"
 	  msg2 "### Remember to use $_prefix/bin/wine instead of just wine (same for winecfg etc.)"
-	elif [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
+	elif [ "$_EXTERNAL_INSTALL" = "proton" ]; then
 	  touch "${pkgdir}"/../HL3_confirmed
 	fi
 }
@@ -270,21 +268,17 @@ _package_makepkg() {
 	# External install
 	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
 	  _lib32name="lib" && _lib64name="lib64"
-	  if [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
-	    if [ "$_EXTERNAL_NOVER" = "true" ]; then
-	      _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
+	  if [ "$_EXTERNAL_NOVER" = "true" ]; then
+	    _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
+	  else
+	    # $_realwineversion doesn't carry over into the fakeroot environment
+	    if [ "$_use_staging" = "true" ]; then
+	      cd "$srcdir/$_stgsrcdir"
 	    else
-	      # $_realwineversion doesn't carry over into the fakeroot environment
-	      if [ "$_use_staging" = "true" ]; then
-	        cd "$srcdir/$_stgsrcdir"
-	      else
-	        cd "$srcdir/$_winesrcdir"
-	      fi
-	      _realwineversion=$(_describe_wine)
-	      _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion"
+	      cd "$srcdir/$_winesrcdir"
 	    fi
-	  elif [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
-	    _prefix=""
+	    _realwineversion=$(_describe_wine)
+	    _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion"
 	  fi
 	fi
 
@@ -307,7 +301,7 @@ _package_makepkg() {
 			  dlldir="${pkgdir}$_prefix/$_lib64name/wine" install
 	fi
 
-	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ] || [ "$_EXTERNAL_INSTALL" != "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" != "proton" ]; then
 	  # freetype font smoothing for win32 applications
 	  install -d "$pkgdir"/etc/fonts/conf.{avail,d}
 	  install -m644 "${srcdir}/30-win32-aliases.conf" "${pkgdir}/etc/fonts/conf.avail/30-$pkgname-win32-aliases.conf"
@@ -315,7 +309,7 @@ _package_makepkg() {
 	fi
 
 	# wine binfmt
-	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
 	  mkdir -p "${pkgdir}/usr/lib/binfmt.d"
 	  # change binfmt.conf to actual installed path
 	  sed -e "s|/usr/bin/wine|$_prefix/bin/wine|g" < "${srcdir}/wine-binfmt.conf" > "${pkgdir}/usr/lib/binfmt.d/$pkgname.conf"
@@ -325,7 +319,7 @@ _package_makepkg() {
 	  if [ "$_FOAS_NOPE" = "true" ]; then
 	    sed 's|    LicenseInformation|    LicenseInformation,\\\n    FileOpenAssociations|g;$a \\n[FileOpenAssociations]\nHKCU,Software\\Wine\\FileOpenAssociations,"Enable",,"N"' "${pkgdir}$_prefix"/share/wine/wine.inf -i
 	  fi
-	elif [ "$_EXTERNAL_INSTALL" != "true" ]; then
+	elif [ "$_EXTERNAL_INSTALL" = "false" ]; then
 	  install -Dm 644 "${srcdir}/wine-binfmt.conf" "${pkgdir}/usr/lib/binfmt.d/wine.conf"
 	  # disable mime-types registering
 	  if [ "$_MIME_NOPE" = "true" ]; then
@@ -343,7 +337,7 @@ _package_makepkg() {
 
 	cp "$_where"/last_build_config.log "${pkgdir}$_prefix"/share/wine/wine-tkg-config.txt
 
-	if [ "$_GENERATE_DEBIAN_PACKAGE" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+	if [ "$_GENERATE_DEBIAN_PACKAGE" = "true" ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
 		_generate_debian_package "$_prefix"
 	fi
 
@@ -368,10 +362,10 @@ _package_makepkg() {
 	fi
 
 	# External install
-	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
 	  msg2 "### This wine will be installed to: $_prefix"
 	  msg2 "### Remember to use $_prefix/bin/wine instead of just wine (same for winecfg etc.)"
-	elif [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
+	elif [ "$_EXTERNAL_INSTALL" = "proton" ]; then
 	  touch "${pkgdir}"/../HL3_confirmed
 	  msg2 'Use Gandalf to prevent packaging we do not need for proton'
 	  YOU_SHALL_NOT_PASS

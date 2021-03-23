@@ -2,7 +2,7 @@
 
 _exit_cleanup() {
   # Proton-tkg specifics to send to token
-  if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ -n "$_proton_tkg_path" ]; then
+  if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ -n "$_proton_tkg_path" ]; then
     if [ -n "$_PROTON_NAME_ADDON" ]; then
       if [ "$_ispkgbuild" = "true" ]; then
         echo "_protontkg_version=makepkg.${_PROTON_NAME_ADDON}" >> "$_proton_tkg_path"/proton_tkg_token
@@ -193,9 +193,9 @@ msg2 ''
   # Check for proton-tkg token to prevent broken state as we need to enforce some defaults
   if [ -e "$_proton_tkg_path"/proton_tkg_token ] && [ -n "$_proton_tkg_path" ]; then
     _LOCAL_PRESET=""
-    _EXTERNAL_INSTALL="true"
-    _EXTERNAL_INSTALL_TYPE="proton"
+    _EXTERNAL_INSTALL="proton"
     _EXTERNAL_NOVER="false"
+    _nomakepkg_nover="true"
     _NOLIB32="false"
     _NOLIB64="false"
     _esync_version=""
@@ -209,7 +209,7 @@ msg2 ''
     if [ "$_ispkgbuild" = "true" ]; then
       _steamvr_support="false"
     fi
-  elif [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
+  elif [ "$_EXTERNAL_INSTALL" = "proton" ]; then
     error "It looks like you're attempting to build a Proton version of wine-tkg-git."
     error "This special option doesn't use pacman and requires you to run 'proton-tkg.sh' script from proton-tkg dir."
     _exit_cleanup
@@ -269,10 +269,10 @@ _pkgnaming() {
   fi
 
   # External install
-  if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+  if [ "$_EXTERNAL_INSTALL" = "true" ]; then
     pkgname="${pkgname/%-git/-$_EXTERNAL_INSTALL_TYPE-git}"
     msg2 "Installing to $_DEFAULT_EXTERNAL_PATH/$pkgname"
-  elif [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
+  elif [ "$_EXTERNAL_INSTALL" = "proton" ]; then
     pkgname="proton_dist"
     _DEFAULT_EXTERNAL_PATH="$HOME/.steam/root/compatibilitytools.d"
     msg2 "Installing to $_DEFAULT_EXTERNAL_PATH/proton_tkg"
@@ -547,11 +547,11 @@ _prepare() {
 	  echo -e "( MTGA bandaid reverts applied )\n" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_sdl_joy_support" = "true" ] && [ "$_use_staging" != "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && git merge-base --is-ancestor e4fbae832c868e9fcf5a91c58255fe3f4ea1cb30 HEAD; then
+	if [ "$_sdl_joy_support" = "true" ] && [ "$_use_staging" != "true" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && git merge-base --is-ancestor e4fbae832c868e9fcf5a91c58255fe3f4ea1cb30 HEAD; then
 	  _committorevert=e4fbae832c868e9fcf5a91c58255fe3f4ea1cb30 && nonuser_reverter
 	  echo -e "( Proton SDL Joystick support unbreak revert applied )\n" >> "$_where"/last_build_config.log
 	fi
-	if [ "$_gamepad_additions" = "true" ] && [ "$_use_staging" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && git merge-base --is-ancestor da7d60bf97fb8726828e57f852e8963aacde21e9 HEAD && ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
+	if [ "$_gamepad_additions" = "true" ] && [ "$_use_staging" = "true" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && git merge-base --is-ancestor da7d60bf97fb8726828e57f852e8963aacde21e9 HEAD && ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD; then
 	  _committorevert=da7d60bf97fb8726828e57f852e8963aacde21e9 && nonuser_reverter
 	  echo -e "( Proton gamepad additions unbreak revert applied )\n" >> "$_where"/last_build_config.log
 	fi
@@ -626,7 +626,7 @@ _prepare() {
 	fi
 
 	# Kernelbase reverts patchset - cleanly reverting part
-	if [ "$_kernelbase_reverts" = "true" ] || [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
+	if [ "$_kernelbase_reverts" = "true" ] || [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
 	  _committorevert=b0199ea2fe8f9b77aee7ab4f68c9ae1755442586 && nonuser_reverter
 	  _committorevert=608d086f1b1bb7168e9322c65224c23f34e75f29 && nonuser_reverter
 	  _committorevert=b7db0b52cee65a008f503ce727befcad3ba8d28a && nonuser_reverter
@@ -743,7 +743,7 @@ _prepare() {
 
 	# Disable winex11-WM_WINDOWPOSCHANGING and winex11-_NET_ACTIVE_WINDOW patchsets on proton-tkg staging
 	if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
-	  if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] || [ "$_proton_fs_hack" = "true" ]; then
+	  if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_use_staging" = "true" ] || [ "$_proton_fs_hack" = "true" ]; then
 	    _staging_args+=(-W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW)
 	  fi
 	fi
@@ -773,7 +773,7 @@ _prepare() {
 	fi
 
 	# Specifically for proton-tkg, our meta patchset breaks with stock staging rawinput patchset, so disable for now, and apply a corresponding fixed winex11-key_translation patchset at a later stage
-	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_fs_hack" != "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD ) && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_fs_hack" != "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD ) && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
 	    _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-nolegacy -W user32-rawinput-mouse-experimental -W user32-rawinput-hid -W winex11-key_translation)
 	  elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor f904ca32a3f678bf829a325dc66699a21e510857 HEAD ); then
@@ -791,12 +791,12 @@ _prepare() {
 	fi
 
 	# Disable some staging patchsets to prevent bad interactions with proton gamepad additions
-	if ( ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_gamepad_additions" = "true" ] ) || ( git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_sdl_joy_support" = "true" ] ) && ( [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] ); then
+	if ( ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_gamepad_additions" = "true" ] ) || ( git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_sdl_joy_support" = "true" ] ) && ( [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_use_staging" = "true" ] ); then
 	  _staging_args+=(-W dinput-SetActionMap-genre -W dinput-axis-recalc -W dinput-joy-mappings -W dinput-reconnect-joystick -W dinput-remap-joystick)
 	fi
 
 	# Fixes for staging based Proton + steamhelper
-	if ( [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_use_steamhelper" = "true" ] ); then
+	if ( [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_use_steamhelper" = "true" ] ); then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7fc716aa5f8595e5bca9206f86859f1ac70894ad HEAD ); then
 	      _staging_args+=(-W ws2_32-TransmitFile) # Might not be actually required with server-Desktop_Refcount gone - needs testing
@@ -1259,7 +1259,7 @@ _prepare() {
 
 	# Fix for Assetto Corsa performance drop when HUD elements are displayed - https://bugs.winehq.org/show_bug.cgi?id=46955
 	if [ "$_assettocorsa_hudperf_fix" = "true" ] && git merge-base --is-ancestor d19e34d8f072514cb903bda89767996ba078bae4 HEAD; then
-	  if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
+	  if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	    _patchname='assettocorsa_hud_perf-proton.patch' && _patchmsg="Applied Assetto Corsa HUD performance fix (proton edition)" && nonuser_patcher
 	  else
 	    _patchname='assettocorsa_hud_perf.patch' && _patchmsg="Applied Assetto Corsa HUD performance fix" && nonuser_patcher
@@ -1396,7 +1396,7 @@ EOM
 	    fi
 	    if [[ ! ${_staging_args[*]} =~ "server-Desktop_Refcount" ]] && ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 7fc716aa5f8595e5bca9206f86859f1ac70894ad HEAD ); then
 	      _patchname='fsync-staging-no_alloc_handle.patch' && _patchmsg="Added no_alloc_handle object method to fsync" && nonuser_patcher
-	      if ([ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]) || [ "$_protonify" = "true" ] && git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
+	      if ([ "$_EXTERNAL_INSTALL" = "proton" ]) || [ "$_protonify" = "true" ] && git merge-base --is-ancestor 2633a5c1ae542f08f127ba737fa59fb03ed6180b HEAD; then
 	        if git merge-base --is-ancestor d6ef9401b3ef05e87e0cadd31992a6809008331e HEAD; then
 	          _patchname='server_Abort_waiting_on_a_completion_port_when_closing_it-no_alloc_handle.patch' && _patchmsg="Added Abort waiting on a completion port when closing it Proton patch (no_alloc_handle edition)" && nonuser_patcher
 	        elif git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD; then
@@ -1660,7 +1660,7 @@ EOM
 	fi
 
 	# Revert moving various funcs to kernelbase & ntdll to fix some dll loading issues and ntdll crashes (with Cemu and Blizzard games notably)
-	if [ "$_kernelbase_reverts" = "true" ] || [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ] && git merge-base --is-ancestor 8d25965e12717b266f2fc74bb10d915234d16772 HEAD && ! git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
+	if [ "$_kernelbase_reverts" = "true" ] || [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] && git merge-base --is-ancestor 8d25965e12717b266f2fc74bb10d915234d16772 HEAD && ! git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
 	  if git merge-base --is-ancestor 461b5e56f95eb095d97e4af1cb1c5fd64bb2862a HEAD; then
 	    if [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-tkg-staging-kernelbase-reverts.patch' && _patchmsg="Using kernelbase reverts patch (staging)" && nonuser_patcher
@@ -1729,7 +1729,7 @@ EOM
 	  _patchname='proton-staging_winex11-MWM_Decorations.patch' && _patchmsg="Applied proton friendly winex11-MWM_Decorations" && nonuser_patcher
 	fi
 
-	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	  if [ "$_proton_fs_hack" != "true" ] && [ "$_use_staging" = "true" ] && [[ ! ${_staging_userargs[*]} =~ "winex11-key_translation" ]] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD && ! git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
 	    _patchname='staging-winex11-key_translation.patch' && _patchmsg="Applied non-fshack friendly staging winex11-key_translation patchset" && nonuser_patcher
 	  fi
@@ -1748,14 +1748,14 @@ EOM
 
 	echo -e "" >> "$_where"/last_build_config.log
 
-	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD || ([ "$_protonify" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
+	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD || ([ "$_protonify" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2cb4bdb10abcfd751d4d1b2ca7780c778166608a HEAD ); then
 	    if [ "$_use_staging" = "true" ]; then
 	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD; then
 	        _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/3" && nonuser_patcher
 	      fi
 	      _patchname='proton-tkg-staging.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 2/3" && nonuser_patcher
-	      if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
+	      if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8cd5c1bc37cb617a6e88698e289516cee8d2449f HEAD ); then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0a6f070f5ebb9b2013fa4ba24dd7d8c16399cf71 HEAD ); then
@@ -1794,7 +1794,7 @@ EOM
 	        _patchname='proton-tkg-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 1/3" && nonuser_patcher
 	      fi
 	      _patchname='proton-tkg.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 2/3" && nonuser_patcher
-	      if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
+	      if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8cd5c1bc37cb617a6e88698e289516cee8d2449f HEAD ); then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0a6f070f5ebb9b2013fa4ba24dd7d8c16399cf71 HEAD ); then
@@ -2015,7 +2015,7 @@ EOM
 	        _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/2" && nonuser_patcher
 	      fi
 	      _patchname="proton-tkg-staging-$_lastcommit.patch" && _patchmsg="Using Steam-specific Proton-tkg patches (staging-$_lastcommit) 2/2" && nonuser_patcher
-	      if [ "$_stmbits" = "1" ] && [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
+	      if [ "$_stmbits" = "1" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8cd5c1bc37cb617a6e88698e289516cee8d2449f HEAD ); then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0a6f070f5ebb9b2013fa4ba24dd7d8c16399cf71 HEAD ); then
@@ -2054,7 +2054,7 @@ EOM
 	        _patchname='proton-tkg-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 1/2" && nonuser_patcher
 	      fi
 	      _patchname="proton-tkg-$_lastcommit.patch" && _patchmsg="Using Steam-specific Proton-tkg patches ($_lastcommit) 2/2" && nonuser_patcher
-	      if [ "$_stmbits" = "1" ] && [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
+	      if [ "$_stmbits" = "1" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8cd5c1bc37cb617a6e88698e289516cee8d2449f HEAD ); then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0a6f070f5ebb9b2013fa4ba24dd7d8c16399cf71 HEAD ); then
@@ -2113,7 +2113,7 @@ EOM
 	  fi
 	fi
 
-	if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_unfrog" != "true" ]; then
+	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	  # SDL Joystick support - from Proton
 	  if [ "$_sdl_joy_support" = "true" ]; then
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e4fbae832c868e9fcf5a91c58255fe3f4ea1cb30 HEAD ) && [ "$_use_staging" = "true" ]; then
@@ -2251,7 +2251,7 @@ EOM
 
 	# Enforce mscvrt Dlls to native then builtin - from Proton
 	if [ "$_msvcrt_nativebuiltin" = "true" ]; then
-	  if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_protonify" = "true" ] && [ "$_unfrog" != "true" ]; then
+	  if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_protonify" = "true" ] && [ "$_unfrog" != "true" ]; then
 	    if git merge-base --is-ancestor 51ffea5a3940bdc74b44b9303c4574dfb156efc0 HEAD; then
 	      _patchname='msvcrt_nativebuiltin.patch' && _patchmsg="Enforce msvcrt Dlls to native then builtin (from Proton)" && nonuser_patcher
 	    elif git merge-base --is-ancestor eafb4aff5a2c322f4f156fdfada5743834996be4 HEAD; then
@@ -2301,7 +2301,7 @@ EOM
 	fi
 
 	# Add support for dxvk_config library to Wine's dxgi for Proton
-	if ( [ "$_use_vkd3dlib" = "false" ] && [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ] && [ "$_protonify" = "true" ] && [ "$_unfrog" != "true" ] ) && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
+	if ( [ "$_use_vkd3dlib" = "false" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_protonify" = "true" ] && [ "$_unfrog" != "true" ] ) && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	  if git merge-base --is-ancestor 591068cec06257f3d5ed23e19ee4ad055ad978aa HEAD; then
 	    _patchname='dxvk_config_dxgi_support.patch' && _patchmsg="Add support for dxvk_config library to Wine's dxgi" && nonuser_patcher
 	  else

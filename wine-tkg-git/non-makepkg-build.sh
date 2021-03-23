@@ -79,7 +79,7 @@ pkgver() {
   fi
 
   # this script makes external builds already and we don't want the specific pacman-related stuff to interfere, so enforce _EXTERNAL_INSTALL="false" when not building proton-tkg
-  if [ "$_EXTERNAL_INSTALL" = "true" ] && [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
+  if [ "$_EXTERNAL_INSTALL" = "true" ]; then
     _EXTERNAL_INSTALL="false"
   fi
 
@@ -231,21 +231,16 @@ build_wine_tkg() {
 
   # External install
   if [ "$_EXTERNAL_INSTALL" = "true" ]; then
-    if [ "$_EXTERNAL_INSTALL_TYPE" != "proton" ]; then
-      if [ "$_EXTERNAL_NOVER" = "true" ]; then
-        _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
+    if [ "$_EXTERNAL_NOVER" = "true" ]; then
+      _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
+    else
+      if [ "$_use_staging" = "true" ]; then
+        cd "$srcdir/$_stgsrcdir"
       else
-        if [ "$_use_staging" = "true" ]; then
-          cd "$srcdir/$_stgsrcdir"
-        else
-          cd "$srcdir/$_winesrcdir"
-        fi
-        _realwineversion=$(_describe_wine)
-        _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion"
+        cd "$srcdir/$_winesrcdir"
       fi
-    elif [ "$_EXTERNAL_INSTALL_TYPE" = "proton" ]; then
-      #_prefix="$_where"
-      _configure_args+=(--without-curses)
+      _realwineversion=$(_describe_wine)
+      _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion"
     fi
   #else
   #  _configure_args64+=(--libdir="$_prefix/$_lib64name")
