@@ -166,6 +166,28 @@ index 4f149c0f644..6229fc201e1 100644
  {
      switch( apc->type )
      {
+@@ -580,6 +580,21 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result )
+         else result->create_thread.status = STATUS_INVALID_PARAMETER;
+         break;
+     }
++    case APC_DUP_HANDLE:
++    {
++        HANDLE dst_handle = NULL;
++
++        result->type = call->type;
++
++        result->dup_handle.status = NtDuplicateObject( NtCurrentProcess(),
++                                                       wine_server_ptr_handle(call->dup_handle.src_handle),
++                                                       wine_server_ptr_handle(call->dup_handle.dst_process),
++                                                       &dst_handle, call->dup_handle.access,
++                                                       call->dup_handle.attributes, call->dup_handle.options );
++        result->dup_handle.handle = wine_server_obj_handle( dst_handle );
++        NtClose( wine_server_ptr_handle(call->dup_handle.dst_process) );
++        break;
++    }
+     case APC_BREAK_PROCESS:
+     {
+         HANDLE handle;
 @@ -713,6 +728,21 @@ unsigned int server_wait( const select_op_t *select_op, data_size_t size, UINT f
  }
  
@@ -197,17 +219,64 @@ index 4f149c0f644..6229fc201e1 100644
  
              SERVER_START_REQ( get_apc_result )
              {
-@@ -1678,6 +1708,7 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source, HANDLE
-      * retrieve it again */
-     if (options & DUPLICATE_CLOSE_SOURCE)
-         fd = remove_fd_from_cache( source );
+@@ -1678,6 +1708,37 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source, HANDLE
+                                    ACCESS_MASK access, ULONG attributes, ULONG options )
+ {
+     NTSTATUS ret;
++    int fd;
++
++    if ((options & DUPLICATE_CLOSE_SOURCE) && source_process != NtCurrentProcess())
++    {
++        apc_call_t call;
++        apc_result_t result;
++
++        memset( &call, 0, sizeof(call) );
++
++        call.dup_handle.type        = APC_DUP_HANDLE;
++        call.dup_handle.src_handle  = wine_server_obj_handle( source );
++        call.dup_handle.dst_process = wine_server_obj_handle( dest_process );
++        call.dup_handle.access      = access;
++        call.dup_handle.attributes  = attributes;
++        call.dup_handle.options     = options;
++        ret = server_queue_process_apc( source_process, &call, &result );
++        if (ret != STATUS_SUCCESS) return ret;
++
++        if (!result.dup_handle.status)
++            *dest = wine_server_ptr_handle( result.dup_handle.handle );
++        return result.dup_handle.status;
++    }
++
++    /* always remove the cached fd; if the server request fails we'll just
++     * retrieve it again */
++    if (options & DUPLICATE_CLOSE_SOURCE)
++    {
++        fd = remove_fd_from_cache( source );
++        if (fd != -1) close( fd );
 +        close_fast_sync_obj( source );
++    }
  
      SERVER_START_REQ( dup_handle )
      {
-@@ -1709,6 +1765,8 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
-      * retrieve it again */
-     fd = remove_fd_from_cache( handle );
+@@ -1690,11 +1751,6 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source, HANDLE
+         if (!(ret = wine_server_call( req )))
+         {
+             if (dest) *dest = wine_server_ptr_handle( reply->handle );
+-            if (reply->closed && reply->self)
+-            {
+-                int fd = remove_fd_from_cache( source );
+-                if (fd != -1) close( fd );
+-            }
+         }
+     }
+     SERVER_END_REQ;
+@@ -1709,8 +1765,13 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
+ {
+     HANDLE port;
+     NTSTATUS ret;
++
++    /* always remove the cached fd; if the server request fails we'll just
++     * retrieve it again */
+     int fd = remove_fd_from_cache( handle );
  
 +    close_fast_sync_obj( handle );
 +
@@ -1931,6 +2000,54 @@ diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
 index 18551a2d448..90afd91e7ba 100644
 --- a/include/wine/server_protocol.h
 +++ b/include/wine/server_protocol.h
+@@ -467,6 +467,7 @@ enum apc_type
+     APC_MAP_VIEW,
+     APC_UNMAP_VIEW,
+     APC_CREATE_THREAD,
++    APC_DUP_HANDLE,
+     APC_BREAK_PROCESS
+ };
+ 
+@@ -577,6 +578,15 @@ typedef union
+         mem_size_t       reserve;
+         mem_size_t       commit;
+     } create_thread;
++    struct
++    {
++        enum apc_type    type;
++        obj_handle_t     src_handle;
++        obj_handle_t     dst_process;
++        unsigned int     access;
++        unsigned int     attributes;
++        unsigned int     options;
++    } dup_handle;
+ } apc_call_t;
+ 
+ typedef union
+@@ -665,6 +675,12 @@ typedef union
+         obj_handle_t     handle;
+     } create_thread;
+     struct
++    {
++        enum apc_type    type;
++        unsigned int     status;
++        obj_handle_t     handle;
++    } dup_handle;
++    struct
+     {
+         enum apc_type    type;
+         unsigned int     status;
+@@ -1255,9 +1271,7 @@ struct dup_handle_reply
+ {
+     struct reply_header __header;
+     obj_handle_t handle;
+-    int          self;
+-    int          closed;
+-    char __pad_20[4];
++    char __pad_12[4];
+ };
+ 
+ 
 @@ -5388,6 +5402,72 @@ struct resume_process_reply
  };
  
@@ -2093,6 +2210,14 @@ index ff8c3ad1037..0eadae4e96d 100644
      dir_close_handle,         /* close_handle */
      dir_destroy               /* destroy */
  };
+@@ -421,7 +422,6 @@ static int dir_close_handle( struct object *obj, struct process *process, obj_ha
+ {
+     struct dir *dir = (struct dir *)obj;
+ 
+-    if (!fd_close_handle( obj, process, handle )) return 0;
+     if (obj->handle_count == 1) release_dir_cache_entry( dir ); /* closing last handle, release cache */
+     return 1;  /* ok to close */
+ }
 diff --git a/server/clipboard.c b/server/clipboard.c
 index 1c4875ff726..1d9369deb52 100644
 --- a/server/clipboard.c
@@ -2224,14 +2349,16 @@ index 848ee6e8d98..a6d192394eb 100644
  
  static const struct object_ops console_server_ops =
  {
-@@ -168,6 +173,7 @@ static const struct object_ops console_server_ops =
+@@ -168,7 +173,8 @@ static const struct object_ops console_server_ops =
      NULL,                             /* unlink_name */
      console_server_open_file,         /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
+-    fd_close_handle,                  /* close_handle */
 +    console_server_get_fast_sync,     /* get_fast_sync */
-     no_close_handle,                  /* close_handle */
++    no_close_handle,                  /* close_handle */
      console_server_destroy            /* destroy */
  };
+ 
 @@ -215,6 +221,7 @@ static int screen_buffer_add_queue( struct object *obj, struct wait_queue_entry
  static struct fd *screen_buffer_get_fd( struct object *obj );
  static struct object *screen_buffer_open_file( struct object *obj, unsigned int access,
@@ -3355,7 +3482,7 @@ index 65a6f876e5c..6ef4e563a6e 100644
 +    }
  }
  
- /* check if events are pending and if yes return which one(s) */
+ /* handler for close_handle that refuses to close fd-associated handles in other processes */
 @@ -2147,6 +2163,19 @@ int default_fd_signaled( struct object *obj, struct wait_queue_entry *entry )
      return ret;
  }
@@ -3380,18 +3507,28 @@ diff --git a/server/file.c b/server/file.c
 index f9ce0106c3b..033f7d45976 100644
 --- a/server/file.c
 +++ b/server/file.c
-@@ -109,6 +109,7 @@ static const struct object_ops file_ops =
+@@ -109,7 +109,8 @@ static const struct object_ops file_ops =
      NULL,                         /* unlink_name */
      file_open_file,               /* open_file */
      file_get_kernel_obj_list,     /* get_kernel_obj_list */
+-    fd_close_handle,              /* close_handle */
 +    default_fd_get_fast_sync,     /* get_fast_sync */
-     no_close_handle,              /* close_handle */
++    no_close_handle,              /* close_handle */
      file_destroy                  /* destroy */
  };
+ 
 diff --git a/server/file.h b/server/file.h
 index fbfd1e4eec9..eaabd72b224 100644
 --- a/server/file.h
 +++ b/server/file.h
+@@ -93,7 +93,6 @@ extern int is_fd_overlapped( struct fd *fd );
+ extern int get_unix_fd( struct fd *fd );
+ extern int is_same_file_fd( struct fd *fd1, struct fd *fd2 );
+ extern int is_fd_removable( struct fd *fd );
+-extern int fd_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
+ extern int check_fd_events( struct fd *fd, int events );
+ extern void set_fd_events( struct fd *fd, int events );
+ extern obj_handle_t lock_fd( struct fd *fd, file_pos_t offset, file_pos_t count, int shared, int wait );
 @@ -104,6 +103,7 @@ extern char *dup_fd_name( struct fd *root, const char *name );
  extern void get_nt_name( struct fd *fd, struct unicode_str *name );
  
@@ -3412,6 +3549,16 @@ index 6e0848eedf0..6cf388cd1d5 100644
      no_close_handle,                 /* close_handle */
      handle_table_destroy             /* destroy */
  };
+@@ -678,8 +679,7 @@ DECL_HANDLER(dup_handle)
+         }
+         /* close the handle no matter what happened */
+         if ((req->options & DUPLICATE_CLOSE_SOURCE) && (src != dst || req->src_handle != reply->handle))
+-            reply->closed = !close_handle( src, req->src_handle );
+-        reply->self = (src == current->process);
++            close_handle( src, req->src_handle );
+         release_object( src );
+     }
+ }
 diff --git a/server/hook.c b/server/hook.c
 index c048908c295..8d1f7895313 100644
 --- a/server/hook.c
@@ -3428,22 +3575,26 @@ diff --git a/server/mailslot.c b/server/mailslot.c
 index 5597a21dd29..88aee771e5e 100644
 --- a/server/mailslot.c
 +++ b/server/mailslot.c
-@@ -90,6 +90,7 @@ static const struct object_ops mailslot_ops =
+@@ -90,7 +90,8 @@ static const struct object_ops mailslot_ops =
      default_unlink_name,       /* unlink_name */
      mailslot_open_file,        /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
+-    fd_close_handle,           /* close_handle */
 +    default_fd_get_fast_sync,  /* get_fast_sync */
-     no_close_handle,           /* close_handle */
++    no_close_handle,           /* close_handle */
      mailslot_destroy           /* destroy */
  };
-@@ -148,6 +149,7 @@ static const struct object_ops mail_writer_ops =
+ 
+@@ -148,7 +149,8 @@ static const struct object_ops mail_writer_ops =
      NULL,                       /* unlink_name */
      no_open_file,               /* open_file */
      no_kernel_obj_list,         /* get_kernel_obj_list */
+-    fd_close_handle,            /* close_handle */
 +    no_get_fast_sync,           /* get_fast_sync */
-     no_close_handle,            /* close_handle */
++    no_close_handle,            /* close_handle */
      mail_writer_destroy         /* destroy */
  };
+ 
 @@ -210,6 +212,7 @@ static const struct object_ops mailslot_device_ops =
      default_unlink_name,            /* unlink_name */
      mailslot_device_open_file,      /* open_file */
@@ -3452,14 +3603,16 @@ index 5597a21dd29..88aee771e5e 100644
      no_close_handle,                /* close_handle */
      mailslot_device_destroy         /* destroy */
  };
-@@ -240,6 +243,7 @@ static const struct object_ops mailslot_device_file_ops =
+@@ -240,7 +243,8 @@ static const struct object_ops mailslot_device_file_ops =
      NULL,                                   /* unlink_name */
      no_open_file,                           /* open_file */
      no_kernel_obj_list,                     /* get_kernel_obj_list */
+-    fd_close_handle,                        /* close_handle */
 +    default_fd_get_fast_sync,               /* get_fast_sync */
-     no_close_handle,                        /* close_handle */
++    no_close_handle,                        /* close_handle */
      mailslot_device_file_destroy            /* destroy */
  };
+ 
 diff --git a/server/mapping.c b/server/mapping.c
 index ebf3e057c75..6a0f5fb8980 100644
 --- a/server/mapping.c
@@ -3480,14 +3633,16 @@ index ebf3e057c75..6a0f5fb8980 100644
      no_close_handle,           /* close_handle */
      shared_map_destroy         /* destroy */
  };
-@@ -189,6 +191,7 @@ static const struct object_ops mapping_ops =
+@@ -189,7 +191,8 @@ static const struct object_ops mapping_ops =
      default_unlink_name,         /* unlink_name */
      no_open_file,                /* open_file */
      no_kernel_obj_list,          /* get_kernel_obj_list */
+-    fd_close_handle,             /* close_handle */
 +    no_get_fast_sync,            /* get_fast_sync */
-     no_close_handle,             /* close_handle */
++    no_close_handle,             /* close_handle */
      mapping_destroy              /* destroy */
  };
+ 
 diff --git a/server/mutex.c b/server/mutex.c
 index 75ff5117d3f..ca5d38da5ea 100644
 --- a/server/mutex.c
@@ -3567,22 +3722,26 @@ index a3ce9d463f1..3bc91bb8350 100644
      no_close_handle,              /* close_handle */
      named_pipe_destroy            /* destroy */
  };
-@@ -179,6 +180,7 @@ static const struct object_ops pipe_server_ops =
+@@ -179,7 +180,8 @@ static const struct object_ops pipe_server_ops =
      NULL,                         /* unlink_name */
      pipe_server_open_file,        /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
+-    fd_close_handle,              /* close_handle */
 +    default_fd_get_fast_sync,     /* get_fast_sync */
-     no_close_handle,              /* close_handle */
++    no_close_handle,              /* close_handle */
      pipe_server_destroy           /* destroy */
  };
-@@ -222,6 +224,7 @@ static const struct object_ops pipe_client_ops =
+ 
+@@ -222,7 +224,8 @@ static const struct object_ops pipe_client_ops =
      NULL,                         /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
+-    fd_close_handle,              /* close_handle */
 +    default_fd_get_fast_sync,     /* get_fast_sync */
-     no_close_handle,              /* close_handle */
++    no_close_handle,              /* close_handle */
      pipe_end_destroy              /* destroy */
  };
+ 
 @@ -268,6 +271,7 @@ static const struct object_ops named_pipe_device_ops =
      default_unlink_name,              /* unlink_name */
      named_pipe_device_open_file,      /* open_file */
@@ -3591,14 +3750,16 @@ index a3ce9d463f1..3bc91bb8350 100644
      no_close_handle,                  /* close_handle */
      named_pipe_device_destroy         /* destroy */
  };
-@@ -299,6 +303,7 @@ static const struct object_ops named_pipe_device_file_ops =
+@@ -299,7 +303,8 @@ static const struct object_ops named_pipe_device_file_ops =
      NULL,                                    /* unlink_name */
      no_open_file,                            /* open_file */
      no_kernel_obj_list,                      /* get_kernel_obj_list */
+-    fd_close_handle,                         /* close_handle */
 +    default_fd_get_fast_sync,                /* get_fast_sync */
-     no_close_handle,                         /* close_handle */
++    no_close_handle,                         /* close_handle */
      named_pipe_device_file_destroy           /* destroy */
  };
+ 
 diff --git a/server/object.c b/server/object.c
 index b2779fd61fe..e8d6783537c 100644
 --- a/server/object.c
@@ -3777,6 +3938,16 @@ index f65d7abe2af..ba58a0931a6 100644
  static struct security_descriptor *process_get_sd( struct object *obj )
  {
      static struct security_descriptor *process_default_sd;
+@@ -842,8 +875,8 @@ static void process_killed( struct process *process )
+     if (!process->is_system) close_process_desktop( process );
+     process->winstation = 0;
+     process->desktop = 0;
+-    close_process_handles( process );
+     cancel_process_asyncs( process );
++    close_process_handles( process );
+     if (process->idle_event) release_object( process->idle_event );
+     process->idle_event = NULL;
+     assert( !process->console );
 @@ -863,6 +896,7 @@ static void process_killed( struct process *process )
      release_job_process( process );
      start_sigkill_timer( process );
@@ -3801,6 +3972,61 @@ diff --git a/server/protocol.def b/server/protocol.def
 index 7f3b785df51..23b516dc42f 100644
 --- a/server/protocol.def
 +++ b/server/protocol.def
+@@ -483,6 +483,7 @@ enum apc_type
+     APC_MAP_VIEW,
+     APC_UNMAP_VIEW,
+     APC_CREATE_THREAD,
++    APC_DUP_HANDLE,
+     APC_BREAK_PROCESS
+ };
+ 
+@@ -593,6 +594,15 @@ typedef union
+         mem_size_t       reserve;   /* reserve size for thread stack */
+         mem_size_t       commit;    /* commit size for thread stack */
+     } create_thread;
++    struct
++    {
++        enum apc_type    type;         /* APC_DUP_HANDLE */
++        obj_handle_t     src_handle;   /* src handle to duplicate */
++        obj_handle_t     dst_process;  /* dst process handle */
++        unsigned int     access;       /* wanted access rights */
++        unsigned int     attributes;   /* object attributes */
++        unsigned int     options;      /* duplicate options */
++    } dup_handle;
+ } apc_call_t;
+ 
+ typedef union
+@@ -668,7 +678,7 @@ typedef union
+     } map_view;
+     struct
+     {
+-        enum apc_type    type;      /* APC_MAP_VIEW */
++        enum apc_type    type;      /* APC_UNMAP_VIEW */
+         unsigned int     status;    /* status returned by call */
+     } unmap_view;
+     struct
+@@ -681,6 +691,12 @@ typedef union
+         obj_handle_t     handle;    /* handle to new thread */
+     } create_thread;
+     struct
++    {
++        enum apc_type    type;      /* APC_DUP_HANDLE */
++        unsigned int     status;    /* status returned by call */
++        obj_handle_t     handle;    /* duplicated handle in dst process */
++    } dup_handle;
++    struct
+     {
+         enum apc_type    type;      /* APC_BREAK_PROCESS */
+         unsigned int     status;    /* status returned by call */
+@@ -1116,8 +1132,6 @@ typedef struct
+     unsigned int options;      /* duplicate options */
+ @REPLY
+     obj_handle_t handle;       /* duplicated handle in dst process */
+-    int          self;         /* is the source the current process? */
+-    int          closed;       /* whether the source handle has been closed */
+ @END
+ 
+ 
 @@ -3694,3 +3708,44 @@ struct handle_info
  @REQ(resume_process)
      obj_handle_t handle;       /* process handle */
@@ -4116,6 +4342,17 @@ index 23308ed49e6..7268716965d 100644
  };
  
  C_ASSERT( sizeof(abstime_t) == 8 );
+@@ -879,9 +887,7 @@ C_ASSERT( FIELD_OFFSET(struct dup_handle_request, attributes) == 28 );
+ C_ASSERT( FIELD_OFFSET(struct dup_handle_request, options) == 32 );
+ C_ASSERT( sizeof(struct dup_handle_request) == 40 );
+ C_ASSERT( FIELD_OFFSET(struct dup_handle_reply, handle) == 8 );
+-C_ASSERT( FIELD_OFFSET(struct dup_handle_reply, self) == 12 );
+-C_ASSERT( FIELD_OFFSET(struct dup_handle_reply, closed) == 16 );
+-C_ASSERT( sizeof(struct dup_handle_reply) == 24 );
++C_ASSERT( sizeof(struct dup_handle_reply) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct make_temporary_request, handle) == 12 );
+ C_ASSERT( sizeof(struct make_temporary_request) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct open_process_request, pid) == 12 );
 @@ -2237,6 +2243,21 @@ C_ASSERT( FIELD_OFFSET(struct suspend_process_request, handle) == 12 );
  C_ASSERT( sizeof(struct suspend_process_request) == 16 );
  C_ASSERT( FIELD_OFFSET(struct resume_process_request, handle) == 12 );
@@ -4205,14 +4442,16 @@ diff --git a/server/serial.c b/server/serial.c
 index ba8402c5935..8c68aafe61f 100644
 --- a/server/serial.c
 +++ b/server/serial.c
-@@ -104,6 +104,7 @@ static const struct object_ops serial_ops =
+@@ -104,7 +104,8 @@ static const struct object_ops serial_ops =
      NULL,                         /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
+-    fd_close_handle,              /* close_handle */
 +    default_fd_get_fast_sync,     /* get_fast_sync */
-     no_close_handle,              /* close_handle */
++    no_close_handle,              /* close_handle */
      serial_destroy                /* destroy */
  };
+ 
 diff --git a/server/signal.c b/server/signal.c
 index 0c22c157f2b..ad555fd51af 100644
 --- a/server/signal.c
@@ -4237,6 +4476,15 @@ index 3aed5494612..26969059bfe 100644
      sock_close_handle,            /* close_handle */
      sock_destroy                  /* destroy */
  };
+@@ -902,7 +890,7 @@ static int sock_close_handle( struct object *obj, struct process *process, obj_h
+             async_terminate( req->async, STATUS_CANCELLED );
+     }
+ 
+-    return fd_close_handle( obj, process, handle );
++    return 1;
+ }
+ 
+ static void sock_destroy( struct object *obj )
 @@ -1551,6 +1539,7 @@ static const struct object_ops ifchange_ops =
      NULL,                    /* unlink_name */
      no_open_file,            /* open_file */
@@ -4356,6 +4604,28 @@ index e4abe4fab94..1e07b386da0 100644
      if (violent_death) send_thread_signal( thread, SIGQUIT );
      cleanup_thread( thread );
      remove_process_thread( thread->process, thread );
+@@ -1756,6 +1775,21 @@ DECL_HANDLER(queue_apc)
+     case APC_BREAK_PROCESS:
+         process = get_process_from_handle( req->handle, PROCESS_CREATE_THREAD );
+         break;
++    case APC_DUP_HANDLE:
++        process = get_process_from_handle( req->handle, PROCESS_DUP_HANDLE );
++        if (process && process != current->process)
++        {
++            /* duplicate the destination process handle into the target process */
++            obj_handle_t handle = duplicate_handle( current->process, apc->call.dup_handle.dst_process,
++                                                    process, 0, 0, DUPLICATE_SAME_ACCESS );
++            if (handle) apc->call.dup_handle.dst_process = handle;
++            else
++            {
++                release_object( process );
++                process = NULL;
++            }
++        }
++        break;
+     default:
+         set_error( STATUS_INVALID_PARAMETER );
+         break;
 diff --git a/server/thread.h b/server/thread.h
 index 5f8eeeb3c50..071f727dd1d 100644
 --- a/server/thread.h
@@ -4459,6 +4729,38 @@ diff --git a/server/trace.c b/server/trace.c
 index b07935cc54b..4f2aa7bbf46 100644
 --- a/server/trace.c
 +++ b/server/trace.c
+@@ -235,6 +235,11 @@ static void dump_apc_call( const char *prefix, const apc_call_t *call )
+         dump_uint64( ",commit=", &call->create_thread.commit );
+         fprintf( stderr, ",flags=%x", call->create_thread.flags );
+         break;
++    case APC_DUP_HANDLE:
++        fprintf( stderr, "APC_DUP_HANDLE,src_handle=%04x,dst_process=%04x,access=%x,attributes=%x,options=%x",
++                 call->dup_handle.src_handle, call->dup_handle.dst_process, call->dup_handle.access,
++                 call->dup_handle.attributes, call->dup_handle.options );
++        break;
+     case APC_BREAK_PROCESS:
+         fprintf( stderr, "APC_BREAK_PROCESS" );
+         break;
+@@ -318,6 +323,10 @@ static void dump_apc_result( const char *prefix, const apc_result_t *result )
+                  get_status_name( result->create_thread.status ),
+                  result->create_thread.pid, result->create_thread.tid, result->create_thread.handle );
+         break;
++    case APC_DUP_HANDLE:
++        fprintf( stderr, "APC_DUP_HANDLE,status=%s,handle=%04x",
++                 get_status_name( result->dup_handle.status ), result->dup_handle.handle );
++        break;
+     case APC_BREAK_PROCESS:
+         fprintf( stderr, "APC_BREAK_PROCESS,status=%s", get_status_name( result->break_process.status ) );
+         break;
+@@ -1678,8 +1687,6 @@ static void dump_dup_handle_request( const struct dup_handle_request *req )
+ static void dump_dup_handle_reply( const struct dup_handle_reply *req )
+ {
+     fprintf( stderr, " handle=%04x", req->handle );
+-    fprintf( stderr, ", self=%d", req->self );
+-    fprintf( stderr, ", closed=%d", req->closed );
+ }
+ 
+ static void dump_make_temporary_request( const struct make_temporary_request *req )
 @@ -4453,6 +4460,39 @@ static void dump_resume_process_request( const struct resume_process_request *re
      fprintf( stderr, " handle=%04x", req->handle );
  }
