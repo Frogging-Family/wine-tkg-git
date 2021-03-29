@@ -2204,14 +2204,16 @@ EOM
 	    _patchname='proton_fs_hack_integer_scaling.patch' && _patchmsg="Enable Proton fs hack integer scaling" && nonuser_patcher
 	  fi
 	  if [ "$_update_winevulkan" = "true" ] && git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD; then
-	    if git merge-base --is-ancestor c681a0732fc3c6466b228417bb5e0d518d26b819 HEAD; then
+	    if git merge-base --is-ancestor 88da78ef428317ff8c258277511abebf1a75e186 HEAD; then
 	      if [ "$_proton_fs_hack" = "true" ]; then
 	        _patchname='proton-winevulkan.patch' && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
 	      else
 	        _patchname='proton-winevulkan-nofshack.patch' && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
 	      fi
 	    else
-	      if git merge-base --is-ancestor eb9f3dd3ad07aae3c9588bcff376ed2a7a8ef8d2 HEAD; then
+	      if git merge-base --is-ancestor c681a0732fc3c6466b228417bb5e0d518d26b819 HEAD; then
+	        _lastcommit="88da78e"
+	      elif git merge-base --is-ancestor eb9f3dd3ad07aae3c9588bcff376ed2a7a8ef8d2 HEAD; then
 	        _lastcommit="c681a07"
 	      elif git merge-base --is-ancestor 7d8c50e4371f2fc5300b90b323210c922d80d4e9 HEAD; then
 	        _lastcommit="eb9f3dd"
