@@ -235,7 +235,7 @@ function build_dxvk {
 function build_steamhelper {
   # disable openvr support for now since we don't support it
   if [ "$_proton_branch" = "proton_6.3" ]; then
-    ( cd Proton && patch -Np1 -R < "$_nowhere/steamhelper_revert_openvr-support.patch" || true )
+    ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support.patch" || true )
   fi
 
   if [[ $_proton_branch != proton_3.* ]]; then
