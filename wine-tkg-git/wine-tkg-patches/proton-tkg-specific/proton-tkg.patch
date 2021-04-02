@@ -996,51 +996,6 @@ index e976fda77f2..212c88c5a02 100644
      case DWMWA_CLOAKED:
          if (size < sizeof(DWORD)) return E_INVALIDARG;
  
-From c099ae745b3a63edee1677a2da01cab5aa5b8562 Mon Sep 17 00:00:00 2001
-From: Zebediah Figura <z.figura12@gmail.com>
-Date: Tue, 28 Jan 2020 14:30:43 -0600
-Subject: [PATCH] winegstreamer: HACK: Try harder to register winegstreamer
- filters.
-
-The IDL declarations should actually be unnecessary with the quartz part, but there's a chance that an application will try to create filters before it creates the graph.
----
- dlls/quartz/filtergraph.c     | 17 +++++++++++++++++
- dlls/winegstreamer/winegstreamer_classes.idl | 21 +++++++++++++++++++++
- 2 files changed, 38 insertions(+)
-
-diff --git a/dlls/quartz/filtergraph.c b/dlls/quartz/filtergraph.c
-index 1ed41bdcec5..0af6e1ded5f 100644
---- a/dlls/quartz/filtergraph.c
-+++ b/dlls/quartz/filtergraph.c
-@@ -5681,11 +5681,28 @@ static const IUnknownVtbl IInner_VTable =
-     FilterGraphInner_Release
- };
- 
-+static BOOL CALLBACK register_winegstreamer_proc(INIT_ONCE *once, void *param, void **ctx)
-+{
-+    HMODULE mod = LoadLibraryW(L"winegstreamer.dll");
-+    if (mod)
-+    {
-+        HRESULT (WINAPI *proc)(void) = (void *)GetProcAddress(mod, "DllRegisterServer");
-+        proc();
-+        FreeLibrary(mod);
-+    }
-+    return TRUE;
-+}
-+
- static HRESULT filter_graph_common_create(IUnknown *outer, IUnknown **out, BOOL threaded)
- {
-+    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
-     struct filter_graph *object;
-     HRESULT hr;
- 
-+    /* HACK: our build system makes it difficult to load gstreamer on prefix
-+     * creation, so it won't get registered. Do that here instead. */
-+    InitOnceExecuteOnce(&once, register_winegstreamer_proc, NULL, NULL);
-+
-     *out = NULL;
- 
-     fimpl = CoTaskMemAlloc(sizeof(*fimpl));
 From a4310c0cf1e27f0a90f737c2e7cfe9cdbde07522 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Mon, 20 Jan 2020 10:36:48 -0600
@@ -2659,3 +2614,24 @@ index 59af860708b..c7b7b92e279 100644
  NTSTATUS  WINAPI IoWMIRegistrationControl(PDEVICE_OBJECT,ULONG);
  
  void    FASTCALL KeAcquireInStackQueuedSpinLockAtDpcLevel(KSPIN_LOCK*,KLOCK_QUEUE_HANDLE*);
+From e6c7aa8bc42fea042c3d504009ad8a0fb70a6c0c Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Thu, 21 Jan 2021 11:54:10 -0600
+Subject: [PATCH] vulkan-1: Prefer builtin
+
+Games that ship their own vulkan-1 will be broken with your VR wrappers.
+---
+ dlls/vulkan-1/Makefile.in | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/dlls/vulkan-1/Makefile.in b/dlls/vulkan-1/Makefile.in
+index a4a10bc8e93..551ef146cd7 100644
+--- a/dlls/vulkan-1/Makefile.in
++++ b/dlls/vulkan-1/Makefile.in
+@@ -2,6 +2,4 @@ MODULE    = vulkan-1.dll
+ IMPORTS   = winevulkan
+ IMPORTLIB = vulkan-1
+ 
+-EXTRADLLFLAGS = -Wb,--prefer-native
+-
+ RC_SRCS = version.rc
