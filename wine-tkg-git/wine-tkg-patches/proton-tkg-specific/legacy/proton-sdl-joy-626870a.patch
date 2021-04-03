@@ -11187,6 +11187,504 @@ index 88bd8ed5392..7b592df5bde 100644
          break;
      case HW_INPUT_HARDWARE:
          if (!desktop) return;
+From 7980ce585f7d59a276359d4dad69abee669eb9a4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 8 Feb 2021 17:19:43 +0100
+Subject: [PATCH] server: Replace tid with async in get_key_state request.
+
+---
+ dlls/user32/input.c             |  4 +---
+ dlls/wineandroid.drv/keyboard.c |  2 +-
+ dlls/winemac.drv/keyboard.c     |  2 +-
+ dlls/winex11.drv/keyboard.c     |  2 +-
+ include/wine/server_protocol.h  |  4 ++--
+ server/protocol.def             |  4 ++--
+ server/queue.c                  | 15 ++++++---------
+ server/request.h                |  2 +-
+ server/trace.c                  |  2 +-
+ 9 files changed, 16 insertions(+), 21 deletions(-)
+
+diff --git a/dlls/user32/input.c b/dlls/user32/input.c
+index 297a15b71e5..2bdd9f7e446 100644
+--- a/dlls/user32/input.c
++++ b/dlls/user32/input.c
+@@ -413,7 +413,7 @@ SHORT WINAPI DECLSPEC_HOTPATCH GetAsyncKeyState( INT key )
+     ret = 0;
+     SERVER_START_REQ( get_key_state )
+     {
+-        req->tid = 0;
++        req->async = 1;
+         req->key = key;
+         if (key_state_info)
+         {
+@@ -550,7 +550,6 @@ SHORT WINAPI DECLSPEC_HOTPATCH GetKeyState(INT vkey)
+ 
+     SERVER_START_REQ( get_key_state )
+     {
+-        req->tid = GetCurrentThreadId();
+         req->key = vkey;
+         if (!wine_server_call( req )) retval = (signed char)(reply->state & 0x81);
+     }
+@@ -573,7 +572,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetKeyboardState( LPBYTE state )
+     memset( state, 0, 256 );
+     SERVER_START_REQ( get_key_state )
+     {
+-        req->tid = GetCurrentThreadId();
+         req->key = -1;
+         wine_server_set_reply( req, state, 256 );
+         ret = !wine_server_call_err( req );
+diff --git a/dlls/wineandroid.drv/keyboard.c b/dlls/wineandroid.drv/keyboard.c
+index 1af8a98f1f9..dc58dd2639b 100644
+--- a/dlls/wineandroid.drv/keyboard.c
++++ b/dlls/wineandroid.drv/keyboard.c
+@@ -660,7 +660,7 @@ static BOOL get_async_key_state( BYTE state[256] )
+ 
+     SERVER_START_REQ( get_key_state )
+     {
+-        req->tid = 0;
++        req->async = 1;
+         req->key = -1;
+         wine_server_set_reply( req, state, 256 );
+         ret = !wine_server_call( req );
+diff --git a/dlls/winemac.drv/keyboard.c b/dlls/winemac.drv/keyboard.c
+index 70426f6c5ea..5e9e2734e1f 100644
+--- a/dlls/winemac.drv/keyboard.c
++++ b/dlls/winemac.drv/keyboard.c
+@@ -942,7 +942,7 @@ static BOOL get_async_key_state(BYTE state[256])
+ 
+     SERVER_START_REQ(get_key_state)
+     {
+-        req->tid = 0;
++        req->async = 1;
+         req->key = -1;
+         wine_server_set_reply(req, state, 256);
+         ret = !wine_server_call(req);
+diff --git a/dlls/winex11.drv/keyboard.c b/dlls/winex11.drv/keyboard.c
+index a03c9a49a52..fc2f1cae1d6 100644
+--- a/dlls/winex11.drv/keyboard.c
++++ b/dlls/winex11.drv/keyboard.c
+@@ -1161,7 +1161,7 @@ static BOOL get_async_key_state( BYTE state[256] )
+ 
+     SERVER_START_REQ( get_key_state )
+     {
+-        req->tid = 0;
++        req->async = 1;
+         req->key = -1;
+         wine_server_set_reply( req, state, 256 );
+         ret = !wine_server_call( req );
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index ae0317bc6e6..6b14f75a869 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -3861,7 +3861,7 @@ struct get_last_input_time_reply
+ struct get_key_state_request
+ {
+     struct request_header __header;
+-    thread_id_t    tid;
++    int            async;
+     int            key;
+     char __pad_20[4];
+ };
+@@ -6461,7 +6461,7 @@ union generic_reply
+ 
+ /* ### protocol_version begin ### */
+ 
+-#define SERVER_PROTOCOL_VERSION 689
++#define SERVER_PROTOCOL_VERSION 690
+ 
+ /* ### protocol_version end ### */
+ 
+diff --git a/server/protocol.def b/server/protocol.def
+index 6a73f351f61..1f7aeb617f3 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -2774,9 +2774,9 @@ enum coords_relative
+ @END
+ 
+ 
+-/* Retrieve queue keyboard state for a given thread */
++/* Retrieve queue keyboard state for current thread or global async state */
+ @REQ(get_key_state)
+-    thread_id_t    tid;           /* id of thread */
++    int            async;         /* whether to query the async state */
+     int            key;           /* optional key code or -1 */
+ @REPLY
+     unsigned char  state;         /* state of specified key */
+diff --git a/server/queue.c b/server/queue.c
+index 528c88e83f5..61a4e451740 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -3114,14 +3114,14 @@ DECL_HANDLER(get_thread_input)
+ }
+ 
+ 
+-/* retrieve queue keyboard state for a given thread */
++/* retrieve queue keyboard state for current thread or global async state */
+ DECL_HANDLER(get_key_state)
+ {
+-    struct thread *thread;
++    struct thread_input *input = current->queue ? current->queue->input : NULL;
+     struct desktop *desktop;
+     data_size_t size = min( 256, get_reply_max_size() );
+ 
+-    if (!req->tid)  /* get global async key state */
++    if (req->async)  /* get global async key state */
+     {
+         if (!(desktop = get_thread_desktop( current, 0 ))) return;
+         if (req->key >= 0)
+@@ -3135,20 +3135,12 @@ DECL_HANDLER(get_key_state)
+     else
+     {
+         unsigned char *keystate;
+-        if (!(thread = get_thread_from_id( req->tid ))) return;
+-        if (thread->queue)
++        if (input)
+         {
+-            if (req->key >= 0)
+-            {
+-                /* synchronize with desktop keystate, but _only_ if req->key is given */
+-                synchronize_input_key_state( thread->queue->input );
+-                reply->state = thread->queue->input->keystate[req->key & 0xff];
+-            }
+-            set_reply_data( thread->queue->input->keystate, size );
+-            release_object( thread );
++            if (req->key >= 0) reply->state = input->keystate[req->key & 0xff];
++            set_reply_data( input->keystate, size );
+             return;
+         }
+-        release_object( thread );
+ 
+         /* fallback to desktop keystate */
+         if (!(desktop = get_thread_desktop( current, 0 ))) return;
+diff --git a/server/request.h b/server/request.h
+index f3739e35aa4..4951488fd76 100644
+--- a/server/request.h
++++ b/server/request.h
+@@ -1746,7 +1746,7 @@ C_ASSERT( sizeof(struct get_thread_input_reply) == 64 );
+ C_ASSERT( sizeof(struct get_last_input_time_request) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct get_last_input_time_reply, time) == 8 );
+ C_ASSERT( sizeof(struct get_last_input_time_reply) == 16 );
+-C_ASSERT( FIELD_OFFSET(struct get_key_state_request, tid) == 12 );
++C_ASSERT( FIELD_OFFSET(struct get_key_state_request, async) == 12 );
+ C_ASSERT( FIELD_OFFSET(struct get_key_state_request, key) == 16 );
+ C_ASSERT( sizeof(struct get_key_state_request) == 24 );
+ C_ASSERT( FIELD_OFFSET(struct get_key_state_reply, state) == 8 );
+diff --git a/server/trace.c b/server/trace.c
+index 7a2f763f541..5868f6bac6e 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -3425,7 +3425,7 @@ static void dump_get_last_input_time_reply( const struct get_last_input_time_rep
+ 
+ static void dump_get_key_state_request( const struct get_key_state_request *req )
+ {
+-    fprintf( stderr, " tid=%04x", req->tid );
++    fprintf( stderr, " async=%d", req->async );
+     fprintf( stderr, ", key=%d", req->key );
+ }
+ 
+From 414a01e2065c092912afb2d39d7ce2ad1cd064c2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 8 Feb 2021 18:28:22 +0100
+Subject: [PATCH] server: Remove tid from set_key_state request.
+
+---
+ dlls/user32/input.c            |  1 -
+ dlls/winex11.drv/keyboard.c    |  1 -
+ include/wine/server_protocol.h |  4 +---
+ server/protocol.def            |  3 +--
+ server/queue.c                 | 19 ++++---------------
+ server/request.h               |  5 ++---
+ server/trace.c                 |  3 +--
+ 7 files changed, 9 insertions(+), 27 deletions(-)
+
+diff --git a/dlls/user32/input.c b/dlls/user32/input.c
+index 2bdd9f7e446..455f857d9d0 100644
+--- a/dlls/user32/input.c
++++ b/dlls/user32/input.c
+@@ -591,7 +591,6 @@ BOOL WINAPI SetKeyboardState( LPBYTE state )
+ 
+     SERVER_START_REQ( set_key_state )
+     {
+-        req->tid = GetCurrentThreadId();
+         wine_server_add_data( req, state, 256 );
+         ret = !wine_server_call_err( req );
+     }
+diff --git a/dlls/winex11.drv/keyboard.c b/dlls/winex11.drv/keyboard.c
+index fc2f1cae1d6..3fb9187dab6 100644
+--- a/dlls/winex11.drv/keyboard.c
++++ b/dlls/winex11.drv/keyboard.c
+@@ -1177,7 +1177,6 @@ static void set_async_key_state( const BYTE state[256] )
+ {
+     SERVER_START_REQ( set_key_state )
+     {
+-        req->tid = GetCurrentThreadId();
+         req->async = 1;
+         wine_server_add_data( req, state, 256 );
+         wine_server_call( req );
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index 6b14f75a869..0ff37b112a6 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -3877,10 +3877,8 @@ struct get_key_state_reply
+ struct set_key_state_request
+ {
+     struct request_header __header;
+-    thread_id_t    tid;
+     int            async;
+     /* VARARG(keystate,bytes); */
+-    char __pad_20[4];
+ };
+ struct set_key_state_reply
+ {
+diff --git a/server/protocol.def b/server/protocol.def
+index 1f7aeb617f3..93a216a4bd7 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -2783,9 +2783,8 @@ enum coords_relative
+     VARARG(keystate,bytes);       /* state array for all the keys */
+ @END
+ 
+-/* Set queue keyboard state for a given thread */
++/* Set queue keyboard state for current thread */
+ @REQ(set_key_state)
+-    thread_id_t    tid;           /* id of thread */
+     int            async;         /* whether to change the async state too */
+     VARARG(keystate,bytes);       /* state array for all the keys */
+ @END
+diff --git a/server/queue.c b/server/queue.c
+index 61a4e451740..cd6ef478284 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -3155,30 +3155,19 @@ DECL_HANDLER(get_key_state)
+ }
+ 
+ 
+-/* set queue keyboard state for a given thread */
++/* set queue keyboard state for current thread */
+ DECL_HANDLER(set_key_state)
+ {
+-    struct thread *thread;
++    struct thread_input *input = current->queue ? current->queue->input : NULL;
+     struct desktop *desktop;
+     data_size_t size = min( 256, get_req_data_size() );
+ 
+-    if (!req->tid)  /* set global async key state */
++    if (input) memcpy( input->keystate, get_req_data(), size );
++    if (req->async && (desktop = get_thread_desktop( current, 0 )))
+     {
+-        if (!(desktop = get_thread_desktop( current, 0 ))) return;
+         memcpy( desktop->keystate, get_req_data(), size );
+         release_object( desktop );
+     }
+-    else
+-    {
+-        if (!(thread = get_thread_from_id( req->tid ))) return;
+-        if (thread->queue) memcpy( thread->queue->input->keystate, get_req_data(), size );
+-        if (req->async && (desktop = get_thread_desktop( thread, 0 )))
+-        {
+-            memcpy( desktop->keystate, get_req_data(), size );
+-            release_object( desktop );
+-        }
+-        release_object( thread );
+-    }
+ }
+ 
+ 
+diff --git a/server/request.h b/server/request.h
+index 4951488fd76..cb95831ab84 100644
+--- a/server/request.h
++++ b/server/request.h
+@@ -1751,9 +1751,8 @@ C_ASSERT( FIELD_OFFSET(struct get_key_state_request, key) == 16 );
+ C_ASSERT( sizeof(struct get_key_state_request) == 24 );
+ C_ASSERT( FIELD_OFFSET(struct get_key_state_reply, state) == 8 );
+ C_ASSERT( sizeof(struct get_key_state_reply) == 16 );
+-C_ASSERT( FIELD_OFFSET(struct set_key_state_request, tid) == 12 );
+-C_ASSERT( FIELD_OFFSET(struct set_key_state_request, async) == 16 );
+-C_ASSERT( sizeof(struct set_key_state_request) == 24 );
++C_ASSERT( FIELD_OFFSET(struct set_key_state_request, async) == 12 );
++C_ASSERT( sizeof(struct set_key_state_request) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct set_foreground_window_request, handle) == 12 );
+ C_ASSERT( sizeof(struct set_foreground_window_request) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct set_foreground_window_reply, previous) == 8 );
+diff --git a/server/trace.c b/server/trace.c
+index 5868f6bac6e..7ae02418734 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -3437,8 +3437,7 @@ static void dump_get_key_state_reply( const struct get_key_state_reply *req )
+ 
+ static void dump_set_key_state_request( const struct set_key_state_request *req )
+ {
+-    fprintf( stderr, " tid=%04x", req->tid );
+-    fprintf( stderr, ", async=%d", req->async );
++    fprintf( stderr, " async=%d", req->async );
+     dump_varargs_bytes( ", keystate=", cur_size );
+ }
+ 
+From 8254582f4698e913c267032d09bae3007f2f2d32 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 2 Mar 2021 11:55:33 +0100
+Subject: [PATCH] server: Don't fallback to desktop async keystate.
+
+When thread doesn't have a message queue.
+---
+ dlls/user32/tests/input.c |  5 ++---
+ server/queue.c            | 24 +++++++-----------------
+ 2 files changed, 9 insertions(+), 20 deletions(-)
+
+diff --git a/dlls/user32/tests/input.c b/dlls/user32/tests/input.c
+index 9d75daa0bd5..a6f7e9d5330 100644
+--- a/dlls/user32/tests/input.c
++++ b/dlls/user32/tests/input.c
+@@ -3774,14 +3774,13 @@ static DWORD WINAPI get_key_state_thread(void *arg)
+     ret = GetKeyboardState(keystate);
+     ok(ret, "GetKeyboardState failed, %u\n", GetLastError());
+     result = keystate['X'];
+-    todo_wine_if(!has_queue)
+     ok(!result, "%d: expected that keystate is not set, got %#x\n", i, result);
+ 
+     result = keystate['C'];
+     ok(!result, "%d: expected that C keystate is not set, got %#x\n", i, result);
+ 
+     result = GetKeyState('X');
+-    if (!has_queue) todo_wine ok(!(result & 0x8000), "%d: expected that highest bit is unset, got %#x\n", i, result);
++    if (!has_queue) ok(!(result & 0x8000), "%d: expected that highest bit is unset, got %#x\n", i, result);
+     else todo_wine ok((result & 0x8000), "%d: expected that highest bit is set, got %#x\n", i, result);
+     ok(!(result & 0x007e), "%d: expected that undefined bits are unset, got %#x\n", i, result);
+ 
+@@ -3793,7 +3792,7 @@ static DWORD WINAPI get_key_state_thread(void *arg)
+     ret = GetKeyboardState(keystate);
+     ok(ret, "GetKeyboardState failed, %u\n", GetLastError());
+     result = keystate['X'];
+-    if (!has_queue) todo_wine ok(!result, "%d: expected that keystate is unset, got %#x\n", i, result);
++    if (!has_queue) ok(!result, "%d: expected that keystate is unset, got %#x\n", i, result);
+     else todo_wine ok(result, "%d: expected that keystate is set, got %#x\n", i, result);
+ 
+     result = keystate['C'];
+diff --git a/server/queue.c b/server/queue.c
+index cd6ef478284..0db7f2cb68e 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -3132,25 +3132,15 @@ DECL_HANDLER(get_key_state)
+         set_reply_data( desktop->keystate, size );
+         release_object( desktop );
+     }
++    else if (!input)
++    {
++        reply->state = 0;
++        memset( set_reply_data_size( size ), 0, size );
++    }
+     else
+     {
+-        unsigned char *keystate;
+-        if (input)
+-        {
+-            if (req->key >= 0) reply->state = input->keystate[req->key & 0xff];
+-            set_reply_data( input->keystate, size );
+-            return;
+-        }
+-
+-        /* fallback to desktop keystate */
+-        if (!(desktop = get_thread_desktop( current, 0 ))) return;
+-        if (req->key >= 0) reply->state = desktop->keystate[req->key & 0xff] & ~0x40;
+-        if ((keystate = set_reply_data_size( size )))
+-        {
+-            unsigned int i;
+-            for (i = 0; i < size; i++) keystate[i] = desktop->keystate[i] & ~0x40;
+-        }
+-        release_object( desktop );
++        if (req->key >= 0) reply->state = input->keystate[req->key & 0xff];
++        set_reply_data( input->keystate, size );
+     }
+ }
+ 
+From 1427adc4ae878a59bd1f3717330cd9d07535bf3a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 2 Mar 2021 12:03:43 +0100
+Subject: [PATCH] server: Copy global async keystate into thread input.
+
+When GetKeyState is called from a background thread.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=26269
+---
+ dlls/user32/tests/input.c | 12 ++++++++----
+ server/queue.c            | 13 +++++++++++++
+ 2 files changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/dlls/user32/tests/input.c b/dlls/user32/tests/input.c
+index a6f7e9d5330..f23cab13141 100644
+--- a/dlls/user32/tests/input.c
++++ b/dlls/user32/tests/input.c
+@@ -3781,7 +3781,7 @@ static DWORD WINAPI get_key_state_thread(void *arg)
+ 
+     result = GetKeyState('X');
+     if (!has_queue) ok(!(result & 0x8000), "%d: expected that highest bit is unset, got %#x\n", i, result);
+-    else todo_wine ok((result & 0x8000), "%d: expected that highest bit is set, got %#x\n", i, result);
++    else ok((result & 0x8000), "%d: expected that highest bit is set, got %#x\n", i, result);
+     ok(!(result & 0x007e), "%d: expected that undefined bits are unset, got %#x\n", i, result);
+ 
+     result = GetKeyState('C');
+@@ -3793,7 +3793,7 @@ static DWORD WINAPI get_key_state_thread(void *arg)
+     ok(ret, "GetKeyboardState failed, %u\n", GetLastError());
+     result = keystate['X'];
+     if (!has_queue) ok(!result, "%d: expected that keystate is unset, got %#x\n", i, result);
+-    else todo_wine ok(result, "%d: expected that keystate is set, got %#x\n", i, result);
++    else ok(result, "%d: expected that keystate is set, got %#x\n", i, result);
+ 
+     result = keystate['C'];
+     ok(!result, "%d: expected that C keystate is not set, got %#x\n", i, result);
+@@ -3808,7 +3808,7 @@ static DWORD WINAPI get_key_state_thread(void *arg)
+     ok(ret, "GetKeyboardState failed, %u\n", GetLastError());
+     result = keystate['X'];
+     if (!has_queue) ok(!result, "%d: expected that keystate is unset, got %#x\n", i, result);
+-    else todo_wine ok(result, "%d: expected that keystate is set, got %#x\n", i, result);
++    else ok(result, "%d: expected that keystate is set, got %#x\n", i, result);
+ 
+     result = keystate['C'];
+     ok(!result, "%d: expected that C keystate is not set, got %#x\n", i, result);
+@@ -3826,7 +3826,11 @@ static DWORD WINAPI get_key_state_thread(void *arg)
+     ok(ret, "GetKeyboardState failed, %u\n", GetLastError());
+     result = keystate['X'];
+     if (!has_queue) ok(!result || broken(result) /* w2008 */, "%d: expected that keystate is unset, got %#x\n", i, result);
+-    else todo_wine ok(result || broken(!result) /* w2008 */, "%d: expected that keystate is set, got %#x\n", i, result);
++    else
++    {
++        todo_wine_if(test->peek_message_main)
++        ok(result || broken(!result) /* w2008 */, "%d: expected that keystate is set, got %#x\n", i, result);
++    }
+ 
+     result = keystate['C'];
+     ok(!result, "%d: expected that C keystate is not set, got %#x\n", i, result);
+diff --git a/server/queue.c b/server/queue.c
+index 0db7f2cb68e..11144941461 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -3118,6 +3118,7 @@ DECL_HANDLER(get_thread_input)
+ DECL_HANDLER(get_key_state)
+ {
+     struct thread_input *input = current->queue ? current->queue->input : NULL;
++    struct thread *foreground = NULL;
+     struct desktop *desktop;
+     data_size_t size = min( 256, get_reply_max_size() );
+ 
+@@ -3141,6 +3142,18 @@ DECL_HANDLER(get_key_state)
+     {
+         if (req->key >= 0) reply->state = input->keystate[req->key & 0xff];
+         set_reply_data( input->keystate, size );
++
++        if (!(desktop = get_thread_desktop( current, 0 ))) return;
++        if (desktop->foreground_input != input &&
++            (foreground = get_foreground_thread( desktop, 0 )) &&
++            foreground->process == current->process)
++        {
++            reply->state = desktop->keystate[req->key & 0xff];
++            memcpy( input->keystate, desktop->keystate, 256 );
++        }
++
++        if (foreground) release_object( foreground );
++        release_object( desktop );
+     }
+ }
+ 
 From e31b544dacbae84c92cd4e2796f3c1c5ac29fcf0 Mon Sep 17 00:00:00 2001
 From: Arkadiusz Hiler <ahiler@codeweavers.com>
 Date: Wed, 9 Dec 2020 14:04:56 +0200
