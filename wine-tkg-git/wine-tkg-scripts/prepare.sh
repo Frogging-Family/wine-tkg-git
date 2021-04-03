@@ -1359,8 +1359,10 @@ EOM
 	# fsync - experimental replacement for esync introduced with Proton 4.11-1
 	if [ "$_use_fsync" = "true" ]; then
 	  if [ "$_staging_esync" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 731339cd60c255fd5890063b144ad7c00661f5a0 HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 626870abe2e800cc9407d05d5c00500a4ad97b3a HEAD ); then
 	      _patchname='fsync-unix-staging.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 731339cd60c255fd5890063b144ad7c00661f5a0 HEAD ); then
+	      _patchname='fsync-unix-staging-626870a.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor d6ef9401b3ef05e87e0cadd31992a6809008331e HEAD ); then
 	      _patchname='fsync-unix-staging-731339c.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c6f2aacb5761801a17b930086111f4b2c4a30075 HEAD ); then
