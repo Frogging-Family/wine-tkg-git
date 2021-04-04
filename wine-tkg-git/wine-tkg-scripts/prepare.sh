@@ -575,7 +575,7 @@ _prepare() {
 	    _committorevert=6dbb153ede48e77a87dddf37e5276276a701c5c3 && nonuser_reverter
 	    _committorevert=81f8b6e8c215dc04a19438e4369fcba8f7f4f333 && nonuser_reverter
 	    echo -e "( FS hack unbreak reverts applied )\n" >> "$_where"/last_build_config.log
-	  elif git merge-base --is-ancestor 2538b0100fbbe1223e7c18a52bade5cfe5f8d3e3 HEAD; then #todo - backports
+	  elif git merge-base --is-ancestor 2538b0100fbbe1223e7c18a52bade5cfe5f8d3e3 HEAD && ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD; then
 	    _committorevert=16984895f0191dad12d55dee422214645b51aece && nonuser_reverter
 	    _committorevert=0120a1aa40936fc6d57d83eb12709b951c7b88d6 && nonuser_reverter
 	    _committorevert=4a330b29212402b9700828be82939112bd11a786 && nonuser_reverter
@@ -749,7 +749,7 @@ _prepare() {
 	fi
 
 	# Disable winex11.drv-mouse-coorrds and winex11-MWM_Decorations patchsets on staging for proton FS hack
-	if [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ]; then
+	if [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD; then
 	  if [ "$_broken_staging_44d1a45_localreverts" != "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD && ! git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
 	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 437038604a09c7952a52b28c373cfbe706d8e78b HEAD ); then
 	      sed -i 's/-@@ -3383,3 +3393,14 @@ DECL_HANDLER(get_rawinput_devices)/-@@ -3432,3 +3442,14 @@ DECL_HANDLER(get_rawinput_devices)/g' "$_where"/staging-44d1a45-localreverts.patch
@@ -892,7 +892,9 @@ _prepare() {
 
 	# Child window support for vk - Fixes World of Final Fantasy and others - https://bugs.winehq.org/show_bug.cgi?id=45277
 	if [ "$_childwindow_fix" = "true" ]; then
-	  _patchname='childwindow.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
+	  if ( [ "$_proton_fs_hack" != "true" ] && git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD ) || ( ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD ); then
+	    _patchname='childwindow.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
+	  fi
 	fi
 
 	# Workaround for https://bugs.winehq.org/show_bug.cgi?id=47633
@@ -1491,14 +1493,16 @@ EOM
 
 	# Proton Fullscreen patch - Allows resolution changes for fullscreen games without changing desktop resolution
 	if [ "$_proton_fs_hack" = "true" ] && [ "$_unfrog" != "true" ]; then
-	  if [ "$_FS_bypass_compositor" != "true" ]; then
+	  if [ "$_FS_bypass_compositor" != "true" ] && ( ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD || git merge-base --is-ancestor 29d9659095fd76e303f204050ab4c85d0a0486e4 HEAD ); then
 	    _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	  fi
 	  if [ "$_use_staging" = "true" ]; then
-	    if git merge-base --is-ancestor af3d292343034b87403b1c8738e29bd3479fe87e HEAD; then
+	    if git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD; then
 	      _patchname='valve_proton_fullscreen_hack-staging.patch' && _patchmsg="Applied Proton fullscreen hack patch (staging)" && nonuser_patcher
 	    else
 	      if git merge-base --is-ancestor 1e074c39f635c585595e9f3ece99aa290a7f9cf8 HEAD; then
+	        _lastcommit="0f972e2"
+	      elif git merge-base --is-ancestor 1e074c39f635c585595e9f3ece99aa290a7f9cf8 HEAD; then
 	        _lastcommit="af3d292"
 	      elif git merge-base --is-ancestor 314cd9cdd542db658ce7a01ef0a7621fc2d9d335 HEAD; then
 	        _lastcommit="1e074c3"
@@ -1572,7 +1576,7 @@ EOM
 	      _proton_fs_hack="false"
 	    fi
 	  fi
-	  if [ "$_FS_bypass_compositor" != "true" ]; then
+	  if [ "$_FS_bypass_compositor" != "true" ] && ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD; then
 	    _FS_bypass_compositor="true"
 	    _patchname='FS_bypass_compositor-disabler.patch' && _patchmsg="Turned off Fullscreen compositor bypass" && nonuser_patcher
 	  fi
@@ -1731,7 +1735,7 @@ EOM
 	fi
 
 	# Proton/fs-hack friendly winex11-MWM_Decorations
-	if [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 8000b5415d2c249176bda3d8b49f8fc9978e1623 HEAD; then
+	if [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 8000b5415d2c249176bda3d8b49f8fc9978e1623 HEAD && ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD; then
 	  _patchname='proton-staging_winex11-MWM_Decorations.patch' && _patchmsg="Applied proton friendly winex11-MWM_Decorations" && nonuser_patcher
 	fi
 
@@ -2198,7 +2202,7 @@ EOM
 	fi
 
 	# Proton fs hack additions
-	if [ "$_unfrog" != "true" ]; then
+	if [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD; then
 	  if git merge-base --is-ancestor 1e074c39f635c585595e9f3ece99aa290a7f9cf8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
 	    _patchname='proton-vk-bits-4.5.patch' && _patchmsg="Enable Proton vulkan bits for 4.5+" && nonuser_patcher
 	  elif git merge-base --is-ancestor 408a5a86ec30e293bf9e6eec4890d552073a82e8 HEAD && [ "$_proton_fs_hack" = "true" ]; then
