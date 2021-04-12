@@ -9798,6 +9798,1395 @@ index 23501931e69..5ff6d1d74fd 100644
  
          set_mapped_report_from_event(event);
  
+From 10a52a88f7083bdcb3e389282d38eddd98771397 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 10 Feb 2021 13:23:35 +0100
+Subject: [PATCH] hidclass.sys: Send rawinput messages with HID report.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=50506
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+Signed-off-by: Arkadiusz Hiler <ahiler@codeweavers.com>
+---
+ dlls/hidclass.sys/device.c | 29 +++++++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/dlls/hidclass.sys/device.c b/dlls/hidclass.sys/device.c
+index fc1dfd07db1..e5efbfa04e3 100644
+--- a/dlls/hidclass.sys/device.c
++++ b/dlls/hidclass.sys/device.c
+@@ -26,6 +26,7 @@
+ #include "winuser.h"
+ #include "setupapi.h"
+ 
++#include "wine/server.h"
+ #include "wine/debug.h"
+ #include "ddk/hidsdi.h"
+ #include "ddk/hidtypes.h"
+@@ -237,6 +238,32 @@ static NTSTATUS copy_packet_into_buffer(HID_XFER_PACKET *packet, BYTE* buffer, U
+         return STATUS_BUFFER_OVERFLOW;
+ }
+ 
++static void HID_Device_sendRawInput(DEVICE_OBJECT *device, HID_XFER_PACKET *packet)
++{
++    BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
++
++    SERVER_START_REQ(send_hardware_message)
++    {
++        req->win                  = 0;
++        req->flags                = 0;
++        req->input.type           = HW_INPUT_HID;
++        req->input.hid.device     = 0; /* FIXME */
++        req->input.hid.usage_page = ext->preparseData->caps.UsagePage;
++        req->input.hid.usage      = ext->preparseData->caps.Usage;
++        req->input.hid.length     = packet->reportBufferLen;
++
++        if (ext->preparseData->reports[0].reportID == 0) {
++            BYTE zero_byte = 0;
++            req->input.hid.length++;
++            wine_server_add_data(req, &zero_byte, sizeof(zero_byte));
++        }
++
++        wine_server_add_data(req, packet->reportBuffer, packet->reportBufferLen);
++        wine_server_call(req);
++    }
++    SERVER_END_REQ;
++}
++
+ static void HID_Device_processQueue(DEVICE_OBJECT *device)
+ {
+     IRP *irp;
+@@ -320,6 +347,7 @@ static DWORD CALLBACK hid_device_thread(void *args)
+             if (irp->IoStatus.u.Status == STATUS_SUCCESS)
+             {
+                 RingBuffer_Write(ext->ring_buffer, packet);
++                HID_Device_sendRawInput(device, packet);
+                 HID_Device_processQueue(device);
+             }
+ 
+@@ -366,6 +394,7 @@ static DWORD CALLBACK hid_device_thread(void *args)
+                 else
+                     packet->reportId = 0;
+                 RingBuffer_Write(ext->ring_buffer, packet);
++                HID_Device_sendRawInput(device, packet);
+                 HID_Device_processQueue(device);
+             }
+ 
+From 9563739899ced9398f4cf47b4eae9d8fff34172e Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Thu, 18 Feb 2021 13:16:06 +0200
+Subject: [PATCH] hidclass.sys: Assign rawinput handles through device
+ properties.
+
+Signed-off-by: Arkadiusz Hiler <ahiler@codeweavers.com>
+---
+ dlls/hidclass.sys/device.c | 26 +++++++++++++++++++++++++-
+ dlls/hidclass.sys/hid.h    |  1 +
+ dlls/hidclass.sys/pnp.c    |  1 +
+ 3 files changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/hidclass.sys/device.c b/dlls/hidclass.sys/device.c
+index e5efbfa04e3..fa41e61f107 100644
+--- a/dlls/hidclass.sys/device.c
++++ b/dlls/hidclass.sys/device.c
+@@ -34,11 +34,14 @@
+ 
+ #include "initguid.h"
+ #include "devguid.h"
++#include "devpkey.h"
+ #include "ntddmou.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(hid);
+ WINE_DECLARE_DEBUG_CHANNEL(hid_report);
+ 
++DEFINE_DEVPROPKEY(DEVPROPKEY_HID_HANDLE, 0xbc62e415, 0xf4fe, 0x405c, 0x8e, 0xda, 0x63, 0x6f, 0xb5, 0x9f, 0x08, 0x98, 2);
++
+ NTSTATUS HID_CreateDevice(DEVICE_OBJECT *native_device, HID_MINIDRIVER_REGISTRATION *driver, DEVICE_OBJECT **device)
+ {
+     WCHAR dev_name[255];
+@@ -72,6 +75,14 @@ NTSTATUS HID_CreateDevice(DEVICE_OBJECT *native_device, HID_MINIDRIVER_REGISTRAT
+     return STATUS_SUCCESS;
+ }
+ 
++/* user32 reserves 1 & 2 for winemouse and winekeyboard */
++#define WINE_KEYBOARD_HANDLE 2
++static INT32 alloc_new_handle(void)
++{
++    static INT32 counter = WINE_KEYBOARD_HANDLE+1;
++    return InterlockedIncrement(&counter);
++}
++
+ NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device, BOOL xinput_hack)
+ {
+     WCHAR device_instance_id[MAX_DEVICE_ID_LEN];
+@@ -81,6 +92,7 @@ NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device)
+     HDEVINFO devinfo;
+     GUID hidGuid;
+     BASE_DEVICE_EXTENSION *ext;
++    INT32 handle;
+ 
+     HidD_GetHidGuid(&hidGuid);
+     ext = device->DeviceExtension;
+@@ -111,8 +123,20 @@ NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device)
+         FIXME( "failed to create device info %x\n", GetLastError());
+         goto error;
+     }
++
+     SetupDiDestroyDeviceInfoList(devinfo);
+ 
++    handle = alloc_new_handle();
++    status = IoSetDevicePropertyData(device, &DEVPROPKEY_HID_HANDLE, LOCALE_NEUTRAL,
++                                     PLUGPLAY_PROPERTY_PERSISTENT, DEVPROP_TYPE_INT32,
++                                     sizeof(handle), &handle);
++    if (status != STATUS_SUCCESS)
++    {
++        FIXME( "failed to set device property %x\n", status );
++        return status;
++    }
++    ext->rawinput_handle = (HANDLE)(UINT_PTR) handle;
++
+     status = IoRegisterDeviceInterface(device, &hidGuid, NULL, &ext->link_name);
+     if (status != STATUS_SUCCESS)
+     {
+@@ -247,7 +271,7 @@ static void HID_Device_sendRawInput(DEVICE_OBJECT *device, HID_XFER_PACKET *pack
+         req->win                  = 0;
+         req->flags                = 0;
+         req->input.type           = HW_INPUT_HID;
+-        req->input.hid.device     = 0; /* FIXME */
++        req->input.hid.device     = wine_server_obj_handle(ext->rawinput_handle);
+         req->input.hid.usage_page = ext->preparseData->caps.UsagePage;
+         req->input.hid.usage      = ext->preparseData->caps.Usage;
+         req->input.hid.length     = packet->reportBufferLen;
+diff --git a/dlls/hidclass.sys/hid.h b/dlls/hidclass.sys/hid.h
+index 889b8c625c0..64c2be4bdda 100644
+--- a/dlls/hidclass.sys/hid.h
++++ b/dlls/hidclass.sys/hid.h
+@@ -51,6 +51,7 @@ typedef struct _BASE_DEVICE_EXTENSION {
+     struct ReportRingBuffer *ring_buffer;
+     HANDLE halt_event;
+     HANDLE thread;
++    HANDLE rawinput_handle;
+ 
+     KSPIN_LOCK irp_queue_lock;
+     LIST_ENTRY irp_queue;
+diff --git a/dlls/hidclass.sys/pnp.c b/dlls/hidclass.sys/pnp.c
+index a50e7382466..7f7111295cc 100644
+--- a/dlls/hidclass.sys/pnp.c
++++ b/dlls/hidclass.sys/pnp.c
+@@ -277,6 +277,7 @@ NTSTATUS WINAPI HID_PNP_Dispatch(DEVICE_OBJECT *device, IRP *irp)
+             IoSetDeviceInterfaceState(&ext->link_name, TRUE);
+             if (ext->is_mouse)
+                 IoSetDeviceInterfaceState(&ext->mouse_link_name, TRUE);
++
+             return rc;
+         }
+         case IRP_MN_REMOVE_DEVICE:
+From b50dcadf6a4ef16327ffe88ec88ce06439607711 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 10 Feb 2021 13:23:31 +0100
+Subject: [PATCH] server: Add process argument to find_rawinput_device.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We need to be able to iterate all registered rawinput devices for
+foreign processes, not only the current one.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=50506
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+---
+ server/queue.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/server/queue.c b/server/queue.c
+index 4c945f33907..06740a6aa8d 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -1538,11 +1538,11 @@ static user_handle_t find_hardware_message_window( struct desktop *desktop, stru
+     return win;
+ }
+ 
+-static struct rawinput_device_entry *find_rawinput_device( unsigned short usage_page, unsigned short usage )
++static struct rawinput_device_entry *find_rawinput_device( struct process *process, unsigned short usage_page, unsigned short usage )
+ {
+     struct rawinput_device_entry *e;
+ 
+-    LIST_FOR_EACH_ENTRY( e, &current->process->rawinput_devices, struct rawinput_device_entry, entry )
++    LIST_FOR_EACH_ENTRY( e, &process->rawinput_devices, struct rawinput_device_entry, entry )
+     {
+         if (e->device.usage_page != usage_page || e->device.usage != usage) continue;
+         return e;
+@@ -1555,7 +1555,7 @@ static void update_rawinput_device(const struct rawinput_device *device)
+ {
+     struct rawinput_device_entry *e;
+ 
+-    if (!(e = find_rawinput_device( device->usage_page, device->usage )))
++    if (!(e = find_rawinput_device( current->process, device->usage_page, device->usage )))
+     {
+         if (!(e = mem_alloc( sizeof(*e) ))) return;
+         list_add_tail( &current->process->rawinput_devices, &e->entry );
+@@ -3368,9 +3368,9 @@ DECL_HANDLER(update_rawinput_devices)
+         update_rawinput_device(&devices[i]);
+     }
+ 
+-    e = find_rawinput_device( 1, 2 );
++    e = find_rawinput_device( current->process, 1, 2 );
+     current->process->rawinput_mouse = e ? &e->device : NULL;
+-    e = find_rawinput_device( 1, 6 );
++    e = find_rawinput_device( current->process, 1, 6 );
+     current->process->rawinput_kbd   = e ? &e->device : NULL;
+ }
+ 
+From 4b7f6847d8c1f09e42fc53af3a837de0ebd8a191 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 10 Feb 2021 13:23:32 +0100
+Subject: [PATCH] server: Add extra data to hardware_msg_data.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The RIM_TYPEHID messages will have to carry the variable length HID
+report.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=50506
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+---
+ server/queue.c | 31 +++++++++++++++++++++----------
+ 1 file changed, 21 insertions(+), 10 deletions(-)
+
+diff --git a/server/queue.c b/server/queue.c
+index 06740a6aa8d..7d84edf48e7 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -370,13 +370,13 @@ static int assign_thread_input( struct thread *thread, struct thread_input *new_
+ 
+ /* allocate a hardware message and its data */
+ static struct message *alloc_hardware_message( lparam_t info, struct hw_msg_source source,
+-                                               unsigned int time )
++                                               unsigned int time, data_size_t extra_len )
+ {
+     struct hardware_msg_data *msg_data;
+     struct message *msg;
+ 
+     if (!(msg = mem_alloc( sizeof(*msg) ))) return NULL;
+-    if (!(msg_data = mem_alloc( sizeof(*msg_data) )))
++    if (!(msg_data = mem_alloc( sizeof(*msg_data) + extra_len )))
+     {
+         free( msg );
+         return NULL;
+@@ -385,9 +385,9 @@ static struct message *alloc_hardware_message( lparam_t info, struct hw_msg_sour
+     msg->type      = MSG_HARDWARE;
+     msg->time      = time;
+     msg->data      = msg_data;
+-    msg->data_size = sizeof(*msg_data);
++    msg->data_size = sizeof(*msg_data) + extra_len;
+ 
+-    memset( msg_data, 0, sizeof(*msg_data) );
++    memset( msg_data, 0, sizeof(*msg_data) + extra_len );
+     msg_data->info   = info;
+     msg_data->source = source;
+     return msg;
+@@ -420,7 +420,7 @@ static void set_cursor_pos( struct desktop *desktop, int x, int y )
+         return;
+     }
+ 
+-    if (!(msg = alloc_hardware_message( 0, source, get_tick_count() ))) return;
++    if (!(msg = alloc_hardware_message( 0, source, get_tick_count(), 0 ))) return;
+ 
+     msg->msg = WM_MOUSEMOVE;
+     msg->x   = x;
+@@ -1712,6 +1712,8 @@ struct rawinput_message
+     struct hw_msg_source     source;
+     unsigned int             time;
+     struct hardware_msg_data data;
++    const void              *extra;
++    data_size_t              extra_len;
+ };
+ 
+ /* check if process is supposed to receive a WM_INPUT message and eventually queue it */
+@@ -1722,6 +1724,7 @@ static int queue_rawinput_message( struct process* process, void *arg )
+     struct desktop *target_desktop = NULL;
+     struct thread *target_thread = NULL;
+     struct message *msg;
++    struct hardware_msg_data *msg_data;
+     int wparam = RIM_INPUT;
+ 
+     if (raw_msg->data.rawinput.type == RIM_TYPEMOUSE)
+@@ -1739,14 +1742,18 @@ static int queue_rawinput_message( struct process* process, void *arg )
+         wparam = RIM_INPUTSINK;
+     }
+ 
+-    if (!(msg = alloc_hardware_message( raw_msg->data.info, raw_msg->source, raw_msg->time )))
++    if (!(msg = alloc_hardware_message( raw_msg->data.info, raw_msg->source, raw_msg->time, raw_msg->extra_len )))
+         goto done;
++    msg_data = msg->data;
+ 
+     msg->win    = device->target;
+     msg->msg    = WM_INPUT;
+     msg->wparam = wparam;
+     msg->lparam = 0;
+-    memcpy( msg->data, &raw_msg->data, sizeof(raw_msg->data) );
++
++    memcpy( msg_data, &raw_msg->data, sizeof(*msg_data) );
++    if (raw_msg->extra_len && raw_msg->extra)
++        memcpy( msg_data + 1, raw_msg->extra, raw_msg->extra_len );
+ 
+     queue_hardware_message( raw_msg->desktop, msg, 1 );
+ 
+@@ -1819,6 +1826,8 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
+         raw_msg.desktop    = desktop;
+         raw_msg.source     = source;
+         raw_msg.time       = time;
++        raw_msg.extra      = NULL;
++        raw_msg.extra_len  = 0;
+ 
+         msg_data = &raw_msg.data;
+         msg_data->info                = input->mouse.info;
+@@ -1844,7 +1853,7 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
+         if (!(flags & (1 << i))) continue;
+         flags &= ~(1 << i);
+ 
+-        if (!(msg = alloc_hardware_message( input->mouse.info, source, time ))) return 0;
++        if (!(msg = alloc_hardware_message( input->mouse.info, source, time, 0 ))) return 0;
+         msg_data = msg->data;
+ 
+         msg->win       = get_user_full_handle( win );
+@@ -1953,6 +1962,8 @@ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, c
+         raw_msg.desktop    = desktop;
+         raw_msg.source     = source;
+         raw_msg.time       = time;
++        raw_msg.extra      = NULL;
++        raw_msg.extra_len  = 0;
+ 
+         msg_data = &raw_msg.data;
+         msg_data->info                 = input->kbd.info;
+@@ -1972,7 +1983,7 @@ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, c
+         return 0;
+     }
+ 
+-    if (!(msg = alloc_hardware_message( input->kbd.info, source, time ))) return 0;
++    if (!(msg = alloc_hardware_message( input->kbd.info, source, time, 0 ))) return 0;
+     msg_data = msg->data;
+ 
+     msg->win       = get_user_full_handle( win );
+@@ -2010,7 +2021,7 @@ static void queue_custom_hardware_message( struct desktop *desktop, user_handle_
+     struct hw_msg_source source = { IMDT_UNAVAILABLE, origin };
+     struct message *msg;
+ 
+-    if (!(msg = alloc_hardware_message( 0, source, get_tick_count() ))) return;
++    if (!(msg = alloc_hardware_message( 0, source, get_tick_count(), 0 ))) return;
+ 
+     msg->win       = get_user_full_handle( win );
+     msg->msg       = input->hw.msg;
+From 0474a3182e4ff8cdcbe8e913298a6d1e833fc6d0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 10 Feb 2021 13:23:33 +0100
+Subject: [PATCH] server: Implement HID rawinput message support.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The messages are of variable size and carry the corresponding HID report
+data after each RAWINPUT struct.
+
+For now hDevice is set to 0 but it will need to be a pseudo-handle that
+will be used to uniquely identify the device and possibly query its
+information using GetRawInputDeviceInfo.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=50506
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+---
+ dlls/user32/message.c  |  4 ++-
+ dlls/user32/rawinput.c | 24 +++++++++++++++--
+ server/protocol.def    | 26 ++++++++++++++++---
+ server/queue.c         | 58 ++++++++++++++++++++++++++++++++++--------
+ server/trace.c         | 10 +++++---
+ 5 files changed, 103 insertions(+), 19 deletions(-)
+
+diff --git a/dlls/user32/message.c b/dlls/user32/message.c
+index f7ce262f90d..01d1a0eed97 100644
+--- a/dlls/user32/message.c
++++ b/dlls/user32/message.c
+@@ -3240,10 +3240,10 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, UINT flags )
+     {
+         req->win        = wine_server_user_handle( hwnd );
+         req->flags      = flags;
+-        req->input.type = input->type;
+         switch (input->type)
+         {
+         case INPUT_MOUSE:
++            req->input.type        = HW_INPUT_MOUSE;
+             req->input.mouse.x     = input->u.mi.dx;
+             req->input.mouse.y     = input->u.mi.dy;
+             req->input.mouse.data  = input->u.mi.mouseData;
+@@ -3252,6 +3252,7 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, UINT flags )
+             req->input.mouse.info  = input->u.mi.dwExtraInfo;
+             break;
+         case INPUT_KEYBOARD:
++            req->input.type      = HW_INPUT_KEYBOARD;
+             req->input.kbd.vkey  = input->u.ki.wVk;
+             req->input.kbd.scan  = input->u.ki.wScan;
+             req->input.kbd.flags = input->u.ki.dwFlags;
+@@ -3259,6 +3260,7 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, UINT flags )
+             req->input.kbd.info  = input->u.ki.dwExtraInfo;
+             break;
+         case INPUT_HARDWARE:
++            req->input.type      = HW_INPUT_HARDWARE;
+             req->input.hw.msg    = input->u.hi.uMsg;
+             req->input.hw.lparam = MAKELONG( input->u.hi.wParamL, input->u.hi.wParamH );
+             break;
+diff --git a/dlls/user32/rawinput.c b/dlls/user32/rawinput.c
+index ba11a121bc5..107b7d48d34 100644
+--- a/dlls/user32/rawinput.c
++++ b/dlls/user32/rawinput.c
+@@ -326,6 +326,22 @@ BOOL rawinput_from_hardware_message(RAWINPUT *rawinput, const struct hardware_ms
+         rawinput->data.keyboard.Message          = msg_data->rawinput.kbd.message;
+         rawinput->data.keyboard.ExtraInformation = msg_data->info;
+     }
++    else if (msg_data->rawinput.type == RIM_TYPEHID)
++    {
++        if (sizeof(*rawinput) + msg_data->rawinput.hid.length > RAWINPUT_BUFFER_SIZE)
++        {
++            ERR("unexpectedly large hardware message dropped\n");
++            return FALSE;
++        }
++
++        rawinput->header.dwSize  = FIELD_OFFSET(RAWINPUT, data.hid.bRawData) + msg_data->rawinput.hid.length;
++        rawinput->header.hDevice = 0; /* FIXME */
++        rawinput->header.wParam  = 0;
++
++        rawinput->data.hid.dwSizeHid = msg_data->rawinput.hid.length;
++        rawinput->data.hid.dwCount = 1;
++        memcpy(rawinput->data.hid.bRawData, msg_data + 1, msg_data->rawinput.hid.length);
++    }
+     else
+     {
+         FIXME("Unhandled rawinput type %#x.\n", msg_data->rawinput.type);
+@@ -524,7 +540,7 @@ UINT WINAPI DECLSPEC_HOTPATCH GetRawInputBuffer(RAWINPUT *data, UINT *data_size,
+     struct hardware_msg_data *msg_data;
+     struct rawinput_thread_data *thread_data;
+     RAWINPUT *rawinput;
+-    UINT count = 0, rawinput_size, next_size, overhead;
++    UINT count = 0, rawinput_size, msg_size, next_size, overhead;
+     BOOL is_wow64;
+     int i;
+ 
+@@ -584,7 +600,10 @@ UINT WINAPI DECLSPEC_HOTPATCH GetRawInputBuffer(RAWINPUT *data, UINT *data_size,
+                               data->header.dwSize - sizeof(RAWINPUTHEADER));
+         data->header.dwSize += overhead;
+         data = NEXTRAWINPUTBLOCK(data);
+-        msg_data++;
++        msg_size = sizeof(*msg_data);
++        if (msg_data->rawinput.type == RIM_TYPEHID)
++            msg_size += msg_data->rawinput.hid.length;
++        msg_data = (struct hardware_msg_data *)((char *)msg_data + msg_size);
+     }
+ 
+     if (count == 0 && next_size == 0) *data_size = 0;
+@@ -657,6 +676,7 @@ UINT WINAPI GetRawInputDeviceInfoW(HANDLE handle, UINT command, void *data, UINT
+             handle, command, data, data_size);
+ 
+     if (!data_size) return ~0U;
++    if (!device) return ~0U;
+ 
+     /* each case below must set:
+      *     *data_size: length (meaning defined by command) of data we want to copy
+diff --git a/server/protocol.def b/server/protocol.def
+index f057fda24dc..3128b7d997f 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -312,6 +312,13 @@ struct hardware_msg_data
+             int            y;       /* y coordinate */
+             unsigned int   data;    /* mouse data */
+         } mouse;
++        struct
++        {
++            int            type;    /* RIM_TYPEHID */
++            obj_handle_t   device;
++            unsigned int   length;  /* HID report length */
++            /* followed by length bytes of HID report data  */
++        } hid;
+     } rawinput;
+ };
+ 
+@@ -335,7 +342,7 @@ typedef union
+     int type;
+     struct
+     {
+-        int            type;    /* INPUT_KEYBOARD */
++        int            type;    /* HW_INPUT_KEYBOARD */
+         unsigned short vkey;    /* virtual key code */
+         unsigned short scan;    /* scan code */
+         unsigned int   flags;   /* event flags */
+@@ -344,7 +351,7 @@ typedef union
+     } kbd;
+     struct
+     {
+-        int            type;    /* INPUT_MOUSE */
++        int            type;    /* HW_INPUT_MOUSE */
+         int            x;       /* coordinates */
+         int            y;
+         unsigned int   data;    /* mouse data */
+@@ -354,11 +361,23 @@ typedef union
+     } mouse;
+     struct
+     {
+-        int            type;    /* INPUT_HARDWARE */
++        int            type;    /* HW_INPUT_HARDWARE */
+         unsigned int   msg;     /* message code */
+         lparam_t       lparam;  /* message param */
+     } hw;
++    struct
++    {
++        int            type;    /* HW_INPUT_HID */
++        obj_handle_t   device;
++        unsigned char  usage_page;
++        unsigned char  usage;
++        unsigned int   length;
++    } hid;
+ } hw_input_t;
++#define HW_INPUT_MOUSE    0
++#define HW_INPUT_KEYBOARD 1
++#define HW_INPUT_HARDWARE 2
++#define HW_INPUT_HID      3
+ 
+ typedef union
+ {
+@@ -2024,6 +2043,7 @@ enum message_type
+     user_handle_t   win;       /* window handle */
+     hw_input_t      input;     /* input data */
+     unsigned int    flags;     /* flags (see below) */
++    VARARG(data,bytes);        /* hid report data */
+ @REPLY
+     int             wait;      /* do we need to wait for a reply? */
+     int             prev_x;    /* previous cursor position */
+diff --git a/server/queue.c b/server/queue.c
+index 7d84edf48e7..ec4f1483f6d 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -1657,7 +1657,7 @@ static int send_hook_ll_message( struct desktop *desktop, struct message *hardwa
+     struct msg_queue *queue;
+     struct message *msg;
+     timeout_t timeout = 2000 * -10000;  /* FIXME: load from registry */
+-    int id = (input->type == INPUT_MOUSE) ? WH_MOUSE_LL : WH_KEYBOARD_LL;
++    int id = (input->type == HW_INPUT_MOUSE) ? WH_MOUSE_LL : WH_KEYBOARD_LL;
+ 
+     if (!(hook_thread = get_first_global_hook( id ))) return 0;
+     if (!(queue = hook_thread->queue)) return 0;
+@@ -1675,7 +1675,7 @@ static int send_hook_ll_message( struct desktop *desktop, struct message *hardwa
+     msg->data_size = hardware_msg->data_size;
+     msg->result    = NULL;
+ 
+-    if (input->type == INPUT_KEYBOARD)
++    if (input->type == HW_INPUT_KEYBOARD)
+     {
+         unsigned short vkey = input->kbd.vkey;
+         if (input->kbd.flags & KEYEVENTF_UNICODE) vkey = VK_PACKET;
+@@ -1711,6 +1711,8 @@ struct rawinput_message
+     struct desktop          *desktop;
+     struct hw_msg_source     source;
+     unsigned int             time;
++    unsigned char            usage_page;
++    unsigned char            usage;
+     struct hardware_msg_data data;
+     const void              *extra;
+     data_size_t              extra_len;
+@@ -1720,6 +1722,7 @@ struct rawinput_message
+ static int queue_rawinput_message( struct process* process, void *arg )
+ {
+     const struct rawinput_message* raw_msg = arg;
++    const struct rawinput_device_entry *entry;
+     const struct rawinput_device *device = NULL;
+     struct desktop *target_desktop = NULL;
+     struct thread *target_thread = NULL;
+@@ -1731,6 +1734,8 @@ static int queue_rawinput_message( struct process* process, void *arg )
+         device = process->rawinput_mouse;
+     else if (raw_msg->data.rawinput.type == RIM_TYPEKEYBOARD)
+         device = process->rawinput_kbd;
++    else if ((entry = find_rawinput_device( process, raw_msg->usage_page, raw_msg->usage )))
++        device = &entry->device;
+     if (!device) return 0;
+ 
+     if (process != raw_msg->foreground->process)
+@@ -2033,6 +2038,34 @@ static void queue_custom_hardware_message( struct desktop *desktop, user_handle_
+     queue_hardware_message( desktop, msg, 1 );
+ }
+ 
++/* queue a hardware message for an hid event */
++static void queue_hid_message( user_handle_t win, const hw_input_t *input,
++                               unsigned int origin, struct msg_queue *sender,
++                               const void *report, data_size_t report_len )
++{
++    struct hw_msg_source source = { IMDT_UNAVAILABLE, origin };
++    struct hardware_msg_data *msg_data;
++    struct rawinput_message raw_msg;
++
++    /* send to all desktops */
++    raw_msg.foreground = NULL;
++    raw_msg.desktop    = NULL;
++    raw_msg.source     = source;
++    raw_msg.time       = get_tick_count();
++    raw_msg.usage_page = input->hid.usage_page;
++    raw_msg.usage      = input->hid.usage;
++    raw_msg.extra      = report;
++    raw_msg.extra_len  = report_len;
++
++    msg_data = &raw_msg.data;
++    msg_data->flags               = 0;
++    msg_data->rawinput.type       = RIM_TYPEHID;
++    msg_data->rawinput.hid.device = input->hid.device;
++    msg_data->rawinput.hid.length = report_len;
++
++    enum_processes( queue_rawinput_message, &raw_msg );
++}
++
+ /* check message filter for a hardware message */
+ static int check_hw_message_filter( user_handle_t win, unsigned int msg_code,
+                                     user_handle_t filter_win, unsigned int first, unsigned int last )
+@@ -2544,15 +2577,18 @@ DECL_HANDLER(send_hardware_message)
+ 
+     switch (req->input.type)
+     {
+-    case INPUT_MOUSE:
++    case HW_INPUT_MOUSE:
+         reply->wait = queue_mouse_message( desktop, req->win, &req->input, origin, sender );
+         break;
+-    case INPUT_KEYBOARD:
++    case HW_INPUT_KEYBOARD:
+         reply->wait = queue_keyboard_message( desktop, req->win, &req->input, origin, sender );
+         break;
+-    case INPUT_HARDWARE:
++    case HW_INPUT_HARDWARE:
+         queue_custom_hardware_message( desktop, req->win, origin, &req->input );
+         break;
++    case HW_INPUT_HID:
++        queue_hid_message( req->win, &req->input, origin, sender, get_req_data(), get_req_data_size() );
++        break;
+     default:
+         set_error( STATUS_INVALID_PARAMETER );
+     }
+@@ -3334,16 +3370,18 @@ DECL_HANDLER(get_rawinput_buffer)
+     {
+         struct message *msg = LIST_ENTRY( ptr, struct message, entry );
+         struct hardware_msg_data *data = msg->data;
++        data_size_t hid_size = data->rawinput.type != RIM_TYPEHID ? 0 : data->rawinput.hid.length;
++        data_size_t data_size = sizeof(*data) + hid_size;
+ 
+         ptr = list_next( &input->msg_list, ptr );
+         if (msg->msg != WM_INPUT) continue;
+ 
+-        next_size = req->rawinput_size;
++        next_size = req->rawinput_size + hid_size;
+         if (size + next_size > req->buffer_size) break;
+-        if (cur + sizeof(*data) > buf + get_reply_max_size()) break;
+-        if (cur + sizeof(*data) > buf + buf_size)
++        if (cur + data_size > buf + get_reply_max_size()) break;
++        if (cur + data_size > buf + buf_size)
+         {
+-            buf_size += buf_size / 2;
++            buf_size += buf_size / 2 + hid_size;
+             if (!(tmp = realloc( buf, buf_size )))
+             {
+                 set_error( STATUS_NO_MEMORY );
+@@ -3353,7 +3391,7 @@ DECL_HANDLER(get_rawinput_buffer)
+             buf = tmp;
+         }
+ 
+-        memcpy(cur, data, sizeof(*data));
++        memcpy( cur, data, data_size );
+         list_remove( &msg->entry );
+         free_message( msg );
+ 
+diff --git a/server/trace.c b/server/trace.c
+index bb0d9aaefe4..e27c974ccd8 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -404,24 +404,28 @@ static void dump_hw_input( const char *prefix, const hw_input_t *input )
+ {
+     switch (input->type)
+     {
+-    case INPUT_MOUSE:
++    case HW_INPUT_MOUSE:
+         fprintf( stderr, "%s{type=MOUSE,x=%d,y=%d,data=%08x,flags=%08x,time=%u",
+                  prefix, input->mouse.x, input->mouse.y, input->mouse.data, input->mouse.flags,
+                  input->mouse.time );
+         dump_uint64( ",info=", &input->mouse.info );
+         fputc( '}', stderr );
+         break;
+-    case INPUT_KEYBOARD:
++    case HW_INPUT_KEYBOARD:
+         fprintf( stderr, "%s{type=KEYBOARD,vkey=%04hx,scan=%04hx,flags=%08x,time=%u",
+                  prefix, input->kbd.vkey, input->kbd.scan, input->kbd.flags, input->kbd.time );
+         dump_uint64( ",info=", &input->kbd.info );
+         fputc( '}', stderr );
+         break;
+-    case INPUT_HARDWARE:
++    case HW_INPUT_HARDWARE:
+         fprintf( stderr, "%s{type=HARDWARE,msg=%04x", prefix, input->hw.msg );
+         dump_uint64( ",lparam=", &input->hw.lparam );
+         fputc( '}', stderr );
+         break;
++    case HW_INPUT_HID:
++        fprintf( stderr, "%s{type=HID,device=%04x,usage_page=%02x,usage=%02x,length=%04x}",
++                 prefix, input->hid.device, input->hid.usage_page, input->hid.usage, input->hid.length );
++        break;
+     default:
+         fprintf( stderr, "%s{type=%04x}", prefix, input->type );
+         break;
+From 935b7c594cd924b43b94b7af540fed7246f85d2c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 10 Feb 2021 13:23:34 +0100
+Subject: [PATCH] server: Implement desktop broadcast in
+ queue_rawinput_message.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+HID rawinput messages are sent from winedevice.exe, which is not
+attached to any desktop. We need to broadcast the messages to all
+desktops in that case.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=50506
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+---
+ server/queue.c | 44 ++++++++++++++++++++++++++++++--------------
+ 1 file changed, 30 insertions(+), 14 deletions(-)
+
+diff --git a/server/queue.c b/server/queue.c
+index ec4f1483f6d..3516ebbd664 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -1724,8 +1724,8 @@ static int queue_rawinput_message( struct process* process, void *arg )
+     const struct rawinput_message* raw_msg = arg;
+     const struct rawinput_device_entry *entry;
+     const struct rawinput_device *device = NULL;
+-    struct desktop *target_desktop = NULL;
+-    struct thread *target_thread = NULL;
++    struct desktop *target_desktop = NULL, *desktop = NULL;
++    struct thread *target_thread = NULL, *foreground = NULL;
+     struct message *msg;
+     struct hardware_msg_data *msg_data;
+     int wparam = RIM_INPUT;
+@@ -1738,12 +1738,18 @@ static int queue_rawinput_message( struct process* process, void *arg )
+         device = &entry->device;
+     if (!device) return 0;
+ 
+-    if (process != raw_msg->foreground->process)
++    if (raw_msg->desktop) desktop = (struct desktop *)grab_object( raw_msg->desktop );
++    else if (!(desktop = get_desktop_obj( process, process->desktop, 0 ))) goto done;
++
++    if (raw_msg->foreground) foreground = (struct thread *)grab_object( raw_msg->foreground );
++    else if (!(foreground = get_foreground_thread( desktop, 0 ))) goto done;
++
++    if (process != foreground->process)
+     {
+         if (!(device->flags & RIDEV_INPUTSINK)) goto done;
+         if (!(target_thread = get_window_thread( device->target ))) goto done;
+         if (!(target_desktop = get_thread_desktop( target_thread, 0 ))) goto done;
+-        if (target_desktop != raw_msg->desktop) goto done;
++        if (target_desktop != desktop) goto done;
+         wparam = RIM_INPUTSINK;
+     }
+ 
+@@ -1760,11 +1766,13 @@ static int queue_rawinput_message( struct process* process, void *arg )
+     if (raw_msg->extra_len && raw_msg->extra)
+         memcpy( msg_data + 1, raw_msg->extra, raw_msg->extra_len );
+ 
+-    queue_hardware_message( raw_msg->desktop, msg, 1 );
++    queue_hardware_message( desktop, msg, 1 );
+ 
+ done:
+     if (target_thread) release_object( target_thread );
+     if (target_desktop) release_object( target_desktop );
++    if (foreground) release_object( foreground );
++    if (desktop) release_object( desktop );
+     return 0;
+ }
+ 
+@@ -2554,15 +2562,14 @@ DECL_HANDLER(send_message)
+ DECL_HANDLER(send_hardware_message)
+ {
+     struct thread *thread = NULL;
+-    struct desktop *desktop;
++    struct desktop *desktop = get_thread_desktop( current, 0 );
+     unsigned int origin = (req->flags & SEND_HWMSG_INJECTED ? IMO_INJECTED : IMO_HARDWARE);
+     struct msg_queue *sender = get_current_queue();
+     data_size_t size = min( 256, get_reply_max_size() );
+ 
+-    if (!(desktop = get_thread_desktop( current, 0 ))) return;
+-
+     if (req->win)
+     {
++        if (!desktop) return;
+         if (!(thread = get_window_thread( req->win ))) return;
+         if (desktop != thread->queue->input->desktop)
+         {
+@@ -2572,18 +2579,24 @@ DECL_HANDLER(send_hardware_message)
+         }
+     }
+ 
+-    reply->prev_x = desktop->cursor.x;
+-    reply->prev_y = desktop->cursor.y;
++    if (desktop)
++    {
++        reply->prev_x = desktop->cursor.x;
++        reply->prev_y = desktop->cursor.y;
++    }
+ 
+     switch (req->input.type)
+     {
+     case HW_INPUT_MOUSE:
++        if (!desktop) return;
+         reply->wait = queue_mouse_message( desktop, req->win, &req->input, origin, sender );
+         break;
+     case HW_INPUT_KEYBOARD:
++        if (!desktop) return;
+         reply->wait = queue_keyboard_message( desktop, req->win, &req->input, origin, sender );
+         break;
+     case HW_INPUT_HARDWARE:
++        if (!desktop) return;
+         queue_custom_hardware_message( desktop, req->win, origin, &req->input );
+         break;
+     case HW_INPUT_HID:
+@@ -2594,10 +2607,13 @@ DECL_HANDLER(send_hardware_message)
+     }
+     if (thread) release_object( thread );
+ 
+-    reply->new_x = desktop->cursor.x;
+-    reply->new_y = desktop->cursor.y;
+-    set_reply_data( desktop->keystate, size );
+-    release_object( desktop );
++    if (desktop)
++    {
++        reply->new_x = desktop->cursor.x;
++        reply->new_y = desktop->cursor.y;
++        set_reply_data( desktop->keystate, size );
++        release_object( desktop );
++    }
+ }
+ 
+ /* post a quit message to the current queue */
+From 80fee1defa3b5b849a041ff6d9d26240e28fb5ed Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Tue, 16 Feb 2021 13:07:35 +0200
+Subject: [PATCH] Implement WM_INPUT_DEVICE_CHANGE.
+
+This fixes Hades and anything that uses SDL 2.0.14+ for xinput handling.
+
+Signed-off-by: Arkadiusz Hiler <ahiler@codeweavers.com>
+---
+ dlls/hidclass.sys/device.c     |  1 +
+ dlls/hidclass.sys/hid.h        |  1 +
+ dlls/hidclass.sys/pnp.c        | 24 ++++++++++++++
+ dlls/user32/message.c          | 13 ++++++++
+ dlls/user32/rawinput.c         |  2 +-
+ include/wine/server_protocol.h | 24 +++++++++++++-
+ server/protocol.def            | 10 +++---
+ server/queue.c                 | 59 ++++++++++++++++++++++++----------
+ server/trace.c                 |  1 +
+ 9 files changed, 112 insertions(+), 23 deletions(-)
+
+diff --git a/dlls/hidclass.sys/device.c b/dlls/hidclass.sys/device.c
+index fa41e61f107..672bfc58afc 100644
+--- a/dlls/hidclass.sys/device.c
++++ b/dlls/hidclass.sys/device.c
+@@ -271,6 +271,7 @@ static void HID_Device_sendRawInput(DEVICE_OBJECT *device, HID_XFER_PACKET *pack
+         req->win                  = 0;
+         req->flags                = 0;
+         req->input.type           = HW_INPUT_HID;
++        req->input.hid.msg        = WM_INPUT;
+         req->input.hid.device     = wine_server_obj_handle(ext->rawinput_handle);
+         req->input.hid.usage_page = ext->preparseData->caps.UsagePage;
+         req->input.hid.usage      = ext->preparseData->caps.Usage;
+diff --git a/dlls/hidclass.sys/hid.h b/dlls/hidclass.sys/hid.h
+index 64c2be4bdda..e299ac773ab 100644
+--- a/dlls/hidclass.sys/hid.h
++++ b/dlls/hidclass.sys/hid.h
+@@ -20,6 +20,7 @@
+ #define WIN32_NO_STATUS
+ #include "windef.h"
+ #include "winbase.h"
++#include "winuser.h"
+ #include "winternl.h"
+ #include "winioctl.h"
+ #include "ddk/wdm.h"
+diff --git a/dlls/hidclass.sys/pnp.c b/dlls/hidclass.sys/pnp.c
+index 7f7111295cc..ba6ddc0d3e8 100644
+--- a/dlls/hidclass.sys/pnp.c
++++ b/dlls/hidclass.sys/pnp.c
+@@ -25,6 +25,7 @@
+ #include "ddk/hidtypes.h"
+ #include "ddk/wdm.h"
+ #include "regstr.h"
++#include "wine/server.h"
+ #include "wine/debug.h"
+ #include "wine/list.h"
+ 
+@@ -69,6 +70,26 @@ static NTSTATUS get_device_id(DEVICE_OBJECT *device, BUS_QUERY_ID_TYPE type, WCH
+     return status;
+ }
+ 
++static void HID_PNP_SendDeviceChange(DEVICE_OBJECT *device, WPARAM wparam)
++{
++    BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
++
++    SERVER_START_REQ(send_hardware_message)
++    {
++        req->win                  = 0;
++        req->flags                = 0;
++        req->input.type           = HW_INPUT_HID;
++        req->input.hid.msg        = WM_INPUT_DEVICE_CHANGE;
++        req->input.hid.device     = wine_server_obj_handle(ext->rawinput_handle);
++        req->input.hid.wparam     = wparam;
++        req->input.hid.usage_page = ext->preparseData->caps.UsagePage;
++        req->input.hid.usage      = ext->preparseData->caps.Usage;
++
++        wine_server_call(req);
++    }
++    SERVER_END_REQ;
++}
++
+ NTSTATUS WINAPI PNP_AddDevice(DRIVER_OBJECT *driver, DEVICE_OBJECT *PDO)
+ {
+     WCHAR device_id[MAX_DEVICE_ID_LEN], instance_id[MAX_DEVICE_ID_LEN];
+@@ -278,10 +299,13 @@ NTSTATUS WINAPI HID_PNP_Dispatch(DEVICE_OBJECT *device, IRP *irp)
+             if (ext->is_mouse)
+                 IoSetDeviceInterfaceState(&ext->mouse_link_name, TRUE);
+ 
++            HID_PNP_SendDeviceChange(device, GIDC_ARRIVAL);
++
+             return rc;
+         }
+         case IRP_MN_REMOVE_DEVICE:
+         {
++            HID_PNP_SendDeviceChange(device, GIDC_REMOVAL);
+             return remove_device(minidriver, device, irp);
+         }
+         default:
+diff --git a/dlls/user32/message.c b/dlls/user32/message.c
+index 01d1a0eed97..5a27be027ce 100644
+--- a/dlls/user32/message.c
++++ b/dlls/user32/message.c
+@@ -2607,13 +2607,26 @@ static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardwar
+     context = SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
+ 
+     if (msg->message == WM_INPUT)
++    {
+         ret = process_rawinput_message( msg, hw_id, msg_data );
++    }
++    else if (msg->message == WM_INPUT_DEVICE_CHANGE)
++    {
++        ret = TRUE;
++        msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
++    }
+     else if (is_keyboard_message( msg->message ))
++    {
+         ret = process_keyboard_message( msg, hw_id, hwnd_filter, first, last, remove );
++    }
+     else if (is_mouse_message( msg->message ))
++    {
+         ret = process_mouse_message( msg, hw_id, msg_data->info, hwnd_filter, first, last, remove );
++    }
+     else
++    {
+         ERR( "unknown message type %x\n", msg->message );
++    }
+     SetThreadDpiAwarenessContext( context );
+     return ret;
+ }
+diff --git a/dlls/user32/rawinput.c b/dlls/user32/rawinput.c
+index ffb03457340..370185dce42 100644
+--- a/dlls/user32/rawinput.c
++++ b/dlls/user32/rawinput.c
+@@ -490,7 +490,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH RegisterRawInputDevices(RAWINPUTDEVICE *devices, U
+         TRACE("device %u: page %#x, usage %#x, flags %#x, target %p.\n",
+                 i, devices[i].usUsagePage, devices[i].usUsage,
+                 devices[i].dwFlags, devices[i].hwndTarget);
+-        if (devices[i].dwFlags & ~(RIDEV_REMOVE|RIDEV_NOLEGACY|RIDEV_INPUTSINK))
++        if (devices[i].dwFlags & ~(RIDEV_REMOVE|RIDEV_NOLEGACY|RIDEV_INPUTSINK|RIDEV_DEVNOTIFY))
+             FIXME("Unhandled flags %#x for device %u.\n", devices[i].dwFlags, i);
+ 
+         d[i].usage_page = devices[i].usUsagePage;
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index 0d9d138d5b2..48bec17d2f8 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -296,6 +296,13 @@ struct hardware_msg_data
+             int            y;
+             unsigned int   data;
+         } mouse;
++        struct
++        {
++            int            type;
++            obj_handle_t   device;
++            unsigned int   length;
++
++        } hid;
+     } rawinput;
+ };
+ 
+@@ -342,7 +349,21 @@ typedef union
+         unsigned int   msg;
+         lparam_t       lparam;
+     } hw;
++    struct
++    {
++        int            type;
++        unsigned int   msg;
++        lparam_t       wparam;
++        obj_handle_t   device;
++        unsigned char  usage_page;
++        unsigned char  usage;
++        unsigned int   length;
++    } hid;
+ } hw_input_t;
++#define HW_INPUT_MOUSE         0
++#define HW_INPUT_KEYBOARD      1
++#define HW_INPUT_HARDWARE      2
++#define HW_INPUT_HID           3
+ 
+ typedef union
+ {
+@@ -2707,6 +2728,7 @@ struct send_hardware_message_request
+     user_handle_t   win;
+     hw_input_t      input;
+     unsigned int    flags;
++    /* VARARG(data,bytes); */
+     char __pad_52[4];
+ };
+ struct send_hardware_message_reply
+diff --git a/server/protocol.def b/server/protocol.def
+index 3128b7d997f..91ef6cda462 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -368,16 +368,18 @@ typedef union
+     struct
+     {
+         int            type;    /* HW_INPUT_HID */
++        unsigned int   msg;
++        lparam_t       wparam;
+         obj_handle_t   device;
+         unsigned char  usage_page;
+         unsigned char  usage;
+         unsigned int   length;
+     } hid;
+ } hw_input_t;
+-#define HW_INPUT_MOUSE    0
+-#define HW_INPUT_KEYBOARD 1
+-#define HW_INPUT_HARDWARE 2
+-#define HW_INPUT_HID      3
++#define HW_INPUT_MOUSE         0
++#define HW_INPUT_KEYBOARD      1
++#define HW_INPUT_HARDWARE      2
++#define HW_INPUT_HID           3
+ 
+ typedef union
+ {
+diff --git a/server/queue.c b/server/queue.c
+index 3516ebbd664..88bd8ed5392 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -1513,7 +1513,7 @@ static user_handle_t find_hardware_message_window( struct desktop *desktop, stru
+ 
+     *thread = NULL;
+     *msg_code = msg->msg;
+-    if (msg->msg == WM_INPUT)
++    if (msg->msg == WM_INPUT || msg->msg == WM_INPUT_DEVICE_CHANGE)
+     {
+         if (!(win = msg->win) && input) win = input->focus;
+     }
+@@ -1602,7 +1602,7 @@ static void queue_hardware_message( struct desktop *desktop, struct message *msg
+         if (msg->wparam == VK_SHIFT || msg->wparam == VK_LSHIFT || msg->wparam == VK_RSHIFT)
+             msg->lparam &= ~(KF_EXTENDED << 16);
+     }
+-    else if (msg->msg != WM_INPUT)
++    else if (msg->msg != WM_INPUT && msg->msg != WM_INPUT_DEVICE_CHANGE)
+     {
+         if (msg->msg == WM_MOUSEMOVE)
+         {
+@@ -1713,6 +1713,9 @@ struct rawinput_message
+     unsigned int             time;
+     unsigned char            usage_page;
+     unsigned char            usage;
++    unsigned int             message;
++    lparam_t                 lparam;
++    lparam_t                 wparam;
+     struct hardware_msg_data data;
+     const void              *extra;
+     data_size_t              extra_len;
+@@ -1728,7 +1731,7 @@ static int queue_rawinput_message( struct process* process, void *arg )
+     struct thread *target_thread = NULL, *foreground = NULL;
+     struct message *msg;
+     struct hardware_msg_data *msg_data;
+-    int wparam = RIM_INPUT;
++    int wm_input_wparam = RIM_INPUT;
+ 
+     if (raw_msg->data.rawinput.type == RIM_TYPEMOUSE)
+         device = process->rawinput_mouse;
+@@ -1738,6 +1741,9 @@ static int queue_rawinput_message( struct process* process, void *arg )
+         device = &entry->device;
+     if (!device) return 0;
+ 
++    if (raw_msg->message == WM_INPUT_DEVICE_CHANGE && !(device->flags & RIDEV_DEVNOTIFY))
++        return 0;
++
+     if (raw_msg->desktop) desktop = (struct desktop *)grab_object( raw_msg->desktop );
+     else if (!(desktop = get_desktop_obj( process, process->desktop, 0 ))) goto done;
+ 
+@@ -1746,11 +1752,11 @@ static int queue_rawinput_message( struct process* process, void *arg )
+ 
+     if (process != foreground->process)
+     {
+-        if (!(device->flags & RIDEV_INPUTSINK)) goto done;
++        if (raw_msg->message == WM_INPUT && !(device->flags & RIDEV_INPUTSINK)) goto done;
+         if (!(target_thread = get_window_thread( device->target ))) goto done;
+         if (!(target_desktop = get_thread_desktop( target_thread, 0 ))) goto done;
+         if (target_desktop != desktop) goto done;
+-        wparam = RIM_INPUTSINK;
++        wm_input_wparam = RIM_INPUTSINK;
+     }
+ 
+     if (!(msg = alloc_hardware_message( raw_msg->data.info, raw_msg->source, raw_msg->time, raw_msg->extra_len )))
+@@ -1758,9 +1764,12 @@ static int queue_rawinput_message( struct process* process, void *arg )
+     msg_data = msg->data;
+ 
+     msg->win    = device->target;
+-    msg->msg    = WM_INPUT;
+-    msg->wparam = wparam;
+-    msg->lparam = 0;
++    msg->msg    = raw_msg->message;
++    msg->lparam = raw_msg->lparam;
++    msg->wparam = raw_msg->wparam;
++
++    if (raw_msg->message == WM_INPUT)
++        msg->wparam = wm_input_wparam;
+ 
+     memcpy( msg_data, &raw_msg->data, sizeof(*msg_data) );
+     if (raw_msg->extra_len && raw_msg->extra)
+@@ -1835,6 +1844,9 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
+ 
+     if ((foreground = get_foreground_thread( desktop, win )))
+     {
++        raw_msg.message    = WM_INPUT;
++        raw_msg.wparam     = 0;
++        raw_msg.lparam     = 0;
+         raw_msg.foreground = foreground;
+         raw_msg.desktop    = desktop;
+         raw_msg.source     = source;
+@@ -1971,6 +1983,9 @@ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, c
+ 
+     if ((foreground = get_foreground_thread( desktop, win )))
+     {
++        raw_msg.message    = WM_INPUT;
++        raw_msg.wparam     = 0;
++        raw_msg.lparam     = 0;
+         raw_msg.foreground = foreground;
+         raw_msg.desktop    = desktop;
+         raw_msg.source     = source;
+@@ -2052,8 +2067,24 @@ static void queue_hid_message( user_handle_t win, const hw_input_t *input,
+                                const void *report, data_size_t report_len )
+ {
+     struct hw_msg_source source = { IMDT_UNAVAILABLE, origin };
+-    struct hardware_msg_data *msg_data;
+     struct rawinput_message raw_msg;
++    struct hardware_msg_data *msg_data = &raw_msg.data;
++
++    memset( &raw_msg, 0, sizeof(raw_msg) );
++    msg_data->rawinput.type = RIM_TYPEHID;
++
++    raw_msg.message = input->hid.msg;
++
++    if (input->hid.msg == WM_INPUT)
++    {
++        msg_data->rawinput.hid.device = input->hid.device;
++        msg_data->rawinput.hid.length = report_len;
++    }
++    else if (input->hid.msg == WM_INPUT_DEVICE_CHANGE)
++    {
++        raw_msg.wparam     = input->hid.wparam;
++        raw_msg.lparam     = (lparam_t) input->hid.device;
++    }
+ 
+     /* send to all desktops */
+     raw_msg.foreground = NULL;
+@@ -2065,12 +2096,6 @@ static void queue_hid_message( user_handle_t win, const hw_input_t *input,
+     raw_msg.extra      = report;
+     raw_msg.extra_len  = report_len;
+ 
+-    msg_data = &raw_msg.data;
+-    msg_data->flags               = 0;
+-    msg_data->rawinput.type       = RIM_TYPEHID;
+-    msg_data->rawinput.hid.device = input->hid.device;
+-    msg_data->rawinput.hid.length = report_len;
+-
+     enum_processes( queue_rawinput_message, &raw_msg );
+ }
+ 
+@@ -2194,8 +2219,8 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
+ 
+         data->hw_id = msg->unique_id;
+         set_reply_data( msg->data, msg->data_size );
+-        if (msg->msg == WM_INPUT && (flags & PM_REMOVE))
+-            release_hardware_message( current->queue, data->hw_id );
++        if ((msg->msg == WM_INPUT || msg->msg == WM_INPUT_DEVICE_CHANGE) && (flags & PM_REMOVE))
++            release_hardware_message( current->queue, msg->unique_id );
+         return 1;
+     }
+     /* nothing found, clear the hardware queue bits */
+diff --git a/server/trace.c b/server/trace.c
+index e27c974ccd8..de9f28ce145 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -2646,6 +2646,7 @@ static void dump_send_hardware_message_request( const struct send_hardware_messa
+     fprintf( stderr, " win=%08x", req->win );
+     dump_hw_input( ", input=", &req->input );
+     fprintf( stderr, ", flags=%08x", req->flags );
++    dump_varargs_bytes( ", data=", cur_size );
+ }
+ 
+ static void dump_send_hardware_message_reply( const struct send_hardware_message_reply *req )
+From 16d385b9e223010a423d5eff3470547ccba19cf4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 26 Aug 2019 14:37:20 +0200
+Subject: [PATCH] server: Add send_hardware_message flags for rawinput
+ translation.
+
+---
+ dlls/user32/input.c            |  6 +++---
+ include/wine/server_protocol.h |  2 ++
+ server/protocol.def            |  2 ++
+ server/queue.c                 | 20 ++++++++++++++------
+ 4 files changed, 21 insertions(+), 9 deletions(-)
+
+diff --git a/dlls/user32/input.c b/dlls/user32/input.c
+index e06f8b4413e..35fd35854f9 100644
+--- a/dlls/user32/input.c
++++ b/dlls/user32/input.c
+@@ -121,7 +121,7 @@ BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret )
+  */
+ BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input )
+ {
+-    NTSTATUS status = send_hardware_message( hwnd, input, 0 );
++    NTSTATUS status = send_hardware_message( hwnd, input, SEND_HWMSG_RAWINPUT|SEND_HWMSG_WINDOW );
+     if (status) SetLastError( RtlNtStatusToDosError(status) );
+     return !status;
+ }
+@@ -189,9 +189,9 @@ UINT WINAPI SendInput( UINT count, LPINPUT inputs, int size )
+             /* we need to update the coordinates to what the server expects */
+             INPUT input = inputs[i];
+             update_mouse_coords( &input );
+-            status = send_hardware_message( 0, &input, SEND_HWMSG_INJECTED );
++            status = send_hardware_message( 0, &input, SEND_HWMSG_INJECTED|SEND_HWMSG_RAWINPUT|SEND_HWMSG_WINDOW );
+         }
+-        else status = send_hardware_message( 0, &inputs[i], SEND_HWMSG_INJECTED );
++        else status = send_hardware_message( 0, &inputs[i], SEND_HWMSG_INJECTED|SEND_HWMSG_RAWINPUT|SEND_HWMSG_WINDOW );
+ 
+         if (status)
+         {
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index 48bec17d2f8..c7d02c9f491 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -2743,6 +2743,8 @@ struct send_hardware_message_reply
+     char __pad_28[4];
+ };
+ #define SEND_HWMSG_INJECTED    0x01
++#define SEND_HWMSG_RAWINPUT    0x02
++#define SEND_HWMSG_WINDOW      0x04
+ 
+ 
+ 
+diff --git a/server/protocol.def b/server/protocol.def
+index 91ef6cda462..b14902395c6 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -2055,6 +2055,8 @@ enum message_type
+     VARARG(keystate,bytes);    /* global state array for all the keys */
+ @END
+ #define SEND_HWMSG_INJECTED    0x01
++#define SEND_HWMSG_RAWINPUT    0x02
++#define SEND_HWMSG_WINDOW      0x04
+ 
+ 
+ /* Get a message from the current queue */
+diff --git a/server/queue.c b/server/queue.c
+index 88bd8ed5392..7b592df5bde 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -1787,7 +1787,7 @@ static int queue_rawinput_message( struct process* process, void *arg )
+ 
+ /* queue a hardware message for a mouse event */
+ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, const hw_input_t *input,
+-                                unsigned int origin, struct msg_queue *sender )
++                                unsigned int origin, struct msg_queue *sender, unsigned int req_flags )
+ {
+     const struct rawinput_device *device;
+     struct hardware_msg_data *msg_data;
+@@ -1862,7 +1862,8 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
+         msg_data->rawinput.mouse.y    = y - desktop->cursor.y;
+         msg_data->rawinput.mouse.data = input->mouse.data;
+ 
+-        enum_processes( queue_rawinput_message, &raw_msg );
++        if ((req_flags & SEND_HWMSG_RAWINPUT))
++            enum_processes( queue_rawinput_message, &raw_msg );
+         release_object( foreground );
+     }
+ 
+@@ -1872,6 +1873,9 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
+         return 0;
+     }
+ 
++    if (!(req_flags & SEND_HWMSG_WINDOW))
++        return 0;
++
+     for (i = 0; i < ARRAY_SIZE( messages ); i++)
+     {
+         if (!messages[i]) continue;
+@@ -1903,7 +1907,7 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
+ 
+ /* queue a hardware message for a keyboard event */
+ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, const hw_input_t *input,
+-                                   unsigned int origin, struct msg_queue *sender )
++                                   unsigned int origin, struct msg_queue *sender, unsigned int req_flags )
+ {
+     struct hw_msg_source source = { IMDT_KEYBOARD, origin };
+     const struct rawinput_device *device;
+@@ -2001,7 +2005,8 @@ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, c
+         msg_data->rawinput.kbd.vkey    = vkey;
+         msg_data->rawinput.kbd.scan    = input->kbd.scan;
+ 
+-        enum_processes( queue_rawinput_message, &raw_msg );
++        if ((req_flags & SEND_HWMSG_RAWINPUT))
++            enum_processes( queue_rawinput_message, &raw_msg );
+         release_object( foreground );
+     }
+ 
+@@ -2011,6 +2016,9 @@ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, c
+         return 0;
+     }
+ 
++    if (!(req_flags & SEND_HWMSG_WINDOW))
++        return 0;
++
+     if (!(msg = alloc_hardware_message( input->kbd.info, source, time, 0 ))) return 0;
+     msg_data = msg->data;
+ 
+@@ -2614,11 +2622,11 @@ DECL_HANDLER(send_hardware_message)
+     {
+     case HW_INPUT_MOUSE:
+         if (!desktop) return;
+-        reply->wait = queue_mouse_message( desktop, req->win, &req->input, origin, sender );
++        reply->wait = queue_mouse_message( desktop, req->win, &req->input, origin, sender, req->flags );
+         break;
+     case HW_INPUT_KEYBOARD:
+         if (!desktop) return;
+-        reply->wait = queue_keyboard_message( desktop, req->win, &req->input, origin, sender );
++        reply->wait = queue_keyboard_message( desktop, req->win, &req->input, origin, sender, req->flags );
+         break;
+     case HW_INPUT_HARDWARE:
+         if (!desktop) return;
 From e31b544dacbae84c92cd4e2796f3c1c5ac29fcf0 Mon Sep 17 00:00:00 2001
 From: Arkadiusz Hiler <ahiler@codeweavers.com>
 Date: Wed, 9 Dec 2020 14:04:56 +0200
@@ -9846,12 +11235,13 @@ index cfe4e8826b6..ea9ea3669e8 100644
  {
      WCHAR device_instance_id[MAX_DEVICE_ID_LEN];
      SP_DEVINFO_DATA Data;
-@@ -91,12 +91,10 @@ NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device, BOOL xinput_hack)
+@@ -91,13 +91,11 @@ NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device, BOOL xinput_hack)
      NTSTATUS status;
      HDEVINFO devinfo;
      GUID hidGuid;
 -    BASE_DEVICE_EXTENSION *ext;
 +    BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
+     INT32 handle;
  
      HidD_GetHidGuid(&hidGuid);
 -    if(xinput_hack)
@@ -9862,14 +11252,14 @@ index cfe4e8826b6..ea9ea3669e8 100644
      RtlInitUnicodeString( &nameW, ext->device_name);
  
 @@ -268,6 +266,8 @@ static void HID_Device_sendRawInput(DEVICE_OBJECT *device, HID_XFER_PACKET *pack
-     ULONG data_size;
-     INPUT input;
+ {
+     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
  
 +    if (ext->xinput_hack) return;
 +
-     data_size = offsetof(RAWINPUT, data.hid.bRawData) + packet->reportBufferLen;
-     if (!(id = ext->preparseData->reports[0].reportID)) data_size += 1;
-                = 0;
+     SERVER_START_REQ(send_hardware_message)
+     {
+         req->win                  = 0;
 diff --git a/dlls/hidclass.sys/hid.h b/dlls/hidclass.sys/hid.h
 index 0273d2510b0..369240d745a 100644
 --- a/dlls/hidclass.sys/hid.h
@@ -9907,6 +11297,29 @@ index 624a4c72414..949e389e72f 100644
  
      ext->poll_interval = DEFAULT_POLL_INTERVAL;
  
+From 97c087d86f22969b8d83cf3e0264eeb4baa4523d Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Fri, 12 Mar 2021 12:45:57 +0200
+Subject: [PATCH] HACK: hidclass.sys: Don't send WM_INPUT_DEVICE_CHANGE for
+ special xinput HID devices
+
+---
+ dlls/hidclass.sys/pnp.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/dlls/hidclass.sys/pnp.c b/dlls/hidclass.sys/pnp.c
+index 949e389e72f..8a0f50ad345 100644
+--- a/dlls/hidclass.sys/pnp.c
++++ b/dlls/hidclass.sys/pnp.c
+@@ -74,6 +74,8 @@ static void HID_PNP_SendDeviceChange(DEVICE_OBJECT *device, WPARAM wparam)
+ {
+     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
+ 
++    if (ext->xinput_hack) return;
++
+     SERVER_START_REQ(send_hardware_message)
+     {
+         req->win                  = 0;
 From 853144dbef072275fe684641bbdbf2e49c3ce9c3 Mon Sep 17 00:00:00 2001
 From: Arkadiusz Hiler <ahiler@codeweavers.com>
 Date: Fri, 12 Mar 2021 13:17:44 +0200

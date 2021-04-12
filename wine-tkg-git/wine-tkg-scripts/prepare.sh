@@ -709,7 +709,7 @@ _prepare() {
 	fi
 
 	# Bypass compositor in fullscreen mode - Reduces stuttering and improves performance
-	if [ "$_FS_bypass_compositor" = "true" ]; then
+	if [ "$_FS_bypass_compositor" = "true" ] && [ "$_FS_bypass_compositor_legacy" != "false" ]; then
 	  _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	fi
 
@@ -1493,7 +1493,7 @@ EOM
 
 	# Proton Fullscreen patch - Allows resolution changes for fullscreen games without changing desktop resolution
 	if [ "$_proton_fs_hack" = "true" ] && [ "$_unfrog" != "true" ]; then
-	  if [ "$_FS_bypass_compositor" != "true" ] && ( ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD || git merge-base --is-ancestor 29d9659095fd76e303f204050ab4c85d0a0486e4 HEAD ); then
+	  if [ "$_FS_bypass_compositor" != "true" ] && [ "$_FS_bypass_compositor_legacy" != "false" ]; then
 	    _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	  fi
 	  if [ "$_use_staging" = "true" ]; then
@@ -1576,7 +1576,7 @@ EOM
 	      _proton_fs_hack="false"
 	    fi
 	  fi
-	  if [ "$_FS_bypass_compositor" != "true" ] && ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD; then
+	  if [ "$_FS_bypass_compositor" != "true" ] && [ "$_FS_bypass_compositor_legacy" != "false" ]; then
 	    _FS_bypass_compositor="true"
 	    _patchname='FS_bypass_compositor-disabler.patch' && _patchmsg="Turned off Fullscreen compositor bypass" && nonuser_patcher
 	  fi
@@ -1765,7 +1765,7 @@ EOM
 	echo -e "" >> "$_where"/last_build_config.log
 
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD || ([ "$_protonify" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2cb4bdb10abcfd751d4d1b2ca7780c778166608a HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a24bdfc2c69c5648cbb3df762149b2647e209a09 HEAD ); then
 	    if [ "$_use_staging" = "true" ]; then
 	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD; then
 	        _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/3" && nonuser_patcher
@@ -1839,7 +1839,11 @@ EOM
 	      fi
 	    fi
 	  else
-	    if git merge-base --is-ancestor e51ae86937c547124c906fb1d5db7a142af60686 HEAD; then
+	    if git merge-base --is-ancestor 2cb4bdb10abcfd751d4d1b2ca7780c778166608a HEAD; then
+	      _lastcommit="a24bdfc"
+	      _rpc="1"
+	      _stmbits="1"
+	    elif git merge-base --is-ancestor e51ae86937c547124c906fb1d5db7a142af60686 HEAD; then
 	      _lastcommit="2cb4bdb"
 	      _rpc="1"
 	      _stmbits="1"
@@ -2132,8 +2136,10 @@ EOM
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	  # SDL Joystick support - from Proton
 	  if [ "$_sdl_joy_support" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 626870abe2e800cc9407d05d5c00500a4ad97b3a HEAD ) && [ "$_use_staging" = "true" ]; then
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 661df7b889bb973721d09a316d87d200a31233fe HEAD ) && [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 626870abe2e800cc9407d05d5c00500a4ad97b3a HEAD ) && [ "$_use_staging" = "true" ]; then
+	      _patchname='proton-sdl-joy-661df7b.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor b71cea76ed24ca940783e01da54917eefa0bb36b HEAD ) && [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-sdl-joy-626870a.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e4fbae832c868e9fcf5a91c58255fe3f4ea1cb30 HEAD ) && [ "$_use_staging" = "true" ]; then
