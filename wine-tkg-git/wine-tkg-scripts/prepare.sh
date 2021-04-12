@@ -1647,7 +1647,7 @@ EOM
 	fi
 
 	# Workarounds to prevent crashes on some mf functions
-	if ! git merge-base --is-ancestor 437bc14ac352df8b34819f7df6aab0b0fb04dddd HEAD
+	if ! git merge-base --is-ancestor 437bc14ac352df8b34819f7df6aab0b0fb04dddd HEAD; then
 	  if [ "$_use_staging" = "true" ] && [ "$_proton_mf_hacks" = "true" ] && git merge-base --is-ancestor b182ba882cfcce7b8769470f49f0fba216095c45 HEAD; then
 	    if git merge-base --is-ancestor e308d81a617632fe0fedd243952f79e8d9ec05b4 HEAD; then
 	      _patchname='proton_mf_hacks.patch' && _patchmsg="Applied proton mf hacks patch" && nonuser_patcher
