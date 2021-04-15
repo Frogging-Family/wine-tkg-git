@@ -749,7 +749,7 @@ index 6c27c6f9894..659a813cefa 100644
 +    }
 +
 +    real_images = heap_alloc(count * sizeof(VkImage));
-+    swapchain->cmd_pools = heap_alloc_zero(sizeof(VkCommandPool) * device->queue_count);
++    swapchain->cmd_pools = heap_alloc_zero(sizeof(VkCommandPool) * device->max_queue_families);
 +    swapchain->fs_hack_images = heap_alloc_zero(sizeof(struct fs_hack_image) * count);
 +    if(!real_images || !swapchain->cmd_pools || !swapchain->fs_hack_images)
 +        goto fail;
@@ -1056,7 +1056,7 @@ index 6c27c6f9894..659a813cefa 100644
      return res;
  }
  
-@@ -3042,3 +3042,621 @@ HRESULT WINAPI DllUnregisterServer(void)
+@@ -3042,3 +3042,632 @@ HRESULT WINAPI DllUnregisterServer(void)
  
      return S_OK;
  }
@@ -1096,7 +1096,7 @@ index 6c27c6f9894..659a813cefa 100644
 +        for(i = 0; i < object->n_images; ++i)
 +            destroy_fs_hack_image(device, object, &object->fs_hack_images[i]);
 +
-+        for(i = 0; i < device->queue_count; ++i)
++        for(i = 0; i < device->max_queue_families; ++i)
 +            if(object->cmd_pools[i])
 +                device->funcs.p_vkDestroyCommandPool(device->device, object->cmd_pools[i], NULL);
 +
@@ -1133,6 +1133,17 @@ index 6c27c6f9894..659a813cefa 100644
 +    }
 +
 +    return device->funcs.p_vkGetSwapchainImagesKHR(device->device, object->swapchain, pSwapchainImageCount, pSwapchainImages);
++}
++
++static uint32_t get_queue_index(VkQueue queue)
++{
++    uint32_t i;
++    for(i = 0; i < queue->device->max_queue_families; ++i){
++        if(queue->device->queues[i] == queue)
++            return i;
++    }
++    WARN("couldn't find queue\n");
++    return -1;
 +}
 +
 +static VkCommandBuffer create_hack_cmd(VkQueue queue, struct VkSwapchainKHR_T *swapchain, uint32_t queue_idx)
@@ -1582,7 +1593,7 @@ index 6c27c6f9894..659a813cefa 100644
 +            struct fs_hack_image *hack = &swapchain->fs_hack_images[our_presentInfo.pImageIndices[i]];
 +
 +            if(!blit_cmds){
-+                queue_idx = queue->family_index;
++                queue_idx = get_queue_index(queue);
 +                blit_cmds = heap_alloc(our_presentInfo.swapchainCount * sizeof(VkCommandBuffer));
 +                blit_sema = hack->blit_finished;
 +            }
@@ -1713,7 +1724,7 @@ index 4a41a15461e..e0b47b32bc3 100644
 +    VkExtent2D real_extent;
 +    VkImageUsageFlags surface_usage;
 +    VkRect2D blit_dst;
-+    VkCommandPool *cmd_pools; /* VkCommandPool[device->queue_count] */
++    VkCommandPool *cmd_pools; /* VkCommandPool[device->max_queue_families] */
 +    VkDeviceMemory user_image_memory, blit_image_memory;
 +    uint32_t n_images;
 +    struct fs_hack_image *fs_hack_images; /* struct fs_hack_image[n_images] */
