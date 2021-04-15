@@ -1,0 +1,1960 @@
+From a27d5bae114eef5352b699ee38975bc8793b4dcb Mon Sep 17 00:00:00 2001
+From: Jacek Caban <jacek@codeweavers.com>
+Date: Tue, 13 Apr 2021 00:53:17 +0200
+Subject: [PATCH] winevulkan: Use standard CRT memory allocators.
+
+Signed-off-by: Jacek Caban <jacek@codeweavers.com>
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
+---
+ dlls/winevulkan/make_vulkan     |   8 +-
+ dlls/winevulkan/vulkan.c        | 111 +++++------
+ dlls/winevulkan/vulkan_thunks.c | 322 ++++++++++++++++----------------
+ 3 files changed, 221 insertions(+), 220 deletions(-)
+
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index 1017c09dfc7..c984dae2776 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -1914,7 +1914,7 @@ class ConversionFunction(object):
+         body += "    unsigned int i;\n\n"
+         body += "    if (!in) return NULL;\n\n"
+ 
+-        body += "    out = heap_alloc(count * sizeof(*out));\n"
++        body += "    out = malloc(count * sizeof(*out));\n"
+ 
+         body += "    for (i = 0; i < count; i++)\n"
+         body += "    {\n"
+@@ -2053,7 +2053,7 @@ class FreeFunction(object):
+         else:
+             body += "    if (!in) return;\n\n"
+ 
+-        body += "    heap_free(in);\n"
++        body += "    free(in);\n"
+ 
+         body += "}\n\n"
+         return body
+@@ -2132,7 +2132,7 @@ class StructChainConversionFunction(object):
+             body += "            const {0} *in = (const {0} *)in_header;\n".format(e.name)
+             body += "            {0} *out;\n\n".format(e.name)
+ 
+-            body += "            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;\n\n"
++            body += "            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;\n\n"
+ 
+             for m in e:
+                 if m.name == "pNext":
+@@ -2184,7 +2184,7 @@ class FreeStructChainFunction(object):
+         body += "    {\n"
+         body += "        void *prev = header;\n"
+         body += "        header = header->pNext;\n"
+-        body += "        heap_free(prev);\n"
++        body += "        free(prev);\n"
+         body += "    }\n\n"
+ 
+         body += "    s->pNext = NULL;\n"
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index b2045295718..220528a8b86 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -20,6 +20,7 @@
+ #include "config.h"
+ #include <time.h>
+ #include <stdarg.h>
++#include <stdlib.h>
+ 
+ #include "windef.h"
+ #include "winbase.h"
+@@ -218,8 +219,8 @@ static void wine_vk_physical_device_free(struct VkPhysicalDevice_T *phys_dev)
+         return;
+ 
+     WINE_VK_REMOVE_HANDLE_MAPPING(phys_dev->instance, phys_dev);
+-    heap_free(phys_dev->extensions);
+-    heap_free(phys_dev);
++    free(phys_dev->extensions);
++    free(phys_dev);
+ }
+ 
+ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstance_T *instance,
+@@ -231,7 +232,7 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
+     VkResult res;
+     unsigned int i, j;
+ 
+-    if (!(object = heap_alloc_zero(sizeof(*object))))
++    if (!(object = calloc(1, sizeof(*object))))
+         return NULL;
+ 
+     object->base.loader_magic = VULKAN_ICD_MAGIC_VALUE;
+@@ -248,7 +249,7 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
+         goto err;
+     }
+ 
+-    host_properties = heap_calloc(num_host_properties, sizeof(*host_properties));
++    host_properties = calloc(num_host_properties, sizeof(*host_properties));
+     if (!host_properties)
+     {
+         ERR("Failed to allocate memory for device properties!\n");
+@@ -281,7 +282,7 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
+ 
+     TRACE("Host supported extensions %u, Wine supported extensions %u\n", num_host_properties, num_properties);
+ 
+-    if (!(object->extensions = heap_calloc(num_properties, sizeof(*object->extensions))))
++    if (!(object->extensions = calloc(num_properties, sizeof(*object->extensions))))
+     {
+         ERR("Failed to allocate memory for device extensions!\n");
+         goto err;
+@@ -297,12 +298,12 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
+     }
+     object->extension_count = num_properties;
+ 
+-    heap_free(host_properties);
++    free(host_properties);
+     return object;
+ 
+ err:
+     wine_vk_physical_device_free(object);
+-    heap_free(host_properties);
++    free(host_properties);
+     return NULL;
+ }
+ 
+@@ -319,7 +320,7 @@ static void wine_vk_free_command_buffers(struct VkDevice_T *device,
+         device->funcs.p_vkFreeCommandBuffers(device->device, pool->command_pool, 1, &buffers[i]->command_buffer);
+         list_remove(&buffers[i]->pool_link);
+         WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, buffers[i]);
+-        heap_free(buffers[i]);
++        free(buffers[i]);
+     }
+ }
+ 
+@@ -375,7 +376,7 @@ static void wine_vk_device_free_create_info(VkDeviceCreateInfo *create_info)
+ 
+     if ((group_info = wine_vk_find_struct(create_info, DEVICE_GROUP_DEVICE_CREATE_INFO)))
+     {
+-        heap_free((void *)group_info->pPhysicalDevices);
++        free((void *)group_info->pPhysicalDevices);
+     }
+ 
+     free_VkDeviceCreateInfo_struct_chain(create_info);
+@@ -401,7 +402,7 @@ static VkResult wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src
+     {
+         VkPhysicalDevice *physical_devices;
+ 
+-        if (!(physical_devices = heap_calloc(group_info->physicalDeviceCount, sizeof(*physical_devices))))
++        if (!(physical_devices = calloc(group_info->physicalDeviceCount, sizeof(*physical_devices))))
+         {
+             free_VkDeviceCreateInfo_struct_chain(dst);
+             return VK_ERROR_OUT_OF_HOST_MEMORY;
+@@ -448,7 +449,7 @@ static void wine_vk_device_free(struct VkDevice_T *device)
+             if (queue && queue->queue)
+                 WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, queue);
+         }
+-        heap_free(device->queues);
++        free(device->queues);
+         device->queues = NULL;
+     }
+ 
+@@ -460,7 +461,7 @@ static void wine_vk_device_free(struct VkDevice_T *device)
+         device->funcs.p_vkDestroyDevice(device->device, NULL /* pAllocator */);
+     }
+ 
+-    heap_free(device);
++    free(device);
+ }
+ 
+ static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
+@@ -507,7 +508,7 @@ static VkResult wine_vk_instance_convert_create_info(const VkInstanceCreateInfo
+     }
+ 
+     object->utils_messenger_count = wine_vk_count_struct(dst, DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT);
+-    object->utils_messengers =  heap_calloc(object->utils_messenger_count, sizeof(*object->utils_messengers));
++    object->utils_messengers =  calloc(object->utils_messenger_count, sizeof(*object->utils_messengers));
+     header = (VkBaseInStructure *) dst;
+     for (i = 0; i < object->utils_messenger_count; i++)
+     {
+@@ -587,20 +588,20 @@ static VkResult wine_vk_instance_load_physical_devices(struct VkInstance_T *inst
+     if (!phys_dev_count)
+         return res;
+ 
+-    if (!(tmp_phys_devs = heap_calloc(phys_dev_count, sizeof(*tmp_phys_devs))))
++    if (!(tmp_phys_devs = calloc(phys_dev_count, sizeof(*tmp_phys_devs))))
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+ 
+     res = instance->funcs.p_vkEnumeratePhysicalDevices(instance->instance, &phys_dev_count, tmp_phys_devs);
+     if (res != VK_SUCCESS)
+     {
+-        heap_free(tmp_phys_devs);
++        free(tmp_phys_devs);
+         return res;
+     }
+ 
+-    instance->phys_devs = heap_calloc(phys_dev_count, sizeof(*instance->phys_devs));
++    instance->phys_devs = calloc(phys_dev_count, sizeof(*instance->phys_devs));
+     if (!instance->phys_devs)
+     {
+-        heap_free(tmp_phys_devs);
++        free(tmp_phys_devs);
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+     }
+ 
+@@ -611,7 +612,7 @@ static VkResult wine_vk_instance_load_physical_devices(struct VkInstance_T *inst
+         if (!phys_dev)
+         {
+             ERR("Unable to allocate memory for physical device!\n");
+-            heap_free(tmp_phys_devs);
++            free(tmp_phys_devs);
+             return VK_ERROR_OUT_OF_HOST_MEMORY;
+         }
+ 
+@@ -620,7 +621,7 @@ static VkResult wine_vk_instance_load_physical_devices(struct VkInstance_T *inst
+     }
+     instance->phys_dev_count = phys_dev_count;
+ 
+-    heap_free(tmp_phys_devs);
++    free(tmp_phys_devs);
+     return VK_SUCCESS;
+ }
+ 
+@@ -656,7 +657,7 @@ static void wine_vk_instance_free(struct VkInstance_T *instance)
+         {
+             wine_vk_physical_device_free(instance->phys_devs[i]);
+         }
+-        heap_free(instance->phys_devs);
++        free(instance->phys_devs);
+     }
+ 
+     if (instance->instance)
+@@ -665,9 +666,9 @@ static void wine_vk_instance_free(struct VkInstance_T *instance)
+     }
+ 
+     pthread_rwlock_destroy(&instance->wrapper_lock);
+-    heap_free(instance->utils_messengers);
++    free(instance->utils_messengers);
+ 
+-    heap_free(instance);
++    free(instance);
+ }
+ 
+ VkResult WINAPI wine_vkAllocateCommandBuffers(VkDevice device,
+@@ -700,7 +701,7 @@ VkResult WINAPI wine_vkAllocateCommandBuffers(VkDevice device,
+         TRACE("Allocating command buffer %u from pool 0x%s.\n",
+                 i, wine_dbgstr_longlong(allocate_info_host.commandPool));
+ 
+-        if (!(buffers[i] = heap_alloc_zero(sizeof(**buffers))))
++        if (!(buffers[i] = calloc(1, sizeof(**buffers))))
+         {
+             res = VK_ERROR_OUT_OF_HOST_MEMORY;
+             break;
+@@ -756,7 +757,7 @@ void WINAPI wine_vkCmdExecuteCommands(VkCommandBuffer buffer, uint32_t count,
+ 
+     buffer->device->funcs.p_vkCmdExecuteCommands(buffer->command_buffer, count, tmp_buffers);
+ 
+-    heap_free(tmp_buffers);
++    free(tmp_buffers);
+ }
+ 
+ VkResult WINAPI wine_vkCreateDevice(VkPhysicalDevice phys_dev,
+@@ -785,7 +786,7 @@ VkResult WINAPI wine_vkCreateDevice(VkPhysicalDevice phys_dev,
+         TRACE("Driver version: %#x.\n", properties.driverVersion);
+     }
+ 
+-    if (!(object = heap_alloc_zero(sizeof(*object))))
++    if (!(object = calloc(1, sizeof(*object))))
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+ 
+     object->base.loader_magic = VULKAN_ICD_MAGIC_VALUE;
+@@ -824,7 +825,7 @@ VkResult WINAPI wine_vkCreateDevice(VkPhysicalDevice phys_dev,
+         object->queue_count += create_info_host.pQueueCreateInfos[i].queueCount;
+     }
+ 
+-    if (!(object->queues = heap_calloc(object->queue_count, sizeof(*object->queues))))
++    if (!(object->queues = calloc(object->queue_count, sizeof(*object->queues))))
+     {
+         res = VK_ERROR_OUT_OF_HOST_MEMORY;
+         goto fail;
+@@ -874,7 +875,7 @@ VkResult WINAPI wine_vkCreateInstance(const VkInstanceCreateInfo *create_info,
+     if (allocator)
+         FIXME("Support for allocation callbacks not implemented yet\n");
+ 
+-    if (!(object = heap_alloc_zero(sizeof(*object))))
++    if (!(object = calloc(1, sizeof(*object))))
+     {
+         ERR("Failed to allocate memory for instance\n");
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+@@ -1014,14 +1015,14 @@ VkResult WINAPI wine_vkEnumerateInstanceExtensionProperties(const char *layer_na
+     if (res != VK_SUCCESS)
+         return res;
+ 
+-    if (!(host_properties = heap_calloc(num_host_properties, sizeof(*host_properties))))
++    if (!(host_properties = calloc(num_host_properties, sizeof(*host_properties))))
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+ 
+     res = vk_funcs->p_vkEnumerateInstanceExtensionProperties(NULL, &num_host_properties, host_properties);
+     if (res != VK_SUCCESS)
+     {
+         ERR("Failed to retrieve host properties, res=%d.\n", res);
+-        heap_free(host_properties);
++        free(host_properties);
+         return res;
+     }
+ 
+@@ -1041,7 +1042,7 @@ VkResult WINAPI wine_vkEnumerateInstanceExtensionProperties(const char *layer_na
+     {
+         TRACE("Returning %u extensions.\n", num_properties);
+         *count = num_properties;
+-        heap_free(host_properties);
++        free(host_properties);
+         return VK_SUCCESS;
+     }
+ 
+@@ -1055,7 +1056,7 @@ VkResult WINAPI wine_vkEnumerateInstanceExtensionProperties(const char *layer_na
+     }
+     *count = min(*count, num_properties);
+ 
+-    heap_free(host_properties);
++    free(host_properties);
+     return *count < num_properties ? VK_INCOMPLETE : VK_SUCCESS;
+ }
+ 
+@@ -1290,7 +1291,7 @@ VkResult WINAPI wine_vkQueueSubmit(VkQueue queue, uint32_t count,
+         return queue->device->funcs.p_vkQueueSubmit(queue->queue, 0, NULL, fence);
+     }
+ 
+-    submits_host = heap_calloc(count, sizeof(*submits_host));
++    submits_host = calloc(count, sizeof(*submits_host));
+     if (!submits_host)
+     {
+         ERR("Unable to allocate memory for submit buffers!\n");
+@@ -1302,7 +1303,7 @@ VkResult WINAPI wine_vkQueueSubmit(VkQueue queue, uint32_t count,
+         memcpy(&submits_host[i], &submits[i], sizeof(*submits_host));
+ 
+         num_command_buffers = submits[i].commandBufferCount;
+-        command_buffers = heap_calloc(num_command_buffers, sizeof(*command_buffers));
++        command_buffers = calloc(num_command_buffers, sizeof(*command_buffers));
+         if (!command_buffers)
+         {
+             ERR("Unable to allocate memory for command buffers!\n");
+@@ -1322,9 +1323,9 @@ VkResult WINAPI wine_vkQueueSubmit(VkQueue queue, uint32_t count,
+ done:
+     for (i = 0; i < count; i++)
+     {
+-        heap_free((void *)submits_host[i].pCommandBuffers);
++        free((void *)submits_host[i].pCommandBuffers);
+     }
+-    heap_free(submits_host);
++    free(submits_host);
+ 
+     TRACE("Returning %d\n", res);
+     return res;
+@@ -1341,7 +1342,7 @@ VkResult WINAPI wine_vkCreateCommandPool(VkDevice device, const VkCommandPoolCre
+     if (allocator)
+         FIXME("Support for allocation callbacks not implemented yet\n");
+ 
+-    if (!(object = heap_alloc_zero(sizeof(*object))))
++    if (!(object = calloc(1, sizeof(*object))))
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+ 
+     list_init(&object->command_buffers);
+@@ -1355,7 +1356,7 @@ VkResult WINAPI wine_vkCreateCommandPool(VkDevice device, const VkCommandPoolCre
+     }
+     else
+     {
+-        heap_free(object);
++        free(object);
+     }
+ 
+     return res;
+@@ -1382,13 +1383,13 @@ void WINAPI wine_vkDestroyCommandPool(VkDevice device, VkCommandPool handle,
+     LIST_FOR_EACH_ENTRY_SAFE(buffer, cursor, &pool->command_buffers, struct VkCommandBuffer_T, pool_link)
+     {
+         WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, buffer);
+-        heap_free(buffer);
++        free(buffer);
+     }
+ 
+     WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, pool);
+ 
+     device->funcs.p_vkDestroyCommandPool(device->device, pool->command_pool, NULL);
+-    heap_free(pool);
++    free(pool);
+ }
+ 
+ static VkResult wine_vk_enumerate_physical_device_groups(struct VkInstance_T *instance,
+@@ -1578,7 +1579,7 @@ VkResult WINAPI wine_vkGetCalibratedTimestampsEXT(VkDevice device,
+     for (i = 0; i < timestamp_count; i++)
+         timestamps[i] = convert_timestamp(host_timestamp_infos[i].timeDomain, timestamp_infos[i].timeDomain, timestamps[i]);
+ 
+-    heap_free(host_timestamp_infos);
++    free(host_timestamp_infos);
+ 
+     return res;
+ }
+@@ -1608,7 +1609,7 @@ VkResult WINAPI wine_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT(VkPhysicalDe
+     res = phys_dev->instance->funcs.p_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT(phys_dev->phys_dev, &host_time_domain_count, host_time_domains);
+     if (res != VK_SUCCESS)
+     {
+-        heap_free(host_time_domains);
++        free(host_time_domains);
+         return res;
+     }
+ 
+@@ -1624,7 +1625,7 @@ VkResult WINAPI wine_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT(VkPhysicalDe
+             FIXME("Unknown time domain %d\n", host_time_domains[i]);
+     }
+ 
+-    heap_free(host_time_domains);
++    free(host_time_domains);
+ 
+     out_time_domain_count = 0;
+ 
+@@ -1806,7 +1807,7 @@ VkResult WINAPI wine_vkCreateWin32SurfaceKHR(VkInstance instance,
+     if (allocator)
+         FIXME("Support for allocation callbacks not implemented yet\n");
+ 
+-    object = heap_alloc_zero(sizeof(*object));
++    object = calloc(1, sizeof(*object));
+ 
+     if (!object)
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+@@ -1815,7 +1816,7 @@ VkResult WINAPI wine_vkCreateWin32SurfaceKHR(VkInstance instance,
+ 
+     if (res != VK_SUCCESS)
+     {
+-        heap_free(object);
++        free(object);
+         return res;
+     }
+ 
+@@ -1840,7 +1841,7 @@ void WINAPI wine_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface,
+     instance->funcs.p_vkDestroySurfaceKHR(instance->instance, object->driver_surface, NULL);
+ 
+     WINE_VK_REMOVE_HANDLE_MAPPING(instance, object);
+-    heap_free(object);
++    free(object);
+ }
+ 
+ VkResult WINAPI wine_vkGetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice phys_dev,
+@@ -1917,7 +1918,7 @@ VkResult WINAPI wine_vkCreateDebugUtilsMessengerEXT(VkInstance instance, const V
+     if (allocator)
+         FIXME("Support for allocation callbacks not implemented yet\n");
+ 
+-    if (!(object = heap_alloc_zero(sizeof(*object))))
++    if (!(object = calloc(1, sizeof(*object))))
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+ 
+     object->instance = instance;
+@@ -1933,7 +1934,7 @@ VkResult WINAPI wine_vkCreateDebugUtilsMessengerEXT(VkInstance instance, const V
+ 
+     if (res != VK_SUCCESS)
+     {
+-        heap_free(object);
++        free(object);
+         return res;
+     }
+ 
+@@ -1958,7 +1959,7 @@ void WINAPI wine_vkDestroyDebugUtilsMessengerEXT(
+     instance->funcs.p_vkDestroyDebugUtilsMessengerEXT(instance->instance, object->debug_messenger, NULL);
+     WINE_VK_REMOVE_HANDLE_MAPPING(instance, object);
+ 
+-    heap_free(object);
++    free(object);
+ }
+ 
+ void WINAPI wine_vkSubmitDebugUtilsMessageEXT(VkInstance instance, VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+@@ -1971,7 +1972,7 @@ void WINAPI wine_vkSubmitDebugUtilsMessageEXT(VkInstance instance, VkDebugUtilsM
+     TRACE("%p, %#x, %#x, %p\n", instance, severity, types, callback_data);
+ 
+     native_callback_data = *callback_data;
+-    object_names = heap_calloc(callback_data->objectCount, sizeof(*object_names));
++    object_names = calloc(callback_data->objectCount, sizeof(*object_names));
+     memcpy(object_names, callback_data->pObjects, callback_data->objectCount * sizeof(*object_names));
+     native_callback_data.pObjects = object_names;
+ 
+@@ -1983,7 +1984,7 @@ void WINAPI wine_vkSubmitDebugUtilsMessageEXT(VkInstance instance, VkDebugUtilsM
+ 
+     thunk_vkSubmitDebugUtilsMessageEXT(instance, severity, types, &native_callback_data);
+ 
+-    heap_free(object_names);
++    free(object_names);
+ }
+ 
+ VkResult WINAPI wine_vkSetDebugUtilsObjectTagEXT(VkDevice device, const VkDebugUtilsObjectTagInfoEXT *tag_info)
+@@ -2022,7 +2023,7 @@ VkResult WINAPI wine_vkCreateDebugReportCallbackEXT(VkInstance instance, const V
+     if (allocator)
+         FIXME("Support for allocation callbacks not implemented yet\n");
+ 
+-    if (!(object = heap_alloc_zero(sizeof(*object))))
++    if (!(object = calloc(1, sizeof(*object))))
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+ 
+     object->instance = instance;
+@@ -2038,7 +2039,7 @@ VkResult WINAPI wine_vkCreateDebugReportCallbackEXT(VkInstance instance, const V
+ 
+     if (res != VK_SUCCESS)
+     {
+-        heap_free(object);
++        free(object);
+         return res;
+     }
+ 
+@@ -2064,7 +2065,7 @@ void WINAPI wine_vkDestroyDebugReportCallbackEXT(
+ 
+     WINE_VK_REMOVE_HANDLE_MAPPING(instance, object);
+ 
+-    heap_free(object);
++    free(object);
+ }
+ 
+ void WINAPI wine_vkDebugReportMessageEXT(VkInstance instance, VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT object_type,
+diff --git a/dlls/winevulkan/vulkan_thunks.c b/dlls/winevulkan/vulkan_thunks.c
+index b4e1f290fdd..f25e7dea7e7 100644
+--- a/dlls/winevulkan/vulkan_thunks.c
++++ b/dlls/winevulkan/vulkan_thunks.c
+@@ -68,7 +68,7 @@ static inline VkCommandBufferInheritanceInfo_host *convert_VkCommandBufferInheri
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -88,7 +88,7 @@ static inline void free_VkCommandBufferInheritanceInfo_array(VkCommandBufferInhe
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkCommandBufferBeginInfo_win_to_host(const VkCommandBufferBeginInfo *in, VkCommandBufferBeginInfo_host *out)
+@@ -113,7 +113,7 @@ static inline VkBindAccelerationStructureMemoryInfoNV_host *convert_VkBindAccele
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -132,7 +132,7 @@ static inline void free_VkBindAccelerationStructureMemoryInfoNV_array(VkBindAcce
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkBindBufferMemoryInfo_host *convert_VkBindBufferMemoryInfo_array_win_to_host(const VkBindBufferMemoryInfo *in, uint32_t count)
+@@ -142,7 +142,7 @@ static inline VkBindBufferMemoryInfo_host *convert_VkBindBufferMemoryInfo_array_
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -159,7 +159,7 @@ static inline void free_VkBindBufferMemoryInfo_array(VkBindBufferMemoryInfo_host
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkBindImageMemoryInfo_host *convert_VkBindImageMemoryInfo_array_win_to_host(const VkBindImageMemoryInfo *in, uint32_t count)
+@@ -169,7 +169,7 @@ static inline VkBindImageMemoryInfo_host *convert_VkBindImageMemoryInfo_array_wi
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -186,7 +186,7 @@ static inline void free_VkBindImageMemoryInfo_array(VkBindImageMemoryInfo_host *
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkAccelerationStructureBuildGeometryInfoKHR_host *convert_VkAccelerationStructureBuildGeometryInfoKHR_array_win_to_host(const VkAccelerationStructureBuildGeometryInfoKHR *in, uint32_t count)
+@@ -196,7 +196,7 @@ static inline VkAccelerationStructureBuildGeometryInfoKHR_host *convert_VkAccele
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -219,7 +219,7 @@ static inline void free_VkAccelerationStructureBuildGeometryInfoKHR_array(VkAcce
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkConditionalRenderingBeginInfoEXT_win_to_host(const VkConditionalRenderingBeginInfoEXT *in, VkConditionalRenderingBeginInfoEXT_host *out)
+@@ -307,7 +307,7 @@ static inline VkGeometryNV_host *convert_VkGeometryNV_array_win_to_host(const Vk
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -324,7 +324,7 @@ static inline void free_VkGeometryNV_array(VkGeometryNV_host *in, uint32_t count
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkAccelerationStructureInfoNV_win_to_host(const VkAccelerationStructureInfoNV *in, VkAccelerationStructureInfoNV_host *out)
+@@ -374,7 +374,7 @@ static inline VkBufferCopy_host *convert_VkBufferCopy_array_win_to_host(const Vk
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].srcOffset = in[i].srcOffset;
+@@ -389,7 +389,7 @@ static inline void free_VkBufferCopy_array(VkBufferCopy_host *in, uint32_t count
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkBufferCopy2KHR_host *convert_VkBufferCopy2KHR_array_win_to_host(const VkBufferCopy2KHR *in, uint32_t count)
+@@ -399,7 +399,7 @@ static inline VkBufferCopy2KHR_host *convert_VkBufferCopy2KHR_array_win_to_host(
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -416,7 +416,7 @@ static inline void free_VkBufferCopy2KHR_array(VkBufferCopy2KHR_host *in, uint32
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkCopyBufferInfo2KHR_win_to_host(const VkCopyBufferInfo2KHR *in, VkCopyBufferInfo2KHR_host *out)
+@@ -443,7 +443,7 @@ static inline VkBufferImageCopy_host *convert_VkBufferImageCopy_array_win_to_hos
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].bufferOffset = in[i].bufferOffset;
+@@ -461,7 +461,7 @@ static inline void free_VkBufferImageCopy_array(VkBufferImageCopy_host *in, uint
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkBufferImageCopy2KHR_host *convert_VkBufferImageCopy2KHR_array_win_to_host(const VkBufferImageCopy2KHR *in, uint32_t count)
+@@ -471,7 +471,7 @@ static inline VkBufferImageCopy2KHR_host *convert_VkBufferImageCopy2KHR_array_wi
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -491,7 +491,7 @@ static inline void free_VkBufferImageCopy2KHR_array(VkBufferImageCopy2KHR_host *
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkCopyBufferToImageInfo2KHR_win_to_host(const VkCopyBufferToImageInfo2KHR *in, VkCopyBufferToImageInfo2KHR_host *out)
+@@ -562,7 +562,7 @@ static inline VkIndirectCommandsStreamNV_host *convert_VkIndirectCommandsStreamN
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].buffer = in[i].buffer;
+@@ -576,7 +576,7 @@ static inline void free_VkIndirectCommandsStreamNV_array(VkIndirectCommandsStrea
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkGeneratedCommandsInfoNV_win_to_host(const VkGeneratedCommandsInfoNV *in, VkGeneratedCommandsInfoNV_host *out)
+@@ -612,7 +612,7 @@ static inline VkBufferMemoryBarrier_host *convert_VkBufferMemoryBarrier_array_wi
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -633,7 +633,7 @@ static inline void free_VkBufferMemoryBarrier_array(VkBufferMemoryBarrier_host *
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkImageMemoryBarrier_host *convert_VkImageMemoryBarrier_array_win_to_host(const VkImageMemoryBarrier *in, uint32_t count)
+@@ -643,7 +643,7 @@ static inline VkImageMemoryBarrier_host *convert_VkImageMemoryBarrier_array_win_
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -665,7 +665,7 @@ static inline void free_VkImageMemoryBarrier_array(VkImageMemoryBarrier_host *in
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkBufferMemoryBarrier2KHR_host *convert_VkBufferMemoryBarrier2KHR_array_win_to_host(const VkBufferMemoryBarrier2KHR *in, uint32_t count)
+@@ -675,7 +675,7 @@ static inline VkBufferMemoryBarrier2KHR_host *convert_VkBufferMemoryBarrier2KHR_
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -698,7 +698,7 @@ static inline void free_VkBufferMemoryBarrier2KHR_array(VkBufferMemoryBarrier2KH
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkImageMemoryBarrier2KHR_host *convert_VkImageMemoryBarrier2KHR_array_win_to_host(const VkImageMemoryBarrier2KHR *in, uint32_t count)
+@@ -708,7 +708,7 @@ static inline VkImageMemoryBarrier2KHR_host *convert_VkImageMemoryBarrier2KHR_ar
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -732,7 +732,7 @@ static inline void free_VkImageMemoryBarrier2KHR_array(VkImageMemoryBarrier2KHR_
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkDependencyInfoKHR_win_to_host(const VkDependencyInfoKHR *in, VkDependencyInfoKHR_host *out)
+@@ -763,7 +763,7 @@ static inline VkDescriptorImageInfo_host *convert_VkDescriptorImageInfo_array_wi
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sampler = in[i].sampler;
+@@ -778,7 +778,7 @@ static inline void free_VkDescriptorImageInfo_array(VkDescriptorImageInfo_host *
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkDescriptorBufferInfo_host *convert_VkDescriptorBufferInfo_array_win_to_host(const VkDescriptorBufferInfo *in, uint32_t count)
+@@ -788,7 +788,7 @@ static inline VkDescriptorBufferInfo_host *convert_VkDescriptorBufferInfo_array_
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].buffer = in[i].buffer;
+@@ -803,7 +803,7 @@ static inline void free_VkDescriptorBufferInfo_array(VkDescriptorBufferInfo_host
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkWriteDescriptorSet_host *convert_VkWriteDescriptorSet_array_win_to_host(const VkWriteDescriptorSet *in, uint32_t count)
+@@ -813,7 +813,7 @@ static inline VkWriteDescriptorSet_host *convert_VkWriteDescriptorSet_array_win_
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -842,7 +842,7 @@ static inline void free_VkWriteDescriptorSet_array(VkWriteDescriptorSet_host *in
+         free_VkDescriptorImageInfo_array((VkDescriptorImageInfo_host *)in[i].pImageInfo, in[i].descriptorCount);
+         free_VkDescriptorBufferInfo_array((VkDescriptorBufferInfo_host *)in[i].pBufferInfo, in[i].descriptorCount);
+     }
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkResolveImageInfo2KHR_win_to_host(const VkResolveImageInfo2KHR *in, VkResolveImageInfo2KHR_host *out)
+@@ -895,7 +895,7 @@ static inline VkDependencyInfoKHR_host *convert_VkDependencyInfoKHR_array_win_to
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -923,7 +923,7 @@ static inline void free_VkDependencyInfoKHR_array(VkDependencyInfoKHR_host *in,
+         free_VkBufferMemoryBarrier2KHR_array((VkBufferMemoryBarrier2KHR_host *)in[i].pBufferMemoryBarriers, in[i].bufferMemoryBarrierCount);
+         free_VkImageMemoryBarrier2KHR_array((VkImageMemoryBarrier2KHR_host *)in[i].pImageMemoryBarriers, in[i].imageMemoryBarrierCount);
+     }
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkAccelerationStructureCreateInfoKHR_win_to_host(const VkAccelerationStructureCreateInfoKHR *in, VkAccelerationStructureCreateInfoKHR_host *out)
+@@ -997,7 +997,7 @@ static inline VkComputePipelineCreateInfo_host *convert_VkComputePipelineCreateI
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -1016,7 +1016,7 @@ static inline void free_VkComputePipelineCreateInfo_array(VkComputePipelineCreat
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkDescriptorUpdateTemplateCreateInfo_win_to_host(const VkDescriptorUpdateTemplateCreateInfo *in, VkDescriptorUpdateTemplateCreateInfo_host *out)
+@@ -1057,7 +1057,7 @@ static inline VkPipelineShaderStageCreateInfo_host *convert_VkPipelineShaderStag
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -1076,7 +1076,7 @@ static inline void free_VkPipelineShaderStageCreateInfo_array(VkPipelineShaderSt
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkGraphicsPipelineCreateInfo_host *convert_VkGraphicsPipelineCreateInfo_array_win_to_host(const VkGraphicsPipelineCreateInfo *in, uint32_t count)
+@@ -1086,7 +1086,7 @@ static inline VkGraphicsPipelineCreateInfo_host *convert_VkGraphicsPipelineCreat
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -1123,7 +1123,7 @@ static inline void free_VkGraphicsPipelineCreateInfo_array(VkGraphicsPipelineCre
+     {
+         free_VkPipelineShaderStageCreateInfo_array((VkPipelineShaderStageCreateInfo_host *)in[i].pStages, in[i].stageCount);
+     }
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkImageViewCreateInfo_win_to_host(const VkImageViewCreateInfo *in, VkImageViewCreateInfo_host *out)
+@@ -1147,7 +1147,7 @@ static inline VkIndirectCommandsLayoutTokenNV_host *convert_VkIndirectCommandsLa
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -1174,7 +1174,7 @@ static inline void free_VkIndirectCommandsLayoutTokenNV_array(VkIndirectCommands
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkIndirectCommandsLayoutCreateInfoNV_win_to_host(const VkIndirectCommandsLayoutCreateInfoNV *in, VkIndirectCommandsLayoutCreateInfoNV_host *out)
+@@ -1203,7 +1203,7 @@ static inline VkRayTracingPipelineCreateInfoKHR_host *convert_VkRayTracingPipeli
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -1235,7 +1235,7 @@ static inline void free_VkRayTracingPipelineCreateInfoKHR_array(VkRayTracingPipe
+     {
+         free_VkPipelineShaderStageCreateInfo_array((VkPipelineShaderStageCreateInfo_host *)in[i].pStages, in[i].stageCount);
+     }
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkRayTracingPipelineCreateInfoNV_host *convert_VkRayTracingPipelineCreateInfoNV_array_win_to_host(const VkRayTracingPipelineCreateInfoNV *in, uint32_t count)
+@@ -1245,7 +1245,7 @@ static inline VkRayTracingPipelineCreateInfoNV_host *convert_VkRayTracingPipelin
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -1274,7 +1274,7 @@ static inline void free_VkRayTracingPipelineCreateInfoNV_array(VkRayTracingPipel
+     {
+         free_VkPipelineShaderStageCreateInfo_array((VkPipelineShaderStageCreateInfo_host *)in[i].pStages, in[i].stageCount);
+     }
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkSwapchainCreateInfoKHR_win_to_host(const VkSwapchainCreateInfoKHR *in, VkSwapchainCreateInfoKHR_host *out)
+@@ -1332,7 +1332,7 @@ static inline VkMappedMemoryRange_host *convert_VkMappedMemoryRange_array_win_to
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -1349,7 +1349,7 @@ static inline void free_VkMappedMemoryRange_array(VkMappedMemoryRange_host *in,
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkAccelerationStructureBuildGeometryInfoKHR_win_to_host(const VkAccelerationStructureBuildGeometryInfoKHR *in, VkAccelerationStructureBuildGeometryInfoKHR_host *out)
+@@ -1757,7 +1757,7 @@ static inline VkSparseMemoryBind_host *convert_VkSparseMemoryBind_array_win_to_h
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].resourceOffset = in[i].resourceOffset;
+@@ -1774,7 +1774,7 @@ static inline void free_VkSparseMemoryBind_array(VkSparseMemoryBind_host *in, ui
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkSparseBufferMemoryBindInfo_host *convert_VkSparseBufferMemoryBindInfo_array_win_to_host(const VkSparseBufferMemoryBindInfo *in, uint32_t count)
+@@ -1784,7 +1784,7 @@ static inline VkSparseBufferMemoryBindInfo_host *convert_VkSparseBufferMemoryBin
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].buffer = in[i].buffer;
+@@ -1805,7 +1805,7 @@ static inline void free_VkSparseBufferMemoryBindInfo_array(VkSparseBufferMemoryB
+     {
+         free_VkSparseMemoryBind_array((VkSparseMemoryBind_host *)in[i].pBinds, in[i].bindCount);
+     }
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkSparseImageOpaqueMemoryBindInfo_host *convert_VkSparseImageOpaqueMemoryBindInfo_array_win_to_host(const VkSparseImageOpaqueMemoryBindInfo *in, uint32_t count)
+@@ -1815,7 +1815,7 @@ static inline VkSparseImageOpaqueMemoryBindInfo_host *convert_VkSparseImageOpaqu
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].image = in[i].image;
+@@ -1836,7 +1836,7 @@ static inline void free_VkSparseImageOpaqueMemoryBindInfo_array(VkSparseImageOpa
+     {
+         free_VkSparseMemoryBind_array((VkSparseMemoryBind_host *)in[i].pBinds, in[i].bindCount);
+     }
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkSparseImageMemoryBind_host *convert_VkSparseImageMemoryBind_array_win_to_host(const VkSparseImageMemoryBind *in, uint32_t count)
+@@ -1846,7 +1846,7 @@ static inline VkSparseImageMemoryBind_host *convert_VkSparseImageMemoryBind_arra
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].subresource = in[i].subresource;
+@@ -1864,7 +1864,7 @@ static inline void free_VkSparseImageMemoryBind_array(VkSparseImageMemoryBind_ho
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkSparseImageMemoryBindInfo_host *convert_VkSparseImageMemoryBindInfo_array_win_to_host(const VkSparseImageMemoryBindInfo *in, uint32_t count)
+@@ -1874,7 +1874,7 @@ static inline VkSparseImageMemoryBindInfo_host *convert_VkSparseImageMemoryBindI
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].image = in[i].image;
+@@ -1895,7 +1895,7 @@ static inline void free_VkSparseImageMemoryBindInfo_array(VkSparseImageMemoryBin
+     {
+         free_VkSparseImageMemoryBind_array((VkSparseImageMemoryBind_host *)in[i].pBinds, in[i].bindCount);
+     }
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkBindSparseInfo_host *convert_VkBindSparseInfo_array_win_to_host(const VkBindSparseInfo *in, uint32_t count)
+@@ -1905,7 +1905,7 @@ static inline VkBindSparseInfo_host *convert_VkBindSparseInfo_array_win_to_host(
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -1937,7 +1937,7 @@ static inline void free_VkBindSparseInfo_array(VkBindSparseInfo_host *in, uint32
+         free_VkSparseImageOpaqueMemoryBindInfo_array((VkSparseImageOpaqueMemoryBindInfo_host *)in[i].pImageOpaqueBinds, in[i].imageOpaqueBindCount);
+         free_VkSparseImageMemoryBindInfo_array((VkSparseImageMemoryBindInfo_host *)in[i].pImageBinds, in[i].imageBindCount);
+     }
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkSemaphoreSubmitInfoKHR_host *convert_VkSemaphoreSubmitInfoKHR_array_win_to_host(const VkSemaphoreSubmitInfoKHR *in, uint32_t count)
+@@ -1947,7 +1947,7 @@ static inline VkSemaphoreSubmitInfoKHR_host *convert_VkSemaphoreSubmitInfoKHR_ar
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -1965,7 +1965,7 @@ static inline void free_VkSemaphoreSubmitInfoKHR_array(VkSemaphoreSubmitInfoKHR_
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline VkSubmitInfo2KHR_host *convert_VkSubmitInfo2KHR_array_win_to_host(const VkSubmitInfo2KHR *in, uint32_t count)
+@@ -1975,7 +1975,7 @@ static inline VkSubmitInfo2KHR_host *convert_VkSubmitInfo2KHR_array_win_to_host(
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -2003,7 +2003,7 @@ static inline void free_VkSubmitInfo2KHR_array(VkSubmitInfo2KHR_host *in, uint32
+         free_VkSemaphoreSubmitInfoKHR_array((VkSemaphoreSubmitInfoKHR_host *)in[i].pWaitSemaphoreInfos, in[i].waitSemaphoreInfoCount);
+         free_VkSemaphoreSubmitInfoKHR_array((VkSemaphoreSubmitInfoKHR_host *)in[i].pSignalSemaphoreInfos, in[i].signalSemaphoreInfoCount);
+     }
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkDebugUtilsObjectNameInfoEXT_win_to_host(const VkDebugUtilsObjectNameInfoEXT *in, VkDebugUtilsObjectNameInfoEXT_host *out)
+@@ -2047,7 +2047,7 @@ static inline VkDebugUtilsObjectNameInfoEXT_host *convert_VkDebugUtilsObjectName
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -2064,7 +2064,7 @@ static inline void free_VkDebugUtilsObjectNameInfoEXT_array(VkDebugUtilsObjectNa
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ static inline void convert_VkDebugUtilsMessengerCallbackDataEXT_win_to_host(const VkDebugUtilsMessengerCallbackDataEXT *in, VkDebugUtilsMessengerCallbackDataEXT_host *out)
+@@ -2097,7 +2097,7 @@ static inline VkCopyDescriptorSet_host *convert_VkCopyDescriptorSet_array_win_to
+ 
+     if (!in) return NULL;
+ 
+-    out = heap_alloc(count * sizeof(*out));
++    out = malloc(count * sizeof(*out));
+     for (i = 0; i < count; i++)
+     {
+         out[i].sType = in[i].sType;
+@@ -2118,7 +2118,7 @@ static inline void free_VkCopyDescriptorSet_array(VkCopyDescriptorSet_host *in,
+ {
+     if (!in) return;
+ 
+-    heap_free(in);
++    free(in);
+ }
+ 
+ #endif /* USE_STRUCT_CONVERSION */
+@@ -2143,7 +2143,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceDeviceGeneratedCommandsFeaturesNV *in = (const VkPhysicalDeviceDeviceGeneratedCommandsFeaturesNV *)in_header;
+             VkPhysicalDeviceDeviceGeneratedCommandsFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2159,7 +2159,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkDevicePrivateDataCreateInfoEXT *in = (const VkDevicePrivateDataCreateInfoEXT *)in_header;
+             VkDevicePrivateDataCreateInfoEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2175,7 +2175,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDevicePrivateDataFeaturesEXT *in = (const VkPhysicalDevicePrivateDataFeaturesEXT *)in_header;
+             VkPhysicalDevicePrivateDataFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2191,7 +2191,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceFeatures2 *in = (const VkPhysicalDeviceFeatures2 *)in_header;
+             VkPhysicalDeviceFeatures2 *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2207,7 +2207,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceVariablePointersFeatures *in = (const VkPhysicalDeviceVariablePointersFeatures *)in_header;
+             VkPhysicalDeviceVariablePointersFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2224,7 +2224,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceMultiviewFeatures *in = (const VkPhysicalDeviceMultiviewFeatures *)in_header;
+             VkPhysicalDeviceMultiviewFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2242,7 +2242,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkDeviceGroupDeviceCreateInfo *in = (const VkDeviceGroupDeviceCreateInfo *)in_header;
+             VkDeviceGroupDeviceCreateInfo *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2259,7 +2259,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDevice16BitStorageFeatures *in = (const VkPhysicalDevice16BitStorageFeatures *)in_header;
+             VkPhysicalDevice16BitStorageFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2278,7 +2278,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderSubgroupExtendedTypesFeatures *in = (const VkPhysicalDeviceShaderSubgroupExtendedTypesFeatures *)in_header;
+             VkPhysicalDeviceShaderSubgroupExtendedTypesFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2294,7 +2294,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceSamplerYcbcrConversionFeatures *in = (const VkPhysicalDeviceSamplerYcbcrConversionFeatures *)in_header;
+             VkPhysicalDeviceSamplerYcbcrConversionFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2310,7 +2310,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceProtectedMemoryFeatures *in = (const VkPhysicalDeviceProtectedMemoryFeatures *)in_header;
+             VkPhysicalDeviceProtectedMemoryFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2326,7 +2326,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT *in = (const VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT *)in_header;
+             VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2342,7 +2342,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceInlineUniformBlockFeaturesEXT *in = (const VkPhysicalDeviceInlineUniformBlockFeaturesEXT *)in_header;
+             VkPhysicalDeviceInlineUniformBlockFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2359,7 +2359,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderDrawParametersFeatures *in = (const VkPhysicalDeviceShaderDrawParametersFeatures *)in_header;
+             VkPhysicalDeviceShaderDrawParametersFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2375,7 +2375,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderFloat16Int8Features *in = (const VkPhysicalDeviceShaderFloat16Int8Features *)in_header;
+             VkPhysicalDeviceShaderFloat16Int8Features *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2392,7 +2392,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceHostQueryResetFeatures *in = (const VkPhysicalDeviceHostQueryResetFeatures *)in_header;
+             VkPhysicalDeviceHostQueryResetFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2408,7 +2408,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceDescriptorIndexingFeatures *in = (const VkPhysicalDeviceDescriptorIndexingFeatures *)in_header;
+             VkPhysicalDeviceDescriptorIndexingFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2443,7 +2443,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceTimelineSemaphoreFeatures *in = (const VkPhysicalDeviceTimelineSemaphoreFeatures *)in_header;
+             VkPhysicalDeviceTimelineSemaphoreFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2459,7 +2459,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDevice8BitStorageFeatures *in = (const VkPhysicalDevice8BitStorageFeatures *)in_header;
+             VkPhysicalDevice8BitStorageFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2477,7 +2477,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceConditionalRenderingFeaturesEXT *in = (const VkPhysicalDeviceConditionalRenderingFeaturesEXT *)in_header;
+             VkPhysicalDeviceConditionalRenderingFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2494,7 +2494,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceVulkanMemoryModelFeatures *in = (const VkPhysicalDeviceVulkanMemoryModelFeatures *)in_header;
+             VkPhysicalDeviceVulkanMemoryModelFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2512,7 +2512,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderAtomicInt64Features *in = (const VkPhysicalDeviceShaderAtomicInt64Features *)in_header;
+             VkPhysicalDeviceShaderAtomicInt64Features *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2529,7 +2529,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderAtomicFloatFeaturesEXT *in = (const VkPhysicalDeviceShaderAtomicFloatFeaturesEXT *)in_header;
+             VkPhysicalDeviceShaderAtomicFloatFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2556,7 +2556,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT *in = (const VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT *)in_header;
+             VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2573,7 +2573,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceASTCDecodeFeaturesEXT *in = (const VkPhysicalDeviceASTCDecodeFeaturesEXT *)in_header;
+             VkPhysicalDeviceASTCDecodeFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2589,7 +2589,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceTransformFeedbackFeaturesEXT *in = (const VkPhysicalDeviceTransformFeedbackFeaturesEXT *)in_header;
+             VkPhysicalDeviceTransformFeedbackFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2606,7 +2606,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceRepresentativeFragmentTestFeaturesNV *in = (const VkPhysicalDeviceRepresentativeFragmentTestFeaturesNV *)in_header;
+             VkPhysicalDeviceRepresentativeFragmentTestFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2622,7 +2622,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceExclusiveScissorFeaturesNV *in = (const VkPhysicalDeviceExclusiveScissorFeaturesNV *)in_header;
+             VkPhysicalDeviceExclusiveScissorFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2638,7 +2638,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceCornerSampledImageFeaturesNV *in = (const VkPhysicalDeviceCornerSampledImageFeaturesNV *)in_header;
+             VkPhysicalDeviceCornerSampledImageFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2654,7 +2654,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceComputeShaderDerivativesFeaturesNV *in = (const VkPhysicalDeviceComputeShaderDerivativesFeaturesNV *)in_header;
+             VkPhysicalDeviceComputeShaderDerivativesFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2671,7 +2671,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceFragmentShaderBarycentricFeaturesNV *in = (const VkPhysicalDeviceFragmentShaderBarycentricFeaturesNV *)in_header;
+             VkPhysicalDeviceFragmentShaderBarycentricFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2687,7 +2687,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderImageFootprintFeaturesNV *in = (const VkPhysicalDeviceShaderImageFootprintFeaturesNV *)in_header;
+             VkPhysicalDeviceShaderImageFootprintFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2703,7 +2703,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceDedicatedAllocationImageAliasingFeaturesNV *in = (const VkPhysicalDeviceDedicatedAllocationImageAliasingFeaturesNV *)in_header;
+             VkPhysicalDeviceDedicatedAllocationImageAliasingFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2719,7 +2719,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShadingRateImageFeaturesNV *in = (const VkPhysicalDeviceShadingRateImageFeaturesNV *)in_header;
+             VkPhysicalDeviceShadingRateImageFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2736,7 +2736,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceMeshShaderFeaturesNV *in = (const VkPhysicalDeviceMeshShaderFeaturesNV *)in_header;
+             VkPhysicalDeviceMeshShaderFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2753,7 +2753,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceAccelerationStructureFeaturesKHR *in = (const VkPhysicalDeviceAccelerationStructureFeaturesKHR *)in_header;
+             VkPhysicalDeviceAccelerationStructureFeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2773,7 +2773,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceRayTracingPipelineFeaturesKHR *in = (const VkPhysicalDeviceRayTracingPipelineFeaturesKHR *)in_header;
+             VkPhysicalDeviceRayTracingPipelineFeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2793,7 +2793,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceRayQueryFeaturesKHR *in = (const VkPhysicalDeviceRayQueryFeaturesKHR *)in_header;
+             VkPhysicalDeviceRayQueryFeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2809,7 +2809,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkDeviceMemoryOverallocationCreateInfoAMD *in = (const VkDeviceMemoryOverallocationCreateInfoAMD *)in_header;
+             VkDeviceMemoryOverallocationCreateInfoAMD *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2825,7 +2825,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceFragmentDensityMapFeaturesEXT *in = (const VkPhysicalDeviceFragmentDensityMapFeaturesEXT *)in_header;
+             VkPhysicalDeviceFragmentDensityMapFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2843,7 +2843,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceFragmentDensityMap2FeaturesEXT *in = (const VkPhysicalDeviceFragmentDensityMap2FeaturesEXT *)in_header;
+             VkPhysicalDeviceFragmentDensityMap2FeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2859,7 +2859,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceScalarBlockLayoutFeatures *in = (const VkPhysicalDeviceScalarBlockLayoutFeatures *)in_header;
+             VkPhysicalDeviceScalarBlockLayoutFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2875,7 +2875,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceUniformBufferStandardLayoutFeatures *in = (const VkPhysicalDeviceUniformBufferStandardLayoutFeatures *)in_header;
+             VkPhysicalDeviceUniformBufferStandardLayoutFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2891,7 +2891,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceDepthClipEnableFeaturesEXT *in = (const VkPhysicalDeviceDepthClipEnableFeaturesEXT *)in_header;
+             VkPhysicalDeviceDepthClipEnableFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2907,7 +2907,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceMemoryPriorityFeaturesEXT *in = (const VkPhysicalDeviceMemoryPriorityFeaturesEXT *)in_header;
+             VkPhysicalDeviceMemoryPriorityFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2923,7 +2923,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceBufferDeviceAddressFeatures *in = (const VkPhysicalDeviceBufferDeviceAddressFeatures *)in_header;
+             VkPhysicalDeviceBufferDeviceAddressFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2941,7 +2941,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceBufferDeviceAddressFeaturesEXT *in = (const VkPhysicalDeviceBufferDeviceAddressFeaturesEXT *)in_header;
+             VkPhysicalDeviceBufferDeviceAddressFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2959,7 +2959,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceImagelessFramebufferFeatures *in = (const VkPhysicalDeviceImagelessFramebufferFeatures *)in_header;
+             VkPhysicalDeviceImagelessFramebufferFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2975,7 +2975,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceTextureCompressionASTCHDRFeaturesEXT *in = (const VkPhysicalDeviceTextureCompressionASTCHDRFeaturesEXT *)in_header;
+             VkPhysicalDeviceTextureCompressionASTCHDRFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -2991,7 +2991,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceCooperativeMatrixFeaturesNV *in = (const VkPhysicalDeviceCooperativeMatrixFeaturesNV *)in_header;
+             VkPhysicalDeviceCooperativeMatrixFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3008,7 +3008,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceYcbcrImageArraysFeaturesEXT *in = (const VkPhysicalDeviceYcbcrImageArraysFeaturesEXT *)in_header;
+             VkPhysicalDeviceYcbcrImageArraysFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3024,7 +3024,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDevicePerformanceQueryFeaturesKHR *in = (const VkPhysicalDevicePerformanceQueryFeaturesKHR *)in_header;
+             VkPhysicalDevicePerformanceQueryFeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3041,7 +3041,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceCoverageReductionModeFeaturesNV *in = (const VkPhysicalDeviceCoverageReductionModeFeaturesNV *)in_header;
+             VkPhysicalDeviceCoverageReductionModeFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3057,7 +3057,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderIntegerFunctions2FeaturesINTEL *in = (const VkPhysicalDeviceShaderIntegerFunctions2FeaturesINTEL *)in_header;
+             VkPhysicalDeviceShaderIntegerFunctions2FeaturesINTEL *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3073,7 +3073,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderClockFeaturesKHR *in = (const VkPhysicalDeviceShaderClockFeaturesKHR *)in_header;
+             VkPhysicalDeviceShaderClockFeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3090,7 +3090,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceIndexTypeUint8FeaturesEXT *in = (const VkPhysicalDeviceIndexTypeUint8FeaturesEXT *)in_header;
+             VkPhysicalDeviceIndexTypeUint8FeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3106,7 +3106,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderSMBuiltinsFeaturesNV *in = (const VkPhysicalDeviceShaderSMBuiltinsFeaturesNV *)in_header;
+             VkPhysicalDeviceShaderSMBuiltinsFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3122,7 +3122,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT *in = (const VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT *)in_header;
+             VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3140,7 +3140,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures *in = (const VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures *)in_header;
+             VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3156,7 +3156,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR *in = (const VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR *)in_header;
+             VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3172,7 +3172,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT *in = (const VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT *)in_header;
+             VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3188,7 +3188,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceTexelBufferAlignmentFeaturesEXT *in = (const VkPhysicalDeviceTexelBufferAlignmentFeaturesEXT *)in_header;
+             VkPhysicalDeviceTexelBufferAlignmentFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3204,7 +3204,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceSubgroupSizeControlFeaturesEXT *in = (const VkPhysicalDeviceSubgroupSizeControlFeaturesEXT *)in_header;
+             VkPhysicalDeviceSubgroupSizeControlFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3221,7 +3221,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceLineRasterizationFeaturesEXT *in = (const VkPhysicalDeviceLineRasterizationFeaturesEXT *)in_header;
+             VkPhysicalDeviceLineRasterizationFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3242,7 +3242,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT *in = (const VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT *)in_header;
+             VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3258,7 +3258,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceVulkan11Features *in = (const VkPhysicalDeviceVulkan11Features *)in_header;
+             VkPhysicalDeviceVulkan11Features *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3285,7 +3285,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceVulkan12Features *in = (const VkPhysicalDeviceVulkan12Features *)in_header;
+             VkPhysicalDeviceVulkan12Features *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3347,7 +3347,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceCoherentMemoryFeaturesAMD *in = (const VkPhysicalDeviceCoherentMemoryFeaturesAMD *)in_header;
+             VkPhysicalDeviceCoherentMemoryFeaturesAMD *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3363,7 +3363,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceCustomBorderColorFeaturesEXT *in = (const VkPhysicalDeviceCustomBorderColorFeaturesEXT *)in_header;
+             VkPhysicalDeviceCustomBorderColorFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3380,7 +3380,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceExtendedDynamicStateFeaturesEXT *in = (const VkPhysicalDeviceExtendedDynamicStateFeaturesEXT *)in_header;
+             VkPhysicalDeviceExtendedDynamicStateFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3396,7 +3396,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceDiagnosticsConfigFeaturesNV *in = (const VkPhysicalDeviceDiagnosticsConfigFeaturesNV *)in_header;
+             VkPhysicalDeviceDiagnosticsConfigFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3412,7 +3412,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkDeviceDiagnosticsConfigCreateInfoNV *in = (const VkDeviceDiagnosticsConfigCreateInfoNV *)in_header;
+             VkDeviceDiagnosticsConfigCreateInfoNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3428,7 +3428,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR *in = (const VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR *)in_header;
+             VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3444,7 +3444,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceRobustness2FeaturesEXT *in = (const VkPhysicalDeviceRobustness2FeaturesEXT *)in_header;
+             VkPhysicalDeviceRobustness2FeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3462,7 +3462,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceImageRobustnessFeaturesEXT *in = (const VkPhysicalDeviceImageRobustnessFeaturesEXT *)in_header;
+             VkPhysicalDeviceImageRobustnessFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3478,7 +3478,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR *in = (const VkPhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR *)in_header;
+             VkPhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3497,7 +3497,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDevice4444FormatsFeaturesEXT *in = (const VkPhysicalDevice4444FormatsFeaturesEXT *)in_header;
+             VkPhysicalDevice4444FormatsFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3514,7 +3514,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT *in = (const VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT *)in_header;
+             VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3531,7 +3531,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceFragmentShadingRateFeaturesKHR *in = (const VkPhysicalDeviceFragmentShadingRateFeaturesKHR *)in_header;
+             VkPhysicalDeviceFragmentShadingRateFeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3549,7 +3549,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR *in = (const VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR *)in_header;
+             VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3565,7 +3565,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceFragmentShadingRateEnumsFeaturesNV *in = (const VkPhysicalDeviceFragmentShadingRateEnumsFeaturesNV *)in_header;
+             VkPhysicalDeviceFragmentShadingRateEnumsFeaturesNV *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3583,7 +3583,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceMutableDescriptorTypeFeaturesVALVE *in = (const VkPhysicalDeviceMutableDescriptorTypeFeaturesVALVE *)in_header;
+             VkPhysicalDeviceMutableDescriptorTypeFeaturesVALVE *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3599,7 +3599,7 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
+             const VkPhysicalDeviceSynchronization2FeaturesKHR *in = (const VkPhysicalDeviceSynchronization2FeaturesKHR *)in_header;
+             VkPhysicalDeviceSynchronization2FeaturesKHR *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3630,7 +3630,7 @@ void free_VkDeviceCreateInfo_struct_chain(VkDeviceCreateInfo *s)
+     {
+         void *prev = header;
+         header = header->pNext;
+-        heap_free(prev);
++        free(prev);
+     }
+ 
+     s->pNext = NULL;
+@@ -3656,7 +3656,7 @@ VkResult convert_VkInstanceCreateInfo_struct_chain(const void *pNext, VkInstance
+             const VkDebugReportCallbackCreateInfoEXT *in = (const VkDebugReportCallbackCreateInfoEXT *)in_header;
+             VkDebugReportCallbackCreateInfoEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3674,7 +3674,7 @@ VkResult convert_VkInstanceCreateInfo_struct_chain(const void *pNext, VkInstance
+             const VkValidationFlagsEXT *in = (const VkValidationFlagsEXT *)in_header;
+             VkValidationFlagsEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3691,7 +3691,7 @@ VkResult convert_VkInstanceCreateInfo_struct_chain(const void *pNext, VkInstance
+             const VkValidationFeaturesEXT *in = (const VkValidationFeaturesEXT *)in_header;
+             VkValidationFeaturesEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3710,7 +3710,7 @@ VkResult convert_VkInstanceCreateInfo_struct_chain(const void *pNext, VkInstance
+             const VkDebugUtilsMessengerCreateInfoEXT *in = (const VkDebugUtilsMessengerCreateInfoEXT *)in_header;
+             VkDebugUtilsMessengerCreateInfoEXT *out;
+ 
+-            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
++            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+ 
+             out->sType = in->sType;
+             out->pNext = NULL;
+@@ -3745,7 +3745,7 @@ void free_VkInstanceCreateInfo_struct_chain(VkInstanceCreateInfo *s)
+     {
+         void *prev = header;
+         header = header->pNext;
+-        heap_free(prev);
++        free(prev);
+     }
+ 
+     s->pNext = NULL;
+ 
