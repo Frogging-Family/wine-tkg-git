@@ -1773,7 +1773,7 @@ EOM
 	echo -e "" >> "$_where"/last_build_config.log
 
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD || ([ "$_protonify" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 90024e492dcefd204c6c953a804c0d51544db5b2 HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 7ef35b33936682c01f1c825b7d1b07567a691c12 HEAD ); then
 	    if [ "$_use_staging" = "true" ]; then
 	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD; then
 	        _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/3" && nonuser_patcher
@@ -1847,7 +1847,11 @@ EOM
 	      fi
 	    fi
 	  else
-	    if git merge-base --is-ancestor a24bdfc2c69c5648cbb3df762149b2647e209a09 HEAD; then
+	    if git merge-base --is-ancestor 90024e492dcefd204c6c953a804c0d51544db5b2 HEAD; then
+	      _lastcommit="7ef35b3"
+	      _rpc="1"
+	      _stmbits="1"
+	    elif git merge-base --is-ancestor a24bdfc2c69c5648cbb3df762149b2647e209a09 HEAD; then
 	      _lastcommit="90024e4"
 	      _rpc="1"
 	      _stmbits="1"
@@ -2317,11 +2321,17 @@ EOM
 
 	# Set the default wine version to win10
 	if [ "$_win10_default" = "true" ] && [ "$_unfrog" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
-	  if git merge-base --is-ancestor 595600b6c14c957d19f3ef8c0c82acacd7c6827a HEAD; then
+	  if git merge-base --is-ancestor 39263558a2088940aaacd6eda19ca23d40b63495 HEAD; then
 	    if [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-win10-default-staging.patch' && _patchmsg="Enforce win10 as default wine version (staging)" && nonuser_patcher
 	    else
 	      _patchname='proton-win10-default.patch' && _patchmsg="Enforce win10 as default wine version" && nonuser_patcher
+	    fi
+	  elif git merge-base --is-ancestor 595600b6c14c957d19f3ef8c0c82acacd7c6827a HEAD; then
+	    if [ "$_use_staging" = "true" ]; then
+	      _patchname='proton-win10-default-staging-3926355.patch' && _patchmsg="Enforce win10 as default wine version (staging)" && nonuser_patcher
+	    else
+	      _patchname='proton-win10-default-3926355.patch' && _patchmsg="Enforce win10 as default wine version" && nonuser_patcher
 	    fi
 	  elif git merge-base --is-ancestor 87f41e6b408dd01055ff6a378b90d089d61ec370 HEAD; then
 	    if [ "$_use_staging" = "true" ]; then
