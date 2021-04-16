@@ -7379,9 +7379,9 @@ index dbcb5bb8ed7..83a92f1fb1f 100644
          private->sdl_controller = controller;
          private->id = id;
 +        private->xinput_hack = xinput_hack;
- 
-         /* FIXME: We should probably move this to IRP_MN_START_DEVICE. */
-          if (controller)
+         if (controller)
+             rc = build_mapped_report_descriptor(private, xinput_hack);
+         else
 diff --git a/dlls/xinput1_3/hid.c b/dlls/xinput1_3/hid.c
 index 59695d1bb1d..978399e1c52 100644
 --- a/dlls/xinput1_3/hid.c
@@ -8381,9 +8381,45 @@ index d9a64374019..4677e1b47ff 100644
  #ifdef HAS_PROPER_INPUT_HEADER
 -        if (strcmp(subsystem, "input") == 0)
 +        if (private->vtbl == &lnxev_vtbl)
-             /* FIXME: We should probably move this to IRP_MN_START_DEVICE. */
              if (!build_report_descriptor((struct wine_input_private*)private, dev))
              {
+                 ERR("Building report descriptor failed, removing device\n");
+@@ -1428,17 +1452,11 @@ static void try_remove_device(struct udev_device *dev)
+ {
+     DEVICE_OBJECT *device = NULL;
+     struct platform_private* private;
+-#ifdef HAS_PROPER_INPUT_HEADER
+-    BOOL is_input = FALSE;
+-#endif
+ 
+     device = bus_find_hid_device(&hidraw_vtbl, dev);
+ #ifdef HAS_PROPER_INPUT_HEADER
+     if (device == NULL)
+-    {
+         device = bus_find_hid_device(&lnxev_vtbl, dev);
+-        is_input = TRUE;
+-    }
+ #endif
+     if (!device) return;
+ 
+@@ -1455,7 +1473,7 @@ static void try_remove_device(struct udev_device *dev)
+         close(private->control_pipe[1]);
+         CloseHandle(private->report_thread);
+ #ifdef HAS_PROPER_INPUT_HEADER
+-        if (strcmp(udev_device_get_subsystem(dev), "input") == 0)
++        if (private->vtbl == &lnxev_vtbl)
+         {
+             HeapFree(GetProcessHeap(), 0, ((struct wine_input_private*)private)->current_report_buffer);
+             HeapFree(GetProcessHeap(), 0, ((struct wine_input_private*)private)->last_report_buffer);
+@@ -1464,7 +1482,7 @@ static void try_remove_device(struct udev_device *dev)
+     }
+ 
+ #ifdef HAS_PROPER_INPUT_HEADER
+-    if (is_input)
++    if (private->vtbl == &lnxev_vtbl)
+     {
+         struct wine_input_private *ext = (struct wine_input_private*)private;
+         HeapFree(GetProcessHeap(), 0, ext->report_descriptor);
 From d183eb51b1804769f48d7ffe0270a1b6eb02872f Mon Sep 17 00:00:00 2001
 From: Simon McVittie <smcv@collabora.com>
 Date: Tue, 10 Nov 2020 14:29:16 +0000
@@ -8402,7 +8438,7 @@ diff --git a/dlls/winebus.sys/bus_udev.c b/dlls/winebus.sys/bus_udev.c
 index 4677e1b47ff..0a0b6e788b3 100644
 --- a/dlls/winebus.sys/bus_udev.c
 +++ b/dlls/winebus.sys/bus_udev.c
-@@ -1448,17 +1448,45 @@ static void try_add_device(struct udev_device *dev)
+@@ -1448,23 +1448,48 @@ static void try_add_device(struct udev_device *dev)
      HeapFree(GetProcessHeap(), 0, serial);
  }
  
@@ -8429,7 +8465,7 @@ index 4677e1b47ff..0a0b6e788b3 100644
 +static void try_remove_device_by_devnode(const char *devnode)
  {
      DEVICE_OBJECT *device = NULL;
-+    struct platform_private* private;
+     struct platform_private* private;
 +    struct udev_device *dev;
 +
 +    TRACE("Removing device if present: %s\n", debugstr_a(devnode));
@@ -8450,7 +8486,12 @@ index 4677e1b47ff..0a0b6e788b3 100644
 +
      bus_unlink_hid_device(device);
      IoInvalidateDeviceRelations(bus_pdo, BusRelations);
- }
+ 
+-    private = impl_from_DEVICE_OBJECT(device);
+-
+     if (private->report_thread)
+     {
+         write(private->control_pipe[1], "q", 1);
 @@ -1495,6 +1520,17 @@ static void try_remove_device(struct udev_device *dev)
      udev_device_unref(dev);
  }
