@@ -2152,7 +2152,7 @@ EOM
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	  # SDL Joystick support - from Proton
 	  if [ "$_sdl_joy_support" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 27f40156baa7f1e09c6e420f6c278606557a505a HEAD ) && [ "$_use_staging" = "true" ]; then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 27f40156baa7f1e09c6e420f6c278606557a505a HEAD ) && [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 661df7b889bb973721d09a316d87d200a31233fe HEAD ) && [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-sdl-joy-27f4015.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
