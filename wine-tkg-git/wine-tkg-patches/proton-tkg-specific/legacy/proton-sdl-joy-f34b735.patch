@@ -6930,31 +6930,40 @@ index 672bfc58afc..cfe4e8826b6 100644
  {
      WCHAR device_instance_id[MAX_DEVICE_ID_LEN];
      SP_DEVINFO_DATA Data;
+@@ -95,6 +95,8 @@ NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device)
+     INT32 handle;
+ 
+     HidD_GetHidGuid(&hidGuid);
++    if(xinput_hack)
++        hidGuid.Data4[7]++; /* HACK: use different GUID so only xinput will find this device */
+     ext = device->DeviceExtension;
+ 
+     RtlInitUnicodeString( &nameW, ext->device_name);
 diff --git a/dlls/hidclass.sys/hid.h b/dlls/hidclass.sys/hid.h
 index e299ac773ab..0273d2510b0 100644
 --- a/dlls/hidclass.sys/hid.h
 +++ b/dlls/hidclass.sys/hid.h
 @@ -91,7 +91,7 @@ minidriver* find_minidriver(DRIVER_OBJECT* driver) DECLSPEC_HIDDEN;
- NTSTATUS call_minidriver(ULONG code, DEVICE_OBJECT *device, void *in_buff, ULONG in_size, void *out_buff, ULONG out_size) DECLSPEC_HIDDEN;
  
  /* Internal device functions */
+ NTSTATUS HID_CreateDevice(DEVICE_OBJECT *native_device, HID_MINIDRIVER_REGISTRATION *driver, DEVICE_OBJECT **device) DECLSPEC_HIDDEN;
 -NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
 +NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device, BOOL xinput_hack) DECLSPEC_HIDDEN;
+ void HID_DeleteDevice(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
  void HID_StartDeviceThread(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
  
- IRP *pop_irp_from_queue(BASE_DEVICE_EXTENSION *ext) DECLSPEC_HIDDEN;
 diff --git a/dlls/hidclass.sys/pnp.c b/dlls/hidclass.sys/pnp.c
 index ba6ddc0d3e8..624a4c72414 100644
 --- a/dlls/hidclass.sys/pnp.c
 +++ b/dlls/hidclass.sys/pnp.c
 @@ -200,7 +200,7 @@ NTSTATUS WINAPI PNP_AddDevice(DRIVER_OBJECT *driver, DEVICE_OBJECT *PDO)
+     lstrcatW(ext->device_id, L"\\");
+     lstrcatW(ext->device_id, wcschr(device_id, '\\') + 1);
  
-     IoInvalidateDeviceRelations(bus_pdo, BusRelations);
+-    HID_LinkDevice(device);
++    HID_LinkDevice(device, attr.Reserved[0]/*xinput_hack*/);
  
--    HID_LinkDevice(child_pdo);
-+    HID_LinkDevice(child_pdo, attr.Reserved[0]/*xinput_hack*/);
- 
-     pdo_ext->u.pdo.poll_interval = DEFAULT_POLL_INTERVAL;
+     ext->poll_interval = DEFAULT_POLL_INTERVAL;
  
 diff --git a/dlls/winebus.sys/bus.h b/dlls/winebus.sys/bus.h
 index 22a4b46a516..8aa5535aa1d 100644
@@ -9747,4 +9756,200 @@ index 23501931e69..5ff6d1d74fd 100644
 +        if (overlay_enabled && event->type != SDL_CONTROLLERBUTTONUP) return;
  
          set_mapped_report_from_event(event);
+ 
+From e31b544dacbae84c92cd4e2796f3c1c5ac29fcf0 Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Wed, 9 Dec 2020 14:04:56 +0200
+Subject: [PATCH] hidclass.sys: Don't send raw input messages for fake xinput
+ hack controllers
+
+For Subnautica hotplugging.
+
+Xinput hack introduces extra fake HID devices for controllers that are
+intended to be only used internally by xinput dlls. There's a unintentional
+leak though - if a process subscribes for WM_INPUT messages for HID
+controllers using RegisterRawInputDevices() it will get the messages twice -
+one for the regular HID device and the second for the faux xinput device.
+
+The second copy of the messages had a few fields (e.g. hDevice) set to zeros.
+Some games (The Elder Scrolls Online, Cuphead) struggled with handling such
+messages, which caused a visible stutter.
+
+To mitigate that 46bfde7d5a36 ("user32: Also look up xinput-only HID devices")
+was introduced, which makes WM_INPUT messages filled out properly, but has
+unintentional effect of leaking those special xinput HID devices even further,
+through GetRawInputDeviceList(). This breaks controller hotplug for Subnautica
+(and likely other games that are using Unity's RI.Hid).
+
+To fix the original problem this patch makes hidclass.sys not send raw input
+messages for the xinput hack codepaths.
+
+Combined with a revert of 46bfde7d5a36 ("user32: Also look up xinput-only HID
+devices") all the games mentioned above seem to run just fine.
+---
+ dlls/hidclass.sys/device.c | 10 +++++-----
+ dlls/hidclass.sys/hid.h    |  4 +++-
+ dlls/hidclass.sys/pnp.c    |  4 +++-
+ 3 files changed, 11 insertions(+), 7 deletions(-)
+
+diff --git a/dlls/hidclass.sys/device.c b/dlls/hidclass.sys/device.c
+index cfe4e8826b6..ea9ea3669e8 100644
+--- a/dlls/hidclass.sys/device.c
++++ b/dlls/hidclass.sys/device.c
+@@ -83,7 +83,7 @@ static INT32 alloc_new_handle(void)
+     return InterlockedIncrement(&counter);
+ }
+ 
+-NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device, BOOL xinput_hack)
++NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device)
+ {
+     WCHAR device_instance_id[MAX_DEVICE_ID_LEN];
+     SP_DEVINFO_DATA Data;
+@@ -91,12 +91,10 @@ NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device, BOOL xinput_hack)
+     NTSTATUS status;
+     HDEVINFO devinfo;
+     GUID hidGuid;
+-    BASE_DEVICE_EXTENSION *ext;
++    BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
+ 
+     HidD_GetHidGuid(&hidGuid);
+-    if(xinput_hack)
+-        hidGuid.Data4[7]++; /* HACK: use different GUID so only xinput will find this device */
+-    ext = device->DeviceExtension;
++    if (ext->xinput_hack) hidGuid.Data4[7]++; /* HACK: use different GUID so only xinput will find this device */
+ 
+     RtlInitUnicodeString( &nameW, ext->device_name);
+ 
+@@ -268,6 +266,8 @@ static void HID_Device_sendRawInput(DEVICE_OBJECT *device, HID_XFER_PACKET *pack
+     ULONG data_size;
+     INPUT input;
+ 
++    if (ext->xinput_hack) return;
++
+     data_size = offsetof(RAWINPUT, data.hid.bRawData) + packet->reportBufferLen;
+     if (!(id = ext->preparseData->reports[0].reportID)) data_size += 1;
+                = 0;
+diff --git a/dlls/hidclass.sys/hid.h b/dlls/hidclass.sys/hid.h
+index 0273d2510b0..369240d745a 100644
+--- a/dlls/hidclass.sys/hid.h
++++ b/dlls/hidclass.sys/hid.h
+@@ -60,6 +60,8 @@ typedef struct _BASE_DEVICE_EXTENSION {
+     BOOL is_mouse;
+     UNICODE_STRING mouse_link_name;
+ 
++    BOOL xinput_hack;
++
+     /* Minidriver Specific stuff will end up here */
+ } BASE_DEVICE_EXTENSION;
+ 
+@@ -91,7 +93,7 @@ minidriver* find_minidriver(DRIVER_OBJECT* driver) DECLSPEC_HIDDEN;
+ 
+ /* Internal device functions */
+ NTSTATUS HID_CreateDevice(DEVICE_OBJECT *native_device, HID_MINIDRIVER_REGISTRATION *driver, DEVICE_OBJECT **device) DECLSPEC_HIDDEN;
+-NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device, BOOL xinput_hack) DECLSPEC_HIDDEN;
++NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
+ void HID_DeleteDevice(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
+ void HID_StartDeviceThread(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
+ 
+diff --git a/dlls/hidclass.sys/pnp.c b/dlls/hidclass.sys/pnp.c
+index 624a4c72414..949e389e72f 100644
+--- a/dlls/hidclass.sys/pnp.c
++++ b/dlls/hidclass.sys/pnp.c
+@@ -200,7 +200,9 @@ NTSTATUS WINAPI PNP_AddDevice(DRIVER_OBJECT *driver, DEVICE_OBJECT *PDO)
+     lstrcatW(ext->device_id, L"\\");
+     lstrcatW(ext->device_id, wcschr(device_id, '\\') + 1);
+ 
+-    HID_LinkDevice(device, attr.Reserved[0]/*xinput_hack*/);
++    ext->xinput_hack = attr.Reserved[0];
++
++    HID_LinkDevice(device);
+ 
+     ext->poll_interval = DEFAULT_POLL_INTERVAL;
+ 
+From 853144dbef072275fe684641bbdbf2e49c3ce9c3 Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Fri, 12 Mar 2021 13:17:44 +0200
+Subject: [PATCH] HACK: hidclass.sys: Don't pass I/O Status Block in requests
+ done by the thread.
+
+Since c4cd339a2155 ("ntoskrnl: Copy the IRP I/O status block to the user
+I/O status block in IoCompleteRequest().") that block (if present) is
+being written to when request is completed. This leads to use after free
+on device unplug as the final IRPs are handled after hidclass.sys has
+already torn down the thread.
+---
+ dlls/hidclass.sys/device.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/dlls/hidclass.sys/device.c b/dlls/hidclass.sys/device.c
+index ea9ea3669e8..f10219aa247 100644
+--- a/dlls/hidclass.sys/device.c
++++ b/dlls/hidclass.sys/device.c
+@@ -339,7 +339,6 @@ static DWORD CALLBACK hid_device_thread(void *args)
+     DEVICE_OBJECT *device = (DEVICE_OBJECT*)args;
+ 
+     IRP *irp;
+-    IO_STATUS_BLOCK irp_status;
+     HID_XFER_PACKET *packet;
+     DWORD rc;
+     HANDLE events[2];
+@@ -362,8 +361,7 @@ static DWORD CALLBACK hid_device_thread(void *args)
+             packet->reportId = 0;
+ 
+             irp = IoBuildDeviceIoControlRequest(IOCTL_HID_GET_INPUT_REPORT,
+-                device, NULL, 0, packet, sizeof(*packet), TRUE, NULL,
+-                &irp_status);
++                device, NULL, 0, packet, sizeof(*packet), TRUE, NULL, NULL);
+ 
+             IoSetCompletionRoutine(irp, read_Completion, events[0], TRUE, TRUE, TRUE);
+             ntrc = IoCallDriver(device, irp);
+@@ -398,8 +396,7 @@ static DWORD CALLBACK hid_device_thread(void *args)
+ 
+             irp = IoBuildDeviceIoControlRequest(IOCTL_HID_READ_REPORT,
+                 device, NULL, 0, packet->reportBuffer,
+-                ext->preparseData->caps.InputReportByteLength, TRUE, NULL,
+-                &irp_status);
++                ext->preparseData->caps.InputReportByteLength, TRUE, NULL, NULL);
+ 
+             IoSetCompletionRoutine(irp, read_Completion, events[0], TRUE, TRUE, TRUE);
+             ntrc = IoCallDriver(device, irp);
+diff --git a/dlls/winebus.sys/bus_sdl.c b/dlls/winebus.sys/bus_sdl.c
+index e85f94aaa41..5ff6d1d74fd 100644
+--- a/dlls/winebus.sys/bus_sdl.c
++++ b/dlls/winebus.sys/bus_sdl.c
+@@ -1020,6 +1020,20 @@ static BOOL is_in_sdl_blacklist(DWORD vid, DWORD pid)
+     return strcasestr(blacklist, needle) != NULL;
+ }
+ 
++static BOOL is_in_wine_blacklist(const DWORD vid, const DWORD pid)
++{
++    int i;
++    for(i = 0; i < ARRAY_SIZE(wine_js_blacklist); ++i)
++    {
++        if(vid == wine_js_blacklist[i].vid &&
++                (wine_js_blacklist[i].pid == 0 ||
++                 wine_js_blacklist[i].pid == pid))
++            return TRUE;
++    }
++
++    return FALSE;
++}
++
+ static void try_add_device(unsigned int index, BOOL xinput_hack)
+ {
+     DWORD vid = 0, pid = 0, version = 0;
+@@ -1061,7 +1075,13 @@ static void try_add_device(unsigned int index, BOOL xinput_hack)
+ 
+     if(is_in_sdl_blacklist(vid, pid))
+     {
+-        TRACE("device %04x/%04x is in blacklist, ignoring\n", vid, pid);
++        TRACE("device %04x/%04x is in SDL blacklist, ignoring\n", vid, pid);
++        return;
++    }
++
++    if(is_in_wine_blacklist(vid, pid))
++    {
++        TRACE("device %04x/%04x is in Wine blacklist, ignoring\n", vid, pid);
+         return;
+     }
  
