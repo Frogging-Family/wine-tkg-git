@@ -947,6 +947,15 @@ _prepare() {
 	  cd "${srcdir}"/"${_winesrcdir}"
 	fi
 
+	# Proton Bcrypt patches
+	if [ "$_use_staging" = "true" ]; then
+	  if [ "$_proton_bcrypt" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 37e000145f07c4ec6f48fdac5969bbbb05435d52 HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 74c0da2d71e95f3e6bd6c8b440652933771b27d7 HEAD );then
+	      _staging_args+=(-W bcrypt-ECDHSecretAgreement)
+	    fi
+	  fi
+	fi
+
 	_commitmsg="02-pre-staging" _committer
 
 	if [ "$_use_staging" = "true" ] && [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW2" =~ [yY] ]]; then
@@ -2314,14 +2323,21 @@ EOM
 	  fi
 	fi
 
-  # Joshua Ashton's take on making wine dialogs and menus less win95-ish - https://github.com/Joshua-Ashton/wine/tree/wine-better-theme
-  if [ "$_use_josh_flat_theme" = "true" ]; then
-    if git merge-base --is-ancestor 6456973f0a64d326bb54da4675310caffc2588f1 HEAD && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
-      _patchname='josh-flat-theme.patch' && _patchmsg="Add Josh's better-theme" && nonuser_patcher
-    else
-      _patchname='josh-flat-theme-6456973.patch' && _patchmsg="Add Josh's better-theme" && nonuser_patcher
+	# Proton Bcrypt patches
+	if [ "$_proton_bcrypt" = "true" ]; then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 74c0da2d71e95f3e6bd6c8b440652933771b27d7 HEAD );then
+	    _patchname='proton-bcrypt.patch' && _patchmsg="Using Proton Bcrypt patches" && nonuser_patcher
+	  fi
+	fi
+
+    # Joshua Ashton's take on making wine dialogs and menus less win95-ish - https://github.com/Joshua-Ashton/wine/tree/wine-better-theme
+    if [ "$_use_josh_flat_theme" = "true" ]; then
+      if git merge-base --is-ancestor 6456973f0a64d326bb54da4675310caffc2588f1 HEAD && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+        _patchname='josh-flat-theme.patch' && _patchmsg="Add Josh's better-theme" && nonuser_patcher
+      else
+        _patchname='josh-flat-theme-6456973.patch' && _patchmsg="Add Josh's better-theme" && nonuser_patcher
+      fi
     fi
-  fi
 
 	# Set the default wine version to win10
 	if [ "$_win10_default" = "true" ] && [ "$_unfrog" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
