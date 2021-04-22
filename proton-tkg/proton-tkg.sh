@@ -612,6 +612,12 @@ else
       fi
     fi
 
+    # pefixup
+    echo ''
+    echo "Fixing PE files..."
+    find "$_nowhere/proton_dist_tmp/lib64/wine" -type f -name "*.dll" -not -path "*/fakedlls/*" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py"
+    find "$_nowhere/proton_dist_tmp/lib/wine" -type f -name "*.dll" -not -path "*/fakedlls/*" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py"
+
     # mono
     mkdir -p "$_nowhere"/mono && cd "$_nowhere"/mono
     rm -rf "$_nowhere"/mono/*
