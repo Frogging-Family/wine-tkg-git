@@ -612,11 +612,8 @@ else
       fi
     fi
 
-    # pefixup
     echo ''
-    echo "Fixing PE files..."
-    find "$_nowhere/proton_dist_tmp/lib64/wine" -type f -name "*.dll" -not -path "*/fakedlls/*" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py"
-    find "$_nowhere/proton_dist_tmp/lib/wine" -type f -name "*.dll" -not -path "*/fakedlls/*" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py"
+    echo "Injecting wine-mono & wine-gecko..."
 
     # mono
     mkdir -p "$_nowhere"/mono && cd "$_nowhere"/mono
@@ -644,12 +641,10 @@ else
     tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86_64$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
     tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
 
-    echo ''
-    echo "Packaging..."
-
-    # Package
-    cd proton_dist_tmp && tar -zcf proton_dist.tar.gz bin/ include/ lib64/ lib/ share/ version && mv proton_dist.tar.gz ../"proton_tkg_$_protontkg_version"
-    cd "$_nowhere" && rm -rf proton_dist_tmp
+    # Move prepared dist
+    mv "$_nowhere"/proton_dist_tmp "$_nowhere"/"proton_tkg_$_protontkg_version"/files
+    #rm -rf proton_dist_tmp
+    cd "$_nowhere"
 
     # Grab conf template and inject version
     echo "$_versionpre" "proton-tkg-$_protontkg_true_version" > "proton_tkg_$_protontkg_version/version" && cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/ && sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
@@ -756,6 +751,20 @@ else
       sed -i 's/.*PROTON_USE_WINED3D11.*/     "PROTON_USE_WINED3D11": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
       sed -i 's/.*PROTON_USE_WINED3D9.*/     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
     fi
+
+    # steampipe fixups
+    python3 "$_nowhere"/proton_template/steampipe_fixups.py process "$_nowhere"/"proton_tkg_$_protontkg_version" && cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
+
+    # pefixup
+    echo ''
+    echo "Fixing PE files..."
+    find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py" >"$_nowhere"/pefixup.log 2>&1
+
+    echo ''
+    echo "Generating default prefix..."
+
+    # Generate default prefix
+    python3 "$_nowhere"/proton_template/default_pfx.py "$_nowhere"/"proton_tkg_$_protontkg_version"/files/share/default_pfx/ "$_nowhere"/"proton_tkg_$_protontkg_version"/files
 
     cd "$_nowhere"
 
