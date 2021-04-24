@@ -760,12 +760,12 @@ else
     find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py" >"$_nowhere"/pefixup.log 2>&1
 
     # Generate default prefix
-    echo ''
-    echo "Generating default prefix..."
-    python3 "$_nowhere"/proton_template/default_pfx.py "$_nowhere"/"proton_tkg_$_protontkg_version"/files/share/default_pfx/ "$_nowhere"/"proton_tkg_$_protontkg_version"/files
+    #echo ''
+    #echo "Generating default prefix..."
+    #python3 "$_nowhere"/proton_template/default_pfx.py "$_nowhere"/"proton_tkg_$_protontkg_version"/files/share/default_pfx/ "$_nowhere"/"proton_tkg_$_protontkg_version"/files
 
     # steampipe fixups
-    python3 "$_nowhere"/proton_template/steampipe_fixups.py process "$_nowhere"/"proton_tkg_$_protontkg_version"
+    #python3 "$_nowhere"/proton_template/steampipe_fixups.py process "$_nowhere"/"proton_tkg_$_protontkg_version"
 
     cd "$_nowhere"
 
