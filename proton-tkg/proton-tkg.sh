@@ -322,6 +322,14 @@ function steam_is_running {
   fi
 }
 
+function wine_is_running {
+  if pgrep -x wineserver >/dev/null; then
+    echo -e "\n Wineserver is running. Waiting for it to finish..."
+    sleep 3
+    wine_is_running
+  fi
+}
+
 function proton_tkg_uninstaller {
   # Never cross the Proton streams!
   i=0
@@ -649,7 +657,8 @@ else
     # Grab conf template and inject version
     echo "$_versionpre" "proton-tkg-$_protontkg_true_version" > "proton_tkg_$_protontkg_version/version" && cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/ && sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
 
-    cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
+    # steampipe fixups
+    #cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
 
     # Patch our proton script to use the current proton tree prefix version value
     _prefix_version=$(cat "$_nowhere/Proton/proton" | grep "CURRENT_PREFIX_VERSION=")
@@ -759,11 +768,6 @@ else
     echo "Fixing PE files..."
     find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py" >"$_nowhere"/pefixup.log 2>&1
 
-    # Generate default prefix
-    #echo ''
-    #echo "Generating default prefix..."
-    #python3 "$_nowhere"/proton_template/default_pfx.py "$_nowhere"/"proton_tkg_$_protontkg_version"/files/share/default_pfx/ "$_nowhere"/"proton_tkg_$_protontkg_version"/files
-
     # steampipe fixups
     #python3 "$_nowhere"/proton_template/steampipe_fixups.py process "$_nowhere"/"proton_tkg_$_protontkg_version"
 
@@ -806,6 +810,18 @@ else
         echo ""
         echo "####################################################################################################"
       fi
+    else
+      # Generate default prefix
+      echo ''
+      echo "Generating default prefix..."
+      mkdir "$_nowhere"/"proton_tkg_$_protontkg_version"/files/share/default_pfx
+      WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" "$_nowhere/proton_tkg_$_protontkg_version"/files/bin/wineboot -u
+      wine_is_running
+      for _d in "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx/dosdevices"; do
+        if [ "$_d" != "c:" ]; then
+          rm -rf "$_d"
+        fi
+      done
     fi
   else
     rm "$_nowhere"/proton_tkg_token
