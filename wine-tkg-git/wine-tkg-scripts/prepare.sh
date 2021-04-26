@@ -2340,7 +2340,9 @@ EOM
 	# Proton Bcrypt patches
 	if [ "$_proton_bcrypt" = "true" ]; then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 74c0da2d71e95f3e6bd6c8b440652933771b27d7 HEAD );then
-	    _patchname='proton-bcrypt.patch' && _patchmsg="Using Proton Bcrypt patches" && nonuser_patcher
+	    if [ "$_use_staging" = "true" ]; then
+	      _patchname='proton-bcrypt-staging.patch' && _patchmsg="Using Proton Bcrypt patches" && nonuser_patcher
+	    fi
 	  fi
 	fi
 
