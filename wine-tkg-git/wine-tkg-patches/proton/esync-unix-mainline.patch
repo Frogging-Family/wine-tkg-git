@@ -4755,3 +4755,44 @@ index 883722eff36..1a031248a7c 100644
      NULL,                         /* satisfied */
      no_signal,                    /* signal */
      no_get_fd,                    /* get_fd */
+From 995fdfb8cdb0a8eed82e16640034dc9673ded681 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 12 Mar 2021 23:58:39 +0300
+Subject: [PATCH 14/16] esync: Fix restoring the objects state on wait all
+ objects retry.
+
+---
+ dlls/ntdll/unix/esync.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
+index 9a615fb277c..810477d02a0 100644
+--- a/dlls/ntdll/unix/esync.c
++++ b/dlls/ntdll/unix/esync.c
+@@ -1168,10 +1168,22 @@ tryagain:
+                         {
+                             /* We were too slow. Put everything back. */
+                             value = 1;
+-                            for (j = i; j >= 0; j--)
++                            for (j = i - 1; j >= 0; j--)
+                             {
+-                                if (write( obj->fd, &value, sizeof(value) ) == -1)
++                                struct esync *obj = objs[j];
++
++                                if (obj->type == ESYNC_MUTEX)
++                                {
++                                    struct mutex *mutex = obj->shm;
++
++                                    if (mutex->tid == GetCurrentThreadId())
++                                        continue;
++                                }
++                                if (write( fds[j].fd, &value, sizeof(value) ) == -1)
++                                {
++                                    ERR("write failed.\n");
+                                     return errno_to_status( errno );
++                                }
+                             }
+ 
+                             goto tryagain;  /* break out of two loops and a switch */
+-- 
+2.30.2
