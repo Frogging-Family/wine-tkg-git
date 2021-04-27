@@ -99,6 +99,36 @@ _cfgstring() {
   fi
 }
 
+update_configure() {
+  _file="./configure"
+
+  if ! cp -a "$_file" "$_file.old"; then
+    abort "failed to create $_file.old"
+  fi
+
+  if ! autoreconf -f; then
+    rm "$_file.old"
+    unset _file
+    return 1
+  fi
+
+  # This is undefined behaviour when off_t is 32-bit, see https://launchpad.net/ubuntu/+source/autoconf/2.69-6
+  # GE has reported RDR2 online issues with the fix applied (which staging applies), so let's restore the broken ways
+  sed -i'' -e "s|^#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))\$|#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))|g" "$_file"
+  sed -i'' -e "s|^#define LARGE_OFF_T (((off_t) 1 << 31 << 31) - 1 + ((off_t) 1 << 31 << 31))\$|#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))|g" "$_file"
+  unset _large_off_old _large_off_new
+
+  # Restore original timestamp when nothing changed
+  if ! cmp "$_file.old" "$_file" >/dev/null; then
+    rm "$_file.old"
+  else
+    mv "$_file.old" "$_file"
+  fi
+
+  unset _file
+  return 0
+}
+
 _init() {
 msg2 '       .---.`               `.---.'
 msg2 '    `/syhhhyso-           -osyhhhys/`'
@@ -2344,6 +2374,7 @@ EOM
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 74c0da2d71e95f3e6bd6c8b440652933771b27d7 HEAD );then
 	    if [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-bcrypt-staging.patch' && _patchmsg="Using Proton Bcrypt patches" && nonuser_patcher
+	      ( cd "${srcdir}"/"${_winesrcdir}" && update_configure )
 	    fi
 	  fi
 	fi
