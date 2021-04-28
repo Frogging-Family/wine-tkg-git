@@ -581,6 +581,7 @@ else
     fi
 
     # dxvk
+    cd "$_nowhere"
     if [ "$_use_dxvk" != "false" ]; then
       if [ "$_use_dxvk" = "git" ]; then
         build_dxvk
