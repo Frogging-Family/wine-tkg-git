@@ -26,6 +26,10 @@ user_settings = {
     #Write the command proton sends to wine for targeted prefix (/prefix/path/launch_command) - Helpful to track bound executable
     "PROTON_LOG_COMMAND_TO_PREFIX": "1",
 
+    #Alternative use of start.exe to run your game. With wine 6.7, start.exe behavior has changed, keeping start.exe running and preventing games from exiting in steam.
+    #This is a workaround, but it might affect dependencies installation on new prefixes.
+    "PROTON_ALT_START": "1",
+
     #Disable nvapi and nvapi64
     "PROTON_NVAPI_DISABLE": "1",
 

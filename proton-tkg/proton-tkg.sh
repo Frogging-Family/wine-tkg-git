@@ -764,6 +764,12 @@ else
       sed -i 's/.*PROTON_USE_WINED3D9.*/     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
     fi
 
+    # Disable alt start by default on 6.6 and lower
+    _alt_start_vercheck=$( echo "$_protontkg_version" | cut -f1,2 -d'.' )
+    if (( ${_alt_start_vercheck//./} <= 66 )); then
+      sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+    fi
+
     # pefixup
     echo ''
     echo "Fixing PE files..."
