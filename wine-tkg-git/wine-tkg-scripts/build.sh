@@ -303,9 +303,9 @@ _package_makepkg() {
 
 	if [ "$_EXTERNAL_INSTALL" != "proton" ]; then
 	  # freetype font smoothing for win32 applications
-	  install -d "$pkgdir"/etc/fonts/conf.{avail,d}
-	  install -m644 "${srcdir}/30-win32-aliases.conf" "${pkgdir}/etc/fonts/conf.avail/30-$pkgname-win32-aliases.conf"
-	  ln -s "../conf.avail/30-$pkgname-win32-aliases.conf" "${pkgdir}/etc/fonts/conf.d/30-$pkgname-win32-aliases.conf"
+	  install -d "$pkgdir"/usr/share/fontconfig/conf.{avail,default}
+	  install -m644 "$srcdir/30-win32-aliases.conf" "$pkgdir/usr/share/fontconfig/conf.avail"
+	  ln -s ../conf.avail/30-win32-aliases.conf "$pkgdir/usr/share/fontconfig/conf.default/30-win32-aliases.conf"
 	fi
 
 	# wine binfmt
