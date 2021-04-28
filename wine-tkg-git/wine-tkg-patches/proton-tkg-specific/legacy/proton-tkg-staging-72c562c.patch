@@ -1206,6 +1206,70 @@ index 9cd6812d032..9e5fe2f3129 100644
      while (*candidates)
      {
          WCHAR **args = CommandLineToArgvW( candidates, &count );
+From 3082a724542ba7527fa52eaac3611ed97ff91cac Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Mon, 10 Dec 2018 12:48:41 -0600
+Subject: [PATCH] xaudio2: Set PulseAudio application name property in the
+ environment
+
+So PA doesn't present all Wine applications as "wine-preloader", and
+allows PA to store per-application settings.
+---
+ dlls/winepulse.drv/mmdevdrv.c |  1 +
+ dlls/xaudio2_7/xaudio_dll.c   | 21 +++++++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/dlls/winepulse.drv/mmdevdrv.c b/dlls/winepulse.drv/mmdevdrv.c
+index c80ea4f9d04..6a2906761a7 100644
+--- a/dlls/winepulse.drv/mmdevdrv.c
++++ b/dlls/winepulse.drv/mmdevdrv.c
+@@ -571,6 +571,7 @@ static HRESULT pulse_connect(void)
+     WideCharToMultiByte(CP_UNIXCP, 0, name, -1, str, len, NULL, NULL);
+     TRACE("Name: %s\n", str);
+     pulse_ctx = pa_context_new(pa_mainloop_get_api(pulse_ml), str);
++    setenv("PULSE_PROP_application.name", str, 1);
+     pa_xfree(str);
+     if (!pulse_ctx) {
+         ERR("Failed to create context\n");
+diff --git a/dlls/xaudio2_7/xaudio_dll.c b/dlls/xaudio2_7/xaudio_dll.c
+index 4ca04198b6e..483e2b4138a 100644
+--- a/dlls/xaudio2_7/xaudio_dll.c
++++ b/dlls/xaudio2_7/xaudio_dll.c
+@@ -38,6 +38,7 @@
+ #include "wine/asm.h"
+ #include "wine/debug.h"
+ #include "wine/heap.h"
++#include "wine/unicode.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(xaudio2);
+ 
+@@ -1948,6 +1949,26 @@ static HRESULT WINAPI XAudio2CF_CreateInstance(IClassFactory *iface, IUnknown *p
+     pthread_cond_init(&object->mst.engine_done, NULL);
+     pthread_cond_init(&object->mst.engine_ready, NULL);
+ 
++    /* set PulseAudio's application.name in the environment since FAudio and
++     * SDL provide no way to pass this in */
++    {
++        WCHAR path[MAX_PATH], *name;
++        char *str;
++        DWORD len;
++
++        GetModuleFileNameW(NULL, path, ARRAY_SIZE(path));
++        name = strrchrW(path, '\\');
++        if (!name)
++            name = path;
++        else
++            name++;
++        len = WideCharToMultiByte(CP_UNIXCP, 0, name, -1, NULL, 0, NULL, NULL);
++        str = HeapAlloc(GetProcessHeap(), 0, len);
++        WideCharToMultiByte(CP_UNIXCP, 0, name, -1, str, len, NULL, NULL);
++        setenv("PULSE_PROP_application.name", str, 1);
++        HeapFree(GetProcessHeap(), 0, str);
++    }
++
+     FAudioCOMConstructWithCustomAllocatorEXT(
+         &object->faudio,
+         XAUDIO2_VER,
 From b739d48093cce805b7b4f48fdbd9d0bb62bc8013 Mon Sep 17 00:00:00 2001
 From: Brendan Shanks <bshanks@codeweavers.com>
 Date: Mon, 13 Apr 2020 16:25:47 -0700
@@ -1318,109 +1382,6 @@ index 20eb6a05922..d99c6b462b2 100644
      name_len = attr->ObjectName->Length / sizeof(WCHAR);
  
      if (name_len && name[0] == '\\') return STATUS_INVALID_PARAMETER;
-From cb427c70056654bf12fb0d7d6dcb13386d193ff4 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
-Date: Fri, 24 Apr 2020 14:37:58 +0300
-Subject: [PATCH] server: Try to retrieve the unix name on handles created from
- file descriptors.
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
-Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=46070
-Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
-
-Fixes Unity of Command II, and possibly other games that use
-Python38.dll.
----
- server/fd.c   | 39 +++++++++++++++++++++++++++++++++++++++
- server/file.c |  1 +
- server/file.h |  2 ++
- 3 files changed, 42 insertions(+)
-
-diff --git a/server/fd.c b/server/fd.c
-index 904c99029ca..990a1a708a0 100644
---- a/server/fd.c
-+++ b/server/fd.c
-@@ -2079,6 +2079,45 @@ struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops, int unix_fd, s
-     return NULL;
- }
- 
-+void set_unix_name_of_fd( struct fd *fd, const struct stat *fd_st )
-+{
-+#ifdef __linux__
-+    static const char procfs_fmt[] = "/proc/self/fd/%d";
-+
-+    char path[PATH_MAX], procfs_path[sizeof(procfs_fmt) - 2 /* %d */ + 11];
-+    struct stat path_st;
-+    ssize_t len;
-+
-+    sprintf( procfs_path, procfs_fmt, fd->unix_fd );
-+    len = readlink( procfs_path, path, sizeof(path) );
-+    if (len == -1 || len >= sizeof(path) )
-+        return;
-+    path[len] = '\0';
-+
-+    /* Make sure it's an absolute path, has at least one hardlink, and the same inode */
-+    if (path[0] != '/' || stat( path, &path_st ) || path_st.st_nlink < 1 ||
-+        path_st.st_dev != fd_st->st_dev || path_st.st_ino != fd_st->st_ino)
-+        return;
-+
-+    if (!(fd->unix_name = mem_alloc( len + 1 )))
-+        return;
-+    memcpy( fd->unix_name, path, len + 1 );
-+
-+#elif defined(F_GETPATH)
-+    char path[PATH_MAX];
-+    size_t size;
-+
-+    if (fcntl( fd->unix_fd, F_GETPATH, path ) == -1 || path[0] != '/')
-+        return;
-+
-+    size = strlen(path) + 1;
-+    if (!(fd->unix_name = mem_alloc( size )))
-+        return;
-+    memcpy( fd->unix_name, path, size );
-+
-+#endif
-+}
-+
- /* retrieve the object that is using an fd */
- void *get_fd_user( struct fd *fd )
- {
-diff --git a/server/file.c b/server/file.c
-index e5e367478ce..e469341c746 100644
---- a/server/file.c
-+++ b/server/file.c
-@@ -147,6 +147,7 @@ struct file *create_file_for_fd( int fd, unsigned int access, unsigned int shari
-         release_object( file );
-         return NULL;
-     }
-+    set_unix_name_of_fd( file->fd, &st );
-     allow_fd_caching( file->fd );
-     return file;
- }
-diff --git a/server/file.h b/server/file.h
-index 0e43a8170df..7d614569a16 100644
---- a/server/file.h
-+++ b/server/file.h
-@@ -22,6 +22,7 @@
- #define __WINE_SERVER_FILE_H
- 
- #include <sys/types.h>
-+#include <sys/stat.h>
- 
- #include "object.h"
- 
-@@ -82,6 +83,7 @@ extern struct fd *open_fd( struct fd *root, const char *name, int flags, mode_t
-                            unsigned int access, unsigned int sharing, unsigned int options );
- extern struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops,
-                                        int unix_fd, struct object *user, unsigned int options );
-+extern void set_unix_name_of_fd( struct fd *fd, const struct stat *fd_st );
- extern struct fd *dup_fd_object( struct fd *orig, unsigned int access, unsigned int sharing,
-                                  unsigned int options );
- extern struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsigned int sharing );
-
 From 514d3e11c999b11a95ab35df5b4ab454d34fe791 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Wed, 13 May 2020 13:55:55 +0300
@@ -2266,114 +2227,6 @@ index a33440107b6..397aa64dce2 100644
          };
  
          WCHAR cur_exe[MAX_PATH];
-From d4f662b14da9f926dc282090406428f05ad88699 Mon Sep 17 00:00:00 2001
-From: Arkadiusz Hiler <ahiler@codeweavers.com>
-Date: Tue, 23 Feb 2021 14:41:58 +0200
-Subject: [PATCH] ntoskrnl: Implement IoSetDevicePropertyData().
-
----
- dlls/ntoskrnl.exe/ntoskrnl.exe.spec |  1 +
- dlls/ntoskrnl.exe/pnp.c             | 45 +++++++++++++++++++++++++++++
- include/ddk/wdm.h                   |  4 +++
- 3 files changed, 50 insertions(+)
-
-diff --git a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
-index 0f65490b487..5ff04af794d 100644
---- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
-+++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
-@@ -465,6 +465,7 @@
- @ stdcall IoReuseIrp(ptr long)
- @ stub IoSetCompletionRoutineEx
- @ stdcall IoSetDeviceInterfaceState(ptr long)
-+@ stdcall IoSetDevicePropertyData(ptr ptr long long long long ptr)
- @ stub IoSetDeviceToVerify
- @ stub IoSetFileOrigin
- @ stub IoSetHardErrorOrVerifyDevice
-diff --git a/dlls/ntoskrnl.exe/pnp.c b/dlls/ntoskrnl.exe/pnp.c
-index 6a0e82ec0e2..7f1e900cc42 100644
---- a/dlls/ntoskrnl.exe/pnp.c
-+++ b/dlls/ntoskrnl.exe/pnp.c
-@@ -793,6 +793,51 @@ NTSTATUS WINAPI IoSetDeviceInterfaceState( UNICODE_STRING *name, BOOLEAN enable
-     return ret;
- }
- 
-+/***********************************************************************
-+ *           IoSetDevicePropertyData (NTOSKRNL.EXE.@)
-+ */
-+NTSTATUS WINAPI IoSetDevicePropertyData( DEVICE_OBJECT *device, const DEVPROPKEY *property_key,
-+                                         LCID lcid, ULONG flags, DEVPROPTYPE type, ULONG size,
-+                                         PVOID data)
-+{
-+    SP_DEVINFO_DATA sp_device = {sizeof(sp_device)};
-+    WCHAR device_instance_id[MAX_DEVICE_ID_LEN];
-+    NTSTATUS status;
-+    HDEVINFO set;
-+
-+    /* flags is always treated as PLUGPLAY_PROPERTY_PERSISTENT starting with Win 8 / 2012 */
-+
-+    if (lcid != LOCALE_NEUTRAL)
-+        FIXME("only LOCALE_NEUTRAL is supported\n");
-+
-+    if ((status = get_device_instance_id( device, device_instance_id )))
-+        return status;
-+
-+    if ((set = SetupDiCreateDeviceInfoList( &GUID_NULL, NULL )) == INVALID_HANDLE_VALUE)
-+    {
-+        ERR("Failed to create device list, error %#x.\n", GetLastError());
-+        return GetLastError();
-+    }
-+
-+    if (!SetupDiOpenDeviceInfoW( set, device_instance_id, NULL, 0, &sp_device ))
-+    {
-+        ERR("Failed to open device, error %#x.\n", GetLastError());
-+        SetupDiDestroyDeviceInfoList( set );
-+        return GetLastError();
-+    }
-+
-+    if (!SetupDiSetDevicePropertyW(set, &sp_device, property_key, type, data, size, 0))
-+    {
-+        ERR("Failed to set property, error %#x.\n", GetLastError());
-+        SetupDiDestroyDeviceInfoList( set );
-+        return GetLastError();
-+    }
-+
-+    SetupDiDestroyDeviceInfoList( set );
-+
-+    return STATUS_SUCCESS;
-+}
-+
- /***********************************************************************
-  *           IoRegisterDeviceInterface (NTOSKRNL.EXE.@)
-  */
-diff --git a/include/ddk/wdm.h b/include/ddk/wdm.h
-index 59af860708b..c7b7b92e279 100644
---- a/include/ddk/wdm.h
-+++ b/include/ddk/wdm.h
-@@ -21,6 +21,7 @@
- #define _NTDDK_
- 
- #include <ntstatus.h>
-+#include <devpropdef.h>
- 
- #ifdef _WIN64
- #define POINTER_ALIGNMENT DECLSPEC_ALIGN(8)
-@@ -1681,6 +1682,8 @@ void      WINAPI ExReleaseResourceForThreadLite(ERESOURCE*,ERESOURCE_THREAD);
- ULONG     WINAPI ExSetTimerResolution(ULONG,BOOLEAN);
- void      WINAPI ExUnregisterCallback(void*);
- 
-+#define PLUGPLAY_PROPERTY_PERSISTENT 0x0001
-+
- void      WINAPI IoAcquireCancelSpinLock(KIRQL*);
- NTSTATUS  WINAPI IoAcquireRemoveLockEx(IO_REMOVE_LOCK*,void*,const char*,ULONG, ULONG);
- NTSTATUS  WINAPI IoAllocateDriverObjectExtension(PDRIVER_OBJECT,PVOID,ULONG,PVOID*);
-@@ -1728,6 +1731,7 @@ void      WINAPI IoReleaseRemoveLockAndWaitEx(IO_REMOVE_LOCK*,void*,ULONG);
- void      WINAPI IoReleaseRemoveLockEx(IO_REMOVE_LOCK*,void*,ULONG);
- void      WINAPI IoReuseIrp(IRP*,NTSTATUS);
- NTSTATUS  WINAPI IoSetDeviceInterfaceState(UNICODE_STRING*,BOOLEAN);
-+NTSTATUS  WINAPI IoSetDevicePropertyData(DEVICE_OBJECT*,const DEVPROPKEY*,LCID,ULONG,DEVPROPTYPE,ULONG,PVOID);
- NTSTATUS  WINAPI IoWMIRegistrationControl(PDEVICE_OBJECT,ULONG);
- 
- void    FASTCALL KeAcquireInStackQueuedSpinLockAtDpcLevel(KSPIN_LOCK*,KLOCK_QUEUE_HANDLE*);
 From e6c7aa8bc42fea042c3d504009ad8a0fb70a6c0c Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Thu, 21 Jan 2021 11:54:10 -0600
@@ -2395,6 +2248,170 @@ index a4a10bc8e93..551ef146cd7 100644
 -EXTRADLLFLAGS = -Wb,--prefer-native
 -
  RC_SRCS = version.rc
+From 2ec8739c7440157e189b762b486433697fee06e3 Mon Sep 17 00:00:00 2001
+From: Brendan Shanks <bshanks@codeweavers.com>
+Date: Wed, 5 Aug 2020 14:26:23 -0700
+Subject: [PATCH] HACK: ntdll: Support x86_64 syscall emulation for Red Dead
+ Redemption 2.
+
+---
+ dlls/ntdll/unix/signal_x86_64.c | 125 +++++++++++++++++++++++++++++---
+ 1 file changed, 115 insertions(+), 10 deletions(-)
+
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index 33ad0489006..66fadacf920 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -2368,6 +2368,63 @@ static void sigsys_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+ 
+     ctx->uc_mcontext.gregs[REG_RIP] = *dispatcher_address;
+ }
++
++unsigned int __wine_syscall_nr_NtClose;
++unsigned int __wine_syscall_nr_NtCreateFile;
++unsigned int __wine_syscall_nr_NtGetContextThread;
++unsigned int __wine_syscall_nr_NtQueryInformationProcess;
++unsigned int __wine_syscall_nr_NtQuerySystemInformation;
++unsigned int __wine_syscall_nr_NtQueryVirtualMemory;
++unsigned int __wine_syscall_nr_NtReadFile;
++unsigned int __wine_syscall_nr_NtWriteFile;
++
++static void sigsys_handler_rdr2( int signal, siginfo_t *siginfo, void *sigcontext )
++{
++    ULONG64 *dispatcher_address = (ULONG64 *)((char *)user_shared_data + page_size);
++    ucontext_t *ctx = sigcontext;
++    void ***rsp;
++
++    TRACE("SIGSYS, rax %#llx, rip %#llx.\n", ctx->uc_mcontext.gregs[REG_RAX],
++            ctx->uc_mcontext.gregs[REG_RIP]);
++
++    rsp = (void ***)&ctx->uc_mcontext.gregs[REG_RSP];
++    *rsp -= 1;
++    **rsp = (void *)(ctx->uc_mcontext.gregs[REG_RIP] + 0xb);
++
++    ctx->uc_mcontext.gregs[REG_RIP] = *dispatcher_address;
++
++    /* syscall numbers are for Windows 10 1809 (build 17763) */
++    switch (ctx->uc_mcontext.gregs[REG_RAX])
++    {
++        case 0x19:
++            ctx->uc_mcontext.gregs[REG_RAX] = __wine_syscall_nr_NtQueryInformationProcess;
++            break;
++        case 0x36:
++            ctx->uc_mcontext.gregs[REG_RAX] = __wine_syscall_nr_NtQuerySystemInformation;
++            break;
++        case 0xec:
++            ctx->uc_mcontext.gregs[REG_RAX] = __wine_syscall_nr_NtGetContextThread;
++            break;
++        case 0x55:
++            ctx->uc_mcontext.gregs[REG_RAX] = __wine_syscall_nr_NtCreateFile;
++            break;
++        case 0x08:
++            ctx->uc_mcontext.gregs[REG_RAX] = __wine_syscall_nr_NtWriteFile;
++            break;
++        case 0x06:
++            ctx->uc_mcontext.gregs[REG_RAX] = __wine_syscall_nr_NtReadFile;
++            break;
++        case 0x0f:
++            ctx->uc_mcontext.gregs[REG_RAX] = __wine_syscall_nr_NtClose;
++            break;
++        case 0x23:
++            ctx->uc_mcontext.gregs[REG_RAX] = __wine_syscall_nr_NtQueryVirtualMemory;
++            break;
++         default:
++            FIXME("Unhandled syscall %#llx.\n", ctx->uc_mcontext.gregs[REG_RAX]);
++            break;
++    }
++}
+ #endif
+ 
+ #ifdef HAVE_SECCOMP
+@@ -2425,27 +2482,75 @@ static void install_bpf(struct sigaction *sig_act)
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+     };
++    static struct sock_filter filter_rdr2[] =
++    {
++        /* Trap anything called from RDR2 or the launcher (0x140000000 - 0x150000000)*/
++        /* > 0x140000000 */
++        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, instruction_pointer) + 0),
++        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x40000000 /*lsb*/, 0, 7),
++        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, instruction_pointer) + 4),
++        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0x1 /*msb*/, 0, 5),
++
++        /* < 0x150000000 */
++        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, instruction_pointer) + 0),
++        BPF_JUMP(BPF_JMP | BPF_JGT | BPF_K, 0x50000000 /*lsb*/, 3, 0),
++        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, instruction_pointer) + 4),
++        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0x1 /*msb*/, 0, 1),
++        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
++
++        /* Allow everything else */
++        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
++    };
+     struct sock_fprog prog;
++    BOOL rdr2 = FALSE;
+     NTSTATUS status;
+ 
+     sig_act->sa_sigaction = sigsys_handler;
++    memset(&prog, 0, sizeof(prog));
++
++    {
++        const char *sgi = getenv("SteamGameId");
++        if (sgi && (!strcmp(sgi, "1174180") || !strcmp(sgi, "1404210")))
++        {
++            /* Use specific filter and signal handler for Red Dead Redemption 2 */
++            prog.len = ARRAY_SIZE(filter_rdr2);
++            prog.filter = filter_rdr2;
++            sig_act->sa_sigaction = sigsys_handler_rdr2;
++            rdr2 = TRUE;
++        }
++    }
++
+     sigaction(SIGSYS, sig_act, NULL);
+ 
+-    if ((status = syscall(0xffff)) == STATUS_INVALID_PARAMETER)
++    if (rdr2)
+     {
+-        TRACE("Seccomp filters already installed.\n");
+-        return;
++        int ret;
++
++        if ((ret = prctl(PR_GET_SECCOMP, 0, NULL, 0, 0)))
++        {
++            if (ret == 2)
++                TRACE("Seccomp filters already installed.\n");
++            else
++                ERR("Seccomp filters cannot be installed, ret %d, error %s.\n", ret, strerror(errno));
++            return;
++        }
+     }
+-    if (status != -ENOSYS && (status != -1 || errno != ENOSYS))
++    else
+     {
+-        ERR("Unexpected status %#x, errno %d.\n", status, errno);
+-        return;
++        if ((status = syscall(0xffff)) == STATUS_INVALID_PARAMETER)
++        {
++            TRACE("Seccomp filters already installed.\n");
++            return;
++        }
++        if (status != -ENOSYS && (status != -1 || errno != ENOSYS))
++        {
++            ERR("Unexpected status %#x, errno %d.\n", status, errno);
++            return;
++        }
++        prog.len = ARRAY_SIZE(filter);
++        prog.filter = filter;
+     }
+ 
+-    memset(&prog, 0, sizeof(prog));
+-    prog.len = ARRAY_SIZE(filter);
+-    prog.filter = filter;
+-
+     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+     {
+         ERR("prctl(PR_SET_NO_NEW_PRIVS, ...): %s.\n", strerror(errno));
 From 646c4b468b4add980861392a439e5184c239c54e Mon Sep 17 00:00:00 2001
 From: Myah Caron <qsniyg@protonmail.com>
 Date: Wed, 10 Mar 2021 12:58:01 +0300
@@ -2438,9 +2455,9 @@ index a60c97b4a5e..334b9aff797 100755
  enable_fwpuclnt
  enable_gameux
 +enable_gamingtcui
+ enable_gcdef
  enable_gdi32
  enable_gdiplus
- enable_glu32
 @@ -20448,6 +20450,7 @@ wine_fn_config_makefile dlls/api-ms-win-eventing-controller-l1-1-0 enable_api_ms
  wine_fn_config_makefile dlls/api-ms-win-eventing-legacy-l1-1-0 enable_api_ms_win_eventing_legacy_l1_1_0
  wine_fn_config_makefile dlls/api-ms-win-eventing-provider-l1-1-0 enable_api_ms_win_eventing_provider_l1_1_0
@@ -2454,9 +2471,9 @@ index a60c97b4a5e..334b9aff797 100755
  wine_fn_config_makefile dlls/gameux enable_gameux
  wine_fn_config_makefile dlls/gameux/tests enable_tests
 +wine_fn_config_makefile dlls/gamingtcui enable_gamingtcui
+ wine_fn_config_makefile dlls/gcdef enable_gcdef
  wine_fn_config_makefile dlls/gdi.exe16 enable_win16
  wine_fn_config_makefile dlls/gdi32 enable_gdi32
- wine_fn_config_makefile dlls/gdi32/tests enable_tests
 diff --git a/configure.ac b/configure.ac
 index 70181d410e0..3013217e411 100644
 --- a/configure.ac
@@ -2474,9 +2491,9 @@ index 70181d410e0..3013217e411 100644
  WINE_CONFIG_MAKEFILE(dlls/gameux)
  WINE_CONFIG_MAKEFILE(dlls/gameux/tests)
 +WINE_CONFIG_MAKEFILE(dlls/gamingtcui)
+ WINE_CONFIG_MAKEFILE(dlls/gcdef)
  WINE_CONFIG_MAKEFILE(dlls/gdi.exe16,enable_win16)
  WINE_CONFIG_MAKEFILE(dlls/gdi32)
- WINE_CONFIG_MAKEFILE(dlls/gdi32/tests)
 diff --git a/dlls/api-ms-win-gaming-tcui-l1-1-0/Makefile.in b/dlls/api-ms-win-gaming-tcui-l1-1-0/Makefile.in
 new file mode 100644
 index 00000000000..5007bd06de2
@@ -2608,6 +2625,675 @@ index 00000000000..07afe30a6cc
 +
 +    return S_OK;
 +}
+
+From 7526e49827642fea25b8b72c66afba6b7fc38b2b Mon Sep 17 00:00:00 2001
+From: Nikolay Sivov <nsivov@codeweavers.com>
+Date: Wed, 10 Mar 2021 15:19:23 +0300
+Subject: [PATCH 03/16] ntdll: Implement NtGetNextProcess().
+
+---
+ dlls/ntdll/ntdll.spec          |  1 +
+ dlls/ntdll/tests/om.c          | 28 +++++++++++++++++++++++
+ dlls/ntdll/unix/process.c      | 20 +++++++++++++++++
+ include/wine/server_protocol.h | 21 +++++++++++++++++
+ server/process.c               | 41 ++++++++++++++++++++++++++++++++++
+ server/protocol.def            | 11 +++++++++
+ server/request.h               |  9 ++++++++
+ server/trace.c                 | 16 +++++++++++++
+ 8 files changed, 147 insertions(+)
+
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index 6c71032bd31..490314c6fce 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -223,6 +223,7 @@
+ @ stdcall -norelay -syscall NtGetContextThread(long ptr)
+ @ stdcall -syscall NtGetCurrentProcessorNumber()
+ # @ stub NtGetDevicePowerState
++@ stdcall -syscall NtGetNextProcess(long long long long ptr)
+ @ stdcall -syscall NtGetNlsSectionPtr(long long long ptr ptr)
+ @ stub NtGetPlugPlayEvent
+ @ stdcall NtGetTickCount()
+diff --git a/dlls/ntdll/tests/om.c b/dlls/ntdll/tests/om.c
+index e93f11e1126..6b865ce27ca 100644
+--- a/dlls/ntdll/tests/om.c
++++ b/dlls/ntdll/tests/om.c
+@@ -78,6 +78,7 @@ static void     (WINAPI *pRtlWakeAddressAll)( const void * );
+ static void     (WINAPI *pRtlWakeAddressSingle)( const void * );
+ static NTSTATUS (WINAPI *pNtOpenProcess)( HANDLE *, ACCESS_MASK, const OBJECT_ATTRIBUTES *, const CLIENT_ID * );
+ static NTSTATUS (WINAPI *pNtCreateDebugObject)( HANDLE *, ACCESS_MASK, OBJECT_ATTRIBUTES *, ULONG );
++static NTSTATUS (WINAPI *pNtGetNextProcess)(HANDLE process, ACCESS_MASK access, ULONG attributes, ULONG flags, HANDLE *handle);
+ 
+ #define KEYEDEVENT_WAIT       0x0001
+ #define KEYEDEVENT_WAKE       0x0002
+@@ -2549,6 +2550,31 @@ static void test_object_types(void)
+     }
+ }
+ 
++static void test_get_next_process(void)
++{
++    NTSTATUS status;
++    HANDLE handle;
++
++    if (!pNtGetNextProcess)
++    {
++        win_skip("NtGetNextProcess is not available.\n");
++        return;
++    }
++
++    status = pNtGetNextProcess(0, PROCESS_QUERY_LIMITED_INFORMATION, OBJ_INHERIT, 0, &handle);
++    ok(!status, "Unexpected status %#x.\n", status);
++    pNtClose(handle);
++
++    /* Reversed search only supported in recent enough Win10 */
++    status = pNtGetNextProcess(0, PROCESS_QUERY_LIMITED_INFORMATION, OBJ_INHERIT, 1, &handle);
++    ok(!status || broken(status == STATUS_INVALID_PARAMETER), "Unexpected status %#x.\n", status);
++    if (status)
++        pNtClose(handle);
++
++    status = pNtGetNextProcess(0, PROCESS_QUERY_LIMITED_INFORMATION, OBJ_INHERIT, 2, &handle);
++    ok(status == STATUS_INVALID_PARAMETER, "Unexpected status %#x.\n", status);
++}
++
+ START_TEST(om)
+ {
+     HMODULE hntdll = GetModuleHandleA("ntdll.dll");
+@@ -2600,6 +2626,7 @@ START_TEST(om)
+     pRtlWakeAddressSingle   =  (void *)GetProcAddress(hntdll, "RtlWakeAddressSingle");
+     pNtOpenProcess          =  (void *)GetProcAddress(hntdll, "NtOpenProcess");
+     pNtCreateDebugObject    =  (void *)GetProcAddress(hntdll, "NtCreateDebugObject");
++    pNtGetNextProcess       =  (void *)GetProcAddress(hntdll, "NtGetNextProcess");
+ 
+     test_case_sensitive();
+     test_namespace_pipe();
+@@ -2617,4 +2644,5 @@ START_TEST(om)
+     test_wait_on_address();
+     test_process();
+     test_object_types();
++    test_get_next_process();
+ }
+diff --git a/dlls/ntdll/unix/process.c b/dlls/ntdll/unix/process.c
+index 083a3a82a1d..8971ed8e5e2 100644
+--- a/dlls/ntdll/unix/process.c
++++ b/dlls/ntdll/unix/process.c
+@@ -1759,6 +1759,26 @@ NTSTATUS WINAPI NtResumeProcess( HANDLE handle )
+     return ret;
+ }
+ 
++/**********************************************************************
++ *           NtGetNextProcess  (NTDLL.@)
++ */
++NTSTATUS WINAPI NtGetNextProcess( HANDLE process, ACCESS_MASK access, ULONG attributes,
++                                  ULONG flags, HANDLE *handle )
++{
++    NTSTATUS ret;
++
++    SERVER_START_REQ( get_next_process )
++    {
++        req->last = wine_server_obj_handle( process );
++        req->access = access;
++        req->attributes = attributes;
++        req->flags = flags;
++        ret = wine_server_call( req );
++        if (!ret) *handle = wine_server_ptr_handle( reply->handle );
++    }
++    SERVER_END_REQ;
++    return ret;
++}
+ 
+ /**********************************************************************
+  *           NtDebugActiveProcess  (NTDLL.@)
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index 0ff37b112a6..a33210f1475 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -5589,6 +5589,24 @@ struct get_fsync_apc_idx_reply
+ };
+ 
+ 
++
++struct get_next_process_request
++{
++    struct request_header __header;
++    obj_handle_t last;
++    unsigned int access;
++    unsigned int attributes;
++    unsigned int flags;
++    char __pad_28[4];
++};
++struct get_next_process_reply
++{
++    struct reply_header __header;
++    obj_handle_t handle;
++    char __pad_12[4];
++};
++
++
+ enum request
+ {
+     REQ_new_process,
+@@ -5875,6 +5893,7 @@ enum request
+     REQ_get_esync_fd,
+     REQ_esync_msgwait,
+     REQ_get_esync_apc_fd,
++    REQ_get_next_process,
+     REQ_NB_REQUESTS
+ };
+ 
+@@ -6166,6 +6185,7 @@ union generic_request
+     struct get_esync_fd_request get_esync_fd_request;
+     struct esync_msgwait_request esync_msgwait_request;
+     struct get_esync_apc_fd_request get_esync_apc_fd_request;
++    struct get_next_process_request get_next_process_request;
+ };
+ union generic_reply
+ {
+@@ -6455,6 +6475,7 @@ union generic_reply
+     struct get_esync_fd_reply get_esync_fd_reply;
+     struct esync_msgwait_reply esync_msgwait_reply;
+     struct get_esync_apc_fd_reply get_esync_apc_fd_reply;
++    struct get_next_process_reply get_next_process_reply;
+ };
+ 
+ /* ### protocol_version begin ### */
+diff --git a/server/process.c b/server/process.c
+index 08cd261f445..307317f37e6 100644
+--- a/server/process.c
++++ b/server/process.c
+@@ -1782,6 +1782,47 @@ DECL_HANDLER(resume_process)
+     }
+ }
+ 
++/* Iterate process list */
++DECL_HANDLER(get_next_process)
++{
++    struct process *process = NULL, *next;
++    struct list *ptr;
++
++    reply->handle = 0;
++
++    if ( req->flags > 1 )
++    {
++        set_error( STATUS_INVALID_PARAMETER );
++        return;
++    }
++
++    if (!req->last)
++    {
++        ptr = req->flags ? list_tail( &process_list ) : list_head( &process_list );
++    }
++    else if ((process = get_process_from_handle( req->last, 0 )))
++    {
++        ptr = req->flags ? list_prev( &process_list, &process->entry ) :
++                list_next( &process_list, &process->entry );
++    }
++    else
++        return;
++
++    while (ptr)
++    {
++        next = LIST_ENTRY( ptr, struct process, entry );
++        if ((reply->handle = alloc_handle( current->process, next, req->access, req->attributes )))
++            break;
++        ptr = req->flags ? list_prev( &process_list, &next->entry ) : list_next( &process_list, &next->entry );
++    }
++
++    if (!reply->handle)
++        set_error( STATUS_NO_MORE_ENTRIES );
++
++    if (process)
++        release_object( process );
++}
++
+ /* Get a list of processes and threads currently running */
+ DECL_HANDLER(list_processes)
+ {
+diff --git a/server/protocol.def b/server/protocol.def
+index ebb3b762347..e1d7f0ee3ab 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -3880,3 +3880,14 @@ enum fsync_type
+ @REPLY
+     unsigned int shm_idx;
+ @END
++
++
++/* Iterate process list */
++@REQ(get_next_process)
++    obj_handle_t last;         /* process handle to start with */
++    unsigned int access;       /* desired access for returned handle */
++    unsigned int attributes;   /* returned handle attributes */
++    unsigned int flags;        /* controls iteration direction */
++@REPLY
++    obj_handle_t handle;       /* next process handle */
++@END
+diff --git a/server/request.h b/server/request.h
+index cb95831ab84..a9b5a478c27 100644
+--- a/server/request.h
++++ b/server/request.h
+@@ -403,6 +403,7 @@ DECL_HANDLER(open_fsync);
+ DECL_HANDLER(get_esync_fd);
+ DECL_HANDLER(esync_msgwait);
+ DECL_HANDLER(get_esync_apc_fd);
++DECL_HANDLER(get_next_process);
+ 
+ #ifdef WANT_REQUEST_HANDLERS
+ 
+@@ -693,6 +694,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+     (req_handler)req_get_esync_fd,
+     (req_handler)req_esync_msgwait,
+     (req_handler)req_get_esync_apc_fd,
++    (req_handler)req_get_next_process,
+ };
+ 
+ C_ASSERT( sizeof(abstime_t) == 8 );
+@@ -2311,6 +2313,13 @@ C_ASSERT( sizeof(struct fsync_msgwait_request) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct esync_msgwait_request, in_msgwait) == 12 );
+ C_ASSERT( sizeof(struct esync_msgwait_request) == 16 );
+ C_ASSERT( sizeof(struct get_esync_apc_fd_request) == 16 );
++C_ASSERT( FIELD_OFFSET(struct get_next_process_request, last) == 12 );
++C_ASSERT( FIELD_OFFSET(struct get_next_process_request, access) == 16 );
++C_ASSERT( FIELD_OFFSET(struct get_next_process_request, attributes) == 20 );
++C_ASSERT( FIELD_OFFSET(struct get_next_process_request, flags) == 24 );
++C_ASSERT( sizeof(struct get_next_process_request) == 32 );
++C_ASSERT( FIELD_OFFSET(struct get_next_process_reply, handle) == 8 );
++C_ASSERT( sizeof(struct get_next_process_reply) == 16 );
+ 
+ #endif  /* WANT_REQUEST_HANDLERS */
+ 
+diff --git a/server/trace.c b/server/trace.c
+index 7ae02418734..13affb37347 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -4586,6 +4586,19 @@ static void dump_get_fsync_apc_idx_reply( const struct get_fsync_apc_idx_reply *
+     fprintf( stderr, " shm_idx=%08x", req->shm_idx );
+ }
+ 
++static void dump_get_next_process_request( const struct get_next_process_request *req )
++{
++    fprintf( stderr, " last=%04x", req->last );
++    fprintf( stderr, ", access=%08x", req->access );
++    fprintf( stderr, ", attributes=%08x", req->attributes );
++    fprintf( stderr, ", flags=%08x", req->flags );
++}
++
++static void dump_get_next_process_reply( const struct get_next_process_reply *req )
++{
++    fprintf( stderr, " handle=%04x", req->handle );
++}
++
+ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_new_process_request,
+     (dump_func)dump_exec_process_request,
+@@ -4871,6 +4884,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_get_esync_fd_request,
+     (dump_func)dump_esync_msgwait_request,
+     (dump_func)dump_get_esync_apc_fd_request,
++    (dump_func)dump_get_next_process_request,
+ };
+ 
+ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
+@@ -5158,6 +5172,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_create_esync_reply,
+     (dump_func)dump_open_esync_reply,
+     (dump_func)dump_get_esync_fd_reply,
++    (dump_func)dump_get_next_process_reply,
+     NULL,
+     NULL,
+ };
+@@ -5445,6 +5460,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
+     "get_esync_fd",
+     "esync_msgwait",
+     "get_esync_apc_fd",
++    "get_next_process",
+ };
+ 
+ static const struct
+-- 
+2.30.2
+
+From cc36ffea19a3fa16a7583e6bdd332fa36262fcb1 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 10 Mar 2021 16:20:44 +0300
+Subject: [PATCH 04/16] ntdll: Implement NtGetNextThread().
+
+---
+ dlls/ntdll/ntdll.spec          |  1 +
+ dlls/ntdll/tests/om.c          | 31 ++++++++++++++++++++
+ dlls/ntdll/unix/thread.c       | 26 +++++++++++++++++
+ include/wine/server_protocol.h | 21 ++++++++++++++
+ server/protocol.def            | 12 ++++++++
+ server/request.h               | 10 +++++++
+ server/thread.c                | 52 ++++++++++++++++++++++++++++++++++
+ server/trace.c                 | 17 +++++++++++
+ 8 files changed, 170 insertions(+)
+
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index 490314c6fce..157babba14d 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -224,6 +224,7 @@
+ @ stdcall -syscall NtGetCurrentProcessorNumber()
+ # @ stub NtGetDevicePowerState
+ @ stdcall -syscall NtGetNextProcess(long long long long ptr)
++@ stdcall -syscall NtGetNextThread(ptr ptr long long long ptr)
+ @ stdcall -syscall NtGetNlsSectionPtr(long long long ptr ptr)
+ @ stub NtGetPlugPlayEvent
+ @ stdcall NtGetTickCount()
+diff --git a/dlls/ntdll/tests/om.c b/dlls/ntdll/tests/om.c
+index 6b865ce27ca..67105ebae84 100644
+--- a/dlls/ntdll/tests/om.c
++++ b/dlls/ntdll/tests/om.c
+@@ -79,6 +79,7 @@ static void     (WINAPI *pRtlWakeAddressSingle)( const void * );
+ static NTSTATUS (WINAPI *pNtOpenProcess)( HANDLE *, ACCESS_MASK, const OBJECT_ATTRIBUTES *, const CLIENT_ID * );
+ static NTSTATUS (WINAPI *pNtCreateDebugObject)( HANDLE *, ACCESS_MASK, OBJECT_ATTRIBUTES *, ULONG );
+ static NTSTATUS (WINAPI *pNtGetNextProcess)(HANDLE process, ACCESS_MASK access, ULONG attributes, ULONG flags, HANDLE *handle);
++static NTSTATUS (WINAPI *pNtGetNextThread)(HANDLE process, HANDLE thread, ACCESS_MASK access, ULONG attributes, ULONG flags, HANDLE *handle);
+ 
+ #define KEYEDEVENT_WAIT       0x0001
+ #define KEYEDEVENT_WAKE       0x0002
+@@ -2575,6 +2576,34 @@ static void test_get_next_process(void)
+     ok(status == STATUS_INVALID_PARAMETER, "Unexpected status %#x.\n", status);
+ }
+ 
++static void test_get_next_thread(void)
++{
++    HANDLE hprocess = GetCurrentProcess();
++    NTSTATUS status;
++    HANDLE handle;
++
++    if (!pNtGetNextThread)
++    {
++        win_skip("NtGetNextThread is not available.\n");
++        return;
++    }
++    status = pNtGetNextThread(hprocess, 0, PROCESS_QUERY_LIMITED_INFORMATION, OBJ_INHERIT, 0, &handle);
++    ok(!status, "Unexpected status %#x.\n", status);
++    pNtClose(handle);
++
++    status = pNtGetNextThread((void *)0xdeadbeef, 0, PROCESS_QUERY_LIMITED_INFORMATION, OBJ_INHERIT, 0, &handle);
++    ok(status == STATUS_INVALID_HANDLE, "Unexpected status %#x.\n", status);
++
++    /* Reversed search only supported in recent enough Win10 */
++    status = pNtGetNextThread(hprocess, 0, PROCESS_QUERY_LIMITED_INFORMATION, OBJ_INHERIT, 1, &handle);
++    ok(!status || broken(status == STATUS_INVALID_PARAMETER), "Unexpected status %#x.\n", status);
++    if (status)
++        pNtClose(handle);
++
++    status = pNtGetNextThread(hprocess, 0, PROCESS_QUERY_LIMITED_INFORMATION, OBJ_INHERIT, 2, &handle);
++    ok(status == STATUS_INVALID_PARAMETER, "Unexpected status %#x.\n", status);
++}
++
+ START_TEST(om)
+ {
+     HMODULE hntdll = GetModuleHandleA("ntdll.dll");
+@@ -2627,6 +2656,7 @@ START_TEST(om)
+     pNtOpenProcess          =  (void *)GetProcAddress(hntdll, "NtOpenProcess");
+     pNtCreateDebugObject    =  (void *)GetProcAddress(hntdll, "NtCreateDebugObject");
+     pNtGetNextProcess       =  (void *)GetProcAddress(hntdll, "NtGetNextProcess");
++    pNtGetNextThread        =  (void *)GetProcAddress(hntdll, "NtGetNextThread");
+ 
+     test_case_sensitive();
+     test_namespace_pipe();
+@@ -2645,4 +2675,5 @@ START_TEST(om)
+     test_process();
+     test_object_types();
+     test_get_next_process();
++    test_get_next_thread();
+ }
+diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
+index 321e9f15360..fc5c3f501bc 100644
+--- a/dlls/ntdll/unix/thread.c
++++ b/dlls/ntdll/unix/thread.c
+@@ -1462,3 +1462,29 @@ ULONG WINAPI NtGetCurrentProcessorNumber(void)
+     /* fallback to the first processor */
+     return 0;
+ }
++
++
++/******************************************************************************
++ *                          NtGetNextThread  (NTDLL.@)
++ */
++NTSTATUS WINAPI NtGetNextThread(HANDLE hprocess, HANDLE hthread, ACCESS_MASK access, ULONG attributes,
++        ULONG flags, HANDLE *handle)
++{
++    NTSTATUS ret;
++
++    FIXME( "hprocess %p, hthread %p, access %#x, attributes %#x, flags %#x, handle %p stub.\n",
++            hprocess, hthread, access, attributes, flags, handle);
++
++    SERVER_START_REQ( get_next_thread )
++    {
++        req->process = wine_server_obj_handle( hprocess );
++        req->last = wine_server_obj_handle( hthread );
++        req->access = access;
++        req->attributes = attributes;
++        req->flags = flags;
++        ret = wine_server_call( req );
++        if (!ret) *handle = wine_server_ptr_handle( reply->handle );
++    }
++    SERVER_END_REQ;
++    return ret;
++}
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index a33210f1475..8e2455410b8 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -5607,6 +5607,24 @@ struct get_next_process_reply
+ };
+ 
+ 
++
++struct get_next_thread_request
++{
++    struct request_header __header;
++    obj_handle_t process;
++    obj_handle_t last;
++    unsigned int access;
++    unsigned int attributes;
++    unsigned int flags;
++};
++struct get_next_thread_reply
++{
++    struct reply_header __header;
++    obj_handle_t handle;
++    char __pad_12[4];
++};
++
++
+ enum request
+ {
+     REQ_new_process,
+@@ -5894,6 +5912,7 @@ enum request
+     REQ_esync_msgwait,
+     REQ_get_esync_apc_fd,
+     REQ_get_next_process,
++    REQ_get_next_thread,
+     REQ_NB_REQUESTS
+ };
+ 
+@@ -6186,6 +6205,7 @@ union generic_request
+     struct esync_msgwait_request esync_msgwait_request;
+     struct get_esync_apc_fd_request get_esync_apc_fd_request;
+     struct get_next_process_request get_next_process_request;
++    struct get_next_thread_request get_next_thread_request;
+ };
+ union generic_reply
+ {
+@@ -6476,6 +6496,7 @@ union generic_reply
+     struct esync_msgwait_reply esync_msgwait_reply;
+     struct get_esync_apc_fd_reply get_esync_apc_fd_reply;
+     struct get_next_process_reply get_next_process_reply;
++    struct get_next_thread_reply get_next_thread_reply;
+ };
+ 
+ /* ### protocol_version begin ### */
+diff --git a/server/protocol.def b/server/protocol.def
+index e1d7f0ee3ab..8c56b35a3dc 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -3891,3 +3891,15 @@ enum fsync_type
+ @REPLY
+     obj_handle_t handle;       /* next process handle */
+ @END
++
++
++/* Iterate process list */
++@REQ(get_next_thread)
++    obj_handle_t process;      /* process handle */
++    obj_handle_t last;         /* thread handle to start with */
++    unsigned int access;       /* desired access for returned handle */
++    unsigned int attributes;   /* returned handle attributes */
++    unsigned int flags;        /* controls iteration direction */
++@REPLY
++    obj_handle_t handle;       /* next thread handle */
++@END
+diff --git a/server/request.h b/server/request.h
+index a9b5a478c27..d1186f1983d 100644
+--- a/server/request.h
++++ b/server/request.h
+@@ -404,6 +404,7 @@ DECL_HANDLER(get_fsync_idx);
+ DECL_HANDLER(esync_msgwait);
+ DECL_HANDLER(get_esync_apc_fd);
+ DECL_HANDLER(get_next_process);
++DECL_HANDLER(get_next_thread);
+ 
+ #ifdef WANT_REQUEST_HANDLERS
+ 
+@@ -695,6 +696,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+     (req_handler)req_esync_msgwait,
+     (req_handler)req_get_esync_apc_fd,
+     (req_handler)req_get_next_process,
++    (req_handler)req_get_next_thread,
+ };
+ 
+ C_ASSERT( sizeof(abstime_t) == 8 );
+@@ -2320,6 +2322,14 @@ C_ASSERT( FIELD_OFFSET(struct get_next_process_request, flags) == 24 );
+ C_ASSERT( sizeof(struct esync_msgwait_request) == 16 );
+ C_ASSERT( sizeof(struct get_esync_apc_fd_request) == 16 );
+ C_ASSERT( sizeof(struct get_next_process_reply) == 16 );
++C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, process) == 12 );
++C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, last) == 16 );
++C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, access) == 20 );
++C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, attributes) == 24 );
++C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, flags) == 28 );
++C_ASSERT( sizeof(struct get_next_thread_request) == 32 );
++C_ASSERT( FIELD_OFFSET(struct get_next_thread_reply, handle) == 8 );
++C_ASSERT( sizeof(struct get_next_thread_reply) == 16 );
+ 
+ #endif  /* WANT_REQUEST_HANDLERS */
+ 
+diff --git a/server/thread.c b/server/thread.c
+index e8ac0ad329d..5ff2392ef37 100644
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -2174,3 +2174,55 @@ DECL_HANDLER(get_selector_entry)
+         release_object( thread );
+     }
+ }
++
++/* Iterate process list */
++DECL_HANDLER(get_next_thread)
++{
++    struct thread *thread = NULL, *next;
++    struct process *process;
++    struct list *ptr;
++
++    reply->handle = 0;
++
++    if ( req->flags > 1 )
++    {
++        set_error( STATUS_INVALID_PARAMETER );
++        return;
++    }
++
++    if (!(process = get_process_from_handle( req->process, PROCESS_QUERY_INFORMATION )))
++    {
++        set_error( STATUS_INVALID_HANDLE );
++        return;
++    }
++
++    if (!req->last)
++    {
++        ptr = req->flags ? list_tail( &process->thread_list ) : list_head( &process->thread_list );
++    }
++    else if ((thread = get_thread_from_handle( req->last, 0 )))
++    {
++        ptr = req->flags ? list_prev( &process->thread_list, &thread->proc_entry ) :
++                list_next( &process->thread_list, &thread->proc_entry );
++    }
++    else
++    {
++        release_object( process );
++        return;
++    }
++
++    while (ptr)
++    {
++        next = LIST_ENTRY( ptr, struct thread, proc_entry );
++        if ((reply->handle = alloc_handle( current->process, next, req->access, req->attributes )))
++            break;
++        ptr = req->flags ? list_prev( &process->thread_list, &next->proc_entry ) : list_next( &process->thread_list, &next->proc_entry );
++    }
++
++    if (!reply->handle)
++        set_error( STATUS_NO_MORE_ENTRIES );
++
++    if (thread)
++        release_object( thread );
++    release_object( process );
++}
+diff --git a/server/trace.c b/server/trace.c
+index 13affb37347..199d6fb6eb2 100644
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -4599,6 +4599,20 @@ static void dump_get_next_process_reply( const struct get_next_process_reply *re
+     fprintf( stderr, " handle=%04x", req->handle );
+ }
+ 
++static void dump_get_next_thread_request( const struct get_next_thread_request *req )
++{
++    fprintf( stderr, " process=%04x", req->process );
++    fprintf( stderr, ", last=%04x", req->last );
++    fprintf( stderr, ", access=%08x", req->access );
++    fprintf( stderr, ", attributes=%08x", req->attributes );
++    fprintf( stderr, ", flags=%08x", req->flags );
++}
++
++static void dump_get_next_thread_reply( const struct get_next_thread_reply *req )
++{
++    fprintf( stderr, " handle=%04x", req->handle );
++}
++
+ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_new_process_request,
+     (dump_func)dump_exec_process_request,
+@@ -4885,6 +4899,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_esync_msgwait_request,
+     (dump_func)dump_get_esync_apc_fd_request,
+     (dump_func)dump_get_next_process_request,
++    (dump_func)dump_get_next_thread_request,
+ };
+ 
+ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
+@@ -5173,6 +5188,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
+     (dump_func)dump_get_esync_fd_reply,
+     (dump_func)dump_get_next_process_request,
+     (dump_func)dump_get_next_process_reply,
++    (dump_func)dump_get_next_thread_reply,
+     NULL,
+     NULL,
+ };
+@@ -5461,6 +5477,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
+     "esync_msgwait",
+     "get_esync_apc_fd",
+     "get_next_process",
++    "get_next_thread",
+ };
+ 
+ static const struct
+-- 
+2.30.2
 
 From 07461415f4399934a3c03c8dd6e146167bd67dfd Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
@@ -3624,6 +4310,47 @@ index d172cc4573a..42f22d70e2c 100644
 -- 
 2.30.2
 
+From 995fdfb8cdb0a8eed82e16640034dc9673ded681 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 12 Mar 2021 23:58:39 +0300
+Subject: [PATCH 14/16] esync: Fix restoring the objects state on wait all
+ objects retry.
+
+---
+ dlls/ntdll/unix/esync.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
+index 9a615fb277c..810477d02a0 100644
+--- a/dlls/ntdll/unix/esync.c
++++ b/dlls/ntdll/unix/esync.c
+@@ -1168,10 +1168,22 @@ tryagain:
+                         {
+                             /* We were too slow. Put everything back. */
+                             value = 1;
+-                            for (j = i; j >= 0; j--)
++                            for (j = i - 1; j >= 0; j--)
+                             {
+-                                if (write( obj->fd, &value, sizeof(value) ) == -1)
++                                struct esync *obj = objs[j];
++
++                                if (obj->type == ESYNC_MUTEX)
++                                {
++                                    struct mutex *mutex = obj->shm;
++
++                                    if (mutex->tid == GetCurrentThreadId())
++                                        continue;
++                                }
++                                if (write( fds[j].fd, &value, sizeof(value) ) == -1)
++                                {
++                                    ERR("write failed.\n");
+                                     return errno_to_status( errno );
++                                }
+                             }
+ 
+                             goto tryagain;  /* break out of two loops and a switch */
+-- 
+2.30.2
 
 From 47be204baf902d876fc5e5b0240b6167500ec0dd Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
@@ -4294,3 +5021,152 @@ index d9b599fadc7..25acdced21e 100644
      /* FIXME: We should search the given paths before the GAC. */
  
      if ((search_flags & ASSEMBLY_SEARCH_GAC) != 0)
+From 8fd758062036561d7a1fbdcf7d331de69a3a4ffd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 26 Mar 2021 13:12:44 +0100
+Subject: [PATCH] mscoree: Initialize parsed_config_file private_path.
+
+In case of error we may free uninitialized pointer otherwise.
+---
+ dlls/mscoree/config.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/dlls/mscoree/config.c b/dlls/mscoree/config.c
+index 38f304f3df8..b6aa647d876 100644
+--- a/dlls/mscoree/config.c
++++ b/dlls/mscoree/config.c
+@@ -617,6 +617,7 @@ static const struct ISAXErrorHandlerVtbl ConfigFileHandlerErrorVtbl =
+ static void init_config(parsed_config_file *config)
+ {
+     list_init(&config->supported_runtimes);
++    config->private_path = NULL;
+ }
+ 
+ static HRESULT parse_config(VARIANT input, parsed_config_file *result)
+
+From: Paul Gofman <pgofman@codeweavers.com>
+Subject: [PATCH v2] kernel32: Do not impose 32 bit limits on Win64 in GlobalMemoryStatus().
+Message-Id: <20210421145826.48117-1-pgofman@codeweavers.com>
+Date: Wed, 21 Apr 2021 17:58:26 +0300
+
+Signed-off-by: Paul Gofman <pgofman@codeweavers.com>
+---
+v2:
+    - fix random test failures which are due to exact available memory sizes
+      changing between GlobalMemoryStatus() and GlobalMemoryStatusEx()
+      calls (by performing approximate comparison).
+
+    Fixes computer configuration detection in Forza Horizon 4
+    (avoids the complain about the system falling below minimum
+    requirements).
+
+ dlls/kernel32/heap.c       |  7 +++---
+ dlls/kernel32/tests/heap.c | 46 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 50 insertions(+), 3 deletions(-)
+
+diff --git a/dlls/kernel32/heap.c b/dlls/kernel32/heap.c
+index b7bd6f5f91d..c8ae9f5a943 100644
+--- a/dlls/kernel32/heap.c
++++ b/dlls/kernel32/heap.c
+@@ -44,6 +44,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(globalmem);
+ 
+ static HANDLE systemHeap;   /* globally shared heap */
+ 
++static BOOL is_win64 = sizeof(void *) == 8;
+ 
+ /***********************************************************************
+  *           HEAP_CreateSystemHeap
+@@ -561,7 +562,7 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
+     osver.dwOSVersionInfoSize = sizeof(osver);
+     GetVersionExW(&osver);
+ 
+-    if ( osver.dwMajorVersion >= 5 || osver.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS )
++    if ( !is_win64 && (osver.dwMajorVersion >= 5 || osver.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS) )
+     {
+         lpBuffer->dwTotalPhys = min( memstatus.ullTotalPhys, MAXDWORD );
+         lpBuffer->dwAvailPhys = min( memstatus.ullAvailPhys, MAXDWORD );
+@@ -572,7 +573,7 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
+         lpBuffer->dwAvailVirtual = min( memstatus.ullAvailVirtual, MAXDWORD );
+ 
+     }
+-    else /* duplicate NT bug */
++    else /* 64 bit case, or duplicate NT bug */
+     {
+         lpBuffer->dwTotalPhys = memstatus.ullTotalPhys;
+         lpBuffer->dwAvailPhys = memstatus.ullAvailPhys;
+@@ -593,7 +594,7 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
+     }
+ 
+     /* work around for broken photoshop 4 installer */
+-    if ( lpBuffer->dwAvailPhys +  lpBuffer->dwAvailPageFile >= 2U*1024*1024*1024)
++    if ( !is_win64 && lpBuffer->dwAvailPhys +  lpBuffer->dwAvailPageFile >= 2U*1024*1024*1024 )
+          lpBuffer->dwAvailPageFile = 2U*1024*1024*1024 -  lpBuffer->dwAvailPhys - 1;
+ 
+     /* limit page file size for really old binaries */
+diff --git a/dlls/kernel32/tests/heap.c b/dlls/kernel32/tests/heap.c
+index fa372b14e21..0a4e3367f60 100644
+--- a/dlls/kernel32/tests/heap.c
++++ b/dlls/kernel32/tests/heap.c
+@@ -1213,6 +1213,51 @@ static void test_GetPhysicallyInstalledSystemMemory(void)
+        "expected total_memory >= memstatus.ullTotalPhys / 1024\n");
+ }
+ 
++static BOOL compare_ulong64(ULONG64 v1, ULONG64 v2, ULONG64 max_diff)
++{
++    ULONG64 diff = v1 > v2 ? v1 - v2 : v2 - v1;
++
++    return diff <= max_diff;
++}
++
++static void test_GlobalMemoryStatus(void)
++{
++    static const ULONG64 max_diff = 0x200000;
++    MEMORYSTATUSEX memex;
++    MEMORYSTATUS mem;
++    SIZE_T size;
++
++    mem.dwLength = sizeof(mem);
++    GlobalMemoryStatus(&mem);
++    memex.dwLength = sizeof(memex);
++    GlobalMemoryStatusEx(&memex);
++
++    /* Compare values approximately as the available memory may change between
++     * GlobalMemoryStatus() and GlobalMemoryStatusEx() calls. */
++
++    size = min(memex.ullTotalPhys, ~(SIZE_T)0 >> 1);
++    ok(compare_ulong64(mem.dwTotalPhys, size, max_diff), "Got unexpected dwTotalPhys %s, size %s.\n",
++            wine_dbgstr_longlong(mem.dwTotalPhys), wine_dbgstr_longlong(size));
++    size = min(memex.ullAvailPhys, ~(SIZE_T)0 >> 1);
++    ok(compare_ulong64(mem.dwAvailPhys, size, max_diff), "Got unexpected dwAvailPhys %s, size %s.\n",
++            wine_dbgstr_longlong(mem.dwAvailPhys), wine_dbgstr_longlong(size));
++
++    size = min(memex.ullTotalPageFile, ~(SIZE_T)0);
++    ok(compare_ulong64(mem.dwTotalPageFile, size, max_diff),
++            "Got unexpected dwTotalPageFile %s, size %s.\n",
++            wine_dbgstr_longlong(mem.dwTotalPageFile), wine_dbgstr_longlong(size));
++    size = min(memex.ullAvailPageFile, ~(SIZE_T)0);
++    ok(compare_ulong64(mem.dwAvailPageFile, size, max_diff), "Got unexpected dwAvailPageFile %s, size %s.\n",
++            wine_dbgstr_longlong(mem.dwAvailPageFile), wine_dbgstr_longlong(size));
++
++    ok(compare_ulong64(mem.dwTotalVirtual, memex.ullTotalVirtual, max_diff),
++            "Got unexpected dwTotalVirtual %s, ullTotalVirtual %s.\n",
++            wine_dbgstr_longlong(mem.dwTotalVirtual), wine_dbgstr_longlong(memex.ullTotalVirtual));
++    ok(compare_ulong64(mem.dwAvailVirtual, memex.ullAvailVirtual, max_diff),
++            "Got unexpected dwAvailVirtual %s, ullAvailVirtual %s.\n",
++            wine_dbgstr_longlong(mem.dwAvailVirtual), wine_dbgstr_longlong(memex.ullAvailVirtual));
++}
++
+ START_TEST(heap)
+ {
+     int argc;
+@@ -1246,6 +1291,7 @@ START_TEST(heap)
+ 
+     test_HeapQueryInformation();
+     test_GetPhysicallyInstalledSystemMemory();
++    test_GlobalMemoryStatus();
+ 
+     if (pRtlGetNtGlobalFlags)
+     {
+
+-- 
+2.30.2
