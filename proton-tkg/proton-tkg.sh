@@ -824,7 +824,7 @@ else
       echo ''
       echo "Generating default prefix..."
       mkdir "$_nowhere"/"proton_tkg_$_protontkg_version"/files/share/default_pfx
-      WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" "$_nowhere/proton_tkg_$_protontkg_version"/files/bin/wineboot -u
+      ( WINEDLLPATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/wine:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine" LD_LIBRARY_PATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/:$_nowhere/proton_tkg_$_protontkg_version/files/lib/::/usr/lib/steam:/usr/lib32/steam" PATH="$_nowhere/proton_tkg_$_protontkg_version/files/bin/:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl" WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" wineboot -u )
       wine_is_running
       for _d in "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx/dosdevices"; do
         if [ "$_d" != "c:" ]; then
