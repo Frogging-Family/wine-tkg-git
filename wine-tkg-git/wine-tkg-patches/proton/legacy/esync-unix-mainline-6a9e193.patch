@@ -2583,9 +2583,9 @@ index cac8ce4d368..bd89649e769 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
 @@ -2682,6 +2682,7 @@ static void init_teb( TEB *teb, PEB *peb )
+     InitializeListHead( &teb->ActivationContextStack.FrameListCache );
      teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
      teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
-     thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
 +    thread_data->esync_apc_fd = -1;
      thread_data->request_fd = -1;
      thread_data->reply_fd   = -1;
@@ -4220,7 +4220,7 @@ index 56092e5b1ac..eec69ddbcaf 100644
 +    int                  esync_fd;        /* esync file descriptor (signaled on exit) */
  };
  
- /* process functions */
+ #define CPU_FLAG(cpu) (1 << (cpu))
 diff --git a/server/protocol.def b/server/protocol.def
 index 45f22624d5d..2a8662354f6 100644
 --- a/server/protocol.def
@@ -4519,7 +4519,7 @@ index 0e916e181bc..1a245c58396 100644
 +#include "esync.h"
  
  
- /* thread queues */
+ #ifdef __i386__
 @@ -110,6 +111,7 @@ static const struct object_ops thread_apc_ops =
      add_queue,                  /* add_queue */
      remove_queue,               /* remove_queue */
