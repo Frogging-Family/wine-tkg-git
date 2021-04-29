@@ -43,8 +43,10 @@ fi
 
 if [ "$_ispkgbuild" = "true" ]; then
   _wine_tkg_git_path="${_nowhere}/../../wine-tkg-git"
+  _logdir="$_nowhere/.."
 else
   _wine_tkg_git_path="${_nowhere}/../wine-tkg-git" # Change to wine-tkg-git path if needed
+  _logdir="$_nowhere"
 
   # Set Steam root path
   if [ -d "$HOME/.steam/root" ]; then # typical on Arch
@@ -465,13 +467,7 @@ else
   # We'll need a token to register to wine-tkg-git - keep one for us to steal wine-tkg-git options later
   echo -e "_proton_tkg_path='${_nowhere}'\n_no_steampath='${_no_steampath}'" > proton_tkg_token && cp proton_tkg_token "${_wine_tkg_git_path}/"
 
-  if [ "$_ispkgbuild" = "true" ]; then
-    _logdir="$_nowhere/.."
-  else
-    _logdir="$_nowhere"
-  fi
-
-  echo -e "Proton-tkg - $(date +"%m-%d-%Y %H:%M:%S")}" > "$_logdir"/proton-tkg.log
+  echo -e "Proton-tkg - $(date +"%m-%d-%Y %H:%M:%S")" > "$_logdir"/proton-tkg.log
 
   # Now let's build
   cd "$_wine_tkg_git_path"
