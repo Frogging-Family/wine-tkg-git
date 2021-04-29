@@ -465,6 +465,14 @@ else
   # We'll need a token to register to wine-tkg-git - keep one for us to steal wine-tkg-git options later
   echo -e "_proton_tkg_path='${_nowhere}'\n_no_steampath='${_no_steampath}'" > proton_tkg_token && cp proton_tkg_token "${_wine_tkg_git_path}/"
 
+  if [ "$_ispkgbuild" = "true" ]; then
+    _logdir="$_nowhere/.."
+  else
+    _logdir="$_nowhere"
+  fi
+
+  echo -e "Proton-tkg - $(date +"%m-%d-%Y %H:%M:%S")}" > "$_logdir"/proton-tkg.log
+
   # Now let's build
   cd "$_wine_tkg_git_path"
   if [ -e "/usr/bin/makepkg" ] && [ "$_nomakepkg" = "false" ]; then
@@ -765,16 +773,20 @@ else
     fi
 
     # Disable alt start by default on 6.6 and lower
-    _alt_start_vercheck=$( echo "$_protontkg_version" | cut -f1,2 -d'.' )
-    if (( ${_alt_start_vercheck//./} <= 66 )); then
-      sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+    if [ -n $_protontkg_true_version ]; then
+      _alt_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' )
+    else
+      _alt_start_vercheck=$( echo "$_protontkg_version" | cut -f1,2 -d'.' )
     fi
+    [ ${_alt_start_vercheck//./} -le 66 ] && sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | msg2 "Disable alt start"
+
+    echo -e "Full version: $_protontkg_version\nStripped version: ${_alt_start_vercheck//./}" > "$_logdir"/proton-tkg.log
 
     # pefixup
     if [[ $_proton_branch != proton_3* ]] && [[ $_proton_branch != proton_4* ]] && [[ $_proton_branch != proton_5* ]]; then
       echo ''
       echo "Fixing PE files..."
-      find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py" >"$_nowhere"/pefixup.log 2>&1
+      find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py" >>"$_logdir"/proton-tkg.log 2>&1
     fi
 
     # steampipe fixups
@@ -824,7 +836,7 @@ else
       echo ''
       echo "Generating default prefix..."
       mkdir "$_nowhere"/"proton_tkg_$_protontkg_version"/files/share/default_pfx
-      ( WINEDLLPATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/wine:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine" LD_LIBRARY_PATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/:$_nowhere/proton_tkg_$_protontkg_version/files/lib/::/usr/lib/steam:/usr/lib32/steam" PATH="$_nowhere/proton_tkg_$_protontkg_version/files/bin/:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl" WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" wineboot -u )
+      ( WINEDLLPATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/wine:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine" LD_LIBRARY_PATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/:$_nowhere/proton_tkg_$_protontkg_version/files/lib/::/usr/lib/steam:/usr/lib32/steam" PATH="$_nowhere/proton_tkg_$_protontkg_version/files/bin/:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl" WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" wineboot -u ) >>"$_logdir"/proton-tkg.log 2>&1
       wine_is_running
       for _d in "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx/dosdevices"; do
         if [ "$_d" != "c:" ]; then
