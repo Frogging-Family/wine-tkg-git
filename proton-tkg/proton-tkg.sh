@@ -774,9 +774,9 @@ else
     else
       _alt_start_vercheck=$( echo "$_protontkg_version" | cut -f1,2 -d'.' )
     fi
-    [ ${_alt_start_vercheck//./} -le 66 ] && sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | msg2 "Disable alt start"
+    [ ${_alt_start_vercheck//./} -le 66 ] && sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
 
-    echo -e "Full version: $_protontkg_version\nStripped version: ${_alt_start_vercheck//./}" > "$_logdir"/proton-tkg.log
+    echo -e "Full version: $_protontkg_version\nStripped version: ${_alt_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
 
     # pefixup
     if [[ $_proton_branch != proton_3* ]] && [[ $_proton_branch != proton_4* ]] && [[ $_proton_branch != proton_5* ]]; then
