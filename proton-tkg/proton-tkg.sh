@@ -779,7 +779,7 @@ else
     echo -e "Full version: $_protontkg_version\nStripped version: ${_alt_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
 
     # pefixup
-    if [[ $_proton_branch != proton_3* ]] && [[ $_proton_branch != proton_4* ]] && [[ $_proton_branch != proton_5* ]]; then
+    if [[ $_proton_branch != proton_3* ]] && [[ $_proton_branch != proton_4* ]] && [[ $_proton_branch != proton_5* ]] && [ ${_alt_start_vercheck//./} -ge 66 ]; then
       echo ''
       echo "Fixing PE files..."
       find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py" >>"$_logdir"/proton-tkg.log 2>&1
