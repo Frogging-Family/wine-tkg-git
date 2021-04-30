@@ -673,7 +673,7 @@ else
     if [[ $_proton_branch != proton_3.* ]] && [ "$_proton_use_steamhelper" = "true" ]; then
       cd "$_nowhere/proton_tkg_$_protontkg_version"
       _patchname="steam.exe.patch"
-      echo "\nApplying $_patchname"
+      echo -e "\nApplying $_patchname"
       patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
       cd "$_nowhere"
     fi
@@ -682,7 +682,7 @@ else
     if [ "$_steamvr_support" = "true" ]; then
       cd "$_nowhere/proton_tkg_$_protontkg_version"
       _patchname="vr-support.patch"
-      echo "\nApplying $_patchname"
+      echo -e "\nApplying $_patchname"
       patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
       cd "$_nowhere"
     fi
@@ -690,14 +690,15 @@ else
     # Patch our proton script to handle minimal d3d10 implementation for dxvk on Wine 5.3+
     if [ "$_dxvk_minimald3d10" = "true" ]; then
       cd "$_nowhere/proton_tkg_$_protontkg_version"
-      echo "\nApplying $_patchname"
-      patch -Np1 < "$_nowhere/proton_template/dxvk_minimald3d10.patch" || exit 1
+      _patchname="dxvk_minimald3d10.patch"
+      echo -e "\nApplying $_patchname"
+      patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
       cd "$_nowhere"
       # Patch our proton script to handle dxvk_config lib
       if [ -e "$_nowhere"/dxvk/x64/dxvk_config.dll ]; then
         cd "$_nowhere/proton_tkg_$_protontkg_version"
         _patchname="dxvk_config_support.patch"
-        echo "\nApplying $_patchname"
+        echo -e "\nApplying $_patchname"
         patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
         cd "$_nowhere"
       fi
@@ -707,14 +708,14 @@ else
     if [ "$_ispkgbuild" = "true" ]; then
       cd "$_nowhere/proton_tkg_$_protontkg_version"
       _patchname="makepkg_adjustments.patch"
-      echo "\nApplying $_patchname"
+      echo -e "\nApplying $_patchname"
       patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
       cd "$_nowhere"
     fi
 
     # Patch our proton script to remove mfplay dll override when _proton_mf_hacks is disabled
     if [ "$_proton_mf_hacks" != "true" ]; then
-      echo "\nUsing prebuilt mfplay"
+      echo -e "\nUsing prebuilt mfplay"
       sed -i '/.*#disable built-in mfplay.*/d' "proton_tkg_$_protontkg_version/proton"
     fi
 
