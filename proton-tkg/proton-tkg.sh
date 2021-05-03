@@ -904,7 +904,11 @@ else
       echo ''
       echo "Generating default prefix..."
       mkdir "$_nowhere"/"proton_tkg_$_protontkg_version"/files/share/default_pfx
-      ( WINEDLLPATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/wine:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine" LD_LIBRARY_PATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/:$_nowhere/proton_tkg_$_protontkg_version/files/lib/::/usr/lib/steam:/usr/lib32/steam" PATH="$_nowhere/proton_tkg_$_protontkg_version/files/bin/:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl" WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" wineboot -u ) >>"$_logdir"/proton-tkg.log 2>&1
+      if [ "$_new_lib_paths" = "true" ]; then
+        ( WINEDLLPATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine/x86_64-windows:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine/i386-windows" LD_LIBRARY_PATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine/x86_64-unix:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine/x86_64/unix::/usr/lib/steam:/usr/lib32/steam" PATH="$_nowhere/proton_tkg_$_protontkg_version/files/bin/:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl" WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" wineboot -u ) >>"$_logdir"/proton-tkg.log 2>&1
+      else
+        ( WINEDLLPATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/wine:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine" LD_LIBRARY_PATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/:$_nowhere/proton_tkg_$_protontkg_version/files/lib/::/usr/lib/steam:/usr/lib32/steam" PATH="$_nowhere/proton_tkg_$_protontkg_version/files/bin/:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl" WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" wineboot -u ) >>"$_logdir"/proton-tkg.log 2>&1
+      fi
       wine_is_running
       for _d in "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx/dosdevices"; do
         if [ "$_d" != "c:" ]; then
