@@ -57,6 +57,7 @@ _exit_cleanup() {
     if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 1e478b804f72a9b5122fc6adafac5479b816885e HEAD ) && [ "$_dxvk_minimald3d10" != "false" ]; then
       echo "_dxvk_minimald3d10='true'" >> "$_proton_tkg_path"/proton_tkg_token
     fi
+    echo "_new_lib_paths='${_new_lib_paths}'" >> "$_proton_tkg_path"/proton_tkg_token
   fi
 
   rm -f "$_where"/BIG_UGLY_FROGMINER && msg2 'Removed BIG_UGLY_FROGMINER - Ribbit' # state tracker end
@@ -823,6 +824,12 @@ _prepare() {
 	# Disable some staging patchsets to prevent bad interactions with proton gamepad additions
 	if ( ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_gamepad_additions" = "true" ] ) || ( git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_sdl_joy_support" = "true" ] ) && ( [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_use_staging" = "true" ] ); then
 	  _staging_args+=(-W dinput-SetActionMap-genre -W dinput-axis-recalc -W dinput-joy-mappings -W dinput-reconnect-joystick -W dinput-remap-joystick)
+	fi
+
+	# We want to track builds using the new lib paths - introduced with 0aa335b1060428f5f799c93e3c6dea2bc2dd864a-79a148e1fa8b5ada2dc8fec03cf866a3d78c0d54
+	if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 79a148e1fa8b5ada2dc8fec03cf866a3d78c0d54 HEAD ); then
+	  _new_lib_paths="true"
+	  _proton_use_steamhelper="false" # The helper breaks with those changes, failing to load steam.exe.so. Let's disable it for now.
 	fi
 
 	# Fixes for staging based Proton + steamhelper

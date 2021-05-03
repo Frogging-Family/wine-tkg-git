@@ -132,11 +132,19 @@ function build_vrclient {
   cd "$_nowhere"
 
   # Inject vrclient & openvr libs in our wine-tkg-git build
-  cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/fakedlls/vrclient_x64.dll
-  cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/vrclient.dll
+  if [ "$_new_lib_paths" = "true" ]; then
+    cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib/wine/x86_64-unix/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib/wine/x86_64-windows/vrclient_x64.dll
+    cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/i386-unix/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/i386-windows/vrclient.dll
 
-  cp -v Proton/openvr/bin/win32/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/openvr_api_dxvk.dll
-  cp -v Proton/openvr/bin/win64/openvr_api.dll proton_dist_tmp/lib64/wine/dxvk/openvr_api_dxvk.dll
+    cp -v Proton/openvr/bin/win32/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/x32/openvr_api_dxvk.dll
+    cp -v Proton/openvr/bin/win64/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/x64/openvr_api_dxvk.dll
+  else
+    cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/fakedlls/vrclient_x64.dll
+    cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/vrclient.dll
+
+    cp -v Proton/openvr/bin/win32/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/openvr_api_dxvk.dll
+    cp -v Proton/openvr/bin/win64/openvr_api.dll proton_dist_tmp/lib64/wine/dxvk/openvr_api_dxvk.dll
+  fi
 }
 
 function build_lsteamclient {
@@ -168,19 +176,36 @@ function build_lsteamclient {
   cp -a lsteamclient/* build/lsteamclient.win64
   cp -a lsteamclient/* build/lsteamclient.win32
 
-  cd build/lsteamclient.win64
-  winemaker $WINEMAKERFLAGS -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib64/" -L"$_nowhere/proton_dist_tmp/lib64/wine/" .
-  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip lsteamclient.dll.so
-  cd ../..
+  if [ "$_new_lib_paths" = "true" ]; then
+    cd build/lsteamclient.win64
+    winemaker $WINEMAKERFLAGS -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/wine/x86_64-unix/" -L"$_nowhere/proton_dist_tmp/lib/wine/x86_64-windows/" .
+    make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip lsteamclient.dll.so
+    cd ../..
 
-  cd build/lsteamclient.win32
-  winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" .
-  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip lsteamclient.dll.so
-  cd "$_nowhere"
+    cd build/lsteamclient.win32
+    winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/wine/i386-unix/" -L"$_nowhere/proton_dist_tmp/lib/wine/i386-windows/" .
+    make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip lsteamclient.dll.so
+    cd "$_nowhere"
+  else
+    cd build/lsteamclient.win64
+    winemaker $WINEMAKERFLAGS -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib64/" -L"$_nowhere/proton_dist_tmp/lib64/wine/" .
+    make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip lsteamclient.dll.so
+    cd ../..
+
+    cd build/lsteamclient.win32
+    winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" .
+    make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip lsteamclient.dll.so
+    cd "$_nowhere"
+  fi
 
   # Inject lsteamclient libs in our wine-tkg-git build
-  cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/
-  cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/
+  if [ "$_new_lib_paths" = "true" ]; then
+    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib/wine/x86_64-unix/
+    cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/i386-unix/
+  else
+    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/
+    cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/
+  fi
 }
 
 function build_vkd3d {
@@ -231,7 +256,7 @@ function build_dxvk {
   fi
 
   ./updxvk build
-  export _proton_tkg_path="proton-tkg" && ./updxvk proton-tkg
+  _proton_tkg_path="proton-tkg" ./updxvk proton-tkg
 
   cd "$_nowhere"
 }
@@ -254,7 +279,11 @@ function build_steamhelper {
     elif [ "$_proton_branch" = "proton_4.2" ] || [ "$_proton_branch" = "proton_5.0" ] || [ "$_proton_branch" = "proton_5.13" ]; then
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -L$_nowhere/proton_dist_tmp/lib/ -L$_nowhere/proton_dist_tmp/lib/wine/"
     else
-      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_nowhere/proton_dist_tmp/lib/ -L$_nowhere/proton_dist_tmp/lib/wine/"
+      if [ "$_new_lib_paths" = "true" ]; then
+        export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_nowhere/proton_dist_tmp/lib/wine/i386-unix/ -L$_nowhere/proton_dist_tmp/lib/wine/i386-windows/"
+      else
+        export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_nowhere/proton_dist_tmp/lib/ -L$_nowhere/proton_dist_tmp/lib/wine/"
+      fi
     fi
 
     winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/build/lsteamclient.win32/steamworks_sdk_142/" -L"$_nowhere/Proton/steam_helper" .
@@ -262,8 +291,13 @@ function build_steamhelper {
     cd "$_nowhere"
 
     # Inject steam helper winelib and libsteam_api lib in our wine-tkg-git build
-    cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
-    cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
+    if [ "$_new_lib_paths" = "true" ]; then
+      cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/i386-unix/
+      cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/wine/i386-unix/
+    else
+      cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
+      cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
+    fi
   fi
 }
 
@@ -559,8 +593,13 @@ else
     echo "$_versionpre" "proton-tkg-$_protontkg_true_version" > "$_nowhere/proton_dist_tmp/version" && cp -r "$_nowhere/proton_template/share"/* "$_nowhere/proton_dist_tmp/share"/
 
     # Create the dxvk dirs
-    mkdir -p "$_nowhere/proton_dist_tmp/lib64/wine/dxvk"
-    mkdir -p "$_nowhere/proton_dist_tmp/lib/wine/dxvk"
+    if [ "$_new_lib_paths" = "true" ]; then
+      mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/dxvk/x64
+      mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/dxvk/x32
+    else
+      mkdir -p "$_nowhere/proton_dist_tmp/lib64/wine/dxvk"
+      mkdir -p "$_nowhere/proton_dist_tmp/lib/wine/dxvk"
+    fi
 
     # Build vrclient libs
     if [ "$_steamvr_support" = "true" ]; then
@@ -578,13 +617,27 @@ else
     # Build vkd3d-proton when vkd3dlib is disabled - Requires MinGW-w64-gcc or it won't be built
     if [ "$_build_vkd3d" = "true" ]; then
       build_vkd3d
-      mkdir -p proton_dist_tmp/lib64/wine/vkd3d-proton
-      mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton
-      cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/lib64/wine/vkd3d-proton/
-      cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/
+      if [ "$_new_lib_paths" = "true" ]; then
+        mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton/x32
+        mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton/x64
+        cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/x64
+        cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/x32
+      else
+        mkdir -p proton_dist_tmp/lib64/wine/vkd3d-proton
+        mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton
+        cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/lib64/wine/vkd3d-proton/
+        cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/
+      fi
     fi
 
     # dxvk
+    if [ "$_new_lib_paths" = "true" ]; then
+      _proton_dxvk_path32="proton_dist_tmp/lib/wine/dxvk/x32/"
+      _proton_dxvk_path64="proton_dist_tmp/lib/wine/dxvk/x64/"
+    else
+      _proton_dxvk_path32="proton_dist_tmp/lib/wine/dxvk/"
+      _proton_dxvk_path64="proton_dist_tmp/lib64/wine/dxvk/"
+    fi
     cd "$_nowhere"
     if [ "$_use_dxvk" != "false" ]; then
       if [ "$_use_dxvk" = "git" ]; then
@@ -611,17 +664,17 @@ else
       fi
       # Remove d3d10.dll and d3d10_1.dll when using a 5.3 base or newer - https://github.com/doitsujin/dxvk/releases/tag/v1.6
       if [ "$_dxvk_minimald3d10" = "true" ]; then
-        cp -v dxvk/x64/{d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} proton_dist_tmp/lib64/wine/dxvk/
-        cp -v dxvk/x32/{d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} proton_dist_tmp/lib/wine/dxvk/
+        cp -v dxvk/x64/{d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path64
+        cp -v dxvk/x32/{d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path32
       else
-        cp -v dxvk/x64/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} proton_dist_tmp/lib64/wine/dxvk/
-        cp -v dxvk/x32/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} proton_dist_tmp/lib/wine/dxvk/
+        cp -v dxvk/x64/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path64
+        cp -v dxvk/x32/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path32
       fi
       if [ -e dxvk/x64/dxvk_config.dll ]; then
-        cp -v dxvk/x64/dxvk_config.dll proton_dist_tmp/lib64/wine/dxvk/
+        cp -v dxvk/x64/dxvk_config.dll $_proton_dxvk_path64
       fi
       if [ -e dxvk/x32/dxvk_config.dll ]; then
-        cp -v dxvk/x32/dxvk_config.dll proton_dist_tmp/lib/wine/dxvk/
+        cp -v dxvk/x32/dxvk_config.dll $_proton_dxvk_path32
       fi
     fi
 
@@ -719,6 +772,14 @@ else
       sed -i '/.*#disable built-in mfplay.*/d' "proton_tkg_$_protontkg_version/proton"
     fi
 
+    if [ "$_new_lib_paths" = "true" ]; then
+      cd "$_nowhere/proton_tkg_$_protontkg_version"
+      _patchname="new_lib_paths.patch"
+      echo -e "\nApplying $_patchname"
+      patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
+      cd "$_nowhere"
+    fi
+
     rm -f "$_nowhere/proton_tkg_$_protontkg_version/proton.orig"
 
     # Set Proton-tkg user_settings.py defaults
@@ -785,7 +846,9 @@ else
     else
       _alt_start_vercheck=$( echo "$_protontkg_version" | cut -f1,2 -d'.' )
     fi
-    [ ${_alt_start_vercheck//./} -le 66 ] && sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
+    if [ "$_proton_use_steamhelper" != "true" ]; then
+      [ ${_alt_start_vercheck//./} -le 66 ] && sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
+    fi
 
     echo -e "Full version: $_protontkg_version\nStripped version: ${_alt_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
 

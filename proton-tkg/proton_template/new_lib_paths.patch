@@ -1,0 +1,85 @@
+From 8e24bfacdc8c29852511b40ae58c63e894d3f679 Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Mon, 3 May 2021 13:29:25 +0200
+Subject: Adapt to new lib paths in wine 6.7-devel
+
+
+diff --git a/proton b/proton
+index 1375736..4cc8429 100755
+--- a/proton
++++ b/proton
+@@ -47,7 +47,7 @@ def log(msg):
+ def file_is_wine_builtin_dll(path):
+     if os.path.islink(path):
+         contents = os.readlink(path)
+-        if os.path.dirname(contents).endswith(('/lib/wine', '/lib/wine/fakedlls', '/lib64/wine', '/lib64/wine/fakedlls')):
++        if os.path.dirname(contents).endswith(('/lib/wine/i386-unix', '/lib/wine/i386-windows', '/lib/wine/x86_64-unix', '/lib/wine/x86_64-windows')):
+             # This may be a broken link to a dll in a removed Proton install
+             return True
+     if not os.path.exists(path):
+@@ -151,8 +151,12 @@ class Proton:
+         self.base_dir = base_dir + "/"
+         self.dist_dir = self.path("files/")
+         self.bin_dir = self.path("files/bin/")
+-        self.lib_dir = self.path("files/lib/")
+-        self.lib64_dir = self.path("files/lib64/")
++        self.dxvk_dir = self.path("files/lib/wine/dxvk/")
++        self.vkd3dproton_dir = self.path("files/lib/wine/vkd3d-proton/")
++        self.lib_dir = self.path("files/lib/i386-unix/")
++        self.lib64_dir = self.path("files/lib/x86_64-unix/")
++        self.dll_dir = self.path("files/lib/i386-windows/")
++        self.dll64_dir = self.path("files/lib/x86_64-windows/")
+         self.fonts_dir = self.path("files/share/fonts/")
+         self.version_file = self.path("version")
+         self.default_pfx_dir = self.path("files/share/default_pfx/")
+@@ -301,7 +305,7 @@ class CompatData:
+     def pfx_copy(self, src, dst, dll_copy=False):
+         if os.path.islink(src):
+             contents = os.readlink(src)
+-            if os.path.dirname(contents).endswith(('/lib/wine', '/lib/wine/fakedlls', '/lib64/wine', '/lib64/wine/fakedlls')):
++            if os.path.dirname(contents).endswith(('/lib/wine/i386-unix', '/lib/wine/i386-windows', '/lib/wine/x86_64-unix', '/lib/wine/x86_64-windows')):
+                 # wine builtin dll
+                 # make the destination an absolute symlink
+                 contents = os.path.normpath(os.path.join(os.path.dirname(src), contents))
+@@ -540,23 +544,23 @@ class CompatData:
+ 
+             for f in dxvkfiles:
+                 if not os.path.exists(self.prefix_dir + "drive_c/windows/syswow64"):
+-                    try_copy(g_proton.lib_dir + "wine/dxvk/" + f + ".dll",
++                    try_copy(g_proton.dxvk_dir + "x32/" + f + ".dll",
+                             self.prefix_dir + "drive_c/windows/system32/" + f + ".dll")
+                     g_session.dlloverrides[f] = "n"
+                 else:
+-                    try_copy(g_proton.lib64_dir + "wine/dxvk/" + f + ".dll",
++                    try_copy(g_proton.dxvk_dir + "x64/" + f + ".dll",
+                             self.prefix_dir + "drive_c/windows/system32/" + f + ".dll")
+-                    try_copy(g_proton.lib_dir + "wine/dxvk/" + f + ".dll",
++                    try_copy(g_proton.dxvk_dir + "x32/" + f + ".dll",
+                             self.prefix_dir + "drive_c/windows/syswow64/" + f + ".dll")
+                     g_session.dlloverrides[f] = "n"
+ 
+             if not os.path.exists(self.prefix_dir + "drive_c/windows/syswow64"):
+-                try_copy(g_proton.lib_dir + "wine/vkd3d-proton/d3d12.dll",
++                try_copy(g_proton.vkd3dproton_dir + "x32/d3d12.dll",
+                         self.prefix_dir + "drive_c/windows/system32/d3d12.dll")
+             else:
+-                try_copy(g_proton.lib64_dir + "wine/vkd3d-proton/d3d12.dll",
++                try_copy(g_proton.vkd3dproton_dir + "x64/d3d12.dll",
+                         self.prefix_dir + "drive_c/windows/system32/d3d12.dll")
+-                try_copy(g_proton.lib_dir + "wine/vkd3d-proton/d3d12.dll",
++                try_copy(g_proton.vkd3dproton_dir + "x32/d3d12.dll",
+                         self.prefix_dir + "drive_c/windows/syswow64/d3d12.dll")
+ 
+             gamedrive_path = self.prefix_dir + "dosdevices/s:"
+@@ -625,9 +629,9 @@ class Session:
+             # Allow wine to restore this when calling an external app.
+             self.env['ORIG_'+ld_path_var] = os.environ.get(ld_path_var, '')
+ 
+-        prepend_to_env_str(self.env, ld_path_var, g_proton.lib64_dir + ":" + g_proton.lib_dir, ":")
++        prepend_to_env_str(self.env, ld_path_var, g_proton.dll64_dir + ":" + g_proton.dll_dir, ":")
+ 
+-        self.env["WINEDLLPATH"] = g_proton.lib64_dir + "/wine:" + g_proton.lib_dir + "/wine"
++        self.env["WINEDLLPATH"] = g_proton.lib64_dir + ":" + g_proton.lib_dir
+ 
+         prepend_to_env_str(self.env, "PATH", g_proton.bin_dir, ":")
+ 
