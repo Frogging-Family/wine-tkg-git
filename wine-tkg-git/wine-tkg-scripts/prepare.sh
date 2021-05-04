@@ -930,7 +930,12 @@ _prepare() {
 	# Child window support for vk - Fixes World of Final Fantasy and others - https://bugs.winehq.org/show_bug.cgi?id=45277
 	if [ "$_childwindow_fix" = "true" ]; then
 	  if ( [ "$_proton_fs_hack" != "true" ] && git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD ) || ( ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD ); then
-	    _patchname='childwindow.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
+	    if git merge-base --is-ancestor 011fabb2c43d13402ea18b6ea7be3669b5e6c7a8 HEAD; then
+	      _staging_args+=(-W Pipelight -W winex11-Vulkan_support)
+	      _patchname='childwindow.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
+	    else
+	      _patchname='childwindow-011fabb.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
+	    fi
 	  fi
 	fi
 
