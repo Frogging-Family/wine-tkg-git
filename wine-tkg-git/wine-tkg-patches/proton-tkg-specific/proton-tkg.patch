@@ -1846,28 +1846,14 @@ Subject: [PATCH] ws2_32: HACK Fail 'download-alt.easyanticheat.net' DNS name
 This has the same effect as the following reverted ECDHE-ECDSA patch,
 but allows those ciphers to be used for other programs.
 ---
- dlls/ws2_32/socket.c | 14 ++++++++++++++
+ dlls/ws2_32/protocol.c | 14 ++++++++++++++
  1 file changed, 14 insertions(+)
 
-diff --git a/dlls/ws2_32/socket.c b/dlls/ws2_32/socket.c
+diff --git a/dlls/ws2_32/protocol.c b/dlls/ws2_32/protocol.c
 index 4010a727a08..ef9a640a771 100644
---- a/dlls/ws2_32/socket.c
-+++ b/dlls/ws2_32/socket.c
-@@ -6483,6 +6483,13 @@ struct WS_hostent* WINAPI WS_gethostbyname(const char* name)
-         extrabuf=HeapAlloc(GetProcessHeap(),0,ebufsize) ;
-         while(extrabuf) {
-             int res = gethostbyname_r(name, &hostentry, extrabuf, ebufsize, &host, &locerr);
-+
-+            if (!strcmp(name, "download-alt.easyanticheat.net"))
-+            {
-+                ERR("HACK: failing download-alt.easyanticheat.net resolution.\n");
-+                res = HOST_NOT_FOUND;
-+            }
-+
-             if( res != ERANGE) break;
-             ebufsize *=2;
-             extrabuf=HeapReAlloc(GetProcessHeap(),0,extrabuf,ebufsize) ;
-@@ -6734,6 +6741,13 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+--- a/dlls/ws2_32/protocol.c
++++ b/dlls/ws2_32/protocol.c
+@@ -232,6 +232,13 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
          return WSAHOST_NOT_FOUND;
      }
  
@@ -1881,6 +1867,20 @@ index 4010a727a08..ef9a640a771 100644
      if (!nodename)
          node = NULL;
      else if (!nodename[0])
+@@ -1001,6 +1001,13 @@ struct WS_hostent* WINAPI WS_gethostbyname(const char* name)
+     while (extrabuf)
+     {
+         int res = gethostbyaddr_r( paddr, len, unixtype, &hostentry, extrabuf, ebufsize, &host, &locerr );
++
++        if (!strcmp(name, "download-alt.easyanticheat.net"))
++        {
++            ERR("HACK: failing download-alt.easyanticheat.net resolution.\n");
++            res = HOST_NOT_FOUND;
++        }
++
+         if (res != ERANGE) break;
+         ebufsize *= 2;
+         extrabuf = HeapReAlloc( GetProcessHeap(), 0, extrabuf, ebufsize );
 From 5d0bdb1470b47224bf359456be9f6c78a43704f7 Mon Sep 17 00:00:00 2001
 From: Zebediah Figura <z.figura12@gmail.com>
 Date: Wed, 20 Jun 2018 15:07:28 -0500
