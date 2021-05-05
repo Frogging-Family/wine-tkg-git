@@ -2395,6 +2395,220 @@ index a4a10bc8e93..551ef146cd7 100644
 -EXTRADLLFLAGS = -Wb,--prefer-native
 -
  RC_SRCS = version.rc
+From 646c4b468b4add980861392a439e5184c239c54e Mon Sep 17 00:00:00 2001
+From: Myah Caron <qsniyg@protonmail.com>
+Date: Wed, 10 Mar 2021 12:58:01 +0300
+Subject: [PATCH] gamingtcui: Add dll.
+
+For FH4.
+
+Edits to the original patch:
+    - add missing WINAPI;
+    - change formatting;
+    - don't use output xuids in ShowPlayerPickerUI().
+---
+ configure                                     |  4 ++
+ configure.ac                                  |  2 +
+ .../api-ms-win-gaming-tcui-l1-1-0/Makefile.in |  1 +
+ .../api-ms-win-gaming-tcui-l1-1-0.spec        |  7 +++
+ dlls/gamingtcui/Makefile.in                   |  4 ++
+ dlls/gamingtcui/gamingtcui.spec               | 29 +++++++++
+ dlls/gamingtcui/gamingtcui_main.c             | 59 +++++++++++++++++++
+ 7 files changed, 106 insertions(+)
+ create mode 100644 dlls/api-ms-win-gaming-tcui-l1-1-0/Makefile.in
+ create mode 100644 dlls/api-ms-win-gaming-tcui-l1-1-0/api-ms-win-gaming-tcui-l1-1-0.spec
+ create mode 100644 dlls/gamingtcui/Makefile.in
+ create mode 100644 dlls/gamingtcui/gamingtcui.spec
+ create mode 100644 dlls/gamingtcui/gamingtcui_main.c
+
+diff --git a/configure b/configure
+index a60c97b4a5e..334b9aff797 100755
+--- a/configure
++++ b/configure
+@@ -1102,6 +1102,7 @@ enable_api_ms_win_eventing_controller_l1_1_0
+ enable_api_ms_win_eventing_legacy_l1_1_0
+ enable_api_ms_win_eventing_provider_l1_1_0
+ enable_api_ms_win_eventlog_legacy_l1_1_0
++enable_api_ms_win_gaming_tcui_l1_1_0
+ enable_api_ms_win_gdi_dpiinfo_l1_1_0
+ enable_api_ms_win_mm_joystick_l1_1_0
+ enable_api_ms_win_mm_misc_l1_1_1
+@@ -1365,6 +1366,7 @@ enable_fontsub
+ enable_fusion
+ enable_fwpuclnt
+ enable_gameux
++enable_gamingtcui
+ enable_gdi32
+ enable_gdiplus
+ enable_glu32
+@@ -20448,6 +20450,7 @@ wine_fn_config_makefile dlls/api-ms-win-eventing-controller-l1-1-0 enable_api_ms
+ wine_fn_config_makefile dlls/api-ms-win-eventing-legacy-l1-1-0 enable_api_ms_win_eventing_legacy_l1_1_0
+ wine_fn_config_makefile dlls/api-ms-win-eventing-provider-l1-1-0 enable_api_ms_win_eventing_provider_l1_1_0
+ wine_fn_config_makefile dlls/api-ms-win-eventlog-legacy-l1-1-0 enable_api_ms_win_eventlog_legacy_l1_1_0
++wine_fn_config_makefile dlls/api-ms-win-gaming-tcui-l1-1-0 enable_api_ms_win_gaming_tcui_l1_1_0
+ wine_fn_config_makefile dlls/api-ms-win-gdi-dpiinfo-l1-1-0 enable_api_ms_win_gdi_dpiinfo_l1_1_0
+ wine_fn_config_makefile dlls/api-ms-win-mm-joystick-l1-1-0 enable_api_ms_win_mm_joystick_l1_1_0
+ wine_fn_config_makefile dlls/api-ms-win-mm-misc-l1-1-1 enable_api_ms_win_mm_misc_l1_1_1
+@@ -20790,6 +20793,7 @@ wine_fn_config_makefile dlls/fusion/tests enable_tests
+ wine_fn_config_makefile dlls/fwpuclnt enable_fwpuclnt
+ wine_fn_config_makefile dlls/gameux enable_gameux
+ wine_fn_config_makefile dlls/gameux/tests enable_tests
++wine_fn_config_makefile dlls/gamingtcui enable_gamingtcui
+ wine_fn_config_makefile dlls/gdi.exe16 enable_win16
+ wine_fn_config_makefile dlls/gdi32 enable_gdi32
+ wine_fn_config_makefile dlls/gdi32/tests enable_tests
+diff --git a/configure.ac b/configure.ac
+index 70181d410e0..3013217e411 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -3014,6 +3014,7 @@ WINE_CONFIG_MAKEFILE(dlls/api-ms-win-eventing-controller-l1-1-0)
+ WINE_CONFIG_MAKEFILE(dlls/api-ms-win-eventing-legacy-l1-1-0)
+ WINE_CONFIG_MAKEFILE(dlls/api-ms-win-eventing-provider-l1-1-0)
+ WINE_CONFIG_MAKEFILE(dlls/api-ms-win-eventlog-legacy-l1-1-0)
++WINE_CONFIG_MAKEFILE(dlls/api-ms-win-gaming-tcui-l1-1-0)
+ WINE_CONFIG_MAKEFILE(dlls/api-ms-win-gdi-dpiinfo-l1-1-0)
+ WINE_CONFIG_MAKEFILE(dlls/api-ms-win-mm-joystick-l1-1-0)
+ WINE_CONFIG_MAKEFILE(dlls/api-ms-win-mm-misc-l1-1-1)
+@@ -3356,6 +3357,7 @@ WINE_CONFIG_MAKEFILE(dlls/fusion/tests)
+ WINE_CONFIG_MAKEFILE(dlls/fwpuclnt)
+ WINE_CONFIG_MAKEFILE(dlls/gameux)
+ WINE_CONFIG_MAKEFILE(dlls/gameux/tests)
++WINE_CONFIG_MAKEFILE(dlls/gamingtcui)
+ WINE_CONFIG_MAKEFILE(dlls/gdi.exe16,enable_win16)
+ WINE_CONFIG_MAKEFILE(dlls/gdi32)
+ WINE_CONFIG_MAKEFILE(dlls/gdi32/tests)
+diff --git a/dlls/api-ms-win-gaming-tcui-l1-1-0/Makefile.in b/dlls/api-ms-win-gaming-tcui-l1-1-0/Makefile.in
+new file mode 100644
+index 00000000000..5007bd06de2
+--- /dev/null
++++ b/dlls/api-ms-win-gaming-tcui-l1-1-0/Makefile.in
+@@ -0,0 +1 @@
++MODULE    = api-ms-win-gaming-tcui-l1-1-0.dll
+\ No newline at end of file
+diff --git a/dlls/api-ms-win-gaming-tcui-l1-1-0/api-ms-win-gaming-tcui-l1-1-0.spec b/dlls/api-ms-win-gaming-tcui-l1-1-0/api-ms-win-gaming-tcui-l1-1-0.spec
+new file mode 100644
+index 00000000000..d7fa8a12e75
+--- /dev/null
++++ b/dlls/api-ms-win-gaming-tcui-l1-1-0/api-ms-win-gaming-tcui-l1-1-0.spec
+@@ -0,0 +1,7 @@
++@ stdcall ProcessPendingGameUI(long) gamingtcui.ProcessPendingGameUI
++@ stub ShowChangeFriendRelationshipUI
++@ stub ShowGameInviteUI
++@ stdcall ShowPlayerPickerUI(ptr ptr long ptr long long long ptr ptr) gamingtcui.ShowPlayerPickerUI
++@ stdcall ShowProfileCardUI(ptr ptr ptr) gamingtcui.ShowProfileCardUI
++@ stub ShowTitleAchievementsUI
++@ stub TryCancelPendingGameUI
+diff --git a/dlls/gamingtcui/Makefile.in b/dlls/gamingtcui/Makefile.in
+new file mode 100644
+index 00000000000..0a88c98c539
+--- /dev/null
++++ b/dlls/gamingtcui/Makefile.in
+@@ -0,0 +1,4 @@
++MODULE    = gamingtcui.dll
++
++C_SRCS = \
++	gamingtcui_main.c
+diff --git a/dlls/gamingtcui/gamingtcui.spec b/dlls/gamingtcui/gamingtcui.spec
+new file mode 100644
+index 00000000000..998bf4edafd
+--- /dev/null
++++ b/dlls/gamingtcui/gamingtcui.spec
+@@ -0,0 +1,29 @@
++@ stub DllCanUnloadNow
++@ stub DllGetActivationFactory
++@ stub DllGetClassObject
++@ stub CheckGamingPrivilegeSilently
++@ stub CheckGamingPrivilegeSilentlyForUser
++@ stub CheckGamingPrivilegeWithUI
++@ stub CheckGamingPrivilegeWithUIForUser
++@ stdcall ProcessPendingGameUI(long)
++@ stub ShowChangeFriendRelationshipUI
++@ stub ShowChangeFriendRelationshipUIForUser
++@ stub ShowCustomizeUserProfileUI
++@ stub ShowCustomizeUserProfileUIForUser
++@ stub ShowFindFriendsUI
++@ stub ShowFindFriendsUIForUser
++@ stub ShowGameInfoUI
++@ stub ShowGameInfoUIForUser
++@ stub ShowGameInviteUI
++@ stub ShowGameInviteUIForUser
++@ stub ShowGameInviteUIWithContext
++@ stub ShowGameInviteUIWithContextForUser
++@ stdcall ShowPlayerPickerUI(ptr ptr long ptr long long long ptr ptr)
++@ stub ShowPlayerPickerUIForUser
++@ stdcall ShowProfileCardUI(ptr ptr ptr)
++@ stub ShowProfileCardUIForUser
++@ stub ShowTitleAchievementsUI
++@ stub ShowTitleAchievementsUIForUser
++@ stub ShowUserSettingsUI
++@ stub ShowUserSettingsUIForUser
++@ stub TryCancelPendingGameUI
+diff --git a/dlls/gamingtcui/gamingtcui_main.c b/dlls/gamingtcui/gamingtcui_main.c
+new file mode 100644
+index 00000000000..07afe30a6cc
+--- /dev/null
++++ b/dlls/gamingtcui/gamingtcui_main.c
+@@ -0,0 +1,59 @@
++#include "config.h"
++
++#include <stdarg.h>
++
++#include "windef.h"
++#include "winbase.h"
++#include "hstring.h"
++#include "wine/debug.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(gamingtcui);
++
++BOOL WINAPI DllMain(HINSTANCE hInstDll, DWORD fdwReason, LPVOID lpvReserved)
++{
++    TRACE("(%p, %d, %p)\n", hInstDll, fdwReason, lpvReserved);
++
++    switch (fdwReason)
++    {
++        case DLL_PROCESS_ATTACH:
++            DisableThreadLibraryCalls(hInstDll);
++            break;
++    }
++
++    return TRUE;
++}
++
++typedef void (WINAPI *GameUICompletionRoutine)(HRESULT returnCode, void *context);
++
++HRESULT WINAPI ShowProfileCardUI(HSTRING targetUserXuid, GameUICompletionRoutine completionRoutine, void *context)
++{
++    FIXME("%p %p %p: stub\n", targetUserXuid, completionRoutine, context);
++
++    if (completionRoutine)
++        completionRoutine(S_OK, context);
++
++    return S_OK;
++}
++
++typedef void (WINAPI *PlayerPickerUICompletionRoutine)(HRESULT returnCode, void *context,
++        const HSTRING *selectedXuids, size_t selectedXuidsCount);
++
++HRESULT WINAPI ShowPlayerPickerUI(HSTRING promptDisplayText, const HSTRING *xuids, size_t xuidsCount,
++        const HSTRING *preSelectedXuids, size_t preSelectedXuidsCount, size_t minSelectionCount,
++        size_t maxSelectionCount, PlayerPickerUICompletionRoutine completionRoutine, void *context)
++{
++    FIXME("%p %p %lu %p %lu %lu %lu %p %p stub.\n", promptDisplayText, xuids, xuidsCount, preSelectedXuids,
++            preSelectedXuidsCount, minSelectionCount, maxSelectionCount, completionRoutine, context);
++
++    if (completionRoutine)
++        completionRoutine(S_OK, context, preSelectedXuids, preSelectedXuidsCount);
++
++    return S_OK;
++}
++
++HRESULT WINAPI ProcessPendingGameUI(BOOL waitForCompletion)
++{
++    FIXME("%d: stub\n", waitForCompletion);
++
++    return S_OK;
++}
+
 From 07461415f4399934a3c03c8dd6e146167bd67dfd Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Thu, 25 Mar 2021 17:53:37 +0300
