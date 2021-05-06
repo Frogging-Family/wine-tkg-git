@@ -9,6 +9,7 @@
 # You can run the vrclient building alone with : ./proton-tkg.sh build_vrclient
 # You can run the lsteamclient building alone with : ./proton-tkg.sh build_lsteamclient
 # You can run the steamhelper building alone with : ./proton-tkg.sh build_steamhelper
+# You can run the mediaconverter building alone with : ./proton-tkg.sh build_mediaconv
 
 set -e
 
@@ -235,6 +236,27 @@ function build_dxvk {
   cd "$_nowhere"
 }
 
+function build_mediaconverter {
+
+mkdir -p "$_nowhere/gst/lib64/gstreamer-1.0"
+
+  if [ -d "$_nowhere"/Proton/media-converter ]; then
+    cd "$_nowhere"/Proton/media-converter
+    #mkdir -p "$_nowhere"/Proton/build/mediaconv32
+    mkdir -p "$_nowhere"/Proton/build/mediaconv64
+    #rm -rf "$_nowhere"/Proton/build/mediaconv32/*
+    rm -rf "$_nowhere"/Proton/build/mediaconv64/*
+
+    #( PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_PATH=/usr/lib32/pkgconfig cargo build --target i686-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv32 --release )
+    ( cargo build --target x86_64-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv64 --release )
+
+    #cp -a "$_nowhere"/Proton/build/mediaconv32/i686-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib/gstreamer-1.0/
+    cp -a "$_nowhere"/Proton/build/mediaconv64/x86_64-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib64/gstreamer-1.0/
+
+    cd "$_nowhere"
+  fi
+}
+
 function build_steamhelper {
   # disable openvr support for now since we don't support it
   if [ "$_proton_branch" = "proton_6.3" ]; then
@@ -449,6 +471,8 @@ elif [ "$1" = "build_vkd3d" ]; then
   build_vkd3d
 elif [ "$1" = "build_dxvk" ]; then
   build_dxvk
+elif [ "$1" = "build_mediaconv" ]; then
+  build_mediaconverter
 elif [ "$1" = "build_steamhelper" ]; then
   build_steamhelper
 else
@@ -470,6 +494,9 @@ else
   echo -e "_proton_tkg_path='${_nowhere}'\n_no_steampath='${_no_steampath}'" > proton_tkg_token && cp proton_tkg_token "${_wine_tkg_git_path}/"
 
   echo -e "Proton-tkg - $(date +"%m-%d-%Y %H:%M:%S")" > "$_logdir"/proton-tkg.log
+
+  # Build GST/mediaconverter
+  build_mediaconverter
 
   # Now let's build
   cd "$_wine_tkg_git_path"
@@ -580,6 +607,10 @@ else
 
     # Build steam helper
     build_steamhelper
+
+    # gst/mediaconverter
+    mv "$_nowhere"/gst/lib64/* proton_dist_tmp/lib64/
+    rm -rf "$_nowhere/gst"
 
     # vkd3d
     # Build vkd3d-proton when vkd3dlib is disabled - Requires MinGW-w64-gcc or it won't be built

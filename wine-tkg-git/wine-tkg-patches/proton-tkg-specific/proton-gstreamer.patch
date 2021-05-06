@@ -1,0 +1,310 @@
+From 1b6dbd0611bca61c388172861403adf13ac02e1d Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Thu, 18 Mar 2021 16:54:44 -0400
+Subject: [PATCH] mfplat: Stub out MFCreateDXGIDeviceManager, to avoid the d3d
+ path.
+
+---
+ dlls/mfplat/main.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/dlls/mfplat/main.c b/dlls/mfplat/main.c
+index f032c610cc4..e5ac9d943b3 100644
+--- a/dlls/mfplat/main.c
++++ b/dlls/mfplat/main.c
+@@ -8917,6 +8917,8 @@ HRESULT WINAPI MFCreateDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **man
+ 
+     TRACE("%p, %p.\n", token, manager);
+ 
++    return E_NOTIMPL;
++
+     if (!token || !manager)
+         return E_POINTER;
+ 
+From 1f8ef236261a1ece93d62b2d2dc36afb340ff37f Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Fri, 18 Dec 2020 14:08:04 -0600
+Subject: [PATCH] mfplat: Register winegstreamer interfaces on load
+
+See also "winegstreamer: HACK: Try harder to register winegstreamer
+filters."
+---
+ dlls/mfplat/main.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/dlls/mfplat/main.c b/dlls/mfplat/main.c
+index 999d8a86147..f032c610cc4 100644
+--- a/dlls/mfplat/main.c
++++ b/dlls/mfplat/main.c
+@@ -1446,6 +1446,18 @@ HRESULT WINAPI MFTUnregister(CLSID clsid)
+     return S_OK;
+ }
+ 
++static BOOL CALLBACK register_winegstreamer_proc(INIT_ONCE *once, void *param, void **ctx)
++{
++    HMODULE mod = LoadLibraryW(L"winegstreamer.dll");
++    if (mod)
++    {
++        HRESULT (WINAPI *proc)(void) = (void *)GetProcAddress(mod, "DllRegisterServer");
++        proc();
++        FreeLibrary(mod);
++    }
++    return TRUE;
++}
++
+ /***********************************************************************
+  *      MFStartup (mfplat.@)
+  */
+@@ -1453,9 +1465,12 @@ HRESULT WINAPI MFStartup(ULONG version, DWORD flags)
+ {
+ #define MF_VERSION_XP   MAKELONG( MF_API_VERSION, 1 )
+ #define MF_VERSION_WIN7 MAKELONG( MF_API_VERSION, 2 )
++    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+ 
+     TRACE("%#x, %#x.\n", version, flags);
+ 
++    InitOnceExecuteOnce(&once, register_winegstreamer_proc, NULL, NULL);
++
+     if (version != MF_VERSION_XP && version != MF_VERSION_WIN7)
+         return MF_E_BAD_STARTUP_VERSION;
+ 
+
+From 7e5b6b8a6bec2231f9950b4e102ee5f74ebf3921 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Thu, 30 Jan 2020 10:16:19 -0600
+Subject: [PATCH] winegstreamer: HACK: Use a different gst registry file per
+ architecture
+
+---
+ dlls/winegstreamer/wg_parser.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/dlls/winegstreamer/wg_parser.c b/dlls/winegstreamer/wg_parser.c
+index f76ca903b80..2d4d4f46327 100644
+--- a/dlls/winegstreamer/wg_parser.c
++++ b/dlls/winegstreamer/wg_parser.c
+@@ -1911,6 +1911,22 @@ NTSTATUS CDECL __wine_init_unix_lib(HMODULE module, DWORD reason, const void *pt
+         int argc = ARRAY_SIZE(args) - 1;
+         char **argv = args;
+         GError *err;
++        const char *e;
++
++        if ((e = getenv("WINE_GST_REGISTRY_DIR")))
++        {
++            char gst_reg[PATH_MAX];
++#if defined(__x86_64__)
++            const char *arch = "/registry.x86_64.bin";
++#elif defined(__i386__)
++            const char *arch = "/registry.i386.bin";
++#else
++#error Bad arch
++#endif
++            strcpy(gst_reg, e);
++            strcat(gst_reg, arch);
++            setenv("GST_REGISTRY_1_0", gst_reg, 1);
++        }
+ 
+         if (!gst_init_check(&argc, &argv, &err))
+         {
+From a6c8d214a85c16b983c9cb9acb7017bbb4346316 Mon Sep 17 00:00:00 2001
+From: Zebediah Figura <z.figura12@gmail.com>
+Date: Tue, 28 Jan 2020 14:30:43 -0600
+Subject: [PATCH] winegstreamer: HACK: Try harder to register winegstreamer
+ filters.
+
+---
+ dlls/quartz/filtergraph.c | 17 +++++++++++++++++
+ dlls/winegstreamer/main.c |  2 ++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/dlls/quartz/filtergraph.c b/dlls/quartz/filtergraph.c
+index a8c6cc3391c..a699053ca12 100644
+--- a/dlls/quartz/filtergraph.c
++++ b/dlls/quartz/filtergraph.c
+@@ -5553,11 +5553,28 @@ static const IUnknownVtbl IInner_VTable =
+     FilterGraphInner_Release
+ };
+ 
++static BOOL CALLBACK register_winegstreamer_proc(INIT_ONCE *once, void *param, void **ctx)
++{
++    HMODULE mod = LoadLibraryW(L"winegstreamer.dll");
++    if (mod)
++    {
++        HRESULT (WINAPI *proc)(void) = (void *)GetProcAddress(mod, "DllRegisterServer");
++        proc();
++        FreeLibrary(mod);
++    }
++    return TRUE;
++}
++
+ static HRESULT filter_graph_common_create(IUnknown *outer, IUnknown **out, BOOL threaded)
+ {
++    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+     struct filter_graph *object;
+     HRESULT hr;
+ 
++    /* HACK: our build system makes it difficult to load gstreamer on prefix
++     * creation, so it won't get registered. Do that here instead. */
++    InitOnceExecuteOnce(&once, register_winegstreamer_proc, NULL, NULL);
++
+     *out = NULL;
+ 
+     if (!(object = calloc(1, sizeof(*object))))
+diff --git a/dlls/winegstreamer/main.c b/dlls/winegstreamer/main.c
+index d5c06bf3279..2a9401a660a 100644
+--- a/dlls/winegstreamer/main.c
++++ b/dlls/winegstreamer/main.c
+@@ -319,6 +319,8 @@ HRESULT WINAPI DllRegisterServer(void)
+ 
+     TRACE(".\n");
+ 
++    init_gstreamer();
++
+     if (FAILED(hr = __wine_register_resources()))
+         return hr;
+ 
+From eddbdd21c623bd041962fe4f91733c6696188d89 Mon Sep 17 00:00:00 2001
+From: Zebediah Figura <zfigura@codeweavers.com>
+Date: Tue, 11 Aug 2020 14:03:20 -0500
+Subject: [PATCH] HACK: winegstreamer: Increase decodebin internal buffering
+
+This helps choppy audio due to OGG frame decoding seen in Worms
+Revolution and BlazBlue Centralfiction.
+---
+ dlls/winegstreamer/wg_parser.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/dlls/winegstreamer/wg_parser.c b/dlls/winegstreamer/wg_parser.c
+index 2d4d4f46327..2629df78ed1 100644
+--- a/dlls/winegstreamer/wg_parser.c
++++ b/dlls/winegstreamer/wg_parser.c
+@@ -1615,6 +1615,10 @@ static BOOL decodebin_parser_init_gst(struct wg_parser *parser)
+     g_signal_connect(element, "autoplug-select", G_CALLBACK(autoplug_select_cb), parser);
+     g_signal_connect(element, "no-more-pads", G_CALLBACK(no_more_pads_cb), parser);
+ 
++    g_object_set(G_OBJECT(element), "max-size-buffers", G_MAXUINT, NULL);
++    g_object_set(G_OBJECT(element), "max-size-time", G_MAXUINT64, NULL);
++    g_object_set(G_OBJECT(element), "max-size-bytes", G_MAXUINT, NULL);
++
+     parser->their_sink = gst_element_get_static_pad(element, "sink");
+ 
+     pthread_mutex_lock(&parser->mutex);
+From afc22791db23d52c13b7f7cbb3eeacde21b381ed Mon Sep 17 00:00:00 2001
+From: Zebediah Figura <z.figura12@gmail.com>
+Date: Wed, 21 Oct 2020 16:03:21 -0500
+Subject: [PATCH] winegstreamer: Allow videoconvert to parallelize.
+
+Not sure if this should be called a hack. It's not the *best* solution to the problem, but it's not a wrong one either.
+
+Signed-off-by: Zebediah Figura <z.figura12@gmail.com>
+---
+ dlls/winegstreamer/wg_parser.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/dlls/winegstreamer/wg_parser.c b/dlls/winegstreamer/wg_parser.c
+index 2629df78ed1..a625f000254 100644
+--- a/dlls/winegstreamer/wg_parser.c
++++ b/dlls/winegstreamer/wg_parser.c
+@@ -1029,6 +1029,9 @@ static void pad_added_cb(GstElement *element, GstPad *pad, gpointer user)
+             goto out;
+         }
+ 
++        /* Let GStreamer choose a default number of threads. */
++        gst_util_set_object_arg(G_OBJECT(vconv), "n-threads", "0");
++
+         /* GStreamer outputs RGB video top-down, but DirectShow expects bottom-up. */
+         if (!(flip = gst_element_factory_make("videoflip", NULL)))
+         {
+From aa52473db040db290296cd65191f87c831bf2878 Mon Sep 17 00:00:00 2001
+From: Zebediah Figura <z.figura12@gmail.com>
+Date: Tue, 20 Oct 2020 17:03:24 -0500
+Subject: [PATCH] HACK: winegstreamer: Use capssetter to ignore non-default YUV
+ color spaces.
+
+---
+ dlls/winegstreamer/wg_parser.c | 53 ++++++++++++++++++++++++++++++++--
+ 1 file changed, 51 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winegstreamer/wg_parser.c b/dlls/winegstreamer/wg_parser.c
+index a625f000254..be27b00cfd0 100644
+--- a/dlls/winegstreamer/wg_parser.c
++++ b/dlls/winegstreamer/wg_parser.c
+@@ -1008,7 +1008,53 @@ static void pad_added_cb(GstElement *element, GstPad *pad, gpointer user)
+ 
+     if (!strcmp(name, "video/x-raw"))
+     {
+-        GstElement *deinterlace, *vconv, *flip, *vconv2;
++        GstElement *capssetter, *deinterlace, *vconv, *flip, *vconv2;
++
++        /* Hack?: Flatten down the colorimetry to default values, without
++         * actually modifying the video at all.
++         *
++         * We want to do color matrix conversions when converting from YUV to
++         * RGB or vice versa. We do *not* want to do color matrix conversions
++         * when converting YUV <-> YUV or RGB <-> RGB, because these are slow
++         * (it essentially means always using the slow path, never going through
++         * liborc). However, we have two videoconvert elements, and it's
++         * basically impossible to know what conversions each is going to do
++         * until caps are negotiated (without depending on some implementation
++         * details, and even then it'snot exactly trivial). And setting
++         * matrix-mode after caps are negotiated has no effect.
++         *
++         * Nor can we just retain colorimetry information the way we retain
++         * other caps values, because videoconvert automatically clears it if
++         * not doing passthrough. I think that this would only happen if we have
++         * to do a double conversion, but that is possible. Not likely, but I
++         * don't want to have to be the one to find out that there's still a
++         * game broken.
++         *
++         * [Note that we'd actually kind of like to retain colorimetry
++         * information, just in case it does ever become relevant to pass that
++         * on to the next DirectShow filter. Hence I think the correct solution
++         * for upstream is to get videoconvert to Not Do That.]
++         *
++         * So as a fallback solution, we force an identity transformation of
++         * the caps to those with a "default" color matrix—i.e. transform the
++         * caps, but not the data. We do this by *pre*pending a capssetter to
++         * the front of the chain, and we remove the matrix-mode setting for the
++         * videoconvert elements.
++         */
++        if (!(capssetter = gst_element_factory_make("capssetter", NULL)))
++        {
++            ERR("Failed to create capssetter, are %u-bit GStreamer \"good\" plugins installed?\n",
++                    8 * (int)sizeof(void *));
++            goto out;
++        }
++        gst_util_set_object_arg(G_OBJECT(capssetter), "join", "true");
++        /* Actually, this is invalid, but it causes videoconvert to use default
++         * colorimetry as a result. Yes, this is depending on undocumented
++         * implementation details. It's a hack.
++         *
++         * Sadly there doesn't seem to be a way to get capssetter to clear
++         * certain fields while leaving others untouched. */
++        gst_util_set_object_arg(G_OBJECT(capssetter), "caps", "video/x-raw,colorimetry=0:0:0:0");
+ 
+         /* DirectShow can express interlaced video, but downstream filters can't
+          * necessarily consume it. In particular, the video renderer can't. */
+@@ -1050,6 +1096,8 @@ static void pad_added_cb(GstElement *element, GstPad *pad, gpointer user)
+         }
+ 
+         /* The bin takes ownership of these elements. */
++        gst_bin_add(GST_BIN(parser->container), capssetter);
++        gst_element_sync_state_with_parent(capssetter);
+         gst_bin_add(GST_BIN(parser->container), deinterlace);
+         gst_element_sync_state_with_parent(deinterlace);
+         gst_bin_add(GST_BIN(parser->container), vconv);
+@@ -1059,11 +1107,12 @@ static void pad_added_cb(GstElement *element, GstPad *pad, gpointer user)
+         gst_bin_add(GST_BIN(parser->container), vconv2);
+         gst_element_sync_state_with_parent(vconv2);
+ 
++        gst_element_link(capssetter, deinterlace);
+         gst_element_link(deinterlace, vconv);
+         gst_element_link(vconv, flip);
+         gst_element_link(flip, vconv2);
+ 
+-        stream->post_sink = gst_element_get_static_pad(deinterlace, "sink");
++        stream->post_sink = gst_element_get_static_pad(capssetter, "sink");
+         stream->post_src = gst_element_get_static_pad(vconv2, "src");
+         stream->flip = flip;
+     }
+ 
