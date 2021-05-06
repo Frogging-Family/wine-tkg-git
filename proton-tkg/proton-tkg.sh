@@ -131,20 +131,11 @@ function build_vrclient {
   winebuild --dll --fake-module -E "$_nowhere/Proton/build/vrclient.win32/vrclient/vrclient.spec" -o vrclient.dll.fake
   cd "$_nowhere"
 
-  # Inject vrclient & openvr libs in our wine-tkg-git build
-  if [ "$_new_lib_paths" = "true" ]; then
-    cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib/wine/x86_64-unix/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib/wine/x86_64-windows/vrclient_x64.dll
-    cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/i386-unix/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/i386-windows/vrclient.dll
+  cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/fakedlls/vrclient_x64.dll
+  cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/vrclient.dll
 
-    cp -v Proton/openvr/bin/win32/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/x32/openvr_api_dxvk.dll
-    cp -v Proton/openvr/bin/win64/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/x64/openvr_api_dxvk.dll
-  else
-    cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/fakedlls/vrclient_x64.dll
-    cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/vrclient.dll
-
-    cp -v Proton/openvr/bin/win32/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/openvr_api_dxvk.dll
-    cp -v Proton/openvr/bin/win64/openvr_api.dll proton_dist_tmp/lib64/wine/dxvk/openvr_api_dxvk.dll
-  fi
+  cp -v Proton/openvr/bin/win32/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/openvr_api_dxvk.dll
+  cp -v Proton/openvr/bin/win64/openvr_api.dll proton_dist_tmp/lib64/wine/dxvk/openvr_api_dxvk.dll
 }
 
 function build_lsteamclient {
@@ -176,36 +167,19 @@ function build_lsteamclient {
   cp -a lsteamclient/* build/lsteamclient.win64
   cp -a lsteamclient/* build/lsteamclient.win32
 
-  if [ "$_new_lib_paths" = "true" ]; then
-    cd build/lsteamclient.win64
-    winemaker $WINEMAKERFLAGS -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/wine/x86_64-unix/" -L"$_nowhere/proton_dist_tmp/lib/wine/x86_64-windows/" .
-    make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip lsteamclient.dll.so
-    cd ../..
+  cd build/lsteamclient.win64
+  winemaker $WINEMAKERFLAGS -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib64/" -L"$_nowhere/proton_dist_tmp/lib64/wine/" .
+  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip lsteamclient.dll.so
+  cd ../..
 
-    cd build/lsteamclient.win32
-    winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/wine/i386-unix/" -L"$_nowhere/proton_dist_tmp/lib/wine/i386-windows/" .
-    make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip lsteamclient.dll.so
-    cd "$_nowhere"
-  else
-    cd build/lsteamclient.win64
-    winemaker $WINEMAKERFLAGS -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib64/" -L"$_nowhere/proton_dist_tmp/lib64/wine/" .
-    make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip lsteamclient.dll.so
-    cd ../..
-
-    cd build/lsteamclient.win32
-    winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" .
-    make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip lsteamclient.dll.so
-    cd "$_nowhere"
-  fi
+  cd build/lsteamclient.win32
+  winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" .
+  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip lsteamclient.dll.so
+  cd "$_nowhere"
 
   # Inject lsteamclient libs in our wine-tkg-git build
-  if [ "$_new_lib_paths" = "true" ]; then
-    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib/wine/x86_64-unix/
-    cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/i386-unix/
-  else
-    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/
-    cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/
-  fi
+  cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/
+  cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/
 }
 
 function build_vkd3d {
@@ -290,14 +264,8 @@ function build_steamhelper {
     make -e CC="winegcc -m32" CXX="wineg++ -m32" -C "$_nowhere/Proton/build/steam.win32" -j$(nproc) && strip steam.exe.so
     cd "$_nowhere"
 
-    # Inject steam helper winelib and libsteam_api lib in our wine-tkg-git build
-    if [ "$_new_lib_paths" = "true" ]; then
-      cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/i386-unix/
-      cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/wine/i386-unix/
-    else
-      cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
-      cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
-    fi
+    cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
+    cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
   fi
 }
 
@@ -594,8 +562,8 @@ else
 
     # Create the dxvk dirs
     if [ "$_new_lib_paths" = "true" ]; then
-      mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/dxvk/x64
-      mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/dxvk/x32
+      mkdir -p "$_nowhere"/proton_dist_tmp/dxvk/x64
+      mkdir -p "$_nowhere"/proton_dist_tmp/dxvk/x32
     else
       mkdir -p "$_nowhere/proton_dist_tmp/lib64/wine/dxvk"
       mkdir -p "$_nowhere/proton_dist_tmp/lib/wine/dxvk"
@@ -618,10 +586,10 @@ else
     if [ "$_build_vkd3d" = "true" ]; then
       build_vkd3d
       if [ "$_new_lib_paths" = "true" ]; then
-        mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton/x32
-        mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton/x64
-        cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/x64
-        cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/x32
+        mkdir -p proton_dist_tmp/vkd3d-proton/x32
+        mkdir -p proton_dist_tmp/vkd3d-proton/x64
+        cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/vkd3d-proton/x64
+        cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/vkd3d-proton/x32
       else
         mkdir -p proton_dist_tmp/lib64/wine/vkd3d-proton
         mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton
@@ -632,8 +600,8 @@ else
 
     # dxvk
     if [ "$_new_lib_paths" = "true" ]; then
-      _proton_dxvk_path32="proton_dist_tmp/lib/wine/dxvk/x32/"
-      _proton_dxvk_path64="proton_dist_tmp/lib/wine/dxvk/x64/"
+      _proton_dxvk_path32="proton_dist_tmp/dxvk/x32/"
+      _proton_dxvk_path64="proton_dist_tmp/dxvk/x64/"
     else
       _proton_dxvk_path32="proton_dist_tmp/lib/wine/dxvk/"
       _proton_dxvk_path64="proton_dist_tmp/lib64/wine/dxvk/"
@@ -905,9 +873,9 @@ else
       echo "Generating default prefix..."
       mkdir "$_nowhere"/"proton_tkg_$_protontkg_version"/files/share/default_pfx
       if [ "$_new_lib_paths" = "true" ]; then
-        ( WINEDLLPATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine/x86_64-windows:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine/i386-windows" LD_LIBRARY_PATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine/x86_64-unix:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine/x86_64/unix::/usr/lib/steam:/usr/lib32/steam" PATH="$_nowhere/proton_tkg_$_protontkg_version/files/bin/:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl" WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" wineboot -u ) >>"$_logdir"/proton-tkg.log 2>&1
+        WINEDLLPATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib:$_nowhere/proton_tkg_$_protontkg_version/files/lib64:$_nowhere/proton_tkg_$_protontkg_version/files/lib64/wine/x86_64-windows:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine/i386-windows" LD_LIBRARY_PATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/wine/x86_64-unix:$_nowhere/proton_tkg_$_protontkg_version/files/lib64/wine/x86_64/unix::/usr/lib/steam:/usr/lib32/steam" PATH="$_nowhere/proton_tkg_$_protontkg_version/files/bin/:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl" WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" wineboot -u >>"$_logdir"/proton-tkg.log 2>&1
       else
-        ( WINEDLLPATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/wine:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine" LD_LIBRARY_PATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/:$_nowhere/proton_tkg_$_protontkg_version/files/lib/::/usr/lib/steam:/usr/lib32/steam" PATH="$_nowhere/proton_tkg_$_protontkg_version/files/bin/:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl" WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" wineboot -u ) >>"$_logdir"/proton-tkg.log 2>&1
+        WINEDLLPATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/wine:$_nowhere/proton_tkg_$_protontkg_version/files/lib/wine" LD_LIBRARY_PATH="$_nowhere/proton_tkg_$_protontkg_version/files/lib64/:$_nowhere/proton_tkg_$_protontkg_version/files/lib/::/usr/lib/steam:/usr/lib32/steam" PATH="$_nowhere/proton_tkg_$_protontkg_version/files/bin/:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl" WINEPREFIX="$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" wineboot -u >>"$_logdir"/proton-tkg.log 2>&1
       fi
       wine_is_running
       for _d in "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx/dosdevices"; do

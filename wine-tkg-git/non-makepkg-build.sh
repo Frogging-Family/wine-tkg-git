@@ -218,8 +218,14 @@ build_wine_tkg() {
   else
     local _prefix="${_nomakepkg_prefix_path}/${_nomakepkg_pkgname}"
   fi
-  local _lib32name="lib32"
-  local _lib64name="lib"
+
+  if [ -e /lib ] && [ -e /lib64 ] && [ -d /usr/lib ] && [ -d /usr/lib32 ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
+    local _lib32name="lib32"
+    local _lib64name="lib"
+  else
+    local _lib32name="lib"
+    local _lib64name="lib64"
+  fi
 
   # configure args
   if [ -n "$_configure_userargs64" ]; then
@@ -242,9 +248,9 @@ build_wine_tkg() {
       _realwineversion=$(_describe_wine)
       _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion"
     fi
-  #else
-  #  _configure_args64+=(--libdir="$_prefix/$_lib64name")
-  #  _configure_args32+=(--libdir="$_prefix/$_lib32name")
+  else
+    _configure_args64+=(--libdir="$_prefix/$_lib64name")
+    _configure_args32+=(--libdir="$_prefix/$_lib32name")
   fi
 
   if [ "$_SKIPBUILDING" != "true" ] && [ "$_NOCOMPILE" != "true" ]; then
