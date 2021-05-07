@@ -495,9 +495,6 @@ else
 
   echo -e "Proton-tkg - $(date +"%m-%d-%Y %H:%M:%S")" > "$_logdir"/proton-tkg.log
 
-  # Build GST/mediaconverter
-  build_mediaconverter
-
   # Now let's build
   cd "$_wine_tkg_git_path"
   if [ -e "/usr/bin/makepkg" ] && [ "$_nomakepkg" = "false" ]; then
@@ -518,6 +515,9 @@ else
   elif [ -n "${CUSTOM_MINGW_PATH}" ] && [ -n "${CUSTOM_GCC_PATH}" ]; then
     PATH="${CUSTOM_GCC_PATH}/bin:${CUSTOM_GCC_PATH}/lib:${CUSTOM_GCC_PATH}/include:${CUSTOM_MINGW_PATH}/bin:${CUSTOM_MINGW_PATH}/lib:${CUSTOM_MINGW_PATH}/include:${PATH}"
   fi
+
+  # Build GST/mediaconverter
+  build_mediaconverter
 
   # If mingw-w64 gcc can't be found, disable building vkd3d-proton
   if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
