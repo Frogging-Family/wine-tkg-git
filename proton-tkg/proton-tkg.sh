@@ -517,7 +517,9 @@ else
   fi
 
   # Build GST/mediaconverter
-  build_mediaconverter
+  if [ "$_build_mediaconv" = "true" ]; then
+    build_mediaconverter
+  fi
 
   # If mingw-w64 gcc can't be found, disable building vkd3d-proton
   if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
@@ -609,7 +611,9 @@ else
     build_steamhelper
 
     # gst/mediaconverter
-    mv "$_nowhere"/gst/lib64/* proton_dist_tmp/lib64/
+    if [ "$_build_mediaconv" = "true" ]; then
+      mv "$_nowhere"/gst/lib64/* proton_dist_tmp/lib64/
+    fi
     rm -rf "$_nowhere/gst"
 
     # vkd3d
