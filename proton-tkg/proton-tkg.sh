@@ -248,7 +248,13 @@ mkdir -p "$_nowhere/gst/lib64/gstreamer-1.0"
     rm -rf "$_nowhere"/Proton/build/mediaconv64/*
 
     #( PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_PATH=/usr/lib32/pkgconfig cargo build --target i686-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv32 --release )
-    ( cargo build --target x86_64-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv64 --release )
+
+    ( if [ ! -d '/usr/lib32' ]; then # Fedora
+      PKG_CONFIG_PATH='/usr/lib64/pkgconfig'
+    elif [ -d '/usr/lib32' ] && [ -d '/usr/lib' ] && [ -e '/usr/lib64' ]; then # Arch
+      PKG_CONFIG_PATH='/usr/lib/pkgconfig'
+    fi
+    cargo build --target x86_64-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv64 --release )
 
     #cp -a "$_nowhere"/Proton/build/mediaconv32/i686-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib/gstreamer-1.0/
     cp -a "$_nowhere"/Proton/build/mediaconv64/x86_64-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib64/gstreamer-1.0/
