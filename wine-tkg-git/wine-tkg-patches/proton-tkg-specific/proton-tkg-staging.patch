@@ -4365,3 +4365,545 @@ index f584330dc6e..3efdcb4c88c 100755
  
 -- 
 2.30.2
+
+From 8ea8199c12388baa57f6d48d45cb9cf98185eacc Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Thu, 6 May 2021 22:32:20 +0300
+Subject: [PATCH] server: Support nested jobs.
+
+CW-Bug-Id: 18912
+---
+ dlls/kernel32/tests/process.c |  50 +++++++++++++++++
+ server/process.c              | 101 ++++++++++++++++++++++------------
+ server/process.h              |   1 -
+ 3 files changed, 115 insertions(+), 37 deletions(-)
+
+diff --git a/dlls/kernel32/tests/process.c b/dlls/kernel32/tests/process.c
+index e28203a2031..c948623d9f4 100644
+--- a/dlls/kernel32/tests/process.c
++++ b/dlls/kernel32/tests/process.c
+@@ -2598,6 +2598,56 @@ static void test_IsProcessInJob(void)
+ 
+     CloseHandle(pi.hProcess);
+     CloseHandle(pi.hThread);
++
++    ret = pAssignProcessToJobObject(job, GetCurrentProcess());
++    ok(ret, "AssignProcessToJobObject error %u\n", GetLastError());
++
++    create_process("wait", &pi);
++
++    ret = pAssignProcessToJobObject(job, pi.hProcess);
++    ok(ret, "AssignProcessToJobObject error %u\n", GetLastError());
++    ret = pAssignProcessToJobObject(job2, pi.hProcess);
++    ok(ret, "AssignProcessToJobObject error %u\n", GetLastError());
++
++    out = FALSE;
++    ret = pIsProcessInJob(pi.hProcess, NULL, &out);
++    ok(ret, "IsProcessInJob error %u\n", GetLastError());
++    ok(out, "IsProcessInJob returned out=%u\n", out);
++
++    out = FALSE;
++    ret = pIsProcessInJob(pi.hProcess, job, &out);
++    ok(ret, "IsProcessInJob error %u\n", GetLastError());
++    ok(out, "IsProcessInJob returned out=%u\n", out);
++
++    out = FALSE;
++    ret = pIsProcessInJob(pi.hProcess, job2, &out);
++    ok(ret, "IsProcessInJob error %u\n", GetLastError());
++    ok(out, "IsProcessInJob returned out=%u\n", out);
++
++    TerminateProcess(pi.hProcess, 0);
++    wait_child_process(pi.hProcess);
++    CloseHandle(pi.hProcess);
++    CloseHandle(pi.hThread);
++
++    ret = pAssignProcessToJobObject(job2, GetCurrentProcess());
++    ok(ret, "AssignProcessToJobObject error %u\n", GetLastError());
++
++    create_process("wait", &pi);
++    out = FALSE;
++    ret = pIsProcessInJob(pi.hProcess, job, &out);
++    ok(ret, "IsProcessInJob error %u\n", GetLastError());
++    ok(out, "IsProcessInJob returned out=%u\n", out);
++
++    out = FALSE;
++    ret = pIsProcessInJob(pi.hProcess, job2, &out);
++    ok(ret, "IsProcessInJob error %u\n", GetLastError());
++    ok(out, "IsProcessInJob returned out=%u\n", out);
++
++    TerminateProcess(pi.hProcess, 0);
++    wait_child_process(pi.hProcess);
++    CloseHandle(pi.hProcess);
++    CloseHandle(pi.hThread);
++
+     CloseHandle(job);
+     CloseHandle(job2);
+ }
+diff --git a/server/process.c b/server/process.c
+index e137a735457..92e85b4800e 100644
+--- a/server/process.c
++++ b/server/process.c
+@@ -191,7 +191,6 @@ static void job_destroy( struct object *obj );
+ struct job
+ {
+     struct object obj;             /* object header */
+-    struct list process_list;      /* list of all processes */
+     int num_processes;             /* count of running processes */
+     int total_processes;           /* count of processes which have been assigned */
+     unsigned int limit_flags;      /* limit flags */
+@@ -199,6 +198,7 @@ struct job
+     int signaled;                  /* job is signaled */
+     struct completion *completion_port; /* associated completion port */
+     apc_param_t completion_key;    /* key to send with completion messages */
++    struct job *parent;
+ };
+ 
+ static const struct object_ops job_ops =
+@@ -237,7 +237,6 @@ static struct job *create_job_object( struct object *root, const struct unicode_
+         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
+         {
+             /* initialize it if it didn't already exist */
+-            list_init( &job->process_list );
+             job->num_processes = 0;
+             job->total_processes = 0;
+             job->limit_flags = 0;
+@@ -245,6 +244,7 @@ static struct job *create_job_object( struct object *root, const struct unicode_
+             job->signaled = 0;
+             job->completion_port = NULL;
+             job->completion_key = 0;
++            job->parent = NULL;
+         }
+     }
+     return job;
+@@ -261,14 +261,19 @@ static void add_job_completion( struct job *job, apc_param_t msg, apc_param_t pi
+         add_completion( job->completion_port, job->completion_key, pid, STATUS_SUCCESS, msg );
+ }
+ 
+-static void add_job_process( struct job *job, struct process *process )
++static void add_job_process( struct job *job, struct process *process, struct job *last_parent )
+ {
+     process->job = (struct job *)grab_object( job );
+-    list_add_tail( &job->process_list, &process->job_entry );
+-    job->num_processes++;
+-    job->total_processes++;
++    do
++    {
++        job->num_processes++;
++        job->total_processes++;
++        add_job_completion( job, JOB_OBJECT_MSG_NEW_PROCESS, get_process_id(process) );
++
++        job = job->parent;
++    }
++    while (job != last_parent);
+ 
+-    add_job_completion( job, JOB_OBJECT_MSG_NEW_PROCESS, get_process_id(process) );
+ }
+ 
+ /* called when a process has terminated, allow one additional process */
+@@ -276,20 +281,25 @@ static void release_job_process( struct process *process )
+ {
+     struct job *job = process->job;
+ 
+-    if (!job) return;
++    while (job)
++    {
++        assert( job->num_processes );
++        job->num_processes--;
+ 
+-    assert( job->num_processes );
+-    job->num_processes--;
++        if (!job->terminating)
++            add_job_completion( job, JOB_OBJECT_MSG_EXIT_PROCESS, get_process_id(process) );
+ 
+-    if (!job->terminating)
+-        add_job_completion( job, JOB_OBJECT_MSG_EXIT_PROCESS, get_process_id(process) );
++        if (!job->num_processes)
++            add_job_completion( job, JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO, 0 );
+ 
+-    if (!job->num_processes)
+-        add_job_completion( job, JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO, 0 );
++        job = job->parent;
++    }
+ }
+ 
+ static void terminate_job( struct job *job, int exit_code )
+ {
++    struct job *curr_job;
++
+     /* don't report completion events for terminated processes */
+     job->terminating = 1;
+ 
+@@ -297,13 +307,17 @@ static void terminate_job( struct job *job, int exit_code )
+     {
+         struct process *process;
+ 
++        curr_job = NULL;
++
+         /* find the first process associated with this job and still running */
+-        LIST_FOR_EACH_ENTRY( process, &job->process_list, struct process, job_entry )
++        LIST_FOR_EACH_ENTRY( process, &process_list, struct process, entry )
+         {
+-            if (process->running_threads) break;
++            for(curr_job = process->job; curr_job; curr_job = curr_job->parent)
++                if (curr_job == job) break;
++
++            if (curr_job == job && process->running_threads) break;
+         }
+-        if (&process->job_entry == &job->process_list) break;  /* no process found */
+-        assert( process->job == job );
++        if (curr_job != job) break;  /* no process found */
+         terminate_process( process, NULL, exit_code );
+     }
+ 
+@@ -331,16 +345,16 @@ static void job_destroy( struct object *obj )
+     assert( obj->ops == &job_ops );
+ 
+     assert( !job->num_processes );
+-    assert( list_empty(&job->process_list) );
+ 
+     if (job->completion_port) release_object( job->completion_port );
++    if (job->parent) release_object( job->parent );
+ }
+ 
+ static void job_dump( struct object *obj, int verbose )
+ {
+     struct job *job = (struct job *)obj;
+     assert( obj->ops == &job_ops );
+-    fprintf( stderr, "Job processes=%d\n", list_count(&job->process_list) );
++    fprintf( stderr, "Job parent=%p\n", job->parent );
+ }
+ 
+ static int job_signaled( struct object *obj, struct wait_queue_entry *entry )
+@@ -658,11 +672,7 @@ static void process_destroy( struct object *obj )
+     close_process_handles( process );
+     set_process_startup_state( process, STARTUP_ABORTED );
+ 
+-    if (process->job)
+-    {
+-        list_remove( &process->job_entry );
+-        release_object( process->job );
+-    }
++    if (process->job) release_object( process->job );
+     if (process->console) release_object( process->console );
+     if (process->msg_fd) release_object( process->msg_fd );
+     if (process->idle_event) release_object( process->idle_event );
+@@ -1185,9 +1195,7 @@ DECL_HANDLER(new_process)
+     if (parent->job
+        && !(req->create_flags & CREATE_BREAKAWAY_FROM_JOB)
+        && !(parent->job->limit_flags & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK))
+-    {
+-        add_job_process( parent->job, process );
+-    }
++         add_job_process( parent->job, process, NULL );
+ 
+     /* connect to the window station */
+     connect_process_winstation( process, parent_thread, parent );
+@@ -1642,17 +1650,35 @@ DECL_HANDLER(assign_job)
+ {
+     struct process *process;
+     struct job *job = get_job_obj( current->process, req->job, JOB_OBJECT_ASSIGN_PROCESS );
++    struct job *curr_job;
+ 
+     if (!job) return;
+ 
+     if ((process = get_process_from_handle( req->process, PROCESS_SET_QUOTA | PROCESS_TERMINATE )))
+     {
+-        if (!process->running_threads)
+-            set_error( STATUS_PROCESS_IS_TERMINATING );
+-        else if (process->job)
+-            set_error( STATUS_ACCESS_DENIED );
+-        else
+-            add_job_process( job, process );
++        if (!process->running_threads) set_error( STATUS_PROCESS_IS_TERMINATING );
++        else if (process->job != job)
++        {
++            if (!process->job || !job->parent)
++            {
++                struct job *parent = process->job;
++
++                add_job_process( job, process, NULL );
++                if (parent) job->parent = parent;
++            }
++            else
++            {
++                for (curr_job = job->parent; curr_job; curr_job = curr_job->parent)
++                    if (curr_job == process->job) break;
++
++                if (curr_job == process->job)
++                {
++                    release_object( process->job );
++                    add_job_process( job, process, process->job );
++                }
++                else set_error( STATUS_ACCESS_DENIED );
++            }
++        }
+         release_object( process );
+     }
+     release_object( job );
+@@ -1663,7 +1689,7 @@ DECL_HANDLER(assign_job)
+ DECL_HANDLER(process_in_job)
+ {
+     struct process *process;
+-    struct job *job;
++    struct job *job, *curr_job;
+ 
+     if (!(process = get_process_from_handle( req->process, PROCESS_QUERY_INFORMATION )))
+         return;
+@@ -1674,7 +1700,10 @@ DECL_HANDLER(process_in_job)
+     }
+     else if ((job = get_job_obj( current->process, req->job, JOB_OBJECT_QUERY )))
+     {
+-        set_error( process->job == job ? STATUS_PROCESS_IN_JOB : STATUS_PROCESS_NOT_IN_JOB );
++        for (curr_job = process->job; curr_job; curr_job = curr_job->parent)
++            if (curr_job == job) break;
++
++        set_error( curr_job == job ? STATUS_PROCESS_IN_JOB : STATUS_PROCESS_NOT_IN_JOB );
+         release_object( job );
+     }
+     release_object( process );
+diff --git a/server/process.h b/server/process.h
+index d2b4273d1cc..a33dad3fa2a 100644
+--- a/server/process.h
++++ b/server/process.h
+@@ -66,7 +66,6 @@ struct process
+     data_size_t          imagelen;        /* length of image path in bytes */
+     WCHAR               *image;           /* main exe image full path */
+     struct job          *job;             /* job object associated with this process */
+-    struct list          job_entry;       /* list entry for job object */
+     struct list          asyncs;          /* list of async object owned by the process */
+     struct list          locks;           /* list of file locks owned by the process */
+     struct list          classes;         /* window classes owned by the process */
+From 1494e219e04f99a26b735034959654bc71aabb11 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 12 May 2021 03:21:36 +0300
+Subject: [PATCH] kernelbase: Return success for PROC_THREAD_ATTRIBUTE_JOB_LIST
+ in UpdateProcThreadAttribute().
+
+For 2K Launcher.
+
+CW-Bug-Id: 18912
+---
+ dlls/kernelbase/process.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
+index 6582cba74c3..33197563cd8 100644
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -1766,6 +1766,10 @@ BOOL WINAPI DECLSPEC_HOTPATCH UpdateProcThreadAttribute( struct _PROC_THREAD_ATT
+        }
+        break;
+ 
++    case PROC_THREAD_ATTRIBUTE_JOB_LIST:
++        FIXME( "Unhandled attribute PROC_THREAD_ATTRIBUTE_JOB_LIST\n" );
++        break;
++
+     default:
+         SetLastError( ERROR_NOT_SUPPORTED );
+         FIXME( "Unhandled attribute %lu\n", attr & PROC_THREAD_ATTRIBUTE_NUMBER );
+From ecfae7775fc3149e55058cd9d969d0d0aa24b9b9 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 11 May 2021 21:00:45 +0300
+Subject: [PATCH] gdi32: Implement D3DKMTOpenAdapterFromDeviceName().
+
+CW-Bug-Id: 18931
+---
+ dlls/gdi32/driver.c   | 111 +++++++++++++++++++++++++++++++++++++++---
+ dlls/gdi32/gdi32.spec |   1 +
+ 2 files changed, 105 insertions(+), 7 deletions(-)
+
+diff --git a/dlls/gdi32/driver.c b/dlls/gdi32/driver.c
+index e146a3a4f85..2d79d1ec420 100644
+--- a/dlls/gdi32/driver.c
++++ b/dlls/gdi32/driver.c
+@@ -1437,6 +1437,18 @@ NTSTATUS WINAPI D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
+     return status;
+ }
+ 
++
++static void d3dkmt_adapter_alloc_handle( struct d3dkmt_adapter *adapter )
++{
++    static D3DKMT_HANDLE handle_start = 0;
++
++    EnterCriticalSection( &driver_section );
++    /* D3DKMT_HANDLE is UINT, so we can't use pointer as handle */
++    adapter->handle = ++handle_start;
++    list_add_tail( &d3dkmt_adapters, &adapter->entry );
++    LeaveCriticalSection( &driver_section );
++}
++
+ /******************************************************************************
+  *		D3DKMTOpenAdapterFromGdiDisplayName [GDI32.@]
+  */
+@@ -1445,7 +1457,6 @@ NTSTATUS WINAPI D3DKMTOpenAdapterFromGdiDisplayName( D3DKMT_OPENADAPTERFROMGDIDI
+     WCHAR *end, key_nameW[MAX_PATH], bufferW[MAX_PATH];
+     HDEVINFO devinfo = INVALID_HANDLE_VALUE;
+     NTSTATUS status = STATUS_UNSUCCESSFUL;
+-    static D3DKMT_HANDLE handle_start = 0;
+     struct d3dkmt_adapter *adapter;
+     SP_DEVINFO_DATA device_data;
+     DWORD size, state_flags;
+@@ -1500,13 +1511,9 @@ NTSTATUS WINAPI D3DKMTOpenAdapterFromGdiDisplayName( D3DKMT_OPENADAPTERFROMGDIDI
+                                     (BYTE *)&luid, sizeof( luid ), NULL, 0))
+         goto done;
+ 
+-    EnterCriticalSection( &driver_section );
+-    /* D3DKMT_HANDLE is UINT, so we can't use pointer as handle */
+-    adapter->handle = ++handle_start;
+-    list_add_tail( &d3dkmt_adapters, &adapter->entry );
+-    LeaveCriticalSection( &driver_section );
++    d3dkmt_adapter_alloc_handle( adapter );
+ 
+-    desc->hAdapter = handle_start;
++    desc->hAdapter = adapter->handle;
+     desc->AdapterLuid = luid;
+     desc->VidPnSourceId = index;
+     status = STATUS_SUCCESS;
+@@ -1650,3 +1657,93 @@ NTSTATUS WINAPI D3DKMTCheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLU
+ 
+     return get_display_driver()->pD3DKMTCheckVidPnExclusiveOwnership( desc );
+ }
++
++/******************************************************************************
++ *		D3DKMTOpenAdapterFromDeviceName [GDI32.@]
++ */
++NTSTATUS WINAPI D3DKMTOpenAdapterFromDeviceName(D3DKMT_OPENADAPTERFROMDEVICENAME *device_name)
++{
++    SP_DEVICE_INTERFACE_DATA iface_data = {sizeof(iface_data)};
++    SP_DEVICE_INTERFACE_DETAIL_DATA_W *iface_detail_data;
++    SP_DEVINFO_DATA device_data = {sizeof(device_data)};
++    WCHAR iface_detail_buffer[256];
++    struct d3dkmt_adapter *adapter;
++    UNICODE_STRING guid_str;
++    unsigned int i, j;
++    DEVPROPTYPE type;
++    LUID luid = {0};
++    GUID iface_uid;
++    const WCHAR *p;
++    HDEVINFO set;
++    BOOL found;
++
++    TRACE( "device_name %p.\n", device_name );
++
++    p = device_name->pDeviceName + lstrlenW( device_name->pDeviceName );
++    while(p != device_name->pDeviceName && *p != L'#')
++        --p;
++    if (*p == L'#') ++p;
++    RtlInitUnicodeString( &guid_str, p );
++    if (RtlGUIDFromString( &guid_str, &iface_uid ))
++    {
++        WARN( "Could not parse guid from %s.\n", debugstr_w( device_name->pDeviceName ));
++        return STATUS_UNSUCCESSFUL;
++    }
++
++    set = SetupDiGetClassDevsW( &iface_uid, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT );
++    iface_detail_data = (SP_DEVICE_INTERFACE_DETAIL_DATA_W *)iface_detail_buffer;
++    iface_detail_data->cbSize = sizeof(*iface_detail_data);
++
++    found = FALSE;
++    j = 0;
++    while (SetupDiEnumDeviceInfo( set, j, &device_data ))
++    {
++        i = 0;
++        while (SetupDiEnumDeviceInterfaces(set, &device_data, &iface_uid, i, &iface_data))
++        {
++            if (SetupDiGetDeviceInterfaceDetailW( set, &iface_data, iface_detail_data,
++                                                  sizeof(iface_detail_buffer), NULL, &device_data ))
++            {
++                if (!lstrcmpiW( device_name->pDeviceName, iface_detail_data->DevicePath ))
++                {
++                    found = TRUE;
++
++                    if (SetupDiGetDevicePropertyW( set, &device_data, &DEVPROPKEY_GPU_LUID, &type,
++                                                    (BYTE *)&luid, sizeof( luid ), NULL, 0))
++                        TRACE( "luid %#x:%#x.\n", luid.HighPart, luid.LowPart );
++                    else
++                        ERR( "Could not get luid.\n" );
++
++                    goto done;
++                }
++            }
++            else
++            {
++                ERR( "Could not get interface detail, iface %u.\n", i );
++            }
++            ++i;
++        }
++        ++j;
++    }
++
++done:
++    SetupDiDestroyDeviceInfoList( set );
++    if (!found)
++    {
++        WARN( "Device %s not found.\n", debugstr_w(device_name->pDeviceName ));
++        return STATUS_UNSUCCESSFUL;
++    }
++
++    adapter = heap_alloc( sizeof( *adapter ));
++    if (!adapter)
++    {
++        ERR( "No memory.\n" );
++        return STATUS_NO_MEMORY;
++    }
++    d3dkmt_adapter_alloc_handle( adapter );
++
++    device_name->hAdapter = adapter->handle;
++    device_name->AdapterLuid = luid;
++
++    return STATUS_SUCCESS;
++}
+diff --git a/dlls/gdi32/gdi32.spec b/dlls/gdi32/gdi32.spec
+index b21f22c3629..2e34568ea17 100644
+--- a/dlls/gdi32/gdi32.spec
++++ b/dlls/gdi32/gdi32.spec
+@@ -87,6 +87,7 @@
+ @ stdcall D3DKMTDestroyDCFromMemory(ptr)
+ @ stdcall D3DKMTDestroyDevice(ptr)
+ @ stdcall D3DKMTEscape(ptr)
++@ stdcall D3DKMTOpenAdapterFromDeviceName(ptr)
+ @ stdcall D3DKMTOpenAdapterFromGdiDisplayName(ptr)
+ @ stdcall D3DKMTOpenAdapterFromHdc(ptr)
+ @ stdcall D3DKMTQueryStatistics(ptr)
+From 164d2b8b3ae2cf65693eed01bd696f791db5d5cc Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 11 May 2021 21:02:05 +0300
+Subject: [PATCH] winex11.drv: Add GUID_DISPLAY_DEVICE_ARRIVAL interface to
+ display device.
+
+CW-Bug-Id: 18931
+---
+ dlls/winex11.drv/display.c | 7 +++++++
+ include/ntddvdeo.h         | 1 +
+ 2 files changed, 8 insertions(+)
+
+diff --git a/dlls/winex11.drv/display.c b/dlls/winex11.drv/display.c
+index 0a44aca39f0..546b4c3370a 100644
+--- a/dlls/winex11.drv/display.c
++++ b/dlls/winex11.drv/display.c
+@@ -605,6 +605,13 @@ static BOOL X11DRV_InitGpu(HDEVINFO devinfo, const struct x11drv_gpu *gpu, INT g
+     if (!link_device(instanceW, &GUID_DEVINTERFACE_DISPLAY_ADAPTER))
+         goto done;
+ 
++    /* Register GUID_DISPLAY_DEVICE_ARRIVAL */
++    if (!SetupDiCreateDeviceInterfaceW(devinfo, &device_data, &GUID_DISPLAY_DEVICE_ARRIVAL, NULL, 0, &iface_data))
++        goto done;
++
++    if (!link_device(instanceW, &GUID_DISPLAY_DEVICE_ARRIVAL))
++        goto done;
++
+     /* Write HardwareID registry property, REG_MULTI_SZ */
+     written = sprintfW(bufferW, gpu_hardware_id_fmtW, gpu->vendor_id, gpu->device_id);
+     bufferW[written + 1] = 0;
+diff --git a/include/ntddvdeo.h b/include/ntddvdeo.h
+index 9523e37f7b4..b830f9ff6f7 100644
+--- a/include/ntddvdeo.h
++++ b/include/ntddvdeo.h
+@@ -20,6 +20,7 @@
+ #define _NTDDVDEO_
+ 
+ DEFINE_GUID(GUID_DEVINTERFACE_DISPLAY_ADAPTER, 0x5b45201d, 0xf2f2, 0x4f3b, 0x85, 0xbb, 0x30, 0xff, 0x1f, 0x95, 0x35, 0x99);
++DEFINE_GUID(GUID_DISPLAY_DEVICE_ARRIVAL, 0x1ca05180, 0xa699, 0x450a, 0x9a, 0x0c, 0xde, 0x4f, 0xbe, 0x3d, 0xdd, 0x89);
+ DEFINE_GUID(GUID_DEVINTERFACE_MONITOR, 0xe6f07b5f, 0xee97, 0x4a90, 0xb0, 0x76, 0x33, 0xf5, 0x7b, 0xf4, 0xea, 0xa7);
+ 
+ #endif
