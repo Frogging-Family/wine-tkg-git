@@ -1020,8 +1020,10 @@ _prepare() {
 	  if [ "$_use_staging" != "true" ]; then
 	    _use_esync="false"
 	    _use_fsync="false"
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor f3d41cc7897635311cf868759f95b4bf5253703b HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0cdc52c65cadd0e17153856e6026e8cfc9bec985 HEAD ); then
 	      _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor f3d41cc7897635311cf868759f95b4bf5253703b HEAD ); then
+	      _patchname='fastsync-mainline-0cdc52c.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3386560057c0d30461af0973fd9dac9871387143 HEAD ); then
 	      _patchname='fastsync-mainline-f3d41cc.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 5df0f5f6fb90e1326b71cd1094a7b710b94916d4 HEAD ); then
