@@ -732,7 +732,7 @@ else
     echo "$_versionpre" "proton-tkg-$_protontkg_true_version" > "proton_tkg_$_protontkg_version/version" && cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/ && sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
 
     # steampipe fixups
-    #cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
+    cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
 
     # Patch our proton script to use the current proton tree prefix version value
     _prefix_version=$(cat "$_nowhere/Proton/proton" | grep "CURRENT_PREFIX_VERSION=")
@@ -874,7 +874,7 @@ else
     fi
 
     # steampipe fixups
-    #python3 "$_nowhere"/proton_template/steampipe_fixups.py process "$_nowhere"/"proton_tkg_$_protontkg_version"
+    python3 "$_nowhere"/proton_template/steampipe_fixups.py process "$_nowhere"/"proton_tkg_$_protontkg_version"
 
     cd "$_nowhere"
 
