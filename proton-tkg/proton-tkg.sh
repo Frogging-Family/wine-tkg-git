@@ -467,6 +467,10 @@ function latest_mono {
   curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.tar.xz" | cut -d : -f 2,3 | tr -d \"
 }
 
+function latest_mono_msi {
+  curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \"
+}
+
 if [ "$1" = "clean" ]; then
   proton_tkg_uninstaller
 elif [ "$1" = "build_vrclient" ]; then
@@ -704,9 +708,14 @@ else
     if [ ! -e ${_mono_bin##*/} ]; then
       latest_mono | wget -qi -
     fi
+    #_mono_msi=$( latest_mono_msi )
+    #if [ ! -e ${_mono_msi##*/} ]; then
+    #  latest_mono_msi | wget -qi -
+    #fi
     cd "$_nowhere"
     mkdir -p proton_dist_tmp/share/wine/mono
     tar -xvJf "$_nowhere"/mono/wine-mono-*.tar.xz -C proton_dist_tmp/share/wine/mono >/dev/null 2>&1
+    #mv "$_nowhere"/mono/wine-mono-*.msi proton_dist_tmp/share/wine/mono
 
     # gecko
     _gecko_ver="2.47.2"
