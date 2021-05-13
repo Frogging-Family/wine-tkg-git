@@ -513,6 +513,13 @@ else
   # Wine-tkg-git has injected versioning and settings in the token for us, so get the values back
   source "$_nowhere/proton_tkg_token"
 
+  # We don't want experimental branches since they are a moving target and not useful to us, so fallback to regular by default
+  # Can by bypassed with _proton_branch_exp env var but you're on your own if using it
+  if [[ "$_proton_branch" = experimental* ]] && [ -z "$_proton_branch_exp" ]; then
+    echo -e "#### Replacing experimental branch by regular ####"
+    sed -i "s/experimental_/proton_/g" "$_nowhere/proton_tkg_token" && source "$_nowhere/proton_tkg_token"
+  fi
+
   # Use custom compiler paths if defined
   if [ -n "${CUSTOM_MINGW_PATH}" ] && [ -z "${CUSTOM_GCC_PATH}" ]; then
     PATH="${PATH}:${CUSTOM_MINGW_PATH}/bin:${CUSTOM_MINGW_PATH}/lib:${CUSTOM_MINGW_PATH}/include"
