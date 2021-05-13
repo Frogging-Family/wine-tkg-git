@@ -2224,7 +2224,7 @@ EOM
 	      fi
 	    fi
 	  fi
-	  if [ "$_staging_pulse_disable" != "true" ] && [ "$_use_staging" = "true" ]; then
+	  if [ "$_staging_pulse_disable" != "true" ] && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor d3673fcb034348b708a5d8b8c65a746faaeec19d HEAD ); then
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor fa6d22b976214ff4dfb32b431500b4cd1f7610a0 HEAD ); then
 	      _patchname='proton-pa-staging.patch' && _patchmsg="Enable Proton's PA additions" && nonuser_patcher
 	    else
