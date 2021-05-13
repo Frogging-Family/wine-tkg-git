@@ -856,13 +856,20 @@ else
       sed -i 's/.*PROTON_USE_WINED3D9.*/     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
     fi
 
-    # Disable alt start by default on 6.6 and lower
-    if [ -n $_protontkg_true_version ]; then
-      _alt_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' )
-    else
-      _alt_start_vercheck=$( echo "$_protontkg_version" | cut -f1,2 -d'.' )
+    # Disable alt start if steamhelper is enabled
+    #if [ -n $_protontkg_true_version ]; then
+    #  _alt_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' )
+    #else
+    #  _alt_start_vercheck=$( echo "$_protontkg_version" | cut -f1,2 -d'.' )
+    #fi
+    #( [ ${_alt_start_vercheck//./} -le 66 ] || [ "$_proton_use_steamhelper" != "true" ] ) && sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
+    if [ "$_proton_use_steamhelper" = "true" ]; then
+      if [ -n $_protontkg_true_version ]; then
+        sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_true_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
+      else
+        sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
+      fi
     fi
-    ( [ ${_alt_start_vercheck//./} -le 66 ] || [ "$_proton_use_steamhelper" != "true" ] ) && sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
 
     echo -e "Full version: $_protontkg_version\nStripped version: ${_alt_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
 
