@@ -1,4 +1,29 @@
 diff --git a/steam_helper/steam.cpp b/steam_helper/steam.cpp
+index 8cb8559b..4f6e825c 100644
+--- a/steam_helper/steam.cpp
++++ b/steam_helper/steam.cpp
+@@ -559,6 +559,7 @@ static DWORD WINAPI initialize_vr_data(void *arg)
+     unsigned int app_id;
+     unsigned int length;
+     void *lib_vrclient;
++    DWORD hmd_present;
+     int return_code;
+     LSTATUS status;
+     unsigned int i;
+@@ -604,6 +605,11 @@ static DWORD WINAPI initialize_vr_data(void *arg)
+     }
+     vr_initialized = TRUE;
+ 
++    hmd_present = !!client_core->BIsHmdPresent();
++    WINE_TRACE("hmd_present %#x.\n", hmd_present);
++    if ((status = RegSetValueExA(vr_key, "is_hmd_present", 0, REG_DWORD, (BYTE *)&hmd_present, sizeof(hmd_present))))
++        WINE_ERR("Could not set is_hmd_present value, status %#x.\n", status);
++
+     compositor = reinterpret_cast<vr::IVRCompositor*>(client_core->GetGenericInterface(vr::IVRCompositor_Version, &error));
+     if (!compositor)
+     {
+
+diff --git a/steam_helper/steam.cpp b/steam_helper/steam.cpp
 index 2554a526..8cb8559b 100644
 --- a/steam_helper/steam.cpp
 +++ b/steam_helper/steam.cpp
@@ -11,7 +36,7 @@ index 2554a526..8cb8559b 100644
  
  #pragma push_macro("_WIN32")
  #pragma push_macro("__cdecl")
-@@ -49,10 +51,17 @@
+@@ -49,6 +51,11 @@
  
  #include "json/json.h"
  
@@ -23,12 +48,6 @@ index 2554a526..8cb8559b 100644
  WINE_DEFAULT_DEBUG_CHANNEL(steam);
  
  EXTERN_C HANDLE CDECL __wine_make_process_system(void);
- 
-+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(*a))
-+
- static void set_active_process_pid(void)
- {
-     DWORD pid = GetCurrentProcessId();
 @@ -417,6 +426,356 @@ static void setup_vrpaths(void)
      }
  }
