@@ -1565,8 +1565,10 @@ EOM
 	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7f18df46333b5686f2e3622ebc474530e15c6888 HEAD ); then
 	      _patchname='valve_proton_fullscreen_hack-staging.patch' && _patchmsg="Applied Proton fullscreen hack patch (staging)" && nonuser_patcher
 	    else
-	      if git merge-base --is-ancestor 6d04e6c3a9c4c8b1cc2d1ba337c33cc56d1a8ab2 HEAD; then
+	      if git merge-base --is-ancestor 011fabb2c43d13402ea18b6ea7be3669b5e6c7a8 HEAD; then
 	        _lastcommit="7f18df4"
+	      elif git merge-base --is-ancestor 6d04e6c3a9c4c8b1cc2d1ba337c33cc56d1a8ab2 HEAD; then
+	        _lastcommit="011fabb"
 	      elif git merge-base --is-ancestor 62cb6ace2cfe46358e6526868145a5bd8a7f990b HEAD; then
 	        _lastcommit="6d04e6c"
 	      elif git merge-base --is-ancestor a27d5bae114eef5352b699ee38975bc8793b4dcb HEAD; then
