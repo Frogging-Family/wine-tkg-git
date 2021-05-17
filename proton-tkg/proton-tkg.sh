@@ -873,11 +873,7 @@ else
     #fi
     #( [ ${_alt_start_vercheck//./} -le 66 ] || [ "$_proton_use_steamhelper" != "true" ] ) && sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
     if [ "$_proton_use_steamhelper" = "true" ]; then
-      if [ -n $_protontkg_true_version ]; then
-        sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_true_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
-      else
-        sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
-      fi
+      sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
     fi
 
     echo -e "Full version: $_protontkg_version\nStripped version: ${_alt_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
