@@ -76,7 +76,6 @@ _exit_cleanup() {
   fi
 
   # Remove temporarily copied patches & other potential fluff
-  rm -f "$_where"/wine-mono*
   rm -f "$_where"/wine-tkg
   rm -f "$_where"/wine-tkg-interactive
   rm -f "$_where"/wine-tkg.install
@@ -242,8 +241,11 @@ msg2 ''
     if [ "$_ispkgbuild" = "true" ]; then
       _steamvr_support="false"
     fi
-    msg2 "Downloading latest mono..."
-    ( curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \" | wget -qi - )
+    if ! [ -f "$_where"/$( curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \" | sed -e "s|.*/||") ]; then
+      rm -f "$_where"/wine-mono* # Remove any existing older mono
+      msg2 "Downloading latest mono..."
+      ( curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \" | wget -qi - )
+    fi
   elif [ "$_EXTERNAL_INSTALL" = "proton" ]; then
     error "It looks like you're attempting to build a Proton version of wine-tkg-git."
     error "This special option doesn't use pacman and requires you to run 'proton-tkg.sh' script from proton-tkg dir."
