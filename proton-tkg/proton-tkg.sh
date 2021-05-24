@@ -171,16 +171,27 @@ function build_lsteamclient {
   cd build/lsteamclient.win64
   winemaker $WINEMAKERFLAGS -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib64/" -L"$_nowhere/proton_dist_tmp/lib64/wine/" .
   make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip lsteamclient.dll.so
+  winebuild --dll --fake-module -E "$_nowhere/Proton/build/lsteamclient.win64/lsteamclient.spec" -o lsteamclient.dll.fake
   cd ../..
 
   cd build/lsteamclient.win32
   winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" .
   make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip lsteamclient.dll.so
+  winebuild --dll --fake-module -E "$_nowhere/Proton/build/lsteamclient.win32/lsteamclient.spec" -o lsteamclient.dll.fake
   cd "$_nowhere"
 
   # Inject lsteamclient libs in our wine-tkg-git build
-  cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/
-  cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/
+  if [ "$_new_lib_paths" = "true" ]; then
+    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/x86_64-unix
+    cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/i386-unix
+    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.fake proton_dist_tmp/lib64/wine/x86_64-windows/lsteamclient.dll
+    cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.fake proton_dist_tmp/lib/wine/i386-windows/lsteamclient.dll
+  else
+    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/
+    cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/
+    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.fake proton_dist_tmp/lib64/wine/fakedlls/lsteamclient.dll
+    cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/lsteamclient.dll
+  fi
 }
 
 function build_vkd3d {
