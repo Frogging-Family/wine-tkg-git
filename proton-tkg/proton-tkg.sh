@@ -281,7 +281,7 @@ function build_steamhelper {
   fi
 
   if [[ $_proton_branch != *3.* ]]; then
-    source "$_nowhere/proton_tkg_token"
+    source "$_nowhere/proton_tkg_token" || true
     rm -rf Proton/build/steam.win32
     mkdir -p Proton/build/steam.win32
     cp -a Proton/steam_helper/* Proton/build/steam.win32
@@ -301,10 +301,19 @@ function build_steamhelper {
 
     winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/build/lsteamclient.win32/steamworks_sdk_142/" -L"$_nowhere/Proton/steam_helper" .
     make -e CC="winegcc -m32" CXX="wineg++ -m32" -C "$_nowhere/Proton/build/steam.win32" -j$(nproc) && strip steam.exe.so
+    touch "$_nowhere/Proton/build/steam.win32/steam.exe.spec"
+    winebuild --dll --fake-module -E "$_nowhere/Proton/build/steam.win32/steam.exe.spec" -o steam.exe.fake
     cd "$_nowhere"
 
-    cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
-    cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
+    if [ "$_new_lib_paths" = "true" ]; then
+      cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/i386-windows/steam.exe
+      cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/i386-unix/
+      cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
+    else
+      cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/fakedlls/steam.exe
+      cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
+      cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
+    fi
   fi
 }
 
