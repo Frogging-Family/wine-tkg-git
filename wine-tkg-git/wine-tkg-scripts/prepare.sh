@@ -1564,10 +1564,12 @@ EOM
 	    _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	  fi
 	  if [ "$_use_staging" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor a71e4cdf85fae1282d7cab042fabd66e407d11d6 HEAD ); then
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 9561af9a7d8d77e2f98341e278c842226cae47ed HEAD ); then
 	      _patchname='valve_proton_fullscreen_hack-staging.patch' && _patchmsg="Applied Proton fullscreen hack patch (staging)" && nonuser_patcher
 	    else
-	      if git merge-base --is-ancestor 454712a94d62849324d20014c786b0e7c452bf61 HEAD; then
+	      if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor a71e4cdf85fae1282d7cab042fabd66e407d11d6 HEAD ); then
+	        _lastcommit="9561af9"
+	      elif git merge-base --is-ancestor 454712a94d62849324d20014c786b0e7c452bf61 HEAD; then
 	        _lastcommit="a71e4cd"
 	      elif git merge-base --is-ancestor a92ab08688b1e425c887ccb77196bbf681f24be1 HEAD; then
 	        _lastcommit="454712a"
@@ -2395,14 +2397,16 @@ EOM
 	  fi
 
 	  if [ "$_update_winevulkan" = "true" ] && git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD && ( ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD || git merge-base --is-ancestor 21e002aa7e7f85d92d1efeaeb7a9545eb16b96ad HEAD && [ "$_proton_fs_hack" = "true" ] ); then
-	    if git merge-base --is-ancestor 88da78ef428317ff8c258277511abebf1a75e186 HEAD; then
+	    if git merge-base --is-ancestor 9561af9a7d8d77e2f98341e278c842226cae47ed HEAD; then
 	      if [ "$_proton_fs_hack" = "true" ]; then
 	        _patchname='proton-winevulkan.patch' && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
 	      else
 	        _patchname='proton-winevulkan-nofshack.patch' && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
 	      fi
 	    else
-	      if git merge-base --is-ancestor c681a0732fc3c6466b228417bb5e0d518d26b819 HEAD; then
+	      if git merge-base --is-ancestor 88da78ef428317ff8c258277511abebf1a75e186 HEAD; then
+	        _lastcommit="9561af9"
+	      elif git merge-base --is-ancestor c681a0732fc3c6466b228417bb5e0d518d26b819 HEAD; then
 	        _lastcommit="88da78e"
 	      elif git merge-base --is-ancestor eb9f3dd3ad07aae3c9588bcff376ed2a7a8ef8d2 HEAD; then
 	        _lastcommit="c681a07"
