@@ -886,12 +886,12 @@ else
     fi
 
     # Disable alt start if steamhelper is enabled
-    _alt_start_vercheck=$( echo "$_protontkg_version" | cut -f1,2 -d'.' )
+    _alt_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' )
     if [ "$_proton_use_steamhelper" = "true" ]; then
       sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
     fi
 
-    echo -e "Full version: $_protontkg_version\nStripped version: ${_alt_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
+    echo -e "Full version: $_protontkg_true_version\nStripped version: ${_alt_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
 
     # pefixup
     if [[ $_proton_branch != *3.* ]] && [[ $_proton_branch != *4.* ]] && [[ $_proton_branch != *5.* ]] && [ ${_alt_start_vercheck//./} -ge 66 ]; then
