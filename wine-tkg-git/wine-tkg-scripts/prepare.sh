@@ -984,9 +984,11 @@ _prepare() {
 	fi
 
 	# Disable winepulse pulseaudio patchset
-	if [ "$_staging_pulse_disable" = "true" ] && [ "$_use_staging" = "true" ]; then
-	  _staging_args+=(-W winepulse-PulseAudio_Support)
-	  echo "Disabled the staging winepulse patchset" >> "$_where"/last_build_config.log
+	if [ "$_use_staging" = "true" ] && ! grep -Fxq 'Disabled: True' "${srcdir}/${_stgsrcdir}/patches/winepulse-PulseAudio_Support/definition"; then
+	  if [ "$_staging_pulse_disable" = "true" ] && [[ ! ${_staging_args[*]} =~ "winepulse-PulseAudio_Support" ]]; then
+	    _staging_args+=(-W winepulse-PulseAudio_Support)
+	    echo "Disabled the staging winepulse patchset" >> "$_where"/last_build_config.log
+	  fi
 	fi
 
 	# CSMT toggle patch - Corrects the CSMT toggle to be more logical
