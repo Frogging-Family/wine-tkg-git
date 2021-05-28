@@ -1815,11 +1815,17 @@ EOM
 	    else
 	      _patchname='legacy-LAA.patch' && _patchmsg="Applied large address aware override support (legacy)" && nonuser_patcher
 	    fi
-	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 72c562ce9c481e73a01f50e17b624095aab11bdc HEAD ); then
+	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor ac3ec2d955573e187413743428ee7e4d1a6906d5 HEAD ); then
 	    if [ "$_use_staging" = "true" ]; then
 	      _patchname='LAA-unix-staging.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
 	    else
 	      _patchname='LAA-unix.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
+	    fi
+	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 72c562ce9c481e73a01f50e17b624095aab11bdc HEAD ); then
+	    if [ "$_use_staging" = "true" ]; then
+	      _patchname='LAA-unix-staging-ac3ec2d.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
+	    else
+	      _patchname='LAA-unix-ac3ec2d.patch' && _patchmsg="Applied large address aware override support" && nonuser_patcher
 	    fi
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 7512c53b89308c16a512cb8f0c1d0fd6ff02b17b HEAD ); then
 	    if [ "$_use_staging" = "true" ]; then
