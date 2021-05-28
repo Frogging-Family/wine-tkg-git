@@ -192,7 +192,7 @@ function build_lsteamclient {
     cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.fake proton_dist_tmp/lib64/wine/x86_64-windows/lsteamclient.dll
     cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.fake proton_dist_tmp/lib/wine/i386-windows/lsteamclient.dll
     # workarounds
-    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/x86_64-unix/steamclient64.dll.so
+    #cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/x86_64-unix/steamclient64.dll.so # Skyrim SE doesn't like this
     cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/i386-unix/steamclient.dll.so
     cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.fake proton_dist_tmp/lib64/wine/x86_64-windows/steamclient64.dll
     cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.fake proton_dist_tmp/lib/wine/i386-windows/steamclient.dll
