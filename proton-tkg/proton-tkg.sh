@@ -973,6 +973,11 @@ else
           rm -rf "$_d"
         fi
       done
+      # Apparently this can happen.. So let's clean it up if needed.
+      if [[ -f /usr/share/steam/compatibilitytools.d/proton_tkg_makepkg/dist* ]] || [[ -d /usr/share/steam/compatibilitytools.d/proton_tkg_makepkg/dist* ]]; then
+        echo -e "\nAn undesirable remnant of a previous build using /dist was found. We need to remove it from /usr/share/steam/compatibilitytools.d with sudo."
+        sudo sh -c 'rm -rf /usr/share/steam/compatibilitytools.d/proton_tkg_makepkg/dist*'
+      fi
     fi
   else
     rm "$_nowhere"/proton_tkg_token
