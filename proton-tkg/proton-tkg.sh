@@ -928,6 +928,8 @@ else
       python3 "$_nowhere"/proton_template/default_pfx-makepkg.py "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" "$_nowhere/proton_tkg_$_protontkg_version/files" >>"$_logdir"/proton-tkg.log 2>&1
     fi
 
+    wine_is_running
+
     if [ "$_ispkgbuild" != "true" ]; then
       if [ "$_no_steampath" != "y" ]; then
         if [ "$_no_autoinstall" != "true" ] ; then
@@ -966,7 +968,6 @@ else
         echo "####################################################################################################"
       fi
     else
-      wine_is_running
       for _d in "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx/dosdevices"; do
         if [ "$_d" != "c:" ]; then
           rm -rf "$_d"
