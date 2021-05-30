@@ -699,6 +699,7 @@ else
           mv "$_nowhere"/dxvk-*.* "$_nowhere"/dxvk
         fi
       fi
+      chmod -R 755 "$_nowhere"/dxvk
       # Remove d3d10.dll and d3d10_1.dll when using a 5.3 base or newer - https://github.com/doitsujin/dxvk/releases/tag/v1.6
       if [ "$_dxvk_minimald3d10" = "true" ]; then
         cp -v dxvk/x64/{d3d10core.dll,d3d11.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path64
