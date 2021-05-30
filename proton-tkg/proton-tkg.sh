@@ -641,13 +641,8 @@ else
     echo "$_versionpre" "proton-tkg-$_protontkg_true_version" > "$_nowhere/proton_dist_tmp/version" && cp -r "$_nowhere/proton_template/share"/* "$_nowhere/proton_dist_tmp/share"/
 
     # Create the dxvk dirs
-    if [ "$_new_lib_paths" = "true" ]; then
-      mkdir -p "$_nowhere"/proton_dist_tmp/dxvk/x64
-      mkdir -p "$_nowhere"/proton_dist_tmp/dxvk/x32
-    else
-      mkdir -p "$_nowhere/proton_dist_tmp/lib64/wine/dxvk"
-      mkdir -p "$_nowhere/proton_dist_tmp/lib/wine/dxvk"
-    fi
+    mkdir -p "$_nowhere/proton_dist_tmp/lib64/wine/dxvk"
+    mkdir -p "$_nowhere/proton_dist_tmp/lib/wine/dxvk"
 
     # Build vrclient libs
     if [ "$_steamvr_support" = "true" ]; then
@@ -671,27 +666,15 @@ else
     # Build vkd3d-proton when vkd3dlib is disabled - Requires MinGW-w64-gcc or it won't be built
     if [ "$_build_vkd3d" = "true" ]; then
       build_vkd3d
-      if [ "$_new_lib_paths" = "true" ]; then
-        mkdir -p proton_dist_tmp/vkd3d-proton/x32
-        mkdir -p proton_dist_tmp/vkd3d-proton/x64
-        cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/vkd3d-proton/x64
-        cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/vkd3d-proton/x32
-      else
-        mkdir -p proton_dist_tmp/lib64/wine/vkd3d-proton
-        mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton
-        cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/lib64/wine/vkd3d-proton/
-        cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/
-      fi
+      mkdir -p proton_dist_tmp/lib64/wine/vkd3d-proton
+      mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton
+      cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/lib64/wine/vkd3d-proton/
+      cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/
     fi
 
     # dxvk
-    if [ "$_new_lib_paths" = "true" ]; then
-      _proton_dxvk_path32="proton_dist_tmp/dxvk/x32/"
-      _proton_dxvk_path64="proton_dist_tmp/dxvk/x64/"
-    else
-      _proton_dxvk_path32="proton_dist_tmp/lib/wine/dxvk/"
-      _proton_dxvk_path64="proton_dist_tmp/lib64/wine/dxvk/"
-    fi
+    _proton_dxvk_path32="proton_dist_tmp/lib/wine/dxvk/"
+    _proton_dxvk_path64="proton_dist_tmp/lib64/wine/dxvk/"
     cd "$_nowhere"
     if [ "$_use_dxvk" != "false" ]; then
       if [ "$_use_dxvk" = "git" ]; then
