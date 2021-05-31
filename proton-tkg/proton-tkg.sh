@@ -898,8 +898,9 @@ else
       find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py" >>"$_logdir"/proton-tkg.log 2>&1
     fi
 
-    # steampipe fixups
-    #python3 "$_nowhere"/proton_template/steampipe_fixups.py process "$_nowhere"/"proton_tkg_$_protontkg_version"
+    # perms
+    find "proton_tkg_$_protontkg_version"/files/lib/wine -type f -execdir chmod a-w '{}' '+'
+    find "proton_tkg_$_protontkg_version"/files/lib64/wine -type f -execdir chmod a-w '{}' '+'
 
     cd "$_nowhere"
 
@@ -913,6 +914,11 @@ else
     fi
 
     wine_is_running
+
+    # steampipe fixups
+    echo ''
+    echo "Running steampipe fixups..."
+    python3 "$_nowhere"/proton_template/steampipe_fixups.py process "$_nowhere"/"proton_tkg_$_protontkg_version"
 
     if [ "$_ispkgbuild" != "true" ]; then
       if [ "$_no_steampath" != "y" ]; then
