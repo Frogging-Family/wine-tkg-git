@@ -751,9 +751,7 @@ else
     tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
 
     # Move prepared dist
-    mv "$_nowhere"/proton_dist_tmp "$_nowhere"/"proton_tkg_$_protontkg_version"/files
-    #rm -rf proton_dist_tmp
-    cd "$_nowhere"
+    mv "$_nowhere"/proton_dist_tmp "$_nowhere"/"proton_tkg_$_protontkg_version"/files && cd "$_nowhere"
 
     # Grab conf template and inject version
     echo "$_versionpre" "proton-tkg-$_protontkg_true_version" > "proton_tkg_$_protontkg_version/version" && cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/ && sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
@@ -899,19 +897,15 @@ else
     fi
 
     # perms
-    find "proton_tkg_$_protontkg_version"/files/lib/wine -type f -execdir chmod a-w '{}' '+'
-    find "proton_tkg_$_protontkg_version"/files/lib64/wine -type f -execdir chmod a-w '{}' '+'
+    find "$_nowhere/proton_tkg_$_protontkg_version"/files/lib/wine -type f -execdir chmod a-w '{}' '+'
+    find "$_nowhere/proton_tkg_$_protontkg_version"/files/lib64/wine -type f -execdir chmod a-w '{}' '+'
 
     cd "$_nowhere"
 
     # default prefix
     echo ''
     echo "Generating default prefix..."
-    if [ "$_ispkgbuild" != "true" ]; then
-      python3 "$_nowhere"/proton_template/default_pfx.py "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" "$_nowhere/proton_tkg_$_protontkg_version/files" >>"$_logdir"/proton-tkg.log 2>&1
-    else
-      python3 "$_nowhere"/proton_template/default_pfx-makepkg.py "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" "$_nowhere/proton_tkg_$_protontkg_version/files" >>"$_logdir"/proton-tkg.log 2>&1
-    fi
+    python3 "$_nowhere"/proton_template/default_pfx.py "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" "$_nowhere/proton_tkg_$_protontkg_version/files" >>"$_logdir"/proton-tkg.log 2>&1
 
     wine_is_running
 
@@ -958,11 +952,6 @@ else
         echo "####################################################################################################"
       fi
     else
-      for _d in "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx/dosdevices"; do
-        if [ "$_d" != "c:" ]; then
-          rm -rf "$_d"
-        fi
-      done
       # Apparently this can happen.. So let's clean it up if needed.
       if [[ -f /usr/share/steam/compatibilitytools.d/proton_tkg_makepkg/dist* ]] || [[ -d /usr/share/steam/compatibilitytools.d/proton_tkg_makepkg/dist* ]]; then
         echo -e "\nAn undesirable remnant of a previous build using /dist was found. We need to remove it from /usr/share/steam/compatibilitytools.d with sudo."
