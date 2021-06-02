@@ -2428,14 +2428,16 @@ EOM
 	  fi
 
 	  if [ "$_update_winevulkan" = "true" ] && git merge-base --is-ancestor 7e736b5903d3d078bbf7bb6a509536a942f6b9a0 HEAD && ( ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD || git merge-base --is-ancestor 21e002aa7e7f85d92d1efeaeb7a9545eb16b96ad HEAD && [ "$_proton_fs_hack" = "true" ] ); then
-	    if git merge-base --is-ancestor 9561af9a7d8d77e2f98341e278c842226cae47ed HEAD; then
+	    if git merge-base --is-ancestor 8285f616030f27877922ff414530d4f909306ace HEAD; then
 	      if [ "$_proton_fs_hack" = "true" ]; then
 	        _patchname='proton-winevulkan.patch' && _patchmsg="Using Proton winevulkan patches" && nonuser_patcher
 	      else
 	        _patchname='proton-winevulkan-nofshack.patch' && _patchmsg="Using Proton winevulkan patches (nofshack)" && nonuser_patcher
 	      fi
 	    else
-	      if git merge-base --is-ancestor 88da78ef428317ff8c258277511abebf1a75e186 HEAD; then
+	      if git merge-base --is-ancestor 9561af9a7d8d77e2f98341e278c842226cae47ed HEAD; then
+	        _lastcommit="8285f61"
+	      elif git merge-base --is-ancestor 88da78ef428317ff8c258277511abebf1a75e186 HEAD; then
 	        _lastcommit="9561af9"
 	      elif git merge-base --is-ancestor c681a0732fc3c6466b228417bb5e0d518d26b819 HEAD; then
 	        _lastcommit="88da78e"
