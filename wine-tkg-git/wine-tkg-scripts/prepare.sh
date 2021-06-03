@@ -2313,8 +2313,10 @@ EOM
 
 	# Proton CPU topology override - depends on protonify and fsync
 	if [ "$_use_fsync" = "true" ] && [ "$_protonify" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 6f158754435f403864052e595ab627dadac2666f HEAD ); then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 5864bc88de0e0a3b1094c2bb0c16ba9a5d39ce65 HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor be8bd6f498dadbafe068c1fbb02adcbadf0b1b56 HEAD ); then
 	    _patchname='proton-cpu-topology-overrides.patch' && _patchmsg="Enable Proton's CPU topology override support" && nonuser_patcher
+	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 5864bc88de0e0a3b1094c2bb0c16ba9a5d39ce65 HEAD ); then
+	    _patchname='proton-cpu-topology-overrides-be8bd6f.patch' && _patchmsg="Enable Proton's CPU topology override support" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c88b2ed3c04fdde86fc1fca670ae862056e614da HEAD ); then
 	    _patchname='proton-cpu-topology-overrides-5864bc8.patch' && _patchmsg="Enable Proton's CPU topology override support" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a3c92a02cc7014cfdb1f90f1d070037868067097 HEAD ); then
