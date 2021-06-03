@@ -527,10 +527,12 @@ prepare() {
 	_polish
 	_makedirs
 
-    if [ "$_allow_server_rt_prio" = "true" ]; then
+    if [ "$_allow_server_rt_prio" = "true" ] || [ "$_allow_wine_net_raw" = "true" ]; then
       if [ "$_EXTERNAL_INSTALL" = "true" ]; then
         if [ "$_EXTERNAL_NOVER" = "true" ]; then
           _serverpath="$_DEFAULT_EXTERNAL_PATH/$pkgname/bin/wineserver"
+          _preloaderpath="$_DEFAULT_EXTERNAL_PATH/$pkgname/bin/wine-preloader"
+          _preloader64path="$_DEFAULT_EXTERNAL_PATH/$pkgname/bin/wine64-preloader"
         else
           if [ "$_use_staging" = "true" ]; then
             cd "$srcdir/$_stgsrcdir"
@@ -539,12 +541,29 @@ prepare() {
           fi
           _realwineversion=$(_describe_wine)
           _serverpath="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion/bin/wineserver"
+          _preloaderpath="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion/bin/wine-preloader"
+          _preloader64path="$_DEFAULT_EXTERNAL_PATH/$pkgname-$_realwineversion/bin/wine64-preloader"
         fi
       else
         _serverpath="/usr/bin/wineserver"
+        _preloaderpath="/usr/bin/wine-preloader"
+        _preloader64path="/usr/bin/wine64-preloader"
       fi
-      cp "$_where"/wine.install "$_where"/wine-tkg.install && sed -i "s|in /etc/security/limits.conf ;)\"|in /etc/security/limits.conf ;)\"\n  echo \"Setting wineserver capabilities\"\n  setcap cap_sys_nice+ep $_serverpath 2>/dev/null|g" "$_where"/wine-tkg.install
-      echo -e "post_upgrade() {\n  echo \"Setting wineserver capabilities\"\n  setcap cap_sys_nice+ep $_serverpath 2>/dev/null\n}" >> "$_where"/wine-tkg.install
+      cp "$_where"/wine.install "$_where"/wine-tkg.install
+      sed -i "s|#echo \"Setting wineserver and/or wine-preloader capabilities\"|echo \"Setting wineserver and/or wine-preloader capabilities\"|g" "$_where"/wine-tkg.install
+      if [ "$_allow_server_rt_prio" = "true" ] && [ "$_allow_wine_net_raw" != "true" ]; then
+        sed -i "s|#setcap cap_net_raw+eip /usr/bin/wineserver 2>/dev/null|setcap cap_sys_nice+ep $_serverpath 2>/dev/null|g" "$_where"/wine-tkg.install
+      fi
+      if [ "$_allow_wine_net_raw" = "true" ] && [ "$_allow_server_rt_prio" != "true" ]; then
+        sed -i "s|#setcap cap_net_raw+eip /usr/bin/wineserver 2>/dev/null|setcap cap_net_raw+eip $_serverpath 2>/dev/null|g" "$_where"/wine-tkg.install
+      fi
+      if [ "$_allow_wine_net_raw" = "true" ] && [ "$_allow_server_rt_prio" = "true" ]; then
+        sed -i "s|#setcap cap_net_raw+eip /usr/bin/wineserver 2>/dev/null|setcap cap_sys_nice,cap_net_raw+eip $_serverpath 2>/dev/null|g" "$_where"/wine-tkg.install
+      fi
+      if [ "$_allow_wine_net_raw" = "true" ]; then
+        sed -i "s|#setcap cap_net_raw+eip /usr/bin/wine-preloader 2>/dev/null|setcap cap_net_raw+eip $_preloaderpath 2>/dev/null|g" "$_where"/wine-tkg.install
+        sed -i "s|#setcap cap_net_raw+eip /usr/bin/wine64-preloader 2>/dev/null|setcap cap_net_raw+eip $_preloader64path 2>/dev/null|g" "$_where"/wine-tkg.install
+      fi
     fi
 }
 
