@@ -90,11 +90,11 @@ By default, proton-tkg will download latest official DXVK release from github. Y
 
 ### If you're not using dxvk-tools/can't build DXVK/D9VK :
 
-When `_use_dxvk` is set to `"prebuilt"`, you'll need to put your prebuilt DXVK dlls inside a dxvk folder, in the `external-ressources` folder of proton-tkg:
+When `_use_dxvk` is set to `"prebuilt"`, you'll need to put your prebuilt DXVK dlls inside a dxvk folder, in the `external-resources` folder of proton-tkg:
 ```
 proton-tkg
    |
-   |__external-ressources
+   |__external-resources
               |
               |
               --dxvk___x64--> d3d11.dll, dxgi.dll etc.

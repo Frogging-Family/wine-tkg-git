@@ -27,7 +27,7 @@ trap ressources_cleanup EXIT
 
 ressources_cleanup
 
-_ressources_path="${_nowhere}/external-ressources"
+_ressources_path="${_nowhere}/external-resources"
 mkdir -p "${_ressources_path}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
 ln -s "${_ressources_path}"/Proton "${_nowhere}"/Proton
 ln -s "${_ressources_path}"/vkd3d-proton "${_nowhere}"/vkd3d-proton
