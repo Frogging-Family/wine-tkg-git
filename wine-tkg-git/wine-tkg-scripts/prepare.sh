@@ -441,6 +441,7 @@ _prepare() {
 	  fi
 	  _community_patches=($_community_patches)
 	  _community_patches_repo_path="$_where/../../community-patches/wine-tkg-git"
+	  ( msg2 "Updating community patches repo..." && cd "$_community_patches_repo_path" && git pull )
 	  for _p in ${_community_patches[@]}; do
 	    if [ -e "$_community_patches_repo_path/$_p" ]; then
 	      ln -s "$_community_patches_repo_path/$_p" "$_where"/
