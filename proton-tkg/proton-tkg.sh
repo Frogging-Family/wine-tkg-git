@@ -259,11 +259,11 @@ function build_dxvk {
 
 function build_mediaconverter {
 
+mkdir -p "$_nowhere/gst/lib64/gstreamer-1.0"
+
 if [ "$_build_gstreamer" = "true" ]; then
   source "$_nowhere"/proton_template/gstreamer && _gstreamer
 fi
-
-mkdir -p "$_nowhere/gst/lib64/gstreamer-1.0"
 
   if [ -d "$_nowhere"/Proton/media-converter ]; then
     cd "$_nowhere"/Proton/media-converter
