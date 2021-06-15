@@ -17,25 +17,25 @@ _nowhere="$PWD"
 _nomakepkg="true"
 _no_steampath="false"
 
-function ressources_cleanup {
+function resources_cleanup {
   # The symlinks switch doesn't need the recursive flag, but we'll use it temporarily
   # as a smoother transition for existing users with dirty trees
   rm -rf "${_nowhere}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
 }
 
-trap ressources_cleanup EXIT
+trap resources_cleanup EXIT
 
-ressources_cleanup
+resources_cleanup
 
-_ressources_path="${_nowhere}/external-resources"
-mkdir -p "${_ressources_path}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
-ln -s "${_ressources_path}"/Proton "${_nowhere}"/Proton
-ln -s "${_ressources_path}"/vkd3d-proton "${_nowhere}"/vkd3d-proton
-ln -s "${_ressources_path}"/dxvk-tools "${_nowhere}"/dxvk-tools
-ln -s "${_ressources_path}"/dxvk "${_nowhere}"/dxvk
-ln -s "${_ressources_path}"/liberation-fonts "${_nowhere}"/liberation-fonts
-ln -s "${_ressources_path}"/mono "${_nowhere}"/mono
-ln -s "${_ressources_path}"/gecko "${_nowhere}"/gecko
+_resources_path="${_nowhere}/external-resources"
+mkdir -p "${_resources_path}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
+ln -s "${_resources_path}"/Proton "${_nowhere}"/Proton
+ln -s "${_resources_path}"/vkd3d-proton "${_nowhere}"/vkd3d-proton
+ln -s "${_resources_path}"/dxvk-tools "${_nowhere}"/dxvk-tools
+ln -s "${_resources_path}"/dxvk "${_nowhere}"/dxvk
+ln -s "${_resources_path}"/liberation-fonts "${_nowhere}"/liberation-fonts
+ln -s "${_resources_path}"/mono "${_nowhere}"/mono
+ln -s "${_resources_path}"/gecko "${_nowhere}"/gecko
 
 # Enforce using makepkg when using --makepkg
 if [ "$1" = "--makepkg" ]; then
