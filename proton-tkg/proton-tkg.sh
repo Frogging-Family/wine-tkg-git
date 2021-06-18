@@ -264,21 +264,36 @@ function build_dxvk {
 
 function build_mediaconverter {
 
-mkdir -p "$_nowhere/gst/lib64/gstreamer-1.0"
+  mkdir -p "$_nowhere/gst/lib64/gstreamer-1.0"
+  mkdir -p "$_nowhere/gst/lib/gstreamer-1.0"
 
-if [ "$_build_gstreamer" = "true" ]; then
-  source "$_nowhere"/proton_template/gstreamer && _gstreamer
-fi
+  if [ "$_build_gstreamer" = "true" ]; then
+    source "$_nowhere"/proton_template/gstreamer && _gstreamer
+  fi
 
   if [ -d "$_nowhere"/Proton/media-converter ]; then
     cd "$_nowhere"/Proton/media-converter
-    #mkdir -p "$_nowhere"/Proton/build/mediaconv32
     mkdir -p "$_nowhere"/Proton/build/mediaconv64
-    #rm -rf "$_nowhere"/Proton/build/mediaconv32/*
     rm -rf "$_nowhere"/Proton/build/mediaconv64/*
 
     # 32-bit
-    #( PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_PATH=/usr/lib32/pkgconfig cargo build --target i686-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv32 --release )
+    if [ "$_lib32_gstreamer" = "true" ]; then
+      mkdir -p "$_nowhere"/Proton/build/mediaconv32
+      rm -rf "$_nowhere"/Proton/build/mediaconv32/*
+
+      ( if [ -d '/usr/lib32/pkgconfig' ]; then # Typical Arch path
+      export PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib/pkgconfig:/usr/lib32/pkgconfig"
+      elif [ -d '/usr/lib/i386-linux-gnu/pkgconfig' ]; then # Ubuntu 18.04/19.04 path
+      export PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib/pkgconfig:/usr/lib/i386-linux-gnu/pkgconfig"
+      else
+      export PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib/pkgconfig:/usr/lib/pkgconfig" # Pretty common path, possibly helpful for OpenSuse & Fedora
+      fi
+      PKG_CONFIG_ALLOW_CROSS=1 cargo build --target i686-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv32 --release )
+
+      cp -a "$_nowhere"/Proton/build/mediaconv32/i686-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib/gstreamer-1.0/
+      strip --strip-unneeded "$_nowhere"/gst/lib/*.so
+      strip --strip-unneeded "$_nowhere"/gst/lib/gstreamer-1.0/*.so
+    fi
 
     # 64-bit
     ( if [ ! -d '/usr/lib32' ]; then # Fedora
@@ -288,14 +303,12 @@ fi
     fi
     cargo build --target x86_64-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv64 --release )
 
-    #cp -a "$_nowhere"/Proton/build/mediaconv32/i686-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib/gstreamer-1.0/
     cp -a "$_nowhere"/Proton/build/mediaconv64/x86_64-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib64/gstreamer-1.0/
-
-    cd "$_nowhere"
+    strip --strip-unneeded "$_nowhere"/gst/lib64/*.so
+    strip --strip-unneeded "$_nowhere"/gst/lib64/gstreamer-1.0/*.so
   fi
 
-  strip --strip-unneeded "$_nowhere"/gst/lib64/*.so
-  strip --strip-unneeded "$_nowhere"/gst/lib64/gstreamer-1.0/*.so
+  cd "$_nowhere"
 }
 
 function build_steamhelper {
@@ -673,6 +686,9 @@ else
     # gst/mediaconverter
     if [ "$_build_mediaconv" = "true" ]; then
       mv "$_nowhere"/gst/lib64/* proton_dist_tmp/lib64/
+      if [ "$_lib32_gstreamer" = "true" ]; then
+        mv "$_nowhere"/gst/lib/* proton_dist_tmp/lib/
+      fi
     fi
     rm -rf "$_nowhere/gst"
 

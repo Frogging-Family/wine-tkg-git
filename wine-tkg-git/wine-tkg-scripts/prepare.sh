@@ -63,6 +63,8 @@ _exit_cleanup() {
     echo "_new_lib_paths_69='${_new_lib_paths_69}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_build_mediaconv='${_build_mediaconv}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_build_gstreamer='${_build_gstreamer}'" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_lib32_gstreamer='${_lib32_gstreamer}'" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_build_faudio='${_build_faudio}'" >> "$_proton_tkg_path"/proton_tkg_token
   fi
 
   rm -f "$_where"/BIG_UGLY_FROGMINER && msg2 'Removed BIG_UGLY_FROGMINER - Ribbit' # state tracker end
