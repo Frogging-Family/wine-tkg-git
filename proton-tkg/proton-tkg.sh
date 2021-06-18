@@ -293,6 +293,9 @@ fi
 
     cd "$_nowhere"
   fi
+
+  strip --strip-unneeded "$_nowhere"/gst/lib64/*.so
+  strip --strip-unneeded "$_nowhere"/gst/lib64/gstreamer-1.0/*.so
 }
 
 function build_steamhelper {
