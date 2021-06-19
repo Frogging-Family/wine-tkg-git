@@ -1,7 +1,9 @@
 #!/bin/bash
 
 _exit_cleanup() {
-  sed -i "s/pkgver=$pkgver.*/pkgver=0/g" "$_where"/PKGBUILD
+  if [ "$pkgver" != "0" ]; then
+    sed -i "s/pkgver=$pkgver.*/pkgver=0/g" "$_where"/PKGBUILD
+  fi
 
   # Proton-tkg specifics to send to token
   if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ -n "$_proton_tkg_path" ]; then
