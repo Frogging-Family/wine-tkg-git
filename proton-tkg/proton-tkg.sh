@@ -291,7 +291,7 @@ function build_mediaconverter {
       PKG_CONFIG_ALLOW_CROSS=1 cargo build --target i686-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv32 --release )
 
       cp -a "$_nowhere"/Proton/build/mediaconv32/i686-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib/gstreamer-1.0/
-      strip --strip-unneeded "$_nowhere"/gst/lib/*.so
+
       strip --strip-unneeded "$_nowhere"/gst/lib/gstreamer-1.0/*.so
     fi
 
@@ -304,7 +304,7 @@ function build_mediaconverter {
     cargo build --target x86_64-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv64 --release )
 
     cp -a "$_nowhere"/Proton/build/mediaconv64/x86_64-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib64/gstreamer-1.0/
-    strip --strip-unneeded "$_nowhere"/gst/lib64/*.so
+
     strip --strip-unneeded "$_nowhere"/gst/lib64/gstreamer-1.0/*.so
   fi
 
