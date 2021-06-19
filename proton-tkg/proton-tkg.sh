@@ -219,6 +219,10 @@ function build_vkd3d {
   git pull origin master
   git submodule update --init --recursive
 
+  if [ "$_bump_dxil_spirv" = "true" ]; then
+    ( cd subprojects/dxil-spirv && git pull origin master )
+  fi
+
   _user_patches_no_confirm="true"
   _userpatch_target="vkd3d-proton"
   _userpatch_ext="myvkd3d"
@@ -234,11 +238,11 @@ function build_vkd3d {
   unset CXXFLAGS
   unset LDFLAGS
 
-  meson --cross-file build-win64.txt -Denable_standalone_d3d12=True --buildtype release --strip -Denable_tests=false --prefix "$_nowhere"/vkd3d-proton/build/lib64-vkd3d "$_nowhere"/vkd3d-proton/build/lib64-vkd3d
+  meson --cross-file build-win64.txt --buildtype release --strip -Denable_tests=false --prefix "$_nowhere"/vkd3d-proton/build/lib64-vkd3d "$_nowhere"/vkd3d-proton/build/lib64-vkd3d
   cd "$_nowhere"/vkd3d-proton/build/lib64-vkd3d && ninja install
   cd "$_nowhere"/vkd3d-proton
 
-  meson --cross-file build-win32.txt -Denable_standalone_d3d12=True --buildtype release --strip -Denable_tests=false --prefix "$_nowhere"/vkd3d-proton/build/lib32-vkd3d "$_nowhere"/vkd3d-proton/build/lib32-vkd3d
+  meson --cross-file build-win32.txt --buildtype release --strip -Denable_tests=false --prefix "$_nowhere"/vkd3d-proton/build/lib32-vkd3d "$_nowhere"/vkd3d-proton/build/lib32-vkd3d
   cd "$_nowhere"/vkd3d-proton/build/lib32-vkd3d && ninja install
 
   cd "$_nowhere"
