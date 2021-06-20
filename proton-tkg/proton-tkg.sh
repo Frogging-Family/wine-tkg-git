@@ -598,11 +598,6 @@ else
     PATH="${CUSTOM_GCC_PATH}/bin:${CUSTOM_GCC_PATH}/lib:${CUSTOM_GCC_PATH}/include:${CUSTOM_MINGW_PATH}/bin:${CUSTOM_MINGW_PATH}/lib:${CUSTOM_MINGW_PATH}/include:${PATH}"
   fi
 
-  # Build GST/mediaconverter
-  if [ "$_build_mediaconv" = "true" ]; then
-    build_mediaconverter
-  fi
-
   # If mingw-w64 gcc can't be found, disable building vkd3d-proton
   if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
     echo -e "######\nmingw-w64 gcc not found - vkd3d-proton and dxvk won't be built\n######"
@@ -645,6 +640,9 @@ else
     cd "$_nowhere"
 
     if [ "$_NUKR" != "debug" ]; then
+      if [ -d Proton ] && [ ! -f Proton/proton ]; then
+        rm -rf Proton/*
+      fi
       # Clone Proton tree as we need to build some tools from it
       git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
       cd Proton
@@ -666,6 +664,11 @@ else
     fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSans-Bold" "Arial-Bold" "Arial" "Arial Bold"
     fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSerif-Regular" "TimesNewRoman" "Times New Roman" "Times New Roman"
     fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationMono-Regular" "CourierNew" "Courier New" "Courier New"
+
+    # Build GST/mediaconverter
+    if [ "$_build_mediaconv" = "true" ]; then
+      build_mediaconverter
+    fi
 
     # Grab share template and inject version
     _versionpre=`date '+%s'`
