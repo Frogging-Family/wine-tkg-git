@@ -266,6 +266,35 @@ function build_dxvk {
   cd "$_nowhere"
 }
 
+function build_dxvk_nvapi {
+  cd "$_nowhere"/Proton
+  git clone https://github.com/jp7677/dxvk-nvapi.git || true # It'll complain the path already exists on subsequent builds
+  cd dxvk-nvapi
+  git reset --hard HEAD
+  git clean -xdf
+  git pull origin master
+  git submodule update --init --recursive
+
+  rm -rf "$_nowhere"/Proton/build/lib64-dxvk-nvapi
+  rm -rf "$_nowhere"/Proton/build/lib32-dxvk-nvapi
+  mkdir -p "$_nowhere"/Proton/build/lib64-dxvk-nvapi
+  mkdir -p "$_nowhere"/Proton/build/lib32-dxvk-nvapi
+
+  unset CFLAGS
+  unset CPPFLAGS
+  unset CXXFLAGS
+  unset LDFLAGS
+
+  meson --cross-file build-win64.txt --buildtype release --prefix "$_nowhere"/Proton/build/lib64-dxvk-nvapi "$_nowhere"/Proton/build/lib64-dxvk-nvapi
+  cd "$_nowhere"/Proton/build/lib64-dxvk-nvapi && ninja install
+  cd "$_nowhere"/Proton/dxvk-nvapi
+
+  meson --cross-file build-win32.txt --buildtype release --prefix "$_nowhere"/Proton/build/lib32-dxvk-nvapi "$_nowhere"/Proton/build/lib32-dxvk-nvapi
+  cd "$_nowhere"/Proton/build/lib32-dxvk-nvapi && ninja install
+
+  cd "$_nowhere"
+}
+
 function build_mediaconverter {
 
   mkdir -p "$_nowhere/gst/lib64/gstreamer-1.0"
@@ -752,6 +781,12 @@ else
         cp -v dxvk/x32/dxvk_config.dll $_proton_dxvk_path32
       fi
     fi
+
+    build_dxvk_nvapi
+    mkdir -p "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
+    mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
+    cp -v "$_nowhere"/Proton/build/lib64-dxvk-nvapi/bin/* "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
+    cp -v "$_nowhere"/Proton/build/lib32-dxvk-nvapi/bin/* "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
 
     echo ''
     echo "Injecting wine-mono & wine-gecko..."
