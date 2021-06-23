@@ -362,7 +362,7 @@ function build_steamhelper {
     elif [[ "$_proton_branch" = *4.2 ]] || [[ "$_proton_branch" = *5.0 ]] || [[ "$_proton_branch" = *5.13 ]]; then
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -L$_nowhere/proton_dist_tmp/lib/ -L$_nowhere/proton_dist_tmp/lib/wine/"
     else
-      if [ "$_new_lib_paths" = "true" ]; then
+      if [ "$_new_lib_paths" = "true" ] && [ -d "$_nowhere/proton_dist_tmp/lib/wine/i386-unix" ]; then
         export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_nowhere/proton_dist_tmp/lib/wine/i386-unix/ -L$_nowhere/proton_dist_tmp/lib/wine/i386-windows/"
       else
         export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_nowhere/proton_dist_tmp/lib/ -L$_nowhere/proton_dist_tmp/lib/wine/"
@@ -371,8 +371,10 @@ function build_steamhelper {
 
     winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -L"$_nowhere/Proton/steam_helper" .
     make -e CC="winegcc -m32" CXX="wineg++ -m32" -C "$_nowhere/Proton/build/steam.win32" -j$(nproc) && strip steam.exe.so
-    touch "$_nowhere/Proton/build/steam.win32/steam.exe.spec"
-    winebuild --dll --fake-module -E "$_nowhere/Proton/build/steam.win32/steam.exe.spec" -o steam.exe.fake
+    if [ "$_new_lib_paths" = "true" ]; then
+      touch "$_nowhere/Proton/build/steam.win32/steam.exe.spec"
+      winebuild --dll --fake-module -E "$_nowhere/Proton/build/steam.win32/steam.exe.spec" -o steam.exe.fake
+    fi
     cd "$_nowhere"
 
     if [ "$_new_lib_paths" = "true" ]; then
@@ -384,7 +386,7 @@ function build_steamhelper {
       fi
       cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
     else
-      cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/fakedlls/steam.exe
+      #cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/fakedlls/steam.exe
       cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
       cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
     fi
