@@ -30,6 +30,9 @@ user_settings = {
     #This is a workaround, but it might affect dependencies installation on new prefixes.
     "PROTON_ALT_START": "1",
 
+    #Enable nvapi support through nvidia provided nvngx.dll (Requires nvidia driver 470+) - Needed for DLSS support
+#    "PROTON_ENABLE_NVAPI": "1",
+
     #Disable nvapi and nvapi64
     "PROTON_NVAPI_DISABLE": "1",
 
