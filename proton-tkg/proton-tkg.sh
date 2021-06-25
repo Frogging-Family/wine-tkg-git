@@ -378,7 +378,7 @@ function build_steamhelper {
     cd "$_nowhere"
 
     if [ "$_new_lib_paths" = "true" ]; then
-      cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/i386-windows/steam.exe
+      #cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/i386-windows/steam.exe
       if [ "$_new_lib_paths_69" = "true" ]; then
         cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/i386-unix/
       else
