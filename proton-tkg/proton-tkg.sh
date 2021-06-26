@@ -88,6 +88,56 @@ Also known as "Some kind of build wrapper for wine-tkg-git"
 
 EOF
 
+function new_lib_path_check {
+  # We want to track builds using the new lib paths - introduced with 0aa335b1060428f5f799c93e3c6dea2bc2dd864a-79a148e1fa8b5ada2dc8fec03cf866a3d78c0d54
+
+  # i386
+  if [ -d "$_nowhere/proton_dist_tmp/lib/wine/i386-unix" ] && [ ! -d "$_nowhere/proton_dist_tmp/lib/wine/i386-windows" ]; then
+    _new_lib_paths="true"
+    _new_lib_paths_69="false"
+    _i386_unix_path="$_nowhere/proton_dist_tmp/lib/wine/i386-unix/"
+    _i386_windows_path="$_nowhere/proton_dist_tmp/lib/wine/"
+  elif [ ! -d "$_nowhere/proton_dist_tmp/lib/wine/i386-unix" ] && [ -d "$_nowhere/proton_dist_tmp/lib/wine/i386-windows" ]; then
+    _new_lib_paths="true"
+    _new_lib_paths_69="false"
+    _i386_unix_path="$_nowhere/proton_dist_tmp/lib/"
+    _i386_windows_path="$_nowhere/proton_dist_tmp/lib/wine/i386-windows/"
+  elif [ -d "$_nowhere/proton_dist_tmp/lib/wine/i386-unix" ] && [ -d "$_nowhere/proton_dist_tmp/lib/wine/i386-windows" ]; then
+    _new_lib_paths="true"
+    _new_lib_paths_69="true"
+    _i386_unix_path="$_nowhere/proton_dist_tmp/lib/wine/i386-unix/"
+    _i386_windows_path="$_nowhere/proton_dist_tmp/lib/wine/i386-windows/"
+  else
+    _new_lib_paths="false"
+    _new_lib_paths_69="false"
+    _i386_unix_path="$_nowhere/proton_dist_tmp/lib/"
+    _i386_windows_path="$_nowhere/proton_dist_tmp/lib/wine/"
+  fi
+
+  # x86_64
+  if [ -d "$_nowhere/proton_dist_tmp/lib64/wine/x86_64-unix" ] && [ ! -d "$_nowhere/proton_dist_tmp/lib64/wine/x86_64-windows" ]; then
+    _new_lib_paths="true"
+    _new_lib_paths_69="false"
+    _x86_64_unix_path="$_nowhere/proton_dist_tmp/lib64/wine/i386-unix/"
+    _x86_64_windows_path="$_nowhere/proton_dist_tmp/lib64/wine/"
+  elif [ ! -d "$_nowhere/proton_dist_tmp/lib64/wine/x86_64-unix" ] && [ -d "$_nowhere/proton_dist_tmp/lib64/wine/x86_64-windows" ]; then
+    _new_lib_paths="true"
+    _new_lib_paths_69="false"
+    _x86_64_unix_path="$_nowhere/proton_dist_tmp/lib64/"
+    _x86_64_windows_path="$_nowhere/proton_dist_tmp/lib64/wine/i386-windows/"
+  elif [ -d "$_nowhere/proton_dist_tmp/lib64/wine/x86_64-unix" ] && [ -d "$_nowhere/proton_dist_tmp/lib64/wine/x86_64-windows" ]; then
+    _new_lib_paths="true"
+    _new_lib_paths_69="true"
+    _x86_64_unix_path="$_nowhere/proton_dist_tmp/lib64/wine/x86_64-unix/"
+    _x86_64_windows_path="$_nowhere/proton_dist_tmp/lib64/wine/x86_64-windows/"
+  else
+    _new_lib_paths="false"
+    _new_lib_paths_69="false"
+    _x86_64_unix_path="$_nowhere/proton_dist_tmp/lib64/"
+    _x86_64_windows_path="$_nowhere/proton_dist_tmp/lib64/wine/"
+  fi
+}
+
 function build_vrclient {
   cd "$_nowhere"/Proton
   source "$_nowhere/proton_tkg_token"
@@ -160,6 +210,8 @@ function build_lsteamclient {
     fi
   fi
 
+  new_lib_path_check
+
   rm -rf build/lsteamclient.win64
   rm -rf build/lsteamclient.win32
   mkdir -p build/lsteamclient.win64
@@ -169,13 +221,13 @@ function build_lsteamclient {
   cp -a lsteamclient/* build/lsteamclient.win32
 
   cd build/lsteamclient.win64
-  winemaker $WINEMAKERFLAGS -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib64/" -L"$_nowhere/proton_dist_tmp/lib64/wine/" .
+  winemaker $WINEMAKERFLAGS -DSTEAM_API_EXPORTS -L"$_x86_64_unix_path" -L"$_x86_64_windows_path" .
   make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip lsteamclient.dll.so
   winebuild --dll --fake-module -E "$_nowhere/Proton/build/lsteamclient.win64/lsteamclient.spec" -o lsteamclient.dll.fake
   cd ../..
 
   cd build/lsteamclient.win32
-  winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" .
+  winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_i386_unix_path" -L"$_i386_windows_path" .
   make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip lsteamclient.dll.so
   winebuild --dll --fake-module -E "$_nowhere/Proton/build/lsteamclient.win32/lsteamclient.spec" -o lsteamclient.dll.fake
   cd "$_nowhere"
@@ -357,16 +409,14 @@ function build_steamhelper {
     cp -a Proton/steam_helper/* Proton/build/steam.win32
     cd Proton/build/steam.win32
 
+    new_lib_path_check
+
     if [[ "$_proton_branch" = *4.11 ]]; then
-      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/wine/msvcrt/ -I$_nowhere/proton_dist_tmp/include/ -L$_nowhere/proton_dist_tmp/lib/ -L$_nowhere/proton_dist_tmp/lib/wine/"
+      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/wine/msvcrt/ -I$_nowhere/proton_dist_tmp/include/ -L$_i386_unix_path -L$_i386_windows_path"
     elif [[ "$_proton_branch" = *4.2 ]] || [[ "$_proton_branch" = *5.0 ]] || [[ "$_proton_branch" = *5.13 ]]; then
-      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -L$_nowhere/proton_dist_tmp/lib/ -L$_nowhere/proton_dist_tmp/lib/wine/"
+      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -L$_i386_unix_path -L$_i386_windows_path"
     else
-      if [ "$_new_lib_paths" = "true" ] && [ -d "$_nowhere/proton_dist_tmp/lib/wine/i386-unix" ]; then
-        export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_nowhere/proton_dist_tmp/lib/wine/i386-unix/ -L$_nowhere/proton_dist_tmp/lib/wine/i386-windows/"
-      else
-        export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_nowhere/proton_dist_tmp/lib/ -L$_nowhere/proton_dist_tmp/lib/wine/"
-      fi
+      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_i386_unix_path -L$_i386_windows_path"
     fi
 
     winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -L"$_nowhere/Proton/steam_helper" .
