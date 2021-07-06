@@ -1,0 +1,314 @@
+From: Zebediah Figura <zfigura@codeweavers.com>
+Subject: [PATCH 3/5] server: Return a Win32 error code from IOCTL_AFD_WINE_GET_SO_ERROR.
+Message-Id: <20210706001419.1846231-3-zfigura@codeweavers.com>
+Date: Mon,  5 Jul 2021 19:14:17 -0500
+In-Reply-To: <20210706001419.1846231-1-zfigura@codeweavers.com>
+References: <20210706001419.1846231-1-zfigura@codeweavers.com>
+
+Fixes: fb3956fcf94397bed53598943a9524520bc23e08
+Signed-off-by: Zebediah Figura <zfigura@codeweavers.com>
+---
+ dlls/ws2_32/tests/sock.c | 10 +++++-----
+ server/sock.c            |  2 +-
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/dlls/ws2_32/tests/sock.c b/dlls/ws2_32/tests/sock.c
+index 1b697423e27..df5a69b4564 100644
+--- a/dlls/ws2_32/tests/sock.c
++++ b/dlls/ws2_32/tests/sock.c
+@@ -3271,13 +3271,13 @@ static void test_select(void)
+         id = 0xdeadbeef;
+         ret = getsockopt(fdWrite, SOL_SOCKET, SO_ERROR, (char *)&id, &len);
+         ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+-        todo_wine ok(id == WSAECONNREFUSED, "got error %u\n", id);
++        ok(id == WSAECONNREFUSED, "got error %u\n", id);
+
+         len = sizeof(id);
+         id = 0xdeadbeef;
+         ret = getsockopt(fdWrite, SOL_SOCKET, SO_ERROR, (char *)&id, &len);
+         ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+-        todo_wine ok(id == WSAECONNREFUSED, "got error %u\n", id);
++        ok(id == WSAECONNREFUSED, "got error %u\n", id);
+
+         FD_ZERO_ALL();
+         FD_SET(fdWrite, &readfds);
+@@ -3307,7 +3307,7 @@ static void test_select(void)
+         id = 0xdeadbeef;
+         ret = getsockopt(fdWrite, SOL_SOCKET, SO_ERROR, (char *)&id, &len);
+         ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+-        todo_wine ok(id == WSAECONNREFUSED, "got error %u\n", id);
++        ok(id == WSAECONNREFUSED, "got error %u\n", id);
+
+         FD_ZERO_ALL();
+         FD_SET(fdWrite, &readfds);
+@@ -6515,13 +6515,13 @@ static void test_WSAPoll(void)
+         err = 0xdeadbeef;
+         ret = getsockopt(client, SOL_SOCKET, SO_ERROR, (char *)&err, &len);
+         ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+-        todo_wine ok(err == WSAECONNREFUSED, "got error %u\n", err);
++        ok(err == WSAECONNREFUSED, "got error %u\n", err);
+
+         len = sizeof(err);
+         err = 0xdeadbeef;
+         ret = getsockopt(client, SOL_SOCKET, SO_ERROR, (char *)&err, &len);
+         ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+-        todo_wine ok(err == WSAECONNREFUSED, "got error %u\n", err);
++        ok(err == WSAECONNREFUSED, "got error %u\n", err);
+
+         check_poll_todo(client, POLLWRNORM | POLLHUP | POLLERR);
+
+diff --git a/server/sock.c b/server/sock.c
+index befa9117c13..2b5915c87fe 100644
+--- a/server/sock.c
++++ b/server/sock.c
+@@ -2587,7 +2587,7 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
+             {
+                 if (sock->errors[i])
+                 {
+-                    error = sock->errors[i];
++                    error = sock_get_error( sock->errors[i] );
+                     break;
+                 }
+             }
+
+-- 
+2.30.2
+
+From: Zebediah Figura <zfigura@codeweavers.com>
+Subject: [PATCH 4/5] server: Separate a poll_single_socket() helper.
+Message-Id: <20210706001419.1846231-4-zfigura@codeweavers.com>
+Date: Mon,  5 Jul 2021 19:14:18 -0500
+In-Reply-To: <20210706001419.1846231-1-zfigura@codeweavers.com>
+References: <20210706001419.1846231-1-zfigura@codeweavers.com>
+
+Signed-off-by: Zebediah Figura <zfigura@codeweavers.com>
+---
+ server/sock.c | 44 +++++++++++++++++++++++++-------------------
+ 1 file changed, 25 insertions(+), 19 deletions(-)
+
+diff --git a/server/sock.c b/server/sock.c
+index 2b5915c87fe..b1cf628abae 100644
+--- a/server/sock.c
++++ b/server/sock.c
+@@ -2734,6 +2734,29 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
+     }
+ }
+
++static int poll_single_socket( struct sock *sock, int mask )
++{
++    struct pollfd pollfd;
++
++    pollfd.fd = get_unix_fd( sock->fd );
++    pollfd.events = poll_flags_from_afd( sock, mask );
++    if (pollfd.events < 0 || poll( &pollfd, 1, 0 ) < 0)
++        return 0;
++
++    if ((mask & AFD_POLL_HUP) && (pollfd.revents & POLLIN) && sock->type == WS_SOCK_STREAM)
++    {
++        char dummy;
++
++        if (!recv( get_unix_fd( sock->fd ), &dummy, 1, MSG_PEEK ))
++        {
++            pollfd.revents &= ~POLLIN;
++            pollfd.revents |= POLLHUP;
++        }
++    }
++
++    return get_poll_flags( sock, pollfd.revents ) & mask;
++}
++
+ static int poll_socket( struct sock *poll_sock, struct async *async, timeout_t timeout,
+                         unsigned int count, const struct poll_socket_input *input )
+ {
+@@ -2788,26 +2811,9 @@ static int poll_socket( struct sock *poll_sock, struct async *async, timeout_t t
+     for (i = 0; i < count; ++i)
+     {
+         struct sock *sock = req->sockets[i].sock;
+-        struct pollfd pollfd;
+-        int flags;
++        int mask = req->sockets[i].flags;
++        int flags = poll_single_socket( sock, mask );
+
+-        pollfd.fd = get_unix_fd( sock->fd );
+-        pollfd.events = poll_flags_from_afd( sock, req->sockets[i].flags );
+-        if (pollfd.events < 0 || poll( &pollfd, 1, 0 ) < 0) continue;
+-
+-        if ((req->sockets[i].flags & AFD_POLL_HUP) && (pollfd.revents & POLLIN) &&
+-            sock->type == WS_SOCK_STREAM)
+-        {
+-            char dummy;
+-
+-            if (!recv( get_unix_fd( sock->fd ), &dummy, 1, MSG_PEEK ))
+-            {
+-                pollfd.revents &= ~POLLIN;
+-                pollfd.revents |= POLLHUP;
+-            }
+-        }
+-
+-        flags = get_poll_flags( sock, pollfd.revents ) & req->sockets[i].flags;
+         if (flags)
+         {
+             req->iosb->status = STATUS_SUCCESS;
+
+-- 
+2.30.2
+
+From: Zebediah Figura <zfigura@codeweavers.com>
+Subject: [PATCH 5/5] server: Report AFD_POLL_CONNECT_ERR if a previous connection attempt failed.
+Message-Id: <20210706001419.1846231-5-zfigura@codeweavers.com>
+Date: Mon,  5 Jul 2021 19:14:19 -0500
+In-Reply-To: <20210706001419.1846231-1-zfigura@codeweavers.com>
+References: <20210706001419.1846231-1-zfigura@codeweavers.com>
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=51331
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=51366
+Signed-off-by: Zebediah Figura <zfigura@codeweavers.com>
+---
+ dlls/ws2_32/tests/afd.c  | 51 +++++++++++++++++-----------------------
+ dlls/ws2_32/tests/sock.c | 16 ++++++-------
+ server/sock.c            |  8 +++++++
+ 3 files changed, 37 insertions(+), 38 deletions(-)
+
+diff --git a/dlls/ws2_32/tests/afd.c b/dlls/ws2_32/tests/afd.c
+index 9afb8e86dc9..4b8796157aa 100644
+--- a/dlls/ws2_32/tests/afd.c
++++ b/dlls/ws2_32/tests/afd.c
+@@ -464,30 +464,24 @@ static void test_poll(void)
+         memset(out_params, 0xcc, sizeof(out_buffer));
+         ret = NtDeviceIoControlFile((HANDLE)client, event, NULL, NULL, &io,
+                 IOCTL_AFD_POLL, in_params, params_size, out_params, params_size);
+-        todo_wine
+-        {
+-            ok(!ret, "got %#x\n", ret);
+-            ok(!io.Status, "got %#x\n", io.Status);
+-            ok(io.Information == offsetof(struct afd_poll_params, sockets[1]), "got %#Ix\n", io.Information);
+-            ok(out_params->count == 1, "got count %u\n", out_params->count);
+-            ok(out_params->sockets[0].socket == client, "got socket %#Ix\n", out_params->sockets[0].socket);
+-            ok(out_params->sockets[0].flags == AFD_POLL_CONNECT_ERR, "got flags %#x\n", out_params->sockets[0].flags);
+-            ok(out_params->sockets[0].status == STATUS_CONNECTION_REFUSED, "got status %#x\n", out_params->sockets[0].status);
+-        }
++        ok(!ret, "got %#x\n", ret);
++        ok(!io.Status, "got %#x\n", io.Status);
++        ok(io.Information == offsetof(struct afd_poll_params, sockets[1]), "got %#Ix\n", io.Information);
++        ok(out_params->count == 1, "got count %u\n", out_params->count);
++        ok(out_params->sockets[0].socket == client, "got socket %#Ix\n", out_params->sockets[0].socket);
++        ok(out_params->sockets[0].flags == AFD_POLL_CONNECT_ERR, "got flags %#x\n", out_params->sockets[0].flags);
++        ok(out_params->sockets[0].status == STATUS_CONNECTION_REFUSED, "got status %#x\n", out_params->sockets[0].status);
+
+         memset(out_params, 0xcc, sizeof(out_buffer));
+         ret = NtDeviceIoControlFile((HANDLE)client, event, NULL, NULL, &io,
+                 IOCTL_AFD_POLL, in_params, params_size, out_params, params_size);
+-        todo_wine
+-        {
+-            ok(!ret, "got %#x\n", ret);
+-            ok(!io.Status, "got %#x\n", io.Status);
+-            ok(io.Information == offsetof(struct afd_poll_params, sockets[1]), "got %#Ix\n", io.Information);
+-            ok(out_params->count == 1, "got count %u\n", out_params->count);
+-            ok(out_params->sockets[0].socket == client, "got socket %#Ix\n", out_params->sockets[0].socket);
+-            ok(out_params->sockets[0].flags == AFD_POLL_CONNECT_ERR, "got flags %#x\n", out_params->sockets[0].flags);
+-            ok(out_params->sockets[0].status == STATUS_CONNECTION_REFUSED, "got status %#x\n", out_params->sockets[0].status);
+-        }
++        ok(!ret, "got %#x\n", ret);
++        ok(!io.Status, "got %#x\n", io.Status);
++        ok(io.Information == offsetof(struct afd_poll_params, sockets[1]), "got %#Ix\n", io.Information);
++        ok(out_params->count == 1, "got count %u\n", out_params->count);
++        ok(out_params->sockets[0].socket == client, "got socket %#Ix\n", out_params->sockets[0].socket);
++        ok(out_params->sockets[0].flags == AFD_POLL_CONNECT_ERR, "got flags %#x\n", out_params->sockets[0].flags);
++        ok(out_params->sockets[0].status == STATUS_CONNECTION_REFUSED, "got status %#x\n", out_params->sockets[0].status);
+
+         ret = connect(client, (struct sockaddr *)&addr, sizeof(addr));
+         ok(ret == -1, "got %d\n", ret);
+@@ -514,16 +508,13 @@ static void test_poll(void)
+         memset(out_params, 0xcc, sizeof(out_buffer));
+         ret = NtDeviceIoControlFile((HANDLE)client, event, NULL, NULL, &io,
+                 IOCTL_AFD_POLL, in_params, params_size, out_params, params_size);
+-        todo_wine
+-        {
+-            ok(!ret, "got %#x\n", ret);
+-            ok(!io.Status, "got %#x\n", io.Status);
+-            ok(io.Information == offsetof(struct afd_poll_params, sockets[1]), "got %#Ix\n", io.Information);
+-            ok(out_params->count == 1, "got count %u\n", out_params->count);
+-            ok(out_params->sockets[0].socket == client, "got socket %#Ix\n", out_params->sockets[0].socket);
+-            ok(out_params->sockets[0].flags == AFD_POLL_CONNECT_ERR, "got flags %#x\n", out_params->sockets[0].flags);
+-            ok(out_params->sockets[0].status == STATUS_CONNECTION_REFUSED, "got status %#x\n", out_params->sockets[0].status);
+-        }
++        ok(!ret, "got %#x\n", ret);
++        ok(!io.Status, "got %#x\n", io.Status);
++        ok(io.Information == offsetof(struct afd_poll_params, sockets[1]), "got %#Ix\n", io.Information);
++        ok(out_params->count == 1, "got count %u\n", out_params->count);
++        ok(out_params->sockets[0].socket == client, "got socket %#Ix\n", out_params->sockets[0].socket);
++        ok(out_params->sockets[0].flags == AFD_POLL_CONNECT_ERR, "got flags %#x\n", out_params->sockets[0].flags);
++        ok(out_params->sockets[0].status == STATUS_CONNECTION_REFUSED, "got status %#x\n", out_params->sockets[0].status);
+
+         closesocket(client);
+     }
+diff --git a/dlls/ws2_32/tests/sock.c b/dlls/ws2_32/tests/sock.c
+index df5a69b4564..9e7cd3a1d39 100644
+--- a/dlls/ws2_32/tests/sock.c
++++ b/dlls/ws2_32/tests/sock.c
+@@ -3263,8 +3263,8 @@ static void test_select(void)
+         FD_SET(fdWrite, &exceptfds);
+         select_timeout.tv_sec = 10;
+         ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
+-        todo_wine ok(ret == 1, "expected 1, got %d\n", ret);
+-        todo_wine ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
++        ok(ret == 1, "expected 1, got %d\n", ret);
++        ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
+         ok(select_timeout.tv_usec == 250000, "select timeout should not have changed\n");
+
+         len = sizeof(id);
+@@ -3285,8 +3285,8 @@ static void test_select(void)
+         FD_SET(fdWrite, &exceptfds);
+         select_timeout.tv_sec = 10;
+         ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
+-        todo_wine ok(ret == 1, "got %d\n", ret);
+-        todo_wine ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
++        ok(ret == 1, "got %d\n", ret);
++        ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
+
+         /* Calling connect() doesn't reset the socket error, but a successful
+          * connection does. This is kind of tricky to test, because while
+@@ -3315,8 +3315,8 @@ static void test_select(void)
+         FD_SET(fdWrite, &exceptfds);
+         select_timeout.tv_sec = 10;
+         ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
+-        todo_wine ok(ret == 1, "got %d\n", ret);
+-        todo_wine ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
++        ok(ret == 1, "got %d\n", ret);
++        ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
+
+         len = sizeof(address);
+         ret = getsockname(fdListen, (struct sockaddr *)&address, &len);
+@@ -3362,8 +3362,8 @@ static void test_select(void)
+         FD_SET(fdWrite, &exceptfds);
+         select_timeout.tv_sec = 0;
+         ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
+-        todo_wine ok(ret == 1, "expected 1, got %d\n", ret);
+-        todo_wine ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
++        ok(ret == 1, "expected 1, got %d\n", ret);
++        ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
+
+         len = sizeof(id);
+         id = 0xdeadbeef;
+diff --git a/server/sock.c b/server/sock.c
+index b1cf628abae..58e9cf4302a 100644
+--- a/server/sock.c
++++ b/server/sock.c
+@@ -2820,6 +2820,14 @@ static int poll_socket( struct sock *poll_sock, struct async *async, timeout_t t
+             output[i].flags = flags;
+             output[i].status = sock_get_ntstatus( sock_error( sock->fd ) );
+         }
++
++        /* FIXME: do other error conditions deserve a similar treatment? */
++        if (sock->state != SOCK_CONNECTING && sock->errors[AFD_POLL_BIT_CONNECT_ERR] && (mask & AFD_POLL_CONNECT_ERR))
++        {
++            req->iosb->status = STATUS_SUCCESS;
++            output[i].flags |= AFD_POLL_CONNECT_ERR;
++            output[i].status = sock_get_ntstatus( sock->errors[AFD_POLL_BIT_CONNECT_ERR] );
++        }
+     }
+
+     if (req->iosb->status != STATUS_PENDING)
+
+-- 
+2.30.2
