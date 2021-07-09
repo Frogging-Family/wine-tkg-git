@@ -1,0 +1,29 @@
+name: Wine Archlinux CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Compilation
+        run: |
+          echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
+          yes|pacman -Syu --noconfirm base-devel sudo
+          useradd user -G wheel && echo "user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown user -R . && cd wine-tkg-git
+          su user -c "yes|PKGDEST=/tmp/wine-tkg makepkg --noconfirm -si"
+
+      - name: Archive the artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: wine-tkg-build
+          path: /tmp/wine-tkg
