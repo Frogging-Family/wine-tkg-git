@@ -591,7 +591,7 @@ _prepare() {
 	  echo -e "( MTGA bandaid reverts applied )\n" >> "$_where"/last_build_config.log
 	fi
 
-	if [ "$_sdl_joy_support" = "true" ] && [ "$_use_staging" != "true" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && git merge-base --is-ancestor e4fbae832c868e9fcf5a91c58255fe3f4ea1cb30 HEAD; then
+	if [ "$_sdl_joy_support" = "true" ] && [ "$_use_staging" != "true" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && git merge-base --is-ancestor e4fbae832c868e9fcf5a91c58255fe3f4ea1cb30 HEAD && ! git merge-base --is-ancestor a17367291104e46c573b7213ee94a0f537563ace HEAD; then
 	  _committorevert=e4fbae832c868e9fcf5a91c58255fe3f4ea1cb30 && nonuser_reverter
 	  echo -e "( Proton SDL Joystick support unbreak revert applied )\n" >> "$_where"/last_build_config.log
 	fi
@@ -840,7 +840,7 @@ _prepare() {
 	fi
 
 	# Disable some staging patchsets to prevent bad interactions with proton gamepad additions
-	if ( ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_gamepad_additions" = "true" ] ) || ( git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_sdl_joy_support" = "true" ] ) && ( [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_use_staging" = "true" ] ); then
+	if ( ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_gamepad_additions" = "true" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] ) || ( git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_sdl_joy_support" = "true" ] && ( git merge-base --is-ancestor a17367291104e46c573b7213ee94a0f537563ace HEAD || [ "$_EXTERNAL_INSTALL" = "proton" ] ) ) && [ "$_use_staging" = "true" ]; then
 	  _staging_args+=(-W dinput-SetActionMap-genre -W dinput-axis-recalc -W dinput-joy-mappings -W dinput-reconnect-joystick -W dinput-remap-joystick)
 	fi
 
@@ -2367,11 +2367,15 @@ EOM
 	  fi
 	fi
 
-	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
-	  # SDL Joystick support - from Proton
-	  if [ "$_sdl_joy_support" = "true" ]; then
+	# SDL Joystick support - from Proton
+	if [ "$_sdl_joy_support" = "true" ]; then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2bd3c9703d3385820c1829a78ef71e7701d3a77a HEAD ); then
+	    _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
+	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a17367291104e46c573b7213ee94a0f537563ace HEAD ); then
+	    _patchname='proton-sdl-joy-5fe1031.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
+	  elif [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor f34b735eba04ee1deeba1e9bbf151956a23b81f2 HEAD ) && [ "$_use_staging" = "true" ]; then
-	      _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
+	      _patchname='proton-sdl-joy-a173672.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 27f40156baa7f1e09c6e420f6c278606557a505a HEAD ) && [ "$_use_staging" = "true" ]; then
 	      _patchname='proton-sdl-joy-f34b735.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 661df7b889bb973721d09a316d87d200a31233fe HEAD ) && [ "$_use_staging" = "true" ]; then
@@ -2427,6 +2431,9 @@ EOM
 	      _patchname='proton-gamepad-additions-exp.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton exp)" && nonuser_patcher
 	    fi
 	  fi
+	fi
+
+	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
 	  #if git merge-base --is-ancestor 0ffb1535517301d28c7c004eac639a9a0cc26c00 HEAD; then
 	  #  _patchname='proton-restore-unicode.patch' && _patchmsg="Restore installing wine/unicode.h to please Proton" && nonuser_patcher
 	  #fi
