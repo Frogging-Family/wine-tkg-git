@@ -893,7 +893,7 @@ else
     cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
 
     # Inject current wine tree prefix version value in a proton-friendly format - major.minor-commitnumber
-    _prefix_version=$( echo ${_protontkg_true_version} | sed 's/.[^.]*//4g; s/.r/-/' )
+    _prefix_version=$( echo ${_protontkg_true_version} | sed 's/.r/-/; s/.[^.]*//4g; s/\.[^.*-]*//2g;' )
     sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version\"|" "proton_tkg_$_protontkg_version/proton"
 
     # Patch our proton script to make use of the steam helper on 4.0+
