@@ -6854,493 +6854,6 @@ index 8921844de26..ff8411e46c6 100644
                      break;
                  case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
                  case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
-From 4b544a2957c6cdc9131dfbbd93744376e963a450 Mon Sep 17 00:00:00 2001
-From: Andrew Eikum <aeikum@codeweavers.com>
-Date: Thu, 2 May 2019 08:16:37 -0500
-Subject: [PATCH] HACK: create a duplicate xinput-only device for each SDL
- controller
-
----
- dlls/winebus.sys/bus.h       |  2 +-
- dlls/winebus.sys/bus_iohid.c |  2 +-
- dlls/winebus.sys/bus_sdl.c   | 50 ++++++++++++++++++++++++++++--------
- dlls/winebus.sys/bus_udev.c  |  4 +--
- dlls/winebus.sys/main.c      | 10 +++---
- dlls/xinput1_3/hid.c         |  1 +
- 6 files changed, 51 insertions(+), 18 deletions(-)
-
-diff --git a/dlls/winebus.sys/bus.h b/dlls/winebus.sys/bus.h
-index 22a4b46a516..8aa5535aa1d 100644
---- a/dlls/winebus.sys/bus.h
-+++ b/dlls/winebus.sys/bus.h
-@@ -43,7 +43,7 @@ void *get_platform_private(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
- /* HID Plug and Play Bus */
- DEVICE_OBJECT *bus_create_hid_device(const WCHAR *busidW, WORD vid, WORD pid,
-                                      WORD input, DWORD version, DWORD uid, const WCHAR *serialW, BOOL is_gamepad,
--                                     const platform_vtbl *vtbl, DWORD platform_data_size) DECLSPEC_HIDDEN;
-+                                     const platform_vtbl *vtbl, DWORD platform_data_size, BOOL xinput_hack) DECLSPEC_HIDDEN;
- DEVICE_OBJECT *bus_find_hid_device(const platform_vtbl *vtbl, void *platform_dev) DECLSPEC_HIDDEN;
- void bus_unlink_hid_device(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
- void bus_remove_hid_device(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
-diff --git a/dlls/winebus.sys/bus_iohid.c b/dlls/winebus.sys/bus_iohid.c
-index ee6225bf398..d17ad2fc8a9 100644
---- a/dlls/winebus.sys/bus_iohid.c
-+++ b/dlls/winebus.sys/bus_iohid.c
-@@ -353,7 +353,7 @@ static void handle_DeviceMatchingCallback(void *context, IOReturn result, void *
- 
-     device = bus_create_hid_device(busidW, vid, pid, input,
-             version, uid, str ? serial_string : NULL, is_gamepad,
--            &iohid_vtbl, sizeof(struct platform_private));
-+            &iohid_vtbl, sizeof(struct platform_private), FALSE);
-     if (!device)
-         ERR("Failed to create device\n");
-     else
-diff --git a/dlls/winebus.sys/bus_sdl.c b/dlls/winebus.sys/bus_sdl.c
-index ff8411e46c6..dbcb5bb8ed7 100644
---- a/dlls/winebus.sys/bus_sdl.c
-+++ b/dlls/winebus.sys/bus_sdl.c
-@@ -69,6 +69,7 @@ static void *sdl_handle = NULL;
- static HANDLE deviceloop_handle;
- static UINT quit_event = -1;
- 
-+#define XINPUT_HACK_ID_BIT 0x80000000
- #define MAKE_FUNCPTR(f) static typeof(f) * p##f = NULL
- MAKE_FUNCPTR(SDL_GetError);
- MAKE_FUNCPTR(SDL_Init);
-@@ -131,6 +132,8 @@ struct platform_private
- 
-     SDL_Haptic *sdl_haptic;
-     int haptic_effect_id;
-+
-+    BOOL xinput_hack;
- };
- 
- static inline struct platform_private *impl_from_DEVICE_OBJECT(DEVICE_OBJECT *device)
-@@ -546,7 +549,7 @@ static SHORT compose_dpad_value(SDL_GameController *joystick)
-     return SDL_HAT_CENTERED;
- }
- 
--static BOOL build_mapped_report_descriptor(struct platform_private *ext)
-+static BOOL build_mapped_report_descriptor(struct platform_private *ext, BOOL xinput_hack)
- {
-     BYTE *report_ptr;
-     INT descript_size;
-@@ -772,7 +775,6 @@ static BOOL set_report_from_event(SDL_Event *event)
-     device = bus_enumerate_hid_devices(&sdl_vtbl, compare_joystick_id, ULongToPtr(id));
-     if (!device)
-     {
--        ERR("Failed to find device at index %i\n",id);
-         return FALSE;
-     }
-     private = impl_from_DEVICE_OBJECT(device);
-@@ -836,7 +838,6 @@ static BOOL set_mapped_report_from_event(SDL_Event *event)
-     device = bus_enumerate_hid_devices(&sdl_vtbl, compare_joystick_id, ULongToPtr(id));
-     if (!device)
-     {
--        ERR("Failed to find device at index %i\n",id);
-         return FALSE;
-     }
-     private = impl_from_DEVICE_OBJECT(device);
-@@ -938,7 +939,7 @@ static void try_remove_device(SDL_JoystickID id)
-         pSDL_HapticClose(sdl_haptic);
- }
- 
--static void try_add_device(unsigned int index)
-+static void try_add_device(unsigned int index, BOOL xinput_hack)
- {
-     DWORD vid = 0, pid = 0, version = 0;
-     DEVICE_OBJECT *device = NULL;
-@@ -961,7 +962,16 @@ static void try_add_device(unsigned int index)
-     if (map_controllers && pSDL_IsGameController(index))
-         controller = pSDL_GameControllerOpen(index);
- 
-+    if (xinput_hack && (!map_controllers || !controller))
-+    {
-+        /* xinput hack only applies to mapped controllers */
-+        pSDL_JoystickClose(joystick);
-+        return;
-+    }
-+
-     id = pSDL_JoystickInstanceID(joystick);
-+    if(xinput_hack)
-+        id |= XINPUT_HACK_ID_BIT;
- 
-     if (pSDL_JoystickGetProductVersion != NULL) {
-         vid = pSDL_JoystickGetVendor(joystick);
-@@ -981,15 +991,15 @@ static void try_add_device(unsigned int index)
- 
-     if (controller)
-     {
--        TRACE("Found sdl game controller %i (vid %04x, pid %04x, version %u, serial %s)\n",
--              id, vid, pid, version, debugstr_w(serial));
-+        TRACE("Found sdl game controller 0x%x (vid %04x, pid %04x, version %u, serial %s, xinput_hack: %u)\n",
-+              id, vid, pid, version, debugstr_w(serial), xinput_hack);
-         is_xbox_gamepad = TRUE;
-     }
-     else
-     {
-         int button_count, axis_count;
- 
--        TRACE("Found sdl device %i (vid %04x, pid %04x, version %u, serial %s)\n",
-+        TRACE("Found sdl device 0x%x (vid %04x, pid %04x, version %u, serial %s)\n",
-               id, vid, pid, version, debugstr_w(serial));
- 
-         axis_count = pSDL_JoystickNumAxes(joystick);
-@@ -1000,7 +1010,7 @@ static void try_add_device(unsigned int index)
-         input = 0;
- 
-     device = bus_create_hid_device(sdl_busidW, vid, pid, input, version, index,
--            serial, is_xbox_gamepad, &sdl_vtbl, sizeof(struct platform_private));
-+            serial, is_xbox_gamepad, &sdl_vtbl, sizeof(struct platform_private), xinput_hack);
- 
-     if (device)
-     {
-@@ -1010,7 +1020,7 @@ static void try_add_device(unsigned int index)
-         private->sdl_controller = controller;
-         private->id = id;
-         if (controller)
--            rc = build_mapped_report_descriptor(private);
-+            rc = build_mapped_report_descriptor(private, xinput_hack);
-         else
-             rc = build_report_descriptor(private);
-         if (!rc)
-@@ -1034,13 +1044,33 @@ static void process_device_event(SDL_Event *event)
-     TRACE_(hid_report)("Received action %x\n", event->type);
- 
-     if (event->type == SDL_JOYDEVICEADDED)
--        try_add_device(((SDL_JoyDeviceEvent*)event)->which);
-+    {
-+        try_add_device(((SDL_JoyDeviceEvent*)event)->which, TRUE);
-+        try_add_device(((SDL_JoyDeviceEvent*)event)->which, FALSE);
-+    }
-     else if (event->type == SDL_JOYDEVICEREMOVED)
-+    {
-         try_remove_device(((SDL_JoyDeviceEvent*)event)->which);
-+        try_remove_device(((SDL_JoyDeviceEvent*)event)->which | XINPUT_HACK_ID_BIT);
-+    }
-     else if (event->type >= SDL_JOYAXISMOTION && event->type <= SDL_JOYBUTTONUP)
-+    {
-+        SDL_Event xinput_hack_event = *event;
-+
-         set_report_from_event(event);
-+
-+        ((SDL_JoyAxisEvent*)&xinput_hack_event)->which |= XINPUT_HACK_ID_BIT;
-+        set_report_from_event(&xinput_hack_event);
-+    }
-     else if (event->type >= SDL_CONTROLLERAXISMOTION && event->type <= SDL_CONTROLLERBUTTONUP)
-+    {
-+        SDL_Event xinput_hack_event = *event;
-+
-         set_mapped_report_from_event(event);
-+
-+        ((SDL_JoyAxisEvent*)&xinput_hack_event)->which |= XINPUT_HACK_ID_BIT;
-+        set_mapped_report_from_event(&xinput_hack_event);
-+    }
- }
- 
- static DWORD CALLBACK deviceloop_thread(void *args)
-diff --git a/dlls/winebus.sys/bus_udev.c b/dlls/winebus.sys/bus_udev.c
-index 74cf6a28a1a..3505b8bdbe1 100644
---- a/dlls/winebus.sys/bus_udev.c
-+++ b/dlls/winebus.sys/bus_udev.c
-@@ -1243,13 +1243,13 @@ static void try_add_device(struct udev_device *dev)
-     if (strcmp(subsystem, "hidraw") == 0)
-     {
-         device = bus_create_hid_device(hidraw_busidW, vid, pid, input, version, 0, serial, is_gamepad,
--                                       &hidraw_vtbl, sizeof(struct platform_private));
-+                                       &hidraw_vtbl, sizeof(struct platform_private), FALSE);
-     }
- #ifdef HAS_PROPER_INPUT_HEADER
-     else if (strcmp(subsystem, "input") == 0)
-     {
-         device = bus_create_hid_device(lnxev_busidW, vid, pid, input, version, 0, serial, is_gamepad,
--                                       &lnxev_vtbl, sizeof(struct wine_input_private));
-+                                       &lnxev_vtbl, sizeof(struct wine_input_private), FALSE);
-     }
- #endif
- 
-diff --git a/dlls/winebus.sys/main.c b/dlls/winebus.sys/main.c
-index 8d3dec4779a..55d444b5fe7 100644
---- a/dlls/winebus.sys/main.c
-+++ b/dlls/winebus.sys/main.c
-@@ -116,7 +116,7 @@ struct device_extension
- 
-     WORD vid, pid, input;
-     DWORD uid, version, index;
--    BOOL is_gamepad;
-+    BOOL is_gamepad, xinput_hack;
-     WCHAR *serial;
-     const WCHAR *busid;  /* Expected to be a static constant */
- 
-@@ -233,7 +233,7 @@ static WCHAR *get_compatible_ids(DEVICE_OBJECT *device)
- 
- DEVICE_OBJECT *bus_create_hid_device(const WCHAR *busidW, WORD vid, WORD pid,
-                                      WORD input, DWORD version, DWORD uid, const WCHAR *serialW, BOOL is_gamepad,
--                                     const platform_vtbl *vtbl, DWORD platform_data_size)
-+                                     const platform_vtbl *vtbl, DWORD platform_data_size, BOOL xinput_hack)
- {
-     static const WCHAR device_name_fmtW[] = {'\\','D','e','v','i','c','e','\\','%','s','#','%','p',0};
-     struct device_extension *ext;
-@@ -274,6 +274,7 @@ DEVICE_OBJECT *bus_create_hid_device(const WCHAR *busidW, WORD vid, WORD pid,
-     ext->version            = version;
-     ext->index              = get_device_index(vid, pid, input);
-     ext->is_gamepad         = is_gamepad;
-+    ext->xinput_hack = xinput_hack;
-     ext->serial             = strdupW(serialW);
-     ext->busid              = busidW;
-     ext->vtbl               = vtbl;
-@@ -537,7 +538,7 @@ static void mouse_device_create(void)
- {
-     static const WCHAR busidW[] = {'W','I','N','E','M','O','U','S','E',0};
- 
--    mouse_obj = bus_create_hid_device(busidW, 0, 0, -1, 0, 0, busidW, FALSE, &mouse_vtbl, 0);
-+    mouse_obj = bus_create_hid_device(busidW, 0, 0, -1, 0, 0, busidW, FALSE, &mouse_vtbl, 0, FALSE);
-     IoInvalidateDeviceRelations(bus_pdo, BusRelations);
- }
- 
-@@ -605,7 +606,7 @@ static void keyboard_device_create(void)
- {
-     static const WCHAR busidW[] = {'W','I','N','E','K','E','Y','B','O','A','R','D',0};
- 
--    keyboard_obj = bus_create_hid_device(busidW, 0, 0, -1, 0, 0, busidW, FALSE, &keyboard_vtbl, 0);
-+    keyboard_obj = bus_create_hid_device(busidW, 0, 0, -1, 0, 0, busidW, FALSE, &keyboard_vtbl, 0, FALSE);
-     IoInvalidateDeviceRelations(bus_pdo, BusRelations);
- }
- 
-@@ -719,6 +720,7 @@ static NTSTATUS WINAPI hid_internal_dispatch(DEVICE_OBJECT *device, IRP *irp)
-             attr->VendorID = ext->vid;
-             attr->ProductID = ext->pid;
-             attr->VersionNumber = ext->version;
-+            attr->Reserved[0] = ext->xinput_hack;
- 
-             irp->IoStatus.u.Status = status = STATUS_SUCCESS;
-             irp->IoStatus.Information = sizeof(*attr);
-diff --git a/dlls/xinput1_3/hid.c b/dlls/xinput1_3/hid.c
-index 803eae9d8f2..59695d1bb1d 100644
---- a/dlls/xinput1_3/hid.c
-+++ b/dlls/xinput1_3/hid.c
-@@ -228,6 +228,7 @@ void HID_find_gamepads(xinput_controller *devices)
-     last_check = idx;
- 
-     HidD_GetHidGuid(&hid_guid);
-+    hid_guid.Data4[7]++; /* HACK: look up the xinput-specific devices */
- 
-     device_info_set = SetupDiGetClassDevsW(&hid_guid, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
- 
-From 0972a0621cd1c1efdb6215182ffcbb89ed282732 Mon Sep 17 00:00:00 2001
-From: Andrew Eikum <aeikum@codeweavers.com>
-Date: Thu, 2 May 2019 08:50:13 -0500
-Subject: [PATCH] HACK: treat xinput-only controllers specially
-
----
- dlls/winebus.sys/bus_sdl.c | 77 +++++++++++++++++++++++++++++++-------
- dlls/xinput1_3/hid.c       | 14 +++++--
- 2 files changed, 73 insertions(+), 18 deletions(-)
-
-diff --git a/dlls/winebus.sys/bus_sdl.c b/dlls/winebus.sys/bus_sdl.c
-index dbcb5bb8ed7..83a92f1fb1f 100644
---- a/dlls/winebus.sys/bus_sdl.c
-+++ b/dlls/winebus.sys/bus_sdl.c
-@@ -160,6 +160,7 @@ static const BYTE REPORT_AXIS_TAIL[] = {
- #define IDX_ABS_AXIS_COUNT 23
- 
- #define CONTROLLER_NUM_BUTTONS 10
-+#define CONTROLLER_NUM_BUTTONS_XINPUT_HACK 11
- 
- static const BYTE CONTROLLER_BUTTONS[] = {
-     USAGE_PAGE(1, HID_USAGE_PAGE_BUTTON),
-@@ -174,6 +175,19 @@ static const BYTE CONTROLLER_BUTTONS[] = {
-     INPUT(1, Data|Var|Abs),
- };
- 
-+static const BYTE CONTROLLER_BUTTONS_XINPUT_HACK[] = {
-+    0x05, 0x09, /* USAGE_PAGE (Button) */
-+    0x19, 0x01, /* USAGE_MINIMUM (Button 1) */
-+    0x29, CONTROLLER_NUM_BUTTONS_XINPUT_HACK, /* USAGE_MAXIMUM (Button 11) */
-+    0x15, 0x00, /* LOGICAL_MINIMUM (0) */
-+    0x25, 0x01, /* LOGICAL_MAXIMUM (1) */
-+    0x35, 0x00, /* LOGICAL_MINIMUM (0) */
-+    0x45, 0x01, /* LOGICAL_MAXIMUM (1) */
-+    0x95, CONTROLLER_NUM_BUTTONS_XINPUT_HACK, /* REPORT_COUNT (11) */
-+    0x75, 0x01, /* REPORT_SIZE (1) */
-+    0x81, 0x02, /* INPUT (Data,Var,Abs) */
-+};
-+
- static const BYTE CONTROLLER_AXIS [] = {
-     USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
-     USAGE(1, HID_USAGE_GENERIC_Y),
-@@ -276,12 +290,24 @@ static unsigned short map_axis_to_hid(short v)
-     return ((int)v) + 32768;
- }
- 
--static short compose_trigger_value(SDL_GameController *joystick)
-+static unsigned char map_trigger_to_byte(short v)
-+{
-+    return ((int)v) * 255 / 32767;
-+}
-+
-+static short compose_trigger_value(struct platform_private *private)
- {
-+    if(private->xinput_hack)
-+    {
-+        /* The range for triggers is [0,32767], so we have to map it to a byte. */
-+        return map_trigger_to_byte(pSDL_GameControllerGetAxis(private->sdl_controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT)) << 8 |
-+                map_trigger_to_byte(pSDL_GameControllerGetAxis(private->sdl_controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT));
-+    }
-+
-     /* yes, they are combined into one value and cannot be detangled */
-     return 0x8000
--        + pSDL_GameControllerGetAxis(joystick, SDL_CONTROLLER_AXIS_TRIGGERLEFT)
--        - pSDL_GameControllerGetAxis(joystick, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
-+        + pSDL_GameControllerGetAxis(private->sdl_controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT)
-+        - pSDL_GameControllerGetAxis(private->sdl_controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
- }
- 
- static void set_axis_value(struct platform_private *ext, int index, short value)
-@@ -554,7 +580,7 @@ static BOOL build_mapped_report_descriptor(struct platform_private *ext, BOOL xi
-     BYTE *report_ptr;
-     INT descript_size;
- 
--    static const int BUTTON_BIT_COUNT = CONTROLLER_NUM_BUTTONS + CONTROLLER_NUM_HATSWITCHES * 4;
-+    int BUTTON_BIT_COUNT;
- 
-     descript_size = sizeof(REPORT_HEADER) + sizeof(REPORT_TAIL);
-     descript_size += sizeof(CONTROLLER_AXIS);
-@@ -562,13 +588,25 @@ static BOOL build_mapped_report_descriptor(struct platform_private *ext, BOOL xi
-     descript_size += sizeof(CONTROLLER_BUTTONS);
-     descript_size += sizeof(REPORT_HATSWITCH);
-     descript_size += sizeof(REPORT_PADDING);
--    if (BUTTON_BIT_COUNT % 8 != 0)
--        descript_size += sizeof(REPORT_PADDING);
-     descript_size += test_haptic(ext);
- 
-     ext->axis_start = 0;
-     ext->button_start = CONTROLLER_NUM_AXES * sizeof(WORD);
--    ext->hat_bit_offs = CONTROLLER_NUM_BUTTONS;
-+
-+    if(ext->xinput_hack)
-+    {
-+        ext->hat_bit_offs = CONTROLLER_NUM_BUTTONS_XINPUT_HACK;
-+        BUTTON_BIT_COUNT = CONTROLLER_NUM_BUTTONS_XINPUT_HACK + CONTROLLER_NUM_HATSWITCHES * 4;
-+    }
-+    else
-+    {
-+        ext->hat_bit_offs = CONTROLLER_NUM_BUTTONS;
-+        BUTTON_BIT_COUNT = CONTROLLER_NUM_BUTTONS + CONTROLLER_NUM_HATSWITCHES * 4;
-+    }
-+
-+
-+    if (BUTTON_BIT_COUNT % 8 != 0)
-+        descript_size += sizeof(REPORT_PADDING);
- 
-     ext->buffer_length = (BUTTON_BIT_COUNT + 7) / 8
-         + CONTROLLER_NUM_AXES * sizeof(WORD)
-@@ -593,8 +631,16 @@ static BOOL build_mapped_report_descriptor(struct platform_private *ext, BOOL xi
-     report_ptr += sizeof(CONTROLLER_AXIS);
-     memcpy(report_ptr, CONTROLLER_TRIGGERS, sizeof(CONTROLLER_TRIGGERS));
-     report_ptr += sizeof(CONTROLLER_TRIGGERS);
--    memcpy(report_ptr, CONTROLLER_BUTTONS, sizeof(CONTROLLER_BUTTONS));
--    report_ptr += sizeof(CONTROLLER_BUTTONS);
-+    if(ext->xinput_hack)
-+    {
-+        memcpy(report_ptr, CONTROLLER_BUTTONS_XINPUT_HACK, sizeof(CONTROLLER_BUTTONS_XINPUT_HACK));
-+        report_ptr += sizeof(CONTROLLER_BUTTONS_XINPUT_HACK);
-+    }
-+    else
-+    {
-+        memcpy(report_ptr, CONTROLLER_BUTTONS, sizeof(CONTROLLER_BUTTONS));
-+        report_ptr += sizeof(CONTROLLER_BUTTONS);
-+    }
-     report_ptr = add_hatswitch(report_ptr, 1);
-     if (BUTTON_BIT_COUNT % 8 != 0)
-         report_ptr = add_padding_block(report_ptr, 8 - (BUTTON_BIT_COUNT % 8));/* unused bits between hatswitch and following constant */
-@@ -624,7 +670,7 @@ static BOOL build_mapped_report_descriptor(struct platform_private *ext, BOOL xi
-     set_axis_value(ext, controller_axis_map[SDL_CONTROLLER_AXIS_RIGHTY],
-             map_axis_to_hid(pSDL_GameControllerGetAxis(ext->sdl_controller, SDL_CONTROLLER_AXIS_RIGHTY)));
- 
--    set_axis_value(ext, COMBINED_TRIGGER_INDEX, compose_trigger_value(ext->sdl_controller));
-+    set_axis_value(ext, COMBINED_TRIGGER_INDEX, compose_trigger_value(ext));
- 
-     set_hat_value(ext, 0, compose_dpad_value(ext->sdl_controller));
- 
-@@ -863,9 +909,11 @@ static BOOL set_mapped_report_from_event(SDL_Event *event)
-                 case SDL_CONTROLLER_BUTTON_LEFTSTICK: usage = 8; break;
-                 case SDL_CONTROLLER_BUTTON_RIGHTSTICK: usage = 9; break;
- 
--                /* native HID does not report the guide button
--                case SDL_CONTROLLER_BUTTON_GUIDE: usage = 10; break;
--                */
-+                case SDL_CONTROLLER_BUTTON_GUIDE:
-+                    /* native HID does not report the guide button */
-+                    if(private->xinput_hack)
-+                        usage = 10;
-+                    break;
- 
-                 case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-@@ -899,7 +947,7 @@ static BOOL set_mapped_report_from_event(SDL_Event *event)
-                     break;
-                 case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
-                 case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
--                    set_axis_value(private, COMBINED_TRIGGER_INDEX, compose_trigger_value(private->sdl_controller));
-+                    set_axis_value(private, COMBINED_TRIGGER_INDEX, compose_trigger_value(private));
-                     break;
-             }
-             process_hid_report(device, private->report_buffer, private->buffer_length);
-@@ -1019,6 +1067,7 @@ static void try_add_device(unsigned int index, BOOL xinput_hack)
-         private->sdl_joystick = joystick;
-         private->sdl_controller = controller;
-         private->id = id;
-+        private->xinput_hack = xinput_hack;
- 
-         /* FIXME: We should probably move this to IRP_MN_START_DEVICE. */
-          if (controller)
-diff --git a/dlls/xinput1_3/hid.c b/dlls/xinput1_3/hid.c
-index 59695d1bb1d..978399e1c52 100644
---- a/dlls/xinput1_3/hid.c
-+++ b/dlls/xinput1_3/hid.c
-@@ -109,7 +109,7 @@ static BOOL VerifyGamepad(PHIDP_PREPARSED_DATA ppd, XINPUT_CAPABILITIES *xinput_
-             button_count = max(button_count, button_caps[i].NotRange.Usage);
-     }
-     free(button_caps);
--    if (button_count < 10)
-+    if (button_count < 11)
-         WARN("Too few buttons, continuing anyway\n");
-     xinput_caps->Gamepad.wButtons = 0xffff;
- 
-@@ -340,7 +340,7 @@ void HID_update_state(xinput_controller *device, XINPUT_STATE *state)
-     CHAR *report = private->reports[(private->current_report)%2];
-     CHAR *target_report = private->reports[(private->current_report+1)%2];
- 
--    USAGE buttons[10];
-+    USAGE buttons[11];
-     ULONG button_length, hat_value;
-     LONG value;
- 
-@@ -382,6 +382,7 @@ void HID_update_state(xinput_controller *device, XINPUT_STATE *state)
-                 case 8: device->state.Gamepad.wButtons |= XINPUT_GAMEPAD_START; break;
-                 case 9: device->state.Gamepad.wButtons |= XINPUT_GAMEPAD_LEFT_THUMB; break;
-                 case 10: device->state.Gamepad.wButtons |= XINPUT_GAMEPAD_RIGHT_THUMB; break;
-+                case 11: device->state.Gamepad.wButtons |= XINPUT_GAMEPAD_GUIDE; break;
-             }
-         }
- 
-@@ -440,8 +441,13 @@ void HID_update_state(xinput_controller *device, XINPUT_STATE *state)
-         status = HidP_GetScaledUsageValue(HidP_Input, HID_USAGE_PAGE_GENERIC, 0, HID_USAGE_GENERIC_Z, &value, private->ppd, report_buf[0], report_len);
-         if (status != HIDP_STATUS_SUCCESS) WARN("HidP_GetScaledUsageValue HID_USAGE_PAGE_GENERIC / HID_USAGE_GENERIC_Z returned %#x\n", status);
-         else {
--            device->state.Gamepad.bLeftTrigger = scale_byte(value, &private->triggers);
--            device->state.Gamepad.bRightTrigger = scale_byte(value, &private->triggers);
-+            /* Wine-specific hack: Windows HID mangles trigger values irretrievably, so
-+             * we instead encode them in a different format in winebus. We use that
-+             * format here. We should be using WineBus to talk directly to the
-+             * controller's USB device so they can be correctly mangled in HID. */
-+            HidP_GetScaledUsageValue(HidP_Input, HID_USAGE_PAGE_GENERIC, 0, HID_USAGE_GENERIC_Z, &value, private->ppd, report_buf[0], report_len);
-+            device->state.Gamepad.bLeftTrigger = (value >> 8) & 0xFF;//scale_byte(value, &private->ltrigger);
-+            device->state.Gamepad.bRightTrigger = value & 0xFF;//scale_byte(value, &private->rtrigger);
-         }
-     }
- 
 From c5d52c73b754568df148013907f26e5da3525166 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Tue, 6 Aug 2019 13:27:25 -0500
@@ -7763,10 +7276,10 @@ index 887e2e801ba..bfef1fcb6cf 100644
 +    return strcasestr(blacklist, needle) != NULL;
 +}
 +
- static void try_add_device(unsigned int index, BOOL xinput_hack)
+ static void try_add_device(unsigned int index)
  {
      DWORD vid = 0, pid = 0, version = 0;
-@@ -1026,6 +1055,12 @@ static void try_add_device(unsigned int index, BOOL xinput_hack)
+@@ -1026,6 +1055,12 @@ static void try_add_device(unsigned int index)
          return;
      }
  
@@ -8271,16 +7784,16 @@ index d9a64374019..4677e1b47ff 100644
 +    if (vtbl == &hidraw_vtbl)
      {
          device = bus_create_hid_device(hidraw_busidW, vid, pid, input, version, 0, serial, is_gamepad,
--                                       &hidraw_vtbl, sizeof(struct platform_private), FALSE);
-+                                       vtbl, sizeof(struct platform_private), FALSE);
+-                                       &hidraw_vtbl, sizeof(struct platform_private));
++                                       vtbl, sizeof(struct platform_private));
      }
  #ifdef HAS_PROPER_INPUT_HEADER
 -    else if (strcmp(subsystem, "input") == 0)
 +    else if (vtbl == &lnxev_vtbl)
      {
          device = bus_create_hid_device(lnxev_busidW, vid, pid, input, version, 0, serial, is_gamepad,
--                                       &lnxev_vtbl, sizeof(struct wine_input_private), FALSE);
-+                                       vtbl, sizeof(struct wine_input_private), FALSE);
+-                                       &lnxev_vtbl, sizeof(struct wine_input_private));
++                                       vtbl, sizeof(struct wine_input_private));
      }
  #endif
  
@@ -9547,24 +9060,22 @@ index 8a4e66bec55..23501931e69 100644
      if (event->type == SDL_JOYDEVICEADDED)
      {
          try_add_device(((SDL_JoyDeviceEvent*)event)->which, TRUE);
-@@ -1178,6 +1184,8 @@ static void process_device_event(SDL_Event *event)
-     {
-         SDL_Event xinput_hack_event = *event;
- 
+@@ -1097,9 +1097,15 @@ static void process_device_event(SDL_Event *event)
+     else if (event->type == SDL_JOYDEVICEREMOVED)
+         try_remove_device(((SDL_JoyDeviceEvent*)event)->which);
+     else if (event->type >= SDL_JOYAXISMOTION && event->type <= SDL_JOYBUTTONUP)
++    {
 +        if (overlay_enabled) return;
-+
          set_report_from_event(event);
- 
-         ((SDL_JoyAxisEvent*)&xinput_hack_event)->which |= XINPUT_HACK_ID_BIT;
-@@ -1187,6 +1195,8 @@ static void process_device_event(SDL_Event *event)
-     {
-         SDL_Event xinput_hack_event = *event;
- 
++    }
+     else if (event->type >= SDL_CONTROLLERAXISMOTION && event->type <= SDL_CONTROLLERBUTTONUP)
++    {
 +        if (overlay_enabled) return;
-+
          set_mapped_report_from_event(event);
- 
-         ((SDL_JoyAxisEvent*)&xinput_hack_event)->which |= XINPUT_HACK_ID_BIT;
++    }
+ }
+
+ static DWORD CALLBACK deviceloop_thread(void *args)
 @@ -1303,6 +1313,7 @@ void sdl_driver_unload( void )
      WaitForSingleObject(deviceloop_handle, INFINITE);
      CloseHandle(deviceloop_handle);
@@ -9653,23 +9164,23 @@ index 23501931e69..5ff6d1d74fd 100644
 --- a/dlls/winebus.sys/bus_sdl.c
 +++ b/dlls/winebus.sys/bus_sdl.c
 @@ -1184,7 +1184,7 @@ static void process_device_event(SDL_Event *event)
+         try_remove_device(((SDL_JoyDeviceEvent*)event)->which);
+     else if (event->type >= SDL_JOYAXISMOTION && event->type <= SDL_JOYBUTTONUP)
      {
-         SDL_Event xinput_hack_event = *event;
- 
 -        if (overlay_enabled) return;
 +        if (overlay_enabled && event->type != SDL_JOYBUTTONUP) return;
- 
          set_report_from_event(event);
- 
+     }
+     else if (event->type >= SDL_CONTROLLERAXISMOTION && event->type <= SDL_CONTROLLERBUTTONUP)
 @@ -1195,7 +1195,7 @@ static void process_device_event(SDL_Event *event)
+     }
+     else if (event->type >= SDL_CONTROLLERAXISMOTION && event->type <= SDL_CONTROLLERBUTTONUP)
      {
-         SDL_Event xinput_hack_event = *event;
- 
 -        if (overlay_enabled) return;
 +        if (overlay_enabled && event->type != SDL_CONTROLLERBUTTONUP) return;
- 
          set_mapped_report_from_event(event);
- 
+     }
+ }
 From ba27a7a35e31e297671e9dcc932ec2edff504646 Mon Sep 17 00:00:00 2001
 From: Ivo Ivanov <logos128@gmail.com>
 Date: Fri, 4 Jun 2021 23:30:24 +0300
