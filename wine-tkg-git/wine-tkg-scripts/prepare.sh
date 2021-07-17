@@ -441,15 +441,15 @@ _prepare() {
 	# Community patches
 	if [ -n "$_community_patches" ]; then
 	  if [ ! -d "$_where/../../community-patches" ] && [ ! -d "$_where/../community-patches" ]; then
-	    ( cd "$_where/../.."
+	    { cd "$_where/../.."
 	      git clone https://github.com/Frogging-Family/community-patches.git
 	      _community_patches_repo_path="$_where/../../community-patches/wine-tkg-git"
-	    ) || (
+	    } || {
 	      msg2 "Cloning the community-patches repo inside the wine-tkg-git dir due to permission limitations in the current path.."
 	      cd "$_where/.."
 	      git clone https://github.com/Frogging-Family/community-patches.git
 	      _community_patches_repo_path="$_where/../community-patches/wine-tkg-git"
-	    )
+	    }
 	    cd "${srcdir}"/"${_winesrcdir}"
 	  elif [ -d "$_where/../../community-patches" ]; then
 	    _community_patches_repo_path="$_where/../../community-patches/wine-tkg-git"
