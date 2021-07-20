@@ -4481,6 +4481,63 @@ index 55e48f928e9..e159c87159c 100644
  
  static inline uint64_t convert_timestamp(VkTimeDomainEXT host_domain, VkTimeDomainEXT target_domain, uint64_t value)
 
+From 349c6ade233c235b5bfe913550362b9f88769fa1 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 14 Jul 2021 20:39:47 +0300
+Subject: [PATCH] ntdll: Add stub implementation for
+ NtSetInformationProcess(ProcessInstrumentationCallback).
+
+CW-Bug-Id: 19085
+---
+ dlls/ntdll/unix/process.c | 16 ++++++++++++++++
+ include/winternl.h        |  7 +++++++
+ 2 files changed, 23 insertions(+)
+
+diff --git a/dlls/ntdll/unix/process.c b/dlls/ntdll/unix/process.c
+index a803ed07fbe..d00306e05c4 100644
+--- a/dlls/ntdll/unix/process.c
++++ b/dlls/ntdll/unix/process.c
+@@ -1701,6 +1701,22 @@ NTSTATUS WINAPI NtSetInformationProcess( HANDLE handle, PROCESSINFOCLASS class,
+         break;
+     }
+
++    case ProcessInstrumentationCallback:
++    {
++        PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION *instr = info;
++
++        FIXME("ProcessInstrumentationCallback version %#x, reserved %#x, callback %p, size %u stub.\n",
++                instr->version, instr->reserved, instr->callback, size);
++
++        if (size != sizeof(*instr))
++        {
++            WARN("Incorrect size %u.\n", size);
++            return STATUS_INVALID_PARAMETER;
++        }
++        ret = STATUS_SUCCESS;
++        break;
++    }
++
+     default:
+         FIXME( "(%p,0x%08x,%p,0x%08x) stub\n", handle, class, info, size );
+         ret = STATUS_NOT_IMPLEMENTED;
+diff --git a/include/winternl.h b/include/winternl.h
+index 66fa17fd0e8..e8d49de5772 100644
+--- a/include/winternl.h
++++ b/include/winternl.h
+@@ -1124,6 +1124,13 @@ typedef struct _FILE_IO_COMPLETION_NOTIFICATION_INFORMATION {
+ #define FILE_SKIP_SET_EVENT_ON_HANDLE        0x2
+ #define FILE_SKIP_SET_USER_EVENT_ON_FAST_IO  0x4
+
++typedef struct _PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION
++{
++    ULONG version;
++    ULONG reserved;
++    PVOID callback;
++} PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION, *PPROCESS_INSTRUMENTATION_CALLBACK_INFORMATION;
++
+ typedef enum _FSINFOCLASS {
+     FileFsVolumeInformation = 1,
+     FileFsLabelInformation,
 From cbb4df46b9fdb46ee0f0d1724ac1379ba17d0575 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Wed, 14 Jul 2021 20:45:38 +0300
@@ -4512,6 +4569,64 @@ index 80eb16198b4..517b137e8ba 100644
      case FilePipeInformation:
          if (len >= sizeof(FILE_PIPE_INFORMATION))
          {
+From 5b249bc8d34e61cac5775d16fd7e8fff48396c94 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 14 Jul 2021 20:26:30 +0300
+Subject: [PATCH] ntdll: Implementat
+ NtQuerySystemInformation(SystemKernelDebuggerInformationEx).
+
+CW-Bug-Id: 19085
+---
+ dlls/ntdll/unix/system.c | 18 ++++++++++++++++++
+ include/winternl.h       |  7 +++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+index 7aa4a64fbef..ea2a1898ce4 100644
+--- a/dlls/ntdll/unix/system.c
++++ b/dlls/ntdll/unix/system.c
+@@ -2807,6 +2807,24 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
+         break;
+     }
+
++    case SystemKernelDebuggerInformationEx:
++    {
++        SYSTEM_KERNEL_DEBUGGER_INFORMATION_EX skdi;
++
++        skdi.DebuggerAllowed = FALSE;
++        skdi.DebuggerEnabled = FALSE;
++        skdi.DebuggerPresent = FALSE;
++
++        len = sizeof(skdi);
++        if (size >= len)
++        {
++            if (!info) ret = STATUS_ACCESS_VIOLATION;
++            else memcpy( info, &skdi, len);
++        }
++        else ret = STATUS_INFO_LENGTH_MISMATCH;
++        break;
++    }
++
+     case SystemRegistryQuotaInformation:  /* 37 */
+     {
+         /* Something to do with the size of the registry             *
+diff --git a/include/winternl.h b/include/winternl.h
+index e8d49de5772..52692732229 100644
+--- a/include/winternl.h
++++ b/include/winternl.h
+@@ -1978,6 +1979,12 @@ typedef struct _SYSTEM_KERNEL_DEBUGGER_INFORMATION {
+ 	BOOLEAN  DebuggerNotPresent;
+ } SYSTEM_KERNEL_DEBUGGER_INFORMATION, *PSYSTEM_KERNEL_DEBUGGER_INFORMATION;
+
++typedef struct _SYSTEM_KERNEL_DEBUGGER_INFORMATION_EX {
++	BOOLEAN  DebuggerAllowed;
++	BOOLEAN  DebuggerEnabled;
++    BOOLEAN  DebuggerPresent;
++} SYSTEM_KERNEL_DEBUGGER_INFORMATION_EX, *PSYSTEM_KERNEL_DEBUGGER_INFORMATION_EX;
++
+ typedef struct _VM_COUNTERS
+ {
+     SIZE_T PeakVirtualSize;
 From 2c609dcfd614b111f28e820823c4d77bdf59f1ff Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Thu, 15 Jul 2021 00:40:57 +0300
