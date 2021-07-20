@@ -2347,7 +2347,7 @@ EOM
 	    fi
 	  fi
 	  if [ "$_EXTERNAL_INSTALL" = "proton" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 9ca95e32651d6a50dc787af4dc53fb907f1c4e2b HEAD ); then
-	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor e36e384cb4d96fd47763332f93c2b213f6556287 HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e36e384cb4d96fd47763332f93c2b213f6556287 HEAD ); then
 	      if [ "$_use_staging" = "true" ]; then
 	        _patchname='proton-gstreamer-staging.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
 	      else
