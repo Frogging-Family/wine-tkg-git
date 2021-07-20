@@ -2347,10 +2347,18 @@ EOM
 	    fi
 	  fi
 	  if [ "$_EXTERNAL_INSTALL" = "proton" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 9ca95e32651d6a50dc787af4dc53fb907f1c4e2b HEAD ); then
-	    if [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 9bf50b7e1f73b3b853eef71e9e2ff1739d21cbf4 HEAD ); then
-	      _patchname='proton-gstreamer-staging.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
-	    else
-	      _patchname='proton-gstreamer.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor e36e384cb4d96fd47763332f93c2b213f6556287 HEAD ); then
+	      if [ "$_use_staging" = "true" ]; then
+	        _patchname='proton-gstreamer-staging.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
+	      else
+	        _patchname='proton-gstreamer.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
+	      fi
+	    elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 9bf50b7e1f73b3b853eef71e9e2ff1739d21cbf4 HEAD ); then
+	      if [ "$_use_staging" = "true" ]; then
+	        _patchname='proton-gstreamer-staging-e36e384.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
+	      else
+	        _patchname='proton-gstreamer-e36e384.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
+	      fi
 	    fi
 	  fi
 	  # Legacy wine.gaming.input patchset (Death Stranding)
