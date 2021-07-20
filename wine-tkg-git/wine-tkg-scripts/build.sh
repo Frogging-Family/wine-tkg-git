@@ -25,7 +25,12 @@ _prebuild_common() {
 	  export CFLAGS="${_GCC_FLAGS}"
 	  export CXXFLAGS="${_GCC_FLAGS}"
 	  export LDFLAGS="${_LD_FLAGS}"
-	  export CROSSCFLAGS="${_CROSS_FLAGS}"
+	  # Workaround for building legacy trees with mingw GCC11
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 9008cd2f2437650ad41ce8a8924ed1828ca21889 HEAD ); then
+	    export CROSSCFLAGS="${_CROSS_FLAGS} -fno-builtin-{sin,cos}{,f}"
+	  else
+	    export CROSSCFLAGS="${_CROSS_FLAGS}"
+	  fi
 	  export CROSSLDFLAGS="${_CROSS_LD_FLAGS}"
 	  echo "With predefined optimizations:" >> "$_where"/last_build_config.log
 	else
