@@ -25,6 +25,7 @@ from ctypes import c_char_p
 from ctypes import c_void_p
 
 from filelock import FileLock
+from random import randrange
 
 #To enable debug logging, copy "user_settings.sample.py" to "user_settings.py"
 #and edit it if needed.
@@ -250,6 +251,7 @@ class Proton:
         self.lib_dir = self.path("files/lib/")
         self.lib64_dir = self.path("files/lib64/")
         self.fonts_dir = self.path("files/share/fonts/")
+        self.wine_fonts_dir = self.path("files/share/wine/fonts/")
         self.version_file = self.path("version")
         self.default_pfx_dir = self.path("files/share/default_pfx/")
         self.user_settings_file = self.path("user_settings.py")
@@ -412,6 +414,59 @@ class CompatData:
                     log("Unable to write new registry file to " + self.prefix_dir + "system.reg")
                     pass
 
+            # Prior to prefix version 6.3-3, ShellExecute* APIs used DDE.
+            # Wipe out old registry entries.
+            if int(old_proton_maj) < 6 or (int(old_proton_maj) == 6 and int(old_proton_min) < 3) or \
+                    (int(old_proton_maj) == 6 and int(old_proton_min) == 3 and int(old_prefix_ver) < 3):
+                delete_keys = {
+                    "[Software\\\\Classes\\\\htmlfile\\\\shell\\\\open\\\\ddeexec",
+                    "[Software\\\\Classes\\\\pdffile\\\\shell\\\\open\\\\ddeexec",
+                    "[Software\\\\Classes\\\\xmlfile\\\\shell\\\\open\\\\ddeexec",
+                    "[Software\\\\Classes\\\\ftp\\\\shell\\\\open\\\\ddeexec",
+                    "[Software\\\\Classes\\\\http\\\\shell\\\\open\\\\ddeexec",
+                    "[Software\\\\Classes\\\\https\\\\shell\\\\open\\\\ddeexec",
+                }
+                dde_wb = '@="\\"C:\\\\windows\\\\system32\\\\winebrowser.exe\\" -nohome"'
+
+                sysreg_fp = self.prefix_dir + "system.reg"
+                new_sysreg_fp = self.prefix_dir + "system.reg.new"
+
+                log("Removing ShellExecute DDE registry entries.")
+
+                with open(sysreg_fp, "r") as reg_in:
+                    with open(new_sysreg_fp, "w") as reg_out:
+                        for line in reg_in:
+                            if line[:line.find("ddeexec")+len("ddeexec")] in delete_keys:
+                                reg_out.write(line.replace("ddeexec", "ddeexec_old", 1))
+                            elif line.rstrip() == dde_wb:
+                                reg_out.write(line.replace("-nohome", "%1"))
+                            else:
+                                reg_out.write(line)
+
+                # Slightly randomize backup file name to avoid colliding with
+                # other backups.
+                backup_sysreg_fp = "{}system.reg.{:x}.old".format(self.prefix_dir, randrange(16 ** 8))
+
+                try:
+                    os.rename(sysreg_fp, backup_sysreg_fp)
+                except OSError:
+                    log("Failed to back up old system.reg. Simply deleting it.")
+                    os.remove(sysreg_fp)
+                    pass
+
+                try:
+                    os.rename(new_sysreg_fp, sysreg_fp)
+                except OSError:
+                    log("Unable to write new registry file to " + sysreg_fp)
+                    pass
+
+            stale_builtins = [self.prefix_dir + "/drive_c/windows/system32/amd_ags_x64.dll",
+                              self.prefix_dir + "/drive_c/windows/syswow64/amd_ags_x64.dll" ]
+            for builtin in stale_builtins:
+                if os.path.lexists(builtin) and file_is_wine_builtin_dll(builtin):
+                    log("Removing stale builtin " + builtin)
+                    os.remove(builtin)
+
         except ValueError:
             log("Prefix has an invalid version?! You may want to back up user files and delete this prefix.")
             #Just let the Wine upgrade happen and hope it works...
@@ -489,17 +544,17 @@ class CompatData:
 
     def create_fonts_symlinks(self):
         fontsmap = [
-            ( "LiberationSans-Regular.ttf", "arial.ttf" ),
-            ( "LiberationSans-Bold.ttf", "arialbd.ttf" ),
-            ( "LiberationSerif-Regular.ttf", "times.ttf" ),
-            ( "LiberationMono-Regular.ttf", "cour.ttf" ),
+            ( g_proton.fonts_dir, "LiberationSans-Regular.ttf", "arial.ttf" ),
+            ( g_proton.fonts_dir, "LiberationSans-Bold.ttf", "arialbd.ttf" ),
+            ( g_proton.fonts_dir, "LiberationSerif-Regular.ttf", "times.ttf" ),
+            ( g_proton.fonts_dir, "LiberationMono-Regular.ttf", "cour.ttf" ),
         ]
 
         windowsfonts = self.prefix_dir + "/drive_c/windows/Fonts"
         makedirs(windowsfonts)
         for p in fontsmap:
-            lname = os.path.join(windowsfonts, p[1])
-            fname = os.path.join(g_proton.fonts_dir, p[0])
+            lname = os.path.join(windowsfonts, p[2])
+            fname = os.path.join(p[0], p[1])
             if os.path.lexists(lname):
                 if os.path.islink(lname):
                     os.remove(lname)
@@ -747,7 +802,7 @@ class CompatData:
             except IOError:
                 old_prefix_info = ""
 
-            if old_prefix_info != prefix_info:
+            if old_ver != CURRENT_PREFIX_VERSION or old_prefix_info != prefix_info:
                 # update builtin dll symlinks or copies
                 self.update_builtin_libs(builtin_dll_copy)
 
@@ -981,7 +1036,7 @@ class Session:
         except (OSError, IOError, TypeError, KeyError):
             pass
 
-    def init_session(self):
+    def init_session(self, update_prefix_files):
         if os.path.exists(g_compatdata.prefix_dir + "drive_c/users/steamuser"):
             # Make sure the "My Documents" dir exists - In case we have to restore steam cloud saves in there on a Wine build that's using "Documents" instead
             if not os.path.exists(g_compatdata.prefix_dir + "drive_c/users/steamuser/My Documents"):
@@ -998,11 +1053,14 @@ class Session:
         self.env["WINEPREFIX"] = g_compatdata.prefix_dir
 
         #load environment overrides
+        used_user_settings = {}
         if os.path.exists(g_proton.user_settings_file):
             try:
                 import user_settings
                 for key, value in user_settings.user_settings.items():
-                    self.env.setdefault(key, value)
+                    if not key in self.env:
+                        self.env[key] = value
+                        used_user_settings[key] = value
             except:
                 log("************************************************")
                 log("THERE IS AN ERROR IN YOUR user_settings.py FILE:")
@@ -1116,7 +1174,7 @@ class Session:
                 lfile_path = basedir + "/steam-" + os.environ["SteamGameId"] + ".log"
                 if os.path.exists(lfile_path):
                     os.remove(lfile_path)
-                self.log_file = open(lfile_path, "w+")
+                self.log_file = open(lfile_path, "a")
                 self.log_file.write("======================\n")
                 with open(g_proton.version_file, "r") as f:
                     self.log_file.write("Proton: " + f.readline().strip() + "\n")
@@ -1124,12 +1182,21 @@ class Session:
                 self.log_file.write("Command: " + str(sys.argv[2:] + self.cmdlineappend) + "\n")
                 self.log_file.write("Options: " + str(self.compat_config) + "\n")
                 self.try_log_slr_versions()
+
+                #dump some important variables into the log header
+                for var in ["WINEDLLOVERRIDES", "WINEDEBUG"]:
+                    if var in os.environ:
+                        self.log_file.write("System " + var + ": " + os.environ[var] + "\n")
+                    if var in used_user_settings:
+                        self.log_file.write("User settings " + var + ": " + used_user_settings[var] + "\n")
+
                 self.log_file.write("======================\n")
                 self.log_file.flush()
         else:
             self.env["WINEDEBUG"] = "-all"
 
-        g_compatdata.setup_prefix()
+        if update_prefix_files:
+            g_compatdata.setup_prefix()
 
         if "winedxgi" in self.compat_config:
             if "dxgi" in self.dlloverrides:
@@ -1371,7 +1438,7 @@ if __name__ == "__main__":
     if g_proton.missing_default_prefix():
         g_proton.make_default_prefix()
 
-    g_session.init_session()
+    g_session.init_session(sys.argv[1] != "runinprefix")
 
     #determine mode
     if sys.argv[1] == "run":
@@ -1387,6 +1454,8 @@ if __name__ == "__main__":
         tricksfile_path = os.environ["STEAM_COMPAT_DATA_PATH"] + "/tricks"
         if os.path.exists(tricksfile_path):
             os.remove(tricksfile_path)
+    elif sys.argv[1] == "runinprefix":
+        g_session.run_proc([g_proton.wine_bin] + sys.argv[2:])
     elif sys.argv[1] == "getcompatpath":
         #linux -> windows path
         path = subprocess.check_output([g_proton.wine_bin, "winepath", "-w", sys.argv[2]], env=g_session.env, stderr=g_session.log_file)
