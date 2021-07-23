@@ -1,3 +1,26 @@
+From 1b6dbd0611bca61c388172861403adf13ac02e1d Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Thu, 18 Mar 2021 16:54:44 -0400
+Subject: [PATCH] mfplat: Stub out MFCreateDXGIDeviceManager, to avoid the d3d
+ path.
+
+---
+ dlls/mfplat/main.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/dlls/mfplat/main.c b/dlls/mfplat/main.c
+index f032c610cc4..e5ac9d943b3 100644
+--- a/dlls/mfplat/main.c
++++ b/dlls/mfplat/main.c
+@@ -8917,6 +8917,8 @@ HRESULT WINAPI MFCreateDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **man
+
+     TRACE("%p, %p.\n", token, manager);
+
++    return E_NOTIMPL;
++
+     if (sgi && (!strcmp(sgi,"1113560")))
+     {
+         if (!token || !manager)
 From 1f8ef236261a1ece93d62b2d2dc36afb340ff37f Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Fri, 18 Dec 2020 14:08:04 -0600
@@ -210,8 +233,8 @@ index a625f000254..be27b00cfd0 100644
  
      if (!strcmp(name, "video/x-raw"))
      {
--        GstElement *deinterlace, *vconv, *flip, *vconv2;
-+        GstElement *capssetter, *deinterlace, *vconv, *flip, *vconv2;
+-        GstElement *deinterlace, *vconv, *flip, *videobox, *vconv2;
++        GstElement *capssetter, *deinterlace, *vconv, *flip, *videobox, *vconv2;
 +
 +        /* Hack?: Flatten down the colorimetry to default values, without
 +         * actually modifying the video at all.
@@ -270,18 +293,26 @@ index a625f000254..be27b00cfd0 100644
          gst_bin_add(GST_BIN(parser->container), deinterlace);
          gst_element_sync_state_with_parent(deinterlace);
          gst_bin_add(GST_BIN(parser->container), vconv);
-@@ -1059,11 +1107,12 @@ static void pad_added_cb(GstElement *element, GstPad *pad, gpointer user)
+@@ -1059,19 +1107,20 @@ static void pad_added_cb(GstElement *element, GstPad *pad, gpointer user)
          gst_bin_add(GST_BIN(parser->container), vconv2);
          gst_element_sync_state_with_parent(vconv2);
  
 +        gst_element_link(capssetter, deinterlace);
          gst_element_link(deinterlace, vconv);
          gst_element_link(vconv, flip);
-         gst_element_link(flip, vconv2);
+         if (videobox)
+         {
+             gst_element_link(flip, videobox);
+             gst_element_link(videobox, vconv2);
+         }
+         else
+         {
+             gst_element_link(flip, vconv2);
+         }
  
 -        stream->post_sink = gst_element_get_static_pad(deinterlace, "sink");
 +        stream->post_sink = gst_element_get_static_pad(capssetter, "sink");
          stream->post_src = gst_element_get_static_pad(vconv2, "src");
          stream->flip = flip;
-     }
+         stream->box = videobox;
  
