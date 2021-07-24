@@ -843,11 +843,13 @@ else
       fi
     fi
 
-    build_dxvk_nvapi
-    mkdir -p "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
-    mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
-    cp -v "$_nowhere"/Proton/build/lib64-dxvk-nvapi/bin/* "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
-    cp -v "$_nowhere"/Proton/build/lib32-dxvk-nvapi/bin/* "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
+    if [ "$_use_dxvk" = "git" ]; then
+      build_dxvk_nvapi
+      mkdir -p "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
+      mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
+      cp -v "$_nowhere"/Proton/build/lib64-dxvk-nvapi/bin/* "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
+      cp -v "$_nowhere"/Proton/build/lib32-dxvk-nvapi/bin/* "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
+    fi
 
     echo ''
     echo "Injecting wine-mono & wine-gecko..."
