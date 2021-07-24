@@ -851,7 +851,7 @@ _prepare() {
 	fi
 
 	# Disable some staging patchsets to prevent bad interactions with proton gamepad additions
-	if ( ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_gamepad_additions" = "true" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] ) || ( git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_sdl_joy_support" = "true" ] && ( git merge-base --is-ancestor a17367291104e46c573b7213ee94a0f537563ace HEAD || [ "$_EXTERNAL_INSTALL" = "proton" ] ) ) && [ "$_use_staging" = "true" ]; then
+	if ( ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_gamepad_additions" = "true" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] ) || ( git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_sdl_joy_support" = "true" ] && ( git merge-base --is-ancestor a17367291104e46c573b7213ee94a0f537563ace HEAD || [ "$_EXTERNAL_INSTALL" = "proton" ] ) ) && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 2bd3c9703d3385820c1829a78ef71e7701d3a77a HEAD ); then
 	  _staging_args+=(-W dinput-SetActionMap-genre -W dinput-axis-recalc -W dinput-joy-mappings -W dinput-reconnect-joystick -W dinput-remap-joystick)
 	fi
 
