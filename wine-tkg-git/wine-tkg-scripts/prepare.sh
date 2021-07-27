@@ -1574,8 +1574,10 @@ EOM
 	  fi
 
 	  # futex2
-	  if [ "$_fsync_futex2" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
-	    _patchname='fsync_futex2.patch' && _patchmsg="Add futex2 support to fsync" && nonuser_patcher
+	  if [ "$_staging_esync" = "true" ] || [ "$_use_esync" = "true" ]; then
+	    if [ "$_fsync_futex2" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	      _patchname='fsync_futex2.patch' && _patchmsg="Add futex2 support to fsync" && nonuser_patcher
+	    fi
 	  fi
 	fi
 
@@ -2397,7 +2399,7 @@ EOM
 	fi
 
 	# SDL Joystick support - from Proton
-	if [ "$_sdl_joy_support" = "true" ]; then
+	if [ "$_sdl_joy_support" = "true" ] && [ "$_use_staging" = "true" ]; then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2bd3c9703d3385820c1829a78ef71e7701d3a77a HEAD ); then
 	    _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a17367291104e46c573b7213ee94a0f537563ace HEAD ); then
