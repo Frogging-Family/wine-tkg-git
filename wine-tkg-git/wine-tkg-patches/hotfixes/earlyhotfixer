@@ -1,8 +1,26 @@
 #!/bin/bash
 
 if [ -d "${srcdir}"/"${_stgsrcdir}" ]; then
-    # community patches
-
+    # Community Patches
+    
+    # Disable the star-citizen-StorageDeviceSeekPenaltyProperty patch if the Wine version already contains the patch.
+    if [[ ${_community_patches[*]} =~ "star-citizen-StorageDeviceSeekPenaltyProperty.mypatch" ]] && ( git merge-base --is-ancestor 7d7b8e2a88c58e05fb80d3600a52c473ddee4c5d $(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit) > /dev/null ); then
+      if [ "$_use_staging" = "true" ] && [ git branch -r --contains 7d7b8e2a88c58e05fb80d3600a52c473ddee4c5d ]; then
+        warning "Disabling staging patchsets breaking Star Citizen: ntdll-ForceBottomUpAlloc, ntdll-WRITECOPY and ntdll-Builtin_Prot"
+        _staging_args+=(-W ntdll-ForceBottomUpAlloc -W ntdll-WRITECOPY -W ntdll-Builtin_Prot)        
+      elif [ git branch -r --contains 7d7b8e2a88c58e05fb80d3600a52c473ddee4c5d ]; then
+        warning "Disabling the star-citizen-StorageDeviceSeekPenaltyProperty community patch because the patch is already in the Wine version selected."
+        _community_patches=$(echo $_community_patches | sed "s/star-citizen-StorageDeviceSeekPenaltyProperty.mypatch//g" | tr -s " ")
+      fi
+    fi
+    
+    # Disable the roblox_fix patch if the Wine version already contains the patch.
+    if [[ ${_community_patches[*]} =~ "roblox_fix.mypatch" ]] && ( git merge-base --is-ancestor 29e1494c72041f3d2ee89e89eff17877df7cabd2 $(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit) > /dev/null ); then
+      warning "Disabling the roblox_fix community patch because the patch is already in the Wine version selected."
+      _community_patches=$(echo $_community_patches | sed "s/roblox_fix.mypatch//g" | tr -s " ")
+    fi
+    
+    # Prompt user to disable fshack if the wine_wayland_driver patch is enabled.
     if [[ ${_community_patches[*]} =~ "wine_wayland_driver.mypatch" ]]; then
       if [ "$_proton_fs_hack" = "true" ] && [ "$_hotfixes_no_confirm" != "true" ]; then
         warning "HALP! You have enabled wine_wayland_driver community patch, but _proton_fs_hack is enabled, which will break it."
@@ -13,7 +31,8 @@ if [ -d "${srcdir}"/"${_stgsrcdir}" ]; then
         _wayland_driver="true"
       fi
     fi
-
+    
+    # Prompt user to enable fshack if the winex11-fs-no_above_state patch is enabled.
     if [[ ${_community_patches[*]} =~ "winex11-fs-no_above_state.mypatch" ]]; then
       if [ "$_proton_fs_hack" != "true" ] && [ "$_hotfixes_no_confirm" != "true" ]; then
         warning "HALP! You have enabled winex11-fs-no_above_state community patch, but its _proton_fs_hack dependency is disabled."
@@ -23,7 +42,8 @@ if [ -d "${srcdir}"/"${_stgsrcdir}" ]; then
         _proton_fs_hack="true"
       fi
     fi
-
+    
+    # Prompt user to disable mfhacks if the guy1524_mfplat_WIP patch is enabled
     if [[ ${_community_patches[*]} =~ "guy1524_mfplat_WIP.mypatch" ]] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor af56d3821a32c84305fcc55b03b7ece4e1f7b3d9 HEAD && ! git merge-base --is-ancestor 480bf20becda07ac96b1de48ef59b07bc16fca56 HEAD ); then
       if [ "$_proton_mf_hacks" = "true" ] && [ "$_hotfixes_no_confirm" != "true" ]; then
         warning "HALP! You have enabled guy1524_mfplat_WIP community patch, but the potentially conflicting _proton_mf_hacks option is also enabled."
@@ -34,38 +54,32 @@ if [ -d "${srcdir}"/"${_stgsrcdir}" ]; then
       fi
       _staging_args+=(-W mfplat-streaming-support)
     fi
-
-    if [[ ${_community_patches[*]} =~ "star-citizen-StorageDeviceSeekPenaltyProperty.mypatch" ]] && [ "$_use_staging" = "true" ]; then
-      warning "Disabling staging patchsets breaking Star Citizen: ntdll-ForceBottomUpAlloc, ntdll-WRITECOPY and ntdll-Builtin_Prot"
-      _staging_args+=(-W ntdll-ForceBottomUpAlloc -W ntdll-WRITECOPY -W ntdll-Builtin_Prot)
-    fi
-    # /community patches
-
-    # Broken staging fbe1ba5
+    
+    # Fix broken staging commit fbe1ba5.
     if ( cd "${srcdir}"/"${_stgsrcdir}" && [ "$(git rev-parse HEAD)" = "fbe1ba5578fb7380e2b09a5aebf5aa488744a823" ] ); then
       warning "Fixing wrong staging upstream commit... Should be 4358ddc75fbfabdc4a4f31b4e3cc9aa1e0811d4c"
       sed -i 's|echo "3bb824f98891e8eb907c9c652fe528373a17b10d"|echo "4358ddc75fbfabdc4a4f31b4e3cc9aa1e0811d4c"|g' "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh
     fi
 
-    # Broken staging f329843
+    # Fix broken staging commit f329843.
     if ( cd "${srcdir}"/"${_stgsrcdir}" && [ "$(git rev-parse HEAD)" = "f3298432f0c4614a7554e06c6c9a66ef3623ead8" ] ); then
       warning "Fixing wrong staging upstream commit... Should be 8257fe88fb99ca0bdeec27b47b7cf835bda5c061"
       sed -i 's|echo "ba920246e502afe7bc664c1881d528a27e980101"|echo "8257fe88fb99ca0bdeec27b47b7cf835bda5c061"|g' "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh
     fi
 
-    # Broken staging 215d78f8 - 3f3a05f9
+    # Fix broken staging commits 215d78f8 - 3f3a05f9.
     if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 215d78f8e18bced54b97b39fcf71ebbb2a3ab13c HEAD && ! git merge-base --is-ancestor 3f3a05f91c85cb5ccdc4c8185bcc862c6e96cd52 HEAD ); then
       warning "Disable broken xactengine-initial patchset on staging 215d78f8+"
       _staging_args+=(-W xactengine-initial)
     fi
 
-    # Broken staging 4ef21bcf
+    # Fix broken staging commit 4ef21bcf.
     if ( cd "${srcdir}"/"${_stgsrcdir}" && [ "$(git rev-parse HEAD)" = "4ef21bcf82f625cce4c487c34ab695e61388afb6" ] ); then
       warning "Disable broken dsound-EAX patchset on staging 4ef21bcf"
       _staging_args+=(-W dsound-EAX)
     fi
 
-    # Broken staging eae4093b
+    # Fix broken staging commit eae4093b.
     if ( cd "${srcdir}"/"${_stgsrcdir}" && [ "$(git rev-parse HEAD)" = "eae4093bf85769871ce6675b54364d190094ebd3" ] ); then
       warning "Fix typo in mfplat-streaming-support patchset on staging eae4093b"
       patch "${srcdir}"/"${_stgsrcdir}"/patches/mfplat-streaming-support/0035-Miscellaneous.patch << 'EOM'
@@ -81,27 +95,27 @@ if [ -d "${srcdir}"/"${_stgsrcdir}" ]; then
 EOM
     fi
 
-    # Broken staging d9eb78e5 - 03290f8a
+    # Fix broken staging commits d9eb78e5 - 03290f8a.
     if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor d9eb78e597833fcafeb3d957a3b7dd6fc3afaa0e HEAD && ! git merge-base --is-ancestor 03290f8a41a61188758b5e0ec1236046367d1497 HEAD ); then
       warning "Disable broken ole32-HGLOBALStream patchset on staging d9eb78e5+"
       _staging_args+=(-W ole32-HGLOBALStream)
     fi
 
-    # Broken staging 495ae4e
+    # Fix broken staging commit 495ae4e.
     if ( cd "${srcdir}"/"${_stgsrcdir}" && [ "$(git rev-parse HEAD)" = "495ae4e9af49936591d486e262ff96f528e28766" ] ); then
       warning "Fixing wrong staging upstream commit... Should be 2148167f2557cc6c7d1e2f5ffef28bd936503a9a"
       sed -i 's|echo "93107c08f5aa7f37ad7ece9cd7ca248dba3030ce"|echo "2148167f2557cc6c7d1e2f5ffef28bd936503a9a"|g' "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh
     fi
 
     if [ "$_use_staging" = "true" ]; then
-      # Esync was disabled in staging 3b6b470, so disable fsync as well
+      # Esync was disabled in staging commit 3b6b470, so let's disable fsync as well.
       if ( cd "${srcdir}"/"${_stgsrcdir}" && [ "$(git rev-parse HEAD)" = "3b6b470bcaf1e77bc9ba851b80a35fd4778e40fe" ] ); then
         warning "Esync was disabled in staging 3b6b470b, so fsync was disabled as well to prevent patch application failure. You can use _staging_version=\"cd3ee9b2\" in your .cfg to get esync/fsync back until rebase."
         _use_fsync="false"
       fi
     fi
 
-    # Broken esync on staging dc77e28 (breaking fsync as a result) - some hunks are getting unordered due to similar contexts. So let's add a bit more context as a fix.
+    # Esync is broken on staging commit dc77e28, breaking fsync as a result. Some hunks are getting unordered due to similar contexts. So let's add a bit more context as a fix.
     if ( cd "${srcdir}"/"${_stgsrcdir}" && [ "$(git rev-parse HEAD)" = "dc77e28b0f7d6fdb11dafacb73b9889545359572" ] ); then
       warning "Fix eventfd_synchronization on staging dc77e28"
       patch "${srcdir}"/"${_stgsrcdir}"/patches/eventfd_synchronization/0008-ntdll-Implement-NtSetEvent.patch << 'EOM'
