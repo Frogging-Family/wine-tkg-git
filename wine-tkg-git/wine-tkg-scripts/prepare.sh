@@ -2379,6 +2379,13 @@ EOM
 	  fi
 	fi
 
+	# Proton Quake Champions fixes from Paul Gofman
+	if [ "$_quake_champions_fix" = "true" ] && [ "$_protonify" = "true" ] && [ "$_use_staging" = "true" ]; then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 588d91aecf2bf8ac7e9ae1de44ddc01caae52109 HEAD ); then
+	    _patchname='quake_champions_fix.patch' && _patchmsg="Enable Proton's Quake Champions fixes from Paul Gofman" && nonuser_patcher
+	  fi
+	fi
+
 	# Proton CPU topology override - depends on protonify and fsync
 	if [ "$_use_fsync" = "true" ] && [ "$_protonify" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 6f158754435f403864052e595ab627dadac2666f HEAD ); then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 588d91aecf2bf8ac7e9ae1de44ddc01caae52109 HEAD ); then
