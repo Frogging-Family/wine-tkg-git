@@ -2417,8 +2417,10 @@ EOM
 
 	# SDL Joystick support - from Proton
 	if [ "$_sdl_joy_support" = "true" ] && [ "$_use_staging" = "true" ]; then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 914633723383f321303d78eb62cb19e8a6fb7bb4 HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 43f0c8096b2d81052a30d8542372adc46dab8292 HEAD ); then
 	    _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
+	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 914633723383f321303d78eb62cb19e8a6fb7bb4 HEAD ); then
+	    _patchname='proton-sdl-joy-43f0c80.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 01d3527065e6f29997eb0ec88e36aeeecbf8ff76 HEAD ); then
 	    _patchname='proton-sdl-joy-9146337.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 828b9b8cc49fe24a306235c056a38c7ae079560f HEAD ); then
