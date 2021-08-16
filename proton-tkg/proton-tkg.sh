@@ -510,11 +510,10 @@ function steam_is_running {
 }
 
 function wine_is_running {
-  if pgrep -x wineserver >/dev/null; then
-    echo -e "\n Wineserver is running. Waiting for it to finish..."
-    sleep 3
-    wine_is_running
-  fi
+  pidof -q wineserver || return 0
+  echo -e "\n Wineserver is running. Waiting for it to finish..."
+  sleep 3
+  wine_is_running
 }
 
 function proton_tkg_uninstaller {
