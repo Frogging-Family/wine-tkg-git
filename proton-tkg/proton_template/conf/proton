@@ -77,7 +77,38 @@ def makedirs(path):
         #already exists
         pass
 
-def try_copy(src, dst, add_write_perm=True, optional=False):
+def merge_user_dir(src, dst):
+    extant_dirs = []
+    for src_dir, dirs, files in os.walk(src):
+        dst_dir = src_dir.replace(src, dst, 1)
+
+        #as described below, avoid merging game save subdirs, too
+        child_of_extant_dir = False
+        for dir_ in extant_dirs:
+            if dir_ in dst_dir:
+                child_of_extant_dir = True
+                break
+        if child_of_extant_dir:
+            continue
+
+        #we only want to copy into directories which don't already exist. games
+        #may not react well to two save directory instances being merged.
+        if not os.path.exists(dst_dir) or os.path.samefile(dst_dir, dst):
+            makedirs(dst_dir)
+            for dir_ in dirs:
+                src_file = os.path.join(src_dir, dir_)
+                dst_file = os.path.join(dst_dir, dir_)
+                if os.path.islink(src_file) and not os.path.exists(dst_file):
+                    try_copy(src_file, dst_file, copy_metadata=True)
+            for file_ in files:
+                src_file = os.path.join(src_dir, file_)
+                dst_file = os.path.join(dst_dir, file_)
+                if not os.path.exists(dst_file):
+                    try_copy(src_file, dst_file, copy_metadata=True)
+        else:
+            extant_dirs += dst_dir
+
+def try_copy(src, dst, add_write_perm=True, copy_metadata=True):
     try:
         if os.path.isdir(dst):
             dstfile = dst + "/" + os.path.basename(src)
@@ -88,7 +119,10 @@ def try_copy(src, dst, add_write_perm=True, optional=False):
             if os.path.lexists(dst):
                 os.remove(dst)
 
-        shutil.copy(src, dst)
+        if copy_metadata:
+            shutil.copy2(src, dst)
+        else:
+            shutil.copy(src, dst)
 
         if add_write_perm:
             new_mode = os.lstat(dstfile).st_mode | stat.S_IWUSR | stat.S_IWGRP
@@ -493,7 +527,7 @@ class CompatData:
                 if len(rel_dir) > 0:
                     rel_dir = rel_dir + "/"
                 dst_dir = src_dir.replace(g_proton.default_pfx_dir, self.prefix_dir, 1)
-                if not os.path.exists(dst_dir):
+                if not os.path.lexists(dst_dir):
                     os.makedirs(dst_dir)
                     tracked_files.write(rel_dir + "\n")
                 for dir_ in dirs:
@@ -562,6 +596,31 @@ class CompatData:
             else:
                 os.symlink(fname, lname)
 
+    def migrate_user_paths(self):
+        #move winxp-style paths to vista+ paths. we can't do this in
+        #upgrade_pfx because Steam may drop cloud files here at any time.
+        for (old, new, link) in \
+                [
+                    (self.prefix_dir + "drive_c/users/steamuser/Local Settings/Application Data",
+                        self.prefix_dir + "drive_c/users/steamuser/AppData/Local",
+                        "../AppData/Local"),
+                    (self.prefix_dir + "drive_c/users/steamuser/Application Data",
+                        self.prefix_dir + "drive_c/users/steamuser/AppData/Roaming",
+                        "./AppData/Roaming"),
+                    (self.prefix_dir + "drive_c/users/steamuser/My Documents",
+                        self.prefix_dir + "drive_c/users/steamuser/Documents",
+                        "./Documents"),
+                ]:
+            if os.path.lexists(old) and not os.path.islink(old):
+                merge_user_dir(src=old, dst=new)
+                os.rename(old, old + " BACKUP")
+            if not os.path.lexists(old):
+                makedirs(os.path.dirname(old))
+                os.symlink(src=link, dst=old)
+            elif os.path.islink(old) and not (os.readlink(old) == link):
+                os.remove(old)
+                os.symlink(src=link, dst=old)
+
     def setup_prefix(self):
         with self.prefix_lock:
             if os.path.exists(self.version_file):
@@ -584,6 +643,8 @@ class CompatData:
 
             if not os.path.lexists(self.prefix_dir + "/dosdevices/z:"):
                 os.symlink("/", self.prefix_dir + "/dosdevices/z:")
+
+            self.migrate_user_paths()
 
             # collect configuration info
             if "STEAM_COMPAT_CLIENT_INSTALL_PATH" in os.environ:
@@ -935,19 +996,6 @@ class CompatData:
             elif os.path.lexists(gamedrive_path):
                 os.remove(gamedrive_path)
 
-            if os.path.exists(self.prefix_dir + "drive_c/users/steamuser"):
-                # Make sure the "My Documents" dir exists - In case we have to restore steam cloud saves in there on a Wine build that's using "Documents" instead
-                if not os.path.exists(self.prefix_dir + "drive_c/users/steamuser/My Documents"):
-                    os.makedirs(self.prefix_dir + "drive_c/users/steamuser/My Documents")
-                # Hack to redirect the "My Documents" dir to the new "Documents" dir - https://github.com/wine-mirror/wine/commit/4111801ab317529c3e24c39a6a97e7043438231a
-                if not os.path.islink(self.prefix_dir + "drive_c/users/steamuser/Documents"):
-                    src = self.prefix_dir + "drive_c/users/steamuser/My Documents"
-                    dst = self.prefix_dir + "drive_c/users/steamuser/Documents"
-                    if os.path.isfile(dst):
-                        os.remove(dst)
-                    shutil.rmtree(dst, ignore_errors=True)
-                    os.symlink(src, dst)
-
 def comma_escaped(s):
     escaped = False
     idx = -1
@@ -1037,19 +1085,6 @@ class Session:
             pass
 
     def init_session(self, update_prefix_files):
-        if os.path.exists(g_compatdata.prefix_dir + "drive_c/users/steamuser"):
-            # Make sure the "My Documents" dir exists - In case we have to restore steam cloud saves in there on a Wine build that's using "Documents" instead
-            if not os.path.exists(g_compatdata.prefix_dir + "drive_c/users/steamuser/My Documents"):
-                os.makedirs(g_compatdata.prefix_dir + "drive_c/users/steamuser/My Documents")
-            # Hack to redirect the "My Documents" dir to the new "Documents" dir - https://github.com/wine-mirror/wine/commit/4111801ab317529c3e24c39a6a97e7043438231a
-            if not os.path.islink(g_compatdata.prefix_dir + "drive_c/users/steamuser/Documents"):
-                src = g_compatdata.prefix_dir + "drive_c/users/steamuser/My Documents"
-                dst = g_compatdata.prefix_dir + "drive_c/users/steamuser/Documents"
-                if os.path.isfile(dst):
-                    os.remove(dst)
-                shutil.rmtree(dst, ignore_errors=True)
-                os.symlink(src, dst)
-
         self.env["WINEPREFIX"] = g_compatdata.prefix_dir
 
         #load environment overrides
