@@ -1,0 +1,28 @@
+name: Proton Arch Linux CI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Compile
+        run: |
+          echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
+          pacman -Syu --noconfirm base-devel sudo lib32-jack2
+          useradd user -G wheel && echo "user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown user -R ..
+          chown user -R /tmp
+          export CARGO_HOME="$PWD"
+          cd proton-tkg
+          su user -c "yes ''|PKGDEST=/tmp/proton-tkg makepkg --noconfirm -s"
+
+      - name: Archive the artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: proton-tkg-build
+          path: /tmp/proton-tkg
