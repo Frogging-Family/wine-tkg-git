@@ -2409,10 +2409,18 @@ EOM
 	  fi
 	fi
 
+	# Proton RDR2 fixes from Paul Gofman - Bound to the "Protonify the staging syscall emu" hotfix
+	# The legacy patch is found in proton meta patchsets, and was moved here for more flexibility following the recent ntdll changes
+	if [ "$_use_staging" = "true" ] && [ -e "$_where"/rdr2.patch ]; then
+	  _patchname='rdr2.patch' && _patchmsg="Enable Proton's RDR2 fixes from Paul Gofman" && nonuser_patcher
+	fi
+
 	# Proton Quake Champions fixes from Paul Gofman
 	if [ "$_quake_champions_fix" = "true" ] && [ "$_protonify" = "true" ] && [ "$_use_staging" = "true" ]; then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 588d91aecf2bf8ac7e9ae1de44ddc01caae52109 HEAD ); then
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 66c0fdc1590e00ce471a6c55f4d97ededd1f5aae HEAD ); then
 	    _patchname='quake_champions_fix.patch' && _patchmsg="Enable Proton's Quake Champions fixes from Paul Gofman" && nonuser_patcher
+	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 588d91aecf2bf8ac7e9ae1de44ddc01caae52109 HEAD ); then
+	    _patchname='quake_champions_fix-66c0fdc.patch' && _patchmsg="Enable Proton's Quake Champions fixes from Paul Gofman" && nonuser_patcher
 	  fi
 	fi
 

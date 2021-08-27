@@ -78,7 +78,7 @@ index 3487f761324..ede34a36c3e 100644
  #endif
 
  #define NONAMELESSUNION
-@@ -2491,37 +2492,34 @@ static void install_bpf(struct sigaction *sig_act)
+@@ -2490,36 +2491,33 @@ static void install_bpf(struct sigaction *sig_act)
  #   ifndef SECCOMP_SET_MODE_FILTER
  #       define SECCOMP_SET_MODE_FILTER 1
  #   endif
@@ -129,13 +129,12 @@ index 3487f761324..ede34a36c3e 100644
          BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
      };
 +    long (WINAPI *test_syscall)(long sc_number);
-     struct syscall_frame *frame = amd64_thread_data()->syscall_frame;
      struct sock_fprog prog;
 -    BOOL rdr2 = FALSE;
      NTSTATUS status;
 
      sig_act->sa_sigaction = sigsys_handler;
-@@ -2532,23 +2530,26 @@ static void install_bpf(struct sigaction *sig_act)
+@@ -2529,20 +2527,23 @@ static void install_bpf(struct sigaction *sig_act)
          const char *sgi = getenv("SteamGameId");
          if (sgi && (!strcmp(sgi, "1174180") || !strcmp(sgi, "1404210")))
          {
@@ -149,9 +148,6 @@ index 3487f761324..ede34a36c3e 100644
      }
 
      sigaction(SIGSYS, sig_act, NULL);
-
-     frame->syscall_flags = syscall_flags;
-     frame->syscall_table = KeServiceDescriptorTable;
 
 -    if (rdr2)
 +    test_syscall = mmap((void *)0x600000000000, 0x1000, PROT_EXEC | PROT_READ | PROT_WRITE,
@@ -195,18 +191,18 @@ index 3487f761324..ede34a36c3e 100644
      if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
      {
          ERR("prctl(PR_SET_NO_NEW_PRIVS, ...): %s.\n", strerror(errno));
-@@ -3222,7 +3222,6 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
-                    "leaq 0x28(%rsp),%rsi\n\t"      /* first argument */
-                    "movq %rcx,%rsp\n\t"
-                    "movq 0x00(%rcx),%rax\n\t"
--                   "subq $0xf000,%rax\n\t"
-                    "movq 0x18(%rcx),%rdx\n\t"
-                    "movl %eax,%ebx\n\t"
-                    "shrl $8,%ebx\n\t"
 diff --git a/tools/winebuild/import.c b/tools/winebuild/import.c
 index 234a7d936d7..de4a5436cda 100644
 --- a/tools/winebuild/import.c
 +++ b/tools/winebuild/import.c
+@@ -1607,7 +1607,6 @@ static void output_syscall_dispatcher( int count, const char *variant )
+         output( "\tleaq 0x28(%%rsp),%%rsi\n" );   /* first argument */
+         output( "\tmovq %%rcx,%%rsp\n" );
+         output( "\tmovq 0x00(%%rcx),%%rax\n" );
+-        output( "\tsubq $0xf000,%%rax\n" );
+         output( "\tmovq 0x18(%%rcx),%%rdx\n" );
+         output( "\tmovl %%eax,%%ebx\n" );
+         output( "\tshrl $8,%%ebx\n" );
 @@ -1912,7 +1911,7 @@ void output_syscalls( DLLSPEC *spec )
               * validate that instruction, we can just put a jmp there instead. */
              output( "\t.byte 0x4c,0x8b,0xd1\n" ); /* movq %rcx,%r10 */
