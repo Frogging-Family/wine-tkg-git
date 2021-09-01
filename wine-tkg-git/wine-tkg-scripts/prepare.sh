@@ -2425,7 +2425,7 @@ EOM
 
 	# Proton Quake Champions fixes from Paul Gofman
 	if [ "$_quake_champions_fix" = "true" ] && [ "$_protonify" = "true" ] && [ "$_use_staging" = "true" ]; then
-	  if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 3513a176fd325492e5b5e498e4eebf3f820f8cc6 HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3513a176fd325492e5b5e498e4eebf3f820f8cc6 HEAD ); then
 	    _patchname='quake_champions_fix.patch' && _patchmsg="Enable Proton's Quake Champions fixes from Paul Gofman" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 66c0fdc1590e00ce471a6c55f4d97ededd1f5aae HEAD ); then
 	    _patchname='quake_champions_fix-3513a17.patch' && _patchmsg="Enable Proton's Quake Champions fixes from Paul Gofman" && nonuser_patcher
