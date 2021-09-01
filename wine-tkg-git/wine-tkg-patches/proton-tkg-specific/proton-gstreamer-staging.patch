@@ -293,3 +293,147 @@ index a625f000254..be27b00cfd0 100644
          stream->flip = flip;
          stream->box = videobox;
  
+From 62062d469c580621c457de3cd1d52204f40d4ea6 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 24 Aug 2021 15:32:51 +0300
+Subject: [PATCH] winegstreamer: Create threads after initializing wg_parser in
+ decode_transform_create().
+
+CW-Bug-ID: 19317
+---
+ dlls/winegstreamer/decode_transform.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/dlls/winegstreamer/decode_transform.c b/dlls/winegstreamer/decode_transform.c
+index 642d8aff264..8fc75d73b63 100644
+--- a/dlls/winegstreamer/decode_transform.c
++++ b/dlls/winegstreamer/decode_transform.c
+@@ -1185,9 +1185,6 @@ HRESULT decode_transform_create(REFIID riid, void **obj, enum decoder_type type)
+     InitializeConditionVariable(&object->help_cv);
+     InitializeConditionVariable(&object->event_cv);
+
+-    object->helper_thread = CreateThread(NULL, 0, helper_thread_func, object, 0, NULL);
+-    object->read_thread = CreateThread(NULL, 0, read_thread_func, object, 0, NULL);
+-
+     if (!(parser = unix_funcs->wg_decodebin_parser_create()))
+     {
+         ERR("Failed to create Decoder MFT type %u: Unspecified GStreamer error\n", type);
+@@ -1196,6 +1193,9 @@ HRESULT decode_transform_create(REFIID riid, void **obj, enum decoder_type type)
+     }
+     object->wg_parser = parser;
+
++    object->helper_thread = CreateThread(NULL, 0, helper_thread_func, object, 0, NULL);
++    object->read_thread = CreateThread(NULL, 0, read_thread_func, object, 0, NULL);
++
+     *obj = &object->IMFTransform_iface;
+     return S_OK;
+ }
+From 301cc9584e57aaf49f643b2eddf531cdf79d2c22 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 24 Aug 2021 16:06:41 +0300
+Subject: [PATCH] winegstreamer: Shutdown helper and read threads in
+ mf_decoder_Release().
+
+CW-Bug-ID: 19317
+---
+ dlls/winegstreamer/decode_transform.c | 53 ++++++++++++++++++++++-----
+ 1 file changed, 44 insertions(+), 9 deletions(-)
+
+diff --git a/dlls/winegstreamer/decode_transform.c b/dlls/winegstreamer/decode_transform.c
+index 8fc75d73b63..64e1c84b2ba 100644
+--- a/dlls/winegstreamer/decode_transform.c
++++ b/dlls/winegstreamer/decode_transform.c
+@@ -157,11 +157,31 @@ static ULONG WINAPI mf_decoder_Release(IMFTransform *iface)
+             decoder->output_type = NULL;
+         }
+
+-        if (decoder->wg_stream)
+-            unix_funcs->wg_parser_disconnect(decoder->wg_parser);
+-
+         if (decoder->wg_parser)
++        {
++            /* NULL wg_parser is possible if the wg_parser creation failed. */
++
++            EnterCriticalSection(&decoder->event_cs);
++            decoder->helper_thread_shutdown = TRUE;
++            WakeAllConditionVariable(&decoder->event_cv);
++            LeaveCriticalSection(&decoder->event_cs);
++
++            EnterCriticalSection(&decoder->help_cs);
++            WakeAllConditionVariable(&decoder->help_cv);
++            LeaveCriticalSection(&decoder->help_cs);
++
++            if (decoder->wg_stream)
++                unix_funcs->wg_parser_disconnect(decoder->wg_parser);
++
++            if (WaitForSingleObject(decoder->helper_thread, 10000) != WAIT_OBJECT_0)
++                FIXME("Failed waiting for helper thread to terminate.\n");
++            CloseHandle(decoder->helper_thread);
++            if (WaitForSingleObject(decoder->read_thread, 10000) != WAIT_OBJECT_0)
++                FIXME("Failed waiting for read thread to terminate.\n");
++            CloseHandle(decoder->read_thread);
++
+             unix_funcs->wg_parser_destroy(decoder->wg_parser);
++        }
+
+         DeleteCriticalSection(&decoder->cs);
+         DeleteCriticalSection(&decoder->help_cs);
+@@ -611,7 +631,10 @@ static DWORD CALLBACK helper_thread_func(PVOID ctx)
+         while(!decoder->helper_thread_shutdown && decoder->help_request.type == HELP_REQ_NONE)
+             SleepConditionVariableCS(&decoder->help_cv, &decoder->help_cs, INFINITE);
+         if (decoder->helper_thread_shutdown)
++        {
++            LeaveCriticalSection(&decoder->help_cs);
+             return 0;
++        }
+
+         switch(decoder->help_request.type)
+         {
+@@ -649,9 +672,15 @@ static DWORD CALLBACK helper_thread_func(PVOID ctx)
+                     &input_format, 1, &output_format, aperture ? &wg_aperture : NULL);
+
+                 EnterCriticalSection(&decoder->event_cs);
+-                while (decoder->event.type != PIPELINE_EVENT_NONE)
++                while (!decoder->helper_thread_shutdown && decoder->event.type != PIPELINE_EVENT_NONE)
+                     SleepConditionVariableCS(&decoder->event_cv, &decoder->event_cs, INFINITE);
+
++                if (decoder->helper_thread_shutdown)
++                {
++                    LeaveCriticalSection(&decoder->event_cs);
++                    return 0;
++                }
++
+                 decoder->event.type = PIPELINE_EVENT_PARSER_STARTED;
+                 decoder->event.u.parser_started.stream = unix_funcs->wg_parser_get_stream(decoder->wg_parser, 0);
+
+@@ -677,19 +706,25 @@ static DWORD CALLBACK read_thread_func(PVOID ctx)
+
+     for (;;)
+     {
+-        if (!unix_funcs->wg_parser_get_read_request(decoder->wg_parser, &data, &offset, &size))
+-            continue;
+-
+         if (decoder->helper_thread_shutdown)
+             break;
+
++        if (!unix_funcs->wg_parser_get_read_request(decoder->wg_parser, &data, &offset, &size))
++            continue;
++
+         EnterCriticalSection(&decoder->event_cs);
+-        while (decoder->event.type != PIPELINE_EVENT_NONE)
++        while (!decoder->helper_thread_shutdown && decoder->event.type != PIPELINE_EVENT_NONE)
+             SleepConditionVariableCS(&decoder->event_cv, &decoder->event_cs, INFINITE);
+
++        if (decoder->helper_thread_shutdown)
++        {
++            LeaveCriticalSection(&decoder->event_cs);
++            break;
++        }
++
+         decoder->event.type = PIPELINE_EVENT_READ_REQUEST;
+         WakeAllConditionVariable(&decoder->event_cv);
+-        while (decoder->event.type == PIPELINE_EVENT_READ_REQUEST)
++        while (!decoder->helper_thread_shutdown && decoder->event.type == PIPELINE_EVENT_READ_REQUEST)
+             SleepConditionVariableCS(&decoder->event_cv, &decoder->event_cs, INFINITE);
+         LeaveCriticalSection(&decoder->event_cs);
+     }
