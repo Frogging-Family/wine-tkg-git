@@ -411,8 +411,8 @@ function build_steamhelper {
     if [ "$_no_loader_array" = "true" ]; then
       ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support-legacy.patch" || true )
     else
+      ( cd Proton && patch -Np1 < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system.patch" || true )
       ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support.patch" || true )
-      ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system.patch" || true )
     fi
   fi
 
