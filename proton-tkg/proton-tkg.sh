@@ -408,7 +408,12 @@ function build_mediaconverter {
 function build_steamhelper {
   # disable openvr support for now since we don't support it
   if [[ "$_proton_branch" = *6.3 ]]; then
-    ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support.patch" || true )
+    if [ "$_no_loader_array" = "true" ]; then
+      ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support-legacy.patch" || true )
+    else
+      ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support.patch" || true )
+      ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system.patch" || true )
+    fi
   fi
 
   if [[ $_proton_branch != *3.* ]]; then
