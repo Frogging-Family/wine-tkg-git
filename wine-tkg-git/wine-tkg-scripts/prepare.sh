@@ -1474,7 +1474,11 @@ EOM
 
 	# GLSL toggle patch - Allows for use of ARB instead of GLSL
 	if [ "$_GLSL_toggle" = "true" ] && [ "$_use_staging" = "true" ] && [ "$_use_legacy_gallium_nine" != "true" ]; then
-	  _patchname='GLSL-toggle.patch' && _patchmsg="Applied GLSL toggle patch" && nonuser_patcher
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor ef11bb63ce54490bc5a1e14ab650207b515340da HEAD ); then
+	    _patchname='GLSL-toggle.patch' && _patchmsg="Applied GLSL toggle patch" && nonuser_patcher
+	  else
+	    _patchname='GLSL-toggle-ef11bb6.patch' && _patchmsg="Applied GLSL toggle patch" && nonuser_patcher
+	  fi
 	fi
 
 	# Set a custom fake refresh rate for virtual desktop
