@@ -6607,6 +6607,137 @@ index c0318781efd..84aa6f14869 100644
      }
      pXRRFreeScreenResources( screen_resources );
      return FALSE;
+From b1ebc538f881d96b6283e6677677db302dfe7673 Mon Sep 17 00:00:00 2001
+From: Zhiyi Zhang <zzhang@codeweavers.com>
+Date: Thu, 26 Dec 2019 10:47:06 +0800
+Subject: [PATCH] winex11.drv: Link display device interfaces.
+
+Signed-off-by: Zhiyi Zhang <zzhang@codeweavers.com>
+---
+ dlls/winex11.drv/display.c | 76 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 76 insertions(+)
+
+diff --git a/dlls/winex11.drv/display.c b/dlls/winex11.drv/display.c
+index e476dac0f6f..2e5395fda80 100644
+--- a/dlls/winex11.drv/display.c
++++ b/dlls/winex11.drv/display.c
+@@ -30,6 +30,7 @@
+ #include "initguid.h"
+ #include "devguid.h"
+ #include "devpkey.h"
++#include "ntddvdeo.h"
+ #include "setupapi.h"
+ #define WIN32_NO_STATUS
+ #include "winternl.h"
+@@ -470,12 +471,72 @@ void X11DRV_DisplayDevices_Update(BOOL send_display_change)
+     }
+ }
+
++/* This function sets device interface link state to enabled.
++ * The link state should be set via IoSetDeviceInterfaceState(),
++ * but IoSetDeviceInterfaceState() requires a PnP driver, which
++ * currently doesn't exist for display devices. */
++static BOOL link_device(const WCHAR *instance, const GUID *guid)
++{
++    static const WCHAR device_instanceW[] = {'D','e','v','i','c','e','I','n','s','t','a','n','c','e',0};
++    static const WCHAR hash_controlW[] = {'#','\\','C','o','n','t','r','o','l',0};
++    static const WCHAR linkedW[] = {'L','i','n','k','e','d',0};
++    static const DWORD enabled = 1;
++    WCHAR device_key_name[MAX_PATH], device_instance[MAX_PATH];
++    HKEY iface_key, device_key, control_key;
++    DWORD length, type, index = 0;
++    BOOL ret = FALSE;
++    LSTATUS lr;
++
++    iface_key = SetupDiOpenClassRegKeyExW(guid, KEY_ALL_ACCESS, DIOCR_INTERFACE, NULL, NULL);
++    while (1)
++    {
++        length = ARRAY_SIZE(device_key_name);
++        lr = RegEnumKeyExW(iface_key, index++, device_key_name, &length, NULL, NULL, NULL, NULL);
++        if (lr)
++            break;
++
++        lr = RegOpenKeyExW(iface_key, device_key_name, 0, KEY_ALL_ACCESS, &device_key);
++        if (lr)
++            continue;
++
++        length = ARRAY_SIZE(device_instance);
++        lr = RegQueryValueExW(device_key, device_instanceW, NULL, &type, (BYTE *)device_instance, &length);
++        if (lr || type != REG_SZ)
++        {
++            RegCloseKey(device_key);
++            continue;
++        }
++
++        if (lstrcmpiW(device_instance, instance))
++        {
++            RegCloseKey(device_key);
++            continue;
++        }
++
++        lr = RegCreateKeyExW(device_key, hash_controlW, 0, NULL, REG_OPTION_VOLATILE, KEY_ALL_ACCESS, NULL, &control_key, NULL);
++        RegCloseKey(device_key);
++        if (lr)
++            continue;
++
++        lr = RegSetValueExW(control_key, linkedW, 0, REG_DWORD, (const BYTE *)&enabled, sizeof(enabled));
++        RegCloseKey(control_key);
++        if (!lr)
++        {
++            ret = TRUE;
++            break;
++        }
++    }
++    RegCloseKey(iface_key);
++    return ret;
++}
++
+ /* Initialize a GPU instance.
+  * Return its GUID string in guid_string, driver value in driver parameter and LUID in gpu_luid */
+ static BOOL X11DRV_InitGpu(HDEVINFO devinfo, const struct x11drv_gpu *gpu, INT gpu_index, WCHAR *guid_string,
+                            WCHAR *driver, LUID *gpu_luid)
+ {
+     static const BOOL present = TRUE;
++    SP_DEVICE_INTERFACE_DATA iface_data = {sizeof(iface_data)};
+     SP_DEVINFO_DATA device_data = {sizeof(device_data)};
+     WCHAR instanceW[MAX_PATH];
+     DEVPROPTYPE property_type;
+@@ -499,6 +560,13 @@ static BOOL X11DRV_InitGpu(HDEVINFO devinfo, const struct x11drv_gpu *gpu, INT g
+             goto done;
+     }
+
++    /* Register GUID_DEVINTERFACE_DISPLAY_ADAPTER */
++    if (!SetupDiCreateDeviceInterfaceW(devinfo, &device_data, &GUID_DEVINTERFACE_DISPLAY_ADAPTER, NULL, 0, &iface_data))
++        goto done;
++
++    if (!link_device(instanceW, &GUID_DEVINTERFACE_DISPLAY_ADAPTER))
++        goto done;
++
+     /* Write HardwareID registry property, REG_MULTI_SZ */
+     written = sprintfW(bufferW, gpu_hardware_id_fmtW, gpu->vendor_id, gpu->device_id);
+     bufferW[written + 1] = 0;
+@@ -651,6 +719,7 @@ static BOOL X11DRV_InitAdapter(HKEY video_hkey, INT video_index, INT gpu_index,
+ static BOOL X11DRV_InitMonitor(HDEVINFO devinfo, const struct x11drv_monitor *monitor, int monitor_index,
+                                int video_index, const LUID *gpu_luid, UINT output_id)
+ {
++    SP_DEVICE_INTERFACE_DATA iface_data = {sizeof(iface_data)};
+     SP_DEVINFO_DATA device_data = {sizeof(SP_DEVINFO_DATA)};
+     WCHAR bufferW[MAX_PATH];
+     HKEY hkey;
+@@ -662,6 +731,13 @@ static BOOL X11DRV_InitMonitor(HDEVINFO devinfo, const struct x11drv_monitor *mo
+     if (!SetupDiRegisterDeviceInfo(devinfo, &device_data, 0, NULL, NULL, NULL))
+         goto done;
+
++    /* Register GUID_DEVINTERFACE_MONITOR */
++    if (!SetupDiCreateDeviceInterfaceW(devinfo, &device_data, &GUID_DEVINTERFACE_MONITOR, NULL, 0, &iface_data))
++        goto done;
++
++    if (!link_device(bufferW, &GUID_DEVINTERFACE_MONITOR))
++        goto done;
++
+     /* Write HardwareID registry property */
+     if (!SetupDiSetDeviceRegistryPropertyW(devinfo, &device_data, SPDRP_HARDWAREID,
+                                            (const BYTE *)monitor_hardware_idW, sizeof(monitor_hardware_idW)))
 From 47f3344841d65e0d23329b9accd6ec4b3bc381aa Mon Sep 17 00:00:00 2001
 From: Zhiyi Zhang <zzhang@codeweavers.com>
 Date: Mon, 6 Apr 2020 15:30:40 +0800
@@ -8563,7 +8694,48 @@ index 9f37398cd7e..38eaf5e3cbc 100644
  };
  
  BOOL wined3d_filter_messages(HWND window, BOOL filter) DECLSPEC_HIDDEN;
+From 164d2b8b3ae2cf65693eed01bd696f791db5d5cc Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 11 May 2021 21:02:05 +0300
+Subject: [PATCH] winex11.drv: Add GUID_DISPLAY_DEVICE_ARRIVAL interface to
+ display device.
 
+CW-Bug-Id: 18931
+---
+ dlls/winex11.drv/display.c | 7 +++++++
+ include/ntddvdeo.h         | 1 +
+ 2 files changed, 8 insertions(+)
+
+diff --git a/dlls/winex11.drv/display.c b/dlls/winex11.drv/display.c
+index 0a44aca39f0..546b4c3370a 100644
+--- a/dlls/winex11.drv/display.c
++++ b/dlls/winex11.drv/display.c
+@@ -605,6 +605,13 @@ static BOOL X11DRV_InitGpu(HDEVINFO devinfo, const struct x11drv_gpu *gpu, INT g
+     if (!link_device(instanceW, &GUID_DEVINTERFACE_DISPLAY_ADAPTER))
+         goto done;
+
++    /* Register GUID_DISPLAY_DEVICE_ARRIVAL */
++    if (!SetupDiCreateDeviceInterfaceW(devinfo, &device_data, &GUID_DISPLAY_DEVICE_ARRIVAL, NULL, 0, &iface_data))
++        goto done;
++
++    if (!link_device(instanceW, &GUID_DISPLAY_DEVICE_ARRIVAL))
++        goto done;
++
+     /* Write HardwareID registry property, REG_MULTI_SZ */
+     written = sprintfW(bufferW, gpu_hardware_id_fmtW, gpu->vendor_id, gpu->device_id);
+     bufferW[written + 1] = 0;
+diff --git a/include/ntddvdeo.h b/include/ntddvdeo.h
+index 9523e37f7b4..b830f9ff6f7 100644
+--- a/include/ntddvdeo.h
++++ b/include/ntddvdeo.h
+@@ -20,6 +20,7 @@
+ #define _NTDDVDEO_
+
+ DEFINE_GUID(GUID_DEVINTERFACE_DISPLAY_ADAPTER, 0x5b45201d, 0xf2f2, 0x4f3b, 0x85, 0xbb, 0x30, 0xff, 0x1f, 0x95, 0x35, 0x99);
++DEFINE_GUID(GUID_DISPLAY_DEVICE_ARRIVAL, 0x1ca05180, 0xa699, 0x450a, 0x9a, 0x0c, 0xde, 0x4f, 0xbe, 0x3d, 0xdd, 0x89);
+ DEFINE_GUID(GUID_DEVINTERFACE_MONITOR, 0xe6f07b5f, 0xee97, 0x4a90, 0xb0, 0x76, 0x33, 0xf5, 0x7b, 0xf4, 0xea, 0xa7);
+
+ #endif
 diff --git a/dlls/winex11.drv/vulkan.c b/dlls/winex11.drv/vulkan.c
 index 74df1e80843..9263919862a 100644
 --- a/dlls/winex11.drv/vulkan.c
