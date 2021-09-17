@@ -2418,11 +2418,15 @@ EOM
 	    fi
 	  fi
 	  if [ "$_EXTERNAL_INSTALL" = "proton" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 9ca95e32651d6a50dc787af4dc53fb907f1c4e2b HEAD ); then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor aeabe991ff8ae69ee9959b908851f8b1148f7cf4 HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 1aa359a100bae859b278007e8bf90673eebd7db0 HEAD ); then
+	      if [ "$_use_staging" = "false" ]; then
+	        _patchname='proton-gstreamer.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
+	      fi
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor aeabe991ff8ae69ee9959b908851f8b1148f7cf4 HEAD ); then
 	      if [ "$_use_staging" = "true" ] && ! grep -Fxq 'Disabled: True' "${srcdir}/${_stgsrcdir}/patches/mfplat-streaming-support/definition"; then
 	        _patchname='proton-gstreamer-staging.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
 	      elif [ "$_use_staging" = "false" ]; then
-	        _patchname='proton-gstreamer.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
+	        _patchname='proton-gstreamer-1aa359a.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
 	      fi
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e36e384cb4d96fd47763332f93c2b213f6556287 HEAD ); then
 	      if [ "$_use_staging" = "true" ] && ! grep -Fxq 'Disabled: True' "${srcdir}/${_stgsrcdir}/patches/mfplat-streaming-support/definition"; then
