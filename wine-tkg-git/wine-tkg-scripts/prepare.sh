@@ -1968,7 +1968,7 @@ EOM
 	fi
 
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD || ([ "$_protonify" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor d94d1a8b263a020575bf8dd76509d9e603434095 HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 6ba7773121fd3b65e48ba65b49e742ab9b061210 HEAD ); then
 	    if [ "$_use_staging" = "true" ]; then
 	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD; then
 	        _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/3" && nonuser_patcher
@@ -2058,7 +2058,11 @@ EOM
 	      fi
 	    fi
 	  else
-	    if git merge-base --is-ancestor 847db3c1d3f5444808814cbea8f2920b16a96fcb HEAD; then
+	    if git merge-base --is-ancestor d94d1a8b263a020575bf8dd76509d9e603434095 HEAD; then
+	      _lastcommit="6ba7773"
+	      _rpc="1"
+	      _stmbits="1"
+	    elif git merge-base --is-ancestor 847db3c1d3f5444808814cbea8f2920b16a96fcb HEAD; then
 	      _lastcommit="d94d1a8"
 	      _rpc="1"
 	      _stmbits="1"
