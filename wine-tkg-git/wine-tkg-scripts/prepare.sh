@@ -2058,8 +2058,12 @@ EOM
 	      fi
 	    fi
 	  else
-	    if git merge-base --is-ancestor d94d1a8b263a020575bf8dd76509d9e603434095 HEAD; then
+	    if git merge-base --is-ancestor 7b17d7081512db52ef852705445762ac4016c29f HEAD; then
 	      _lastcommit="6ba7773"
+	      _rpc="1"
+	      _stmbits="1"
+	    elif git merge-base --is-ancestor d94d1a8b263a020575bf8dd76509d9e603434095 HEAD; then
+	      _lastcommit="7b17d70"
 	      _rpc="1"
 	      _stmbits="1"
 	    elif git merge-base --is-ancestor 847db3c1d3f5444808814cbea8f2920b16a96fcb HEAD; then
