@@ -75,6 +75,7 @@ _build() {
 	  msg2 'Building Wine-64...'
 	  cd  "${srcdir}"/"${pkgname}"-64-build
 	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW3" =~ [yY] ]]; then
+	  chmod +x ../"${_winesrcdir}"/configure
 	    ../"${_winesrcdir}"/configure \
 		    --prefix="$_prefix" \
 			--enable-win64 \
