@@ -40,6 +40,14 @@ cd proton-tkg
 
 **You have two options on pacman based distros. You can either make a pacman package (with a few limitations), or use a more powerful but also less user-friendly way.**
 
+#### Unpackaged, vanilla way :
+
+This is the recommended way and doesn't have the limitations of the makepkg path below.
+
+ * From the `proton-tkg` directory (where the PKGBUILD is located), run the following command in a terminal to start the building process :
+```
+./proton-tkg.sh
+```
 
 #### Pacman package way :
 
@@ -50,14 +58,6 @@ Using this option will enforce a "proton-tkg-makepkg" naming scheme in Steam, an
 makepkg -si
 ```
 
-#### Unpackaged, vanilla way :
-
-None of the limitations above apply here.
-
- * From the `proton-tkg` directory (where the PKGBUILD is located), run the following command in a terminal to start the building process :
-```
-./proton-tkg.sh
-```
 
 ### For other distros (make sure to check the [wiki page](https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git)) :
 
