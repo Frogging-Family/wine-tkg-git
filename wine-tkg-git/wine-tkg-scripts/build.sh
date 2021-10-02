@@ -62,11 +62,16 @@ _build() {
 	  # build wine 64-bit
 	  # (according to the wine wiki, this 64-bit/32-bit building order is mandatory)
 	  if [[ ! ${_makepkg_options[*]} =~ "ccache" ]] && [ -e /usr/bin/ccache ]; then
-	    export CC="ccache gcc" && echo "CC = ${CC}" >> "$_where"/last_build_config.log
-	    export CXX="ccache g++" && echo "CXX = ${CXX}" >> "$_where"/last_build_config.log
+	    export CC="ccache $_C_COMPILER" && echo "CC = ${CC}" >> "$_where"/last_build_config.log
+	    export CXX="ccache $_CXX_COMPILER" && echo "CXX = ${CXX}" >> "$_where"/last_build_config.log
+	  else
+		export CC="$_C_COMPILER" && echo "CC = ${CC}" >> "$_where"/last_build_config.log
+	    export CXX="$_CXX_COMPILER" && echo "CXX = ${CXX}" >> "$_where"/last_build_config.log
 	  fi
 	  if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
-	    export CROSSCC="ccache x86_64-w64-mingw32-gcc" && echo "CROSSCC64 = ${CROSSCC}" >> "$_where"/last_build_config.log
+	    export CROSSCC="ccache $_CROSS_C_COMPILER_64" && echo "CROSSCC64 = ${CROSSCC}" >> "$_where"/last_build_config.log
+	  else
+	  	export CROSSCC="$_CROSS_C_COMPILER_64" && echo "CROSSCC64 = ${CROSSCC}" >> "$_where"/last_build_config.log
 	  fi
 	  # If /usr/lib32 doesn't exist (such as on Fedora), make sure we're using /usr/lib64 for 64-bit pkgconfig path
 	  if [ ! -d '/usr/lib32' ]; then
@@ -103,11 +108,16 @@ _build() {
 	  fi
 	  # /nomakepkg
 	  if [[ ! ${_makepkg_options[*]} =~ "ccache" ]] && [ -e /usr/bin/ccache ]; then
-	    export CC="ccache gcc"
-	    export CXX="ccache g++"
+	    export CC="ccache $_C_COMPILER"
+	    export CXX="ccache $_CXX_COMPILER"
+	  else
+		export CC="$_C_COMPILER"
+	    export CXX="$_CXX_COMPILER"
 	  fi
 	  if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
-	    export CROSSCC="ccache i686-w64-mingw32-gcc" && echo "CROSSCC32 = ${CROSSCC}" >> "$_where"/last_build_config.log
+	    export CROSSCC="ccache $_CROSS_C_COMPILER_32" && echo "CROSSCC32 = ${CROSSCC}" >> "$_where"/last_build_config.log
+	  else
+	  	export CROSSCC="$_CROSS_C_COMPILER_32" && echo "CROSSCC32 = ${CROSSCC}" >> "$_where"/last_build_config.log
 	  fi
 	  # build wine 32-bit
 	  if [ -d '/usr/lib32/pkgconfig' ]; then # Typical Arch path
