@@ -248,10 +248,12 @@ msg2 ''
     if [ "$_ispkgbuild" = "true" ]; then
       _steamvr_support="false"
     fi
-    if ! [ -f "$_where"/$( curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \" | sed -e "s|.*/||") ]; then
-      rm -f "$_where"/wine-mono* # Remove any existing older mono
-      msg2 "Downloading latest mono..."
-      ( curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \" | wget -qi - )
+    if [ "$_use_latest_mono" = "true" ]; then
+      if ! [ -f "$_where"/$( curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \" | sed -e "s|.*/||") ]; then
+        rm -f "$_where"/wine-mono* # Remove any existing older mono
+        msg2 "Downloading latest mono..."
+        ( curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \" | wget -qi - )
+      fi
     fi
   elif [ "$_EXTERNAL_INSTALL" = "proton" ]; then
     error "It looks like you're attempting to build a Proton version of wine-tkg-git."
@@ -1961,12 +1963,14 @@ EOM
 
 	# Set mono version and hash for proton
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
-	  mono_ver=$( ls "$_where"/wine-mono* | sed -e "s|.*wine-mono-||; s/-x86.msi//" )
-	  mono_sum=$( echo $( sha256sum "$_where"/wine-mono* | cut -d " " -f 1 ) )
-	  echo -e "Setting wine-mono version to ${mono_ver} with sha256 ${mono_sum}" >> "$_where"/last_build_config.log
-	  sed -i "s|#define MONO_VERSION.*|#define MONO_VERSION \"${mono_ver}\"|g" "${srcdir}"/"${_winesrcdir}"/dlls/appwiz.cpl/addons.c
-	  sed -i "s|#define MONO_SHA.*|#define MONO_SHA \"${mono_sum}\"|g" "${srcdir}"/"${_winesrcdir}"/dlls/appwiz.cpl/addons.c
-	  sed -i "s|#define WINE_MONO_VERSION.*|#define WINE_MONO_VERSION \"${mono_ver}\"|g" "${srcdir}"/"${_winesrcdir}"/dlls/mscoree/mscoree_private.h
+	  if [ "$_use_latest_mono" = "true" ]; then
+	    mono_ver=$( ls "$_where"/wine-mono* | sed -e "s|.*wine-mono-||; s/-x86.msi//" )
+	    mono_sum=$( echo $( sha256sum "$_where"/wine-mono* | cut -d " " -f 1 ) )
+	    echo -e "Setting wine-mono version to ${mono_ver} with sha256 ${mono_sum}" >> "$_where"/last_build_config.log
+	    sed -i "s|#define MONO_VERSION.*|#define MONO_VERSION \"${mono_ver}\"|g" "${srcdir}"/"${_winesrcdir}"/dlls/appwiz.cpl/addons.c
+	    sed -i "s|#define MONO_SHA.*|#define MONO_SHA \"${mono_sum}\"|g" "${srcdir}"/"${_winesrcdir}"/dlls/appwiz.cpl/addons.c
+	    sed -i "s|#define WINE_MONO_VERSION.*|#define WINE_MONO_VERSION \"${mono_ver}\"|g" "${srcdir}"/"${_winesrcdir}"/dlls/mscoree/mscoree_private.h
+	  fi
 	fi
 
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD || ([ "$_protonify" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then

@@ -623,11 +623,21 @@ function download_dxvk_version {
 }
 
 function latest_mono {
-  curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.tar.xz" | cut -d : -f 2,3 | tr -d \"
+  if [ "$_use_latest_mono" = "true" ]; then
+    curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.tar.xz" | cut -d : -f 2,3 | tr -d \"
+  else
+    _current_mono=$( grep "#define MONO_VERSION" "$_wine_tkg_git_path/src/$_winesrcdir/dlls/appwiz.cpl/addons.c" | cut -d'"' -f 2 )
+    echo "https://github.com/madewokherd/wine-mono/releases/download/wine-mono-$_current_mono/wine-mono-$_current_mono-x86.tar.xz"
+  fi
 }
 
 function latest_mono_msi {
-  curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \"
+  if [ "$_use_latest_mono" = "true" ]; then
+    curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \"
+  else
+    _current_mono=$( grep "#define MONO_VERSION" "$_wine_tkg_git_path/src/$_winesrcdir/dlls/appwiz.cpl/addons.c" | cut -d'"' -f 2 )
+    echo "https://github.com/madewokherd/wine-mono/releases/download/wine-mono-$_current_mono/wine-mono-$_current_mono-x86.msi"
+  fi
 }
 
 if [ "$1" = "clean" ]; then
