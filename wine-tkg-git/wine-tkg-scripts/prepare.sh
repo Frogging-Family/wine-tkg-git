@@ -859,6 +859,9 @@ _prepare() {
 	fi
 
 	# Fixes for staging based Proton + steamhelper
+	if [ "$_steamclient_noswap" = "true" ]; then
+	  _proton_use_steamhelper="false"
+	fi
 	if ( [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_use_steamhelper" = "true" ] ); then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7fc716aa5f8595e5bca9206f86859f1ac70894ad HEAD ); then
