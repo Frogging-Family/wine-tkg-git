@@ -1024,7 +1024,7 @@ _prepare() {
 
 	# Proton Bcrypt patches
 	if [ "$_use_staging" = "true" ]; then
-	  if [ "$_proton_bcrypt" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 37e000145f07c4ec6f48fdac5969bbbb05435d52 HEAD ); then
+	  if [ "$_proton_bcrypt" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 37e000145f07c4ec6f48fdac5969bbbb05435d52 HEAD ) && ! grep -Fxq 'Disabled: true' "${srcdir}/${_stgsrcdir}/patches/bcrypt-ECDHSecretAgreement/definition"; then
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 74c0da2d71e95f3e6bd6c8b440652933771b27d7 HEAD );then
 	      _staging_args+=(-W bcrypt-ECDHSecretAgreement)
 	    fi
