@@ -2713,7 +2713,7 @@ EOM
 	# Proton Bcrypt patches
 	if [ "$_proton_bcrypt" = "true" ]; then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 74c0da2d71e95f3e6bd6c8b440652933771b27d7 HEAD );then
-	    if [ "$_use_staging" = "true" ]; then
+	    if [ "$_use_staging" = "true" ] && ! grep -Fxq 'Disabled: true' "${srcdir}/${_stgsrcdir}/patches/bcrypt-ECDHSecretAgreement/definition"; then
 	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor b3cd21c21cf832529b154b3b8cc6ff85ec246c59 HEAD );then
 	        _patchname='proton-bcrypt-staging.patch' && _patchmsg="Using Proton Bcrypt patches" && nonuser_patcher
 	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3db37dc5ae4e8b701c26f96fec97822b8b4da80c HEAD );then
