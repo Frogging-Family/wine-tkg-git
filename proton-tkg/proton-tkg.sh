@@ -208,8 +208,8 @@ function build_vrclient {
 function build_lsteamclient {
   cd "$_nowhere"/Proton
   source "$_nowhere/proton_tkg_token"
-  export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --dll -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/"
-  export CFLAGS="-O2 -g"
+  export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine"
+  export CFLAGS="-Wno-attributes -O2 -g"
   export CXXFLAGS="-fpermissive -Wno-attributes -O2 -g"
   export PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
   if [[ "$_proton_branch" != *3.* ]] && [[ "$_proton_branch" != *4.* ]]; then
@@ -237,18 +237,18 @@ function build_lsteamclient {
   cp -a lsteamclient/* build/lsteamclient.win32
 
   cd build/lsteamclient.win64
-  winemaker $WINEMAKERFLAGS -DSTEAM_API_EXPORTS -L"$_x86_64_unix_path" -L"$_x86_64_windows_path" .
-  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip lsteamclient.dll.so
+  winemaker $WINEMAKERFLAGS --dll -DSTEAM_API_EXPORTS -Dprivate=public -Dprotected=public .
+  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip --strip-unneeded lsteamclient.dll.so
   if [ "$_new_lib_paths_69" = "true" ]; then
-    winebuild --dll --fake-module -E "$_nowhere/Proton/build/lsteamclient.win64/lsteamclient.spec" -o lsteamclient.dll.fake
+    winebuild --dll --fake-module -m64 -E "$_nowhere/Proton/lsteamclient/lsteamclient.spec" --dll-name=lsteamclient -o lsteamclient.dll.fake
   fi
   cd ../..
 
   cd build/lsteamclient.win32
-  winemaker $WINEMAKERFLAGS --wine32 -DSTEAM_API_EXPORTS -L"$_i386_unix_path" -L"$_i386_windows_path" .
-  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip lsteamclient.dll.so
+  winemaker $WINEMAKERFLAGS --dll -DSTEAM_API_EXPORTS -Dprivate=public -Dprotected=public --wine32 .
+  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip --strip-unneeded lsteamclient.dll.so
   if [ "$_new_lib_paths_69" = "true" ]; then
-    winebuild --dll --fake-module -E "$_nowhere/Proton/build/lsteamclient.win32/lsteamclient.spec" -o lsteamclient.dll.fake
+    winebuild --dll --fake-module -m32 -E "$_nowhere/Proton/lsteamclient/lsteamclient.spec" --dll-name=lsteamclient -o lsteamclient.dll.fake
   fi
   cd "$_nowhere"
 
@@ -261,23 +261,15 @@ function build_lsteamclient {
       cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/
       cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/
     fi
-    # workarounds
-    if [ -d proton_dist_tmp/lib/wine/i386-unix ]; then
-      #cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/x86_64-unix/steamclient64.dll.so # Skyrim SE doesn't like this
-      cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/i386-unix/steamclient.dll.so
-    fi
     if [ "$_new_lib_paths_69" = "true" ] && [ -d proton_dist_tmp/lib/wine/i386-windows ] && [ -d proton_dist_tmp/lib64/wine/x86_64-windows ]; then
       cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.fake proton_dist_tmp/lib64/wine/x86_64-windows/lsteamclient.dll
       cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.fake proton_dist_tmp/lib/wine/i386-windows/lsteamclient.dll
-
-      cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.fake proton_dist_tmp/lib64/wine/x86_64-windows/steamclient64.dll
-      cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.fake proton_dist_tmp/lib/wine/i386-windows/steamclient.dll
     fi
   else
     cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/lib64/wine/
     cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.so proton_dist_tmp/lib/wine/
-    #cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.fake proton_dist_tmp/lib64/wine/fakedlls/lsteamclient.dll
-    #cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/lsteamclient.dll
+    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.fake proton_dist_tmp/lib64/wine/fakedlls/lsteamclient.dll
+    cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/lsteamclient.dll
   fi
 }
 
