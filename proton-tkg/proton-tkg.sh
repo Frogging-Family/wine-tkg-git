@@ -409,8 +409,11 @@ function build_mediaconverter {
 }
 
 function build_steamhelper {
+  export CFLAGS="-Wno-attributes -O2 -g"
+  export CXXFLAGS="-Wno-attributes -O2 -g"
   # disable openvr support for now since we don't support it
   if [[ "$_proton_branch" = *6.3 ]]; then
+    _cxx_addon="-std=c++17"
     if [ "$_no_loader_array" = "true" ]; then
       ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support-legacy.patch" || true )
     else
@@ -433,11 +436,11 @@ function build_steamhelper {
     elif [[ "$_proton_branch" = *4.2 ]] || [[ "$_proton_branch" = *5.0 ]] || [[ "$_proton_branch" = *5.13 ]]; then
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -L$_i386_unix_path -L$_i386_windows_path"
     else
-      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_i386_unix_path -L$_i386_windows_path"
+      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_i386_unix_path -L$_i386_windows_path -ldl"
     fi
 
-    winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -L"$_nowhere/Proton/steam_helper" .
-    make -e CC="winegcc -m32" CXX="wineg++ -m32" -C "$_nowhere/Proton/build/steam.win32" -j$(nproc) && strip steam.exe.so
+    winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
+    make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win32" -j$(nproc) && strip --strip-unneeded steam.exe.so
     if [ "$_new_lib_paths_69" = "true" ]; then
       touch "$_nowhere/Proton/build/steam.win32/steam.exe.spec"
       winebuild --dll --fake-module -E "$_nowhere/Proton/build/steam.win32/steam.exe.spec" -o steam.exe.fake
