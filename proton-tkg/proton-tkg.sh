@@ -158,7 +158,9 @@ function build_vrclient {
   export CFLAGS="-O2 -g"
   export CXXFLAGS="-Wno-attributes -std=c++0x -O2 -g"
   PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
-  if [ "$_standard_dlopen" = "true" ] && [[ "$_proton_branch" != *5.13 ]]; then
+  if [[ "$_proton_branch" = *6.* ]]; then
+    WINEMAKERFLAGS+=" -ldl"
+  elif [ "$_standard_dlopen" = "true" ] && [[ "$_proton_branch" != *5.13 ]]; then
     patch -Np1 < "$_nowhere/proton_template/vrclient-remove-library.h-dep.patch" || true
     patch -Np1 < "$_nowhere/proton_template/vrclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch" || true
     WINEMAKERFLAGS+=" -ldl"
@@ -166,6 +168,8 @@ function build_vrclient {
     patch -Np1 < "$_nowhere/proton_template/vrclient-remove-library.h-dep.patch" || true
     WINEMAKERFLAGS+=" -ldl"
   fi
+
+  new_lib_path_check
 
   rm -rf build/vrclient.win64
   rm -rf build/vrclient.win32
@@ -187,11 +191,18 @@ function build_vrclient {
   winebuild --dll --fake-module -E "$_nowhere/Proton/build/vrclient.win32/vrclient/vrclient.spec" -o vrclient.dll.fake
   cd "$_nowhere"
 
-  cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/fakedlls/vrclient_x64.dll
-  cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/vrclient.dll
-
   cp -v Proton/openvr/bin/win32/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/openvr_api_dxvk.dll
   cp -v Proton/openvr/bin/win64/openvr_api.dll proton_dist_tmp/lib64/wine/dxvk/openvr_api_dxvk.dll
+
+  if [ "$_new_lib_paths" = "true" ]; then
+    if [ "$_new_lib_paths_69" = "true" ] && [ -d proton_dist_tmp/lib/wine/i386-windows ] && [ -d proton_dist_tmp/lib64/wine/x86_64-windows ]; then
+      cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/x86_64-unix/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/x86_64-windows/vrclient_x64.dll
+      cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/i386-unix/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/i386-windows/vrclient.dll
+    fi
+  else
+    cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/fakedlls/vrclient_x64.dll
+    cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/vrclient.dll
+  fi
 }
 
 function build_lsteamclient {
