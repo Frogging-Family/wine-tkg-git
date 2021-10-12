@@ -181,13 +181,13 @@ function build_vrclient {
 
   cd build/vrclient.win64
   winemaker $WINEMAKERFLAGS -L"$_nowhere/proton_dist_tmp/lib64/" -L"$_nowhere/proton_dist_tmp/lib64/wine/" -I"$_nowhere/Proton/build/vrclient.win64/vrclient_x64/" -I"$_nowhere/Proton/build/vrclient.win64/" vrclient_x64
-  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win64/vrclient_x64" -j$(nproc) && strip vrclient_x64/vrclient_x64.dll.so
+  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win64/vrclient_x64" -j$(nproc) && strip --strip-unneeded vrclient_x64/vrclient_x64.dll.so
   winebuild --dll --fake-module -E "$_nowhere/Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.spec" -o vrclient_x64.dll.fake
   cd ../..
 
   cd build/vrclient.win32
   winemaker $WINEMAKERFLAGS --wine32 -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" -I"$_nowhere/Proton/build/vrclient.win32/vrclient/" -I"$_nowhere/Proton/build/vrclient.win32/" vrclient
-  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win32/vrclient" -j$(nproc) && strip vrclient/vrclient.dll.so
+  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win32/vrclient" -j$(nproc) && strip --strip-unneeded vrclient/vrclient.dll.so
   winebuild --dll --fake-module -E "$_nowhere/Proton/build/vrclient.win32/vrclient/vrclient.spec" -o vrclient.dll.fake
   cd "$_nowhere"
 
