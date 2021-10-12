@@ -436,23 +436,22 @@ function build_steamhelper {
     new_lib_path_check
 
     if [[ "$_proton_branch" = *4.11 ]]; then
-      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/wine/msvcrt/ -I$_nowhere/proton_dist_tmp/include/ -L$_i386_unix_path -L$_i386_windows_path"
+      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine -I$_nowhere/proton_dist_tmp/include/wine/msvcrt"
     elif [[ "$_proton_branch" = *4.2 ]] || [[ "$_proton_branch" = *5.0 ]] || [[ "$_proton_branch" = *5.13 ]]; then
-      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -L$_i386_unix_path -L$_i386_windows_path"
+      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine"
     else
-      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --wine32 -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_wine_tkg_git_path/src/$_winesrcdir/include/ -L$_i386_unix_path -L$_i386_windows_path -ldl"
+      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine -ldl"
     fi
 
-    winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
+    winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
     make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win32" -j$(nproc) && strip --strip-unneeded steam.exe.so
     if [ "$_new_lib_paths_69" = "true" ]; then
-      touch "$_nowhere/Proton/build/steam.win32/steam.exe.spec"
-      winebuild --dll --fake-module -E "$_nowhere/Proton/build/steam.win32/steam.exe.spec" -o steam.exe.fake
+      winebuild --exe --fake-module -m32 -E "$_nowhere/Proton/lsteamclient/lsteamclient.spec" --dll-name=steam -o steam.exe.fake
     fi
     cd "$_nowhere"
 
     if [ "$_new_lib_paths" = "true" ]; then
-      #cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/i386-windows/steam.exe
+      cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/i386-windows/steam.exe
       if [ "$_new_lib_paths_69" = "true" ]; then
         cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/i386-unix/
       else
@@ -460,7 +459,7 @@ function build_steamhelper {
       fi
       cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
     else
-      #cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/fakedlls/steam.exe
+      cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/fakedlls/steam.exe
       cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
       cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
     fi
