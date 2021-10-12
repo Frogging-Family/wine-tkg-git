@@ -415,10 +415,14 @@ function build_steamhelper {
   if [[ "$_proton_branch" = *6.3 ]]; then
     _cxx_addon="-std=c++17"
     if [ "$_no_loader_array" = "true" ]; then
-      ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support-legacy.patch" || true )
+      if [ "$_steamvr_support" != "true" ]; then
+        ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support-legacy.patch" || true )
+      fi
     else
       ( cd Proton && patch -Np1 < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system.patch" || true )
-      ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support.patch" || true )
+      if [ "$_steamvr_support" != "true" ]; then
+        ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support.patch" || true )
+      fi
     fi
   fi
 
