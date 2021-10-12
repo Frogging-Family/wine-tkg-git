@@ -1049,6 +1049,9 @@ else
 
     echo -e "Full version: $_protontkg_true_version\nStripped version: ${_alt_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
 
+    # Cleanup
+    find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.def' ')' -delete
+
     # pefixup
     if [[ $_proton_branch != *3.* ]] && [[ $_proton_branch != *4.* ]] && [[ $_proton_branch != *5.* ]] && [ ${_alt_start_vercheck//./} -ge 66 ]; then
       echo ''
