@@ -921,15 +921,6 @@ else
     _prefix_version=$( echo ${_protontkg_true_version} | sed 's/.r/-/; s/.[^.]*//4g; s/\.[^.*-]*//2g;' )
     sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version\"|" "proton_tkg_$_protontkg_version/proton"
 
-    # Patch our proton script to make use of the steam helper on 4.0+
-    if [[ $_proton_branch != *3.* ]] && [ "$_proton_use_steamhelper" = "true" ]; then
-      cd "$_nowhere/proton_tkg_$_protontkg_version"
-      _patchname="steam.exe.patch"
-      echo -e "\nApplying $_patchname"
-      patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
-      cd "$_nowhere"
-    fi
-
     # Patch our proton script to allow for VR support
     if [ "$_steamvr_support" = "true" ]; then
       cd "$_nowhere/proton_tkg_$_protontkg_version"
@@ -1039,19 +1030,14 @@ else
       sed -i 's/.*PROTON_USE_WINED3D9.*/     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
     fi
 
-    # Disable alt start if steamhelper is enabled
-    _alt_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' )
-    if [ "$_proton_use_steamhelper" = "true" ]; then
-      sed -i 's/.*PROTON_ALT_START.*/#     "PROTON_ALT_START": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py" | echo "Disable alt start" >> "$_logdir"/proton-tkg.log
-    fi
-
-    echo -e "Full version: $_protontkg_true_version\nStripped version: ${_alt_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
+    _standalone_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' )
+    echo -e "Full version: $_protontkg_true_version\nStripped version: ${_standalone_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
 
     # Cleanup
     find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.def' ')' -delete
 
     # pefixup
-    if [[ $_proton_branch != *3.* ]] && [[ $_proton_branch != *4.* ]] && [[ $_proton_branch != *5.* ]] && [ ${_alt_start_vercheck//./} -ge 66 ]; then
+    if [[ $_proton_branch != *3.* ]] && [[ $_proton_branch != *4.* ]] && [[ $_proton_branch != *5.* ]] && [ ${_standalone_start_vercheck//./} -ge 66 ]; then
       echo ''
       echo "Fixing PE files..."
       find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py" >>"$_logdir"/proton-tkg.log 2>&1
@@ -1080,6 +1066,11 @@ else
     python3 "$_nowhere"/proton_template/default_pfx.py "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" "$_nowhere/proton_tkg_$_protontkg_version/files" >>"$_logdir"/proton-tkg.log 2>&1
 
     wine_is_running
+
+    # Enable standalone start when the steamhelper is disabled
+    if [ "$_proton_use_steamhelper" != "true" ]; then
+      sed -i 's/.*PROTON_STANDALONE_START.*/     "PROTON_STANDALONE_START": "1",/g' "$_nowhere/proton_tkg_$_protontkg_version/user_settings.py" | echo "Enable standalone start" >> "$_logdir"/proton-tkg.log
+    fi
 
     # steampipe fixups
     echo ''

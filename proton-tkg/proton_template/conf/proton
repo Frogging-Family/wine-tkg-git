@@ -1032,6 +1032,7 @@ class Session:
         self.log_file = None
         self.env = dict(os.environ)
         self.dlloverrides = {
+                "steam.exe": "b", #always use our special built-in steam.exe
                 "mfplay": "n", #disable built-in mfplay
                 "dotnetfx35.exe": "b,n" #replace the broken installer, as does Windows, if it exists
         }
@@ -1165,7 +1166,7 @@ class Session:
         self.check_environment("PROTON_CONHOST_DISABLE", "noconhost")
         self.check_environment("PROTON_PULSE_LOWLATENCY", "pulselowlat")
         self.check_environment("PROTON_LOG_COMMAND_TO_PREFIX", "logcommandtoprefix")
-        self.check_environment("PROTON_ALT_START", "alternativestart")
+        self.check_environment("PROTON_STANDALONE_START", "standalonestart")
         self.check_environment("PROTON_WINETRICKS", "winetricks")
         self.check_environment("PROTON_BYPASS_SHADERCACHE_PATH", "shadercachepath")
 
@@ -1446,10 +1447,13 @@ class Session:
         ]
 
         gamebin = (os.path.basename(sys.argv[2]))
-        if any(check_args) and not "alternativestart" in self.compat_config:
+        if any(check_args) in self.compat_config:
+            commandtorun=[g_proton.wine_bin, "steam"] + sys.argv[2:] + self.cmdlineappend
+        elif "standalonestart" in self.compat_config:
             commandtorun=[g_proton.wine_bin] + [gamebin] + self.cmdlineappend
+            os.chdir(os.path.dirname(sys.argv[2]))
         else:
-            commandtorun=[g_proton.wine_bin] + [gamebin] + self.cmdlineappend
+            commandtorun=[g_proton.wine_bin, "start.exe", "/b", "steam"] + sys.argv[2:] + self.cmdlineappend
 
         if "winetricks" in self.compat_config:
             if os.path.exists(os.environ["STEAM_COMPAT_DATA_PATH"]):
@@ -1471,11 +1475,13 @@ class Session:
                                     root.destroy()
                                     open(tricksfile_path, "w+").close()
                     except ImportError:
-                        if any(check_args) and not "alternativestart" in self.compat_config:
+                        if any(check_args) in self.compat_config:
+                            commandtorun=[g_proton.wine_bin, "steam"] + sys.argv[2:] + self.cmdlineappend
+                        elif "standalonestart" in self.compat_config:
                             commandtorun=[g_proton.wine_bin] + [gamebin] + self.cmdlineappend
+                            os.chdir(os.path.dirname(sys.argv[2]))
                         else:
-                            commandtorun=[g_proton.wine_bin] + [gamebin] + self.cmdlineappend
-        os.chdir(os.path.dirname(sys.argv[2]))
+                            commandtorun=[g_proton.wine_bin, "start.exe", "/b", "steam"] + sys.argv[2:] + self.cmdlineappend
         self.run_proc(commandtorun)
 
 
