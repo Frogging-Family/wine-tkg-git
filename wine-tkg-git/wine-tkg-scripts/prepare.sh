@@ -321,7 +321,9 @@ _pkgnaming() {
   elif [ "$_EXTERNAL_INSTALL" = "proton" ]; then
     pkgname="proton_dist"
     _DEFAULT_EXTERNAL_PATH="$HOME/.steam/root/compatibilitytools.d"
-    msg2 "Installing to $_DEFAULT_EXTERNAL_PATH/proton_tkg"
+    if [ "$_ispkgbuild" != "true" ]; then
+      msg2 "Installing to $_DEFAULT_EXTERNAL_PATH/proton_tkg"
+    fi
   fi
 }
 
