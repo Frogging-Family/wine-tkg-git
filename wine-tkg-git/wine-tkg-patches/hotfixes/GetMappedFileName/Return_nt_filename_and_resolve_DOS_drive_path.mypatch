@@ -1,16 +1,22 @@
-From 3f060e30416f6456d549bae835905449683fef3f Mon Sep 17 00:00:00 2001
 From: Matias Zuniga <matias.nicolas.zc@gmail.com>
-Date: Sun, 29 Aug 2021 15:58:03 -0400
-Subject: [PATCH] GetMappedFileName: Return nt filename and resolve DOS drive
- path
+Subject: [PATCH v2] ntdll: resolve drive symlink for mapped filename
+Message-Id: <20210910222502.427576-1-matias.nicolas.zc@gmail.com>
+Date: Fri, 10 Sep 2021 19:25:02 -0300
 
+Applications expect a path starting with a drive like
+'\Device\Harddisk1\' instead of a drive letter.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=51687
+Signed-off-by: Matias Zuniga <matias.nicolas.zc@gmail.com>
 ---
- dlls/ntdll/unix/virtual.c     | 76 ++++++++++++++++++++++++++++++++---
- dlls/psapi/tests/psapi_main.c |  5 +--
- 2 files changed, 71 insertions(+), 10 deletions(-)
+v2: Fix info.c test breakage
+---
+ dlls/ntdll/unix/virtual.c     | 97 ++++++++++++++++++++++++++++++++---
+ dlls/psapi/tests/psapi_main.c |  5 +-
+ 2 files changed, 90 insertions(+), 12 deletions(-)
 
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index 8a1e35b6387..04eddf0e6f1 100644
+index 984af2d4a21..48bfaf3cf99 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
 @@ -133,6 +133,8 @@ struct file_view
@@ -22,7 +28,7 @@ index 8a1e35b6387..04eddf0e6f1 100644
  /* per-page protection flags */
  #define VPROT_READ       0x01
  #define VPROT_WRITE      0x02
-@@ -4273,34 +4275,96 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
+@@ -4273,34 +4275,113 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
      return STATUS_SUCCESS;
  }
 
@@ -51,28 +57,41 @@ index 8a1e35b6387..04eddf0e6f1 100644
 +    return status;
 +}
 +
-+static NTSTATUS follow_device_symlink( WCHAR *buffer, SIZE_T max_path_len, WCHAR *name, SIZE_T *current_path_len )
++static NTSTATUS follow_device_symlink( WCHAR *name, SIZE_T max_path_len, WCHAR *buffer,
++                                       SIZE_T buffer_len, SIZE_T *current_path_len )
 +{
-+    WCHAR *p = buffer;
++    WCHAR *p;
 +    NTSTATUS status = STATUS_SUCCESS;
-+    SIZE_T devname_len = 6; // e.g. \??\C:
++    SIZE_T devname_len = 6 * sizeof(WCHAR); // e.g. \??\C:
 +    UNICODE_STRING devname;
-+    DWORD target_len;
++    SIZE_T target_len;
 +
-+    if (*current_path_len >= devname_len * sizeof(WCHAR) && name[devname_len - 1] == ':') {
-+        devname.Buffer = name;
-+        devname.Length = devname_len * sizeof(WCHAR);
-+        if (!(status = read_nt_symlink( &devname, p, (max_path_len - *current_path_len) / sizeof(WCHAR) + devname_len + 1 )))
++    if (*current_path_len > buffer_len) return STATUS_INVALID_PARAMETER;
++
++    if (*current_path_len >= devname_len && buffer[devname_len / sizeof(WCHAR) - 1] == ':') {
++        devname.Buffer = buffer;
++        devname.Length = devname_len;
++
++        p = buffer + (*current_path_len / sizeof(WCHAR));
++        if (!(status = read_nt_symlink( &devname, p, (buffer_len - *current_path_len) / sizeof(WCHAR) )))
 +        {
-+            target_len = lstrlenW(p);
-+            *current_path_len -= devname_len * sizeof(WCHAR); // skip the device name
-+            p += target_len;
++            *current_path_len -= devname_len; // skip the device name
++            target_len = lstrlenW(p) * sizeof(WCHAR);
++            *current_path_len += target_len;
 +
-+            memcpy( p, name + devname_len, *current_path_len );
-+            *current_path_len += target_len * sizeof(WCHAR);
++            if (*current_path_len <= max_path_len)
++            {
++                memcpy( name, p, target_len );
++                p = buffer + devname_len / sizeof(WCHAR);
++                memcpy( name + target_len / sizeof(WCHAR), p, *current_path_len - target_len);
++            }
++            else status = STATUS_BUFFER_OVERFLOW;
 +        }
 +    }
-+    else memcpy( p, name, *current_path_len );
++    else if (*current_path_len <= max_path_len) {
++        memcpy( name, buffer, *current_path_len );
++    }
++    else status = STATUS_BUFFER_OVERFLOW;
 +
 +    return status;
 +}
@@ -80,32 +99,38 @@ index 8a1e35b6387..04eddf0e6f1 100644
  static NTSTATUS get_memory_section_name( HANDLE process, LPCVOID addr,
                                           MEMORY_SECTION_NAME *info, SIZE_T len, SIZE_T *ret_len )
  {
-+    SIZE_T current_path_len, max_path_len;
-+    WCHAR *name;
++    SIZE_T current_path_len, max_path_len = 0;
++    // buffer to hold the path + 6 chars devname (e.g. \??\C:)
++    SIZE_T buffer_len = (MAX_PATH + 6) * sizeof(WCHAR);
++    WCHAR *buffer = NULL;
      NTSTATUS status;
 
      if (!info) return STATUS_ACCESS_VIOLATION;
-+    max_path_len = len - sizeof(*info) - sizeof(WCHAR); // dont count null char
-+    if (!(name = malloc( max_path_len ))) return STATUS_NO_MEMORY;
++    if (!(buffer = malloc( buffer_len ))) return STATUS_NO_MEMORY;
++    if (len > sizeof(*info) + sizeof(WCHAR))
++    {
++        max_path_len = len - sizeof(*info) - sizeof(WCHAR); // dont count null char
++    }
 
      SERVER_START_REQ( get_mapping_filename )
      {
          req->process = wine_server_obj_handle( process );
          req->addr = wine_server_client_ptr( addr );
-         if (len > sizeof(*info) + sizeof(WCHAR))
+-        if (len > sizeof(*info) + sizeof(WCHAR))
 -            wine_server_set_reply( req, info + 1, len - sizeof(*info) - sizeof(WCHAR) );
-+            wine_server_set_reply( req, name, max_path_len );
++        wine_server_set_reply( req, buffer, MAX_PATH );
          status = wine_server_call( req );
-         if (!status || status == STATUS_BUFFER_OVERFLOW)
+-        if (!status || status == STATUS_BUFFER_OVERFLOW)
++        if (!status)
          {
 -            if (ret_len) *ret_len = sizeof(*info) + reply->len + sizeof(WCHAR);
 -            if (len < sizeof(*info)) status = STATUS_INFO_LENGTH_MISMATCH;
 +            current_path_len = reply->len;
++            status = follow_device_symlink( (WCHAR *)(info + 1), max_path_len, buffer, buffer_len, &current_path_len);
 +            if (len < sizeof(*info))
 +            {
 +                status = STATUS_INFO_LENGTH_MISMATCH;
 +            }
-+            else if (!status) status = follow_device_symlink( (WCHAR *)(info + 1), max_path_len, name, &current_path_len);
 +
 +            if (ret_len) *ret_len = sizeof(*info) + current_path_len + sizeof(WCHAR);
              if (!status)
@@ -121,7 +146,7 @@ index 8a1e35b6387..04eddf0e6f1 100644
          }
      }
      SERVER_END_REQ;
-+    free(name);
++    free(buffer);
      return status;
  }
 
@@ -162,7 +187,7 @@ index c4a740310a4..d6fb8e69384 100644
      }
 
      SetLastError(0xdeadbeef);
+
 --
 2.31.1
-
 
