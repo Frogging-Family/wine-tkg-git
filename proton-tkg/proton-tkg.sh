@@ -1040,7 +1040,7 @@ else
     if [[ $_proton_branch != *3.* ]] && [[ $_proton_branch != *4.* ]] && [[ $_proton_branch != *5.* ]] && [ ${_standalone_start_vercheck//./} -ge 66 ]; then
       echo ''
       echo "Fixing PE files..."
-      find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P8 -n3 "$_nowhere/proton_template/pefixup.py" >>"$_logdir"/proton-tkg.log 2>&1
+      find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P$(nproc) -n1 "$_nowhere/proton_template/pefixup.py" >>"$_logdir"/proton-tkg.log 2>&1
     fi
 
     # perms
