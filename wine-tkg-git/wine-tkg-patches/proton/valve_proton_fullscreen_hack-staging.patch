@@ -7032,7 +7032,26 @@ diff --git a/dlls/winex11.drv/vulkan.c b/dlls/winex11.drv/vulkan.c
 index 5563af5fa41..7230b778cc5 100644
 --- a/dlls/winex11.drv/vulkan.c
 +++ b/dlls/winex11.drv/vulkan.c
-@@ -215,16 +220,30 @@ static void wine_vk_surface_release(struct wine_vk_surface *surface)
+@@ -60,6 +60,7 @@ static XContext vulkan_swapchain_context;
+ 
+ struct wine_vk_surface
+ {
++    struct list entry;
+     LONG ref;
+     Window window;
+     VkSurfaceKHR surface; /* native surface */
+@@ -208,6 +209,10 @@ static void wine_vk_surface_release(struct wine_vk_surface *surface)
+     if (InterlockedDecrement(&surface->ref))
+         return;
+ 
++    EnterCriticalSection(&context_section);
++    list_remove(&surface->entry);
++    LeaveCriticalSection(&context_section);
++
+     if (surface->window)
+         XDestroyWindow(gdi_display, surface->window);
+ 
+@@ -215,14 +220,28 @@ static void wine_vk_surface_release(struct wine_vk_surface *surface)
  }
  
  void wine_vk_surface_destroy(HWND hwnd)
@@ -7056,8 +7075,6 @@ index 5563af5fa41..7230b778cc5 100644
 -    if (!XFindContext(gdi_display, (XID)hwnd, vulkan_hwnd_context, (char **)&surface))
 +    if (!XFindContext(gdi_display, (XID)hwnd, vulkan_hwnd_context, (char **)&surface_list))
      {
-         surface->hwnd_thread_id = 0;
-         surface->hwnd = NULL;
 -        wine_vk_surface_release(surface);
 +        LIST_FOR_EACH_ENTRY(surface, surface_list, struct wine_vk_surface, entry)
 +            if (surface->window != active) XConfigureWindow(gdi_display, surface->window, mask, changes);
@@ -7066,29 +7083,40 @@ index 5563af5fa41..7230b778cc5 100644
      LeaveCriticalSection(&context_section);
  }
  
-@@ -298,6 +317,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
+@@ -298,7 +317,8 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
+ {
      VkResult res;
      VkXlibSurfaceCreateInfoKHR create_info_host;
-     struct wine_vk_surface *x11_surface;
+-    struct wine_vk_surface *x11_surface, *prev;
++    struct wine_vk_surface *x11_surface;
 +    struct list *surface_list;
  
      TRACE("%p %p %p %p\n", instance, create_info, allocator, surface);
  
 @@ -304,6 +322,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
-     {
-         x11_surface->window = create_dummy_client_window();
-     }
+     x11_surface->hwnd = create_info->hwnd;
+     x11_surface->window = x11_surface->hwnd ? create_client_window(create_info->hwnd, &default_visual)
+                                             : create_dummy_client_window();
 +    list_init(&x11_surface->entry);
  
      if (!x11_surface->window)
      {
-@@ -329,7 +348,16 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
+@@ -329,12 +348,23 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
      if (x11_surface->hwnd)
      {
-         wine_vk_surface_destroy( x11_surface->hwnd );
+         EnterCriticalSection(&context_section);
+-        if (!XFindContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char **)&prev))
++        if (XFindContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char **)&surface_list) &&
++                (surface_list = heap_alloc_zero(sizeof(*surface_list))))
+         {
+-            wine_vk_surface_release(prev);
++            list_init(surface_list);
++            XSaveContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char *)surface_list);
+         }
 -        XSaveContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char *)wine_vk_surface_grab(x11_surface));
 +        if (!XFindContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char **)&surface_list))
 +            list_add_tail(surface_list, &x11_surface->entry);
+         LeaveCriticalSection(&context_section);
 +
 +        if (!surface_list)
 +        {
@@ -7098,8 +7126,8 @@ index 5563af5fa41..7230b778cc5 100644
 +        }
 +
      }
-     list_add_tail(&surface_list, &x11_surface->entry);
-     LeaveCriticalSection(&context_section);
+ 
+     *surface = (uintptr_t)x11_surface;
 diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
 index 559d9e7880a..eb508c05b5d 100644
 --- a/dlls/winex11.drv/window.c
@@ -7121,9 +7149,9 @@ index b41b9d6ad08..faebd7ffcd5 100644
  extern void destroy_gl_drawable( HWND hwnd ) DECLSPEC_HIDDEN;
  extern void wine_vk_surface_destroy( HWND hwnd ) DECLSPEC_HIDDEN;
 +extern void resize_vk_surfaces( HWND hwnd, Window active, int mask, XWindowChanges *changes ) DECLSPEC_HIDDEN;
- extern void vulkan_thread_detach(void) DECLSPEC_HIDDEN;
  
  extern void wait_for_withdrawn_state( HWND hwnd, BOOL set ) DECLSPEC_HIDDEN;
+ extern Window init_clip_window(void) DECLSPEC_HIDDEN;
 From 92c5b6ea2e8e79253e5c336f871399c14d1c8cad Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Fri, 12 Mar 2021 18:07:04 +0100
@@ -7147,9 +7175,9 @@ index 7230b778cc5..b4d674f78e8 100644
 --- a/dlls/winex11.drv/vulkan.c
 +++ b/dlls/winex11.drv/vulkan.c
 @@ -64,6 +64,7 @@ struct wine_vk_surface
+     VkPresentModeKHR present_mode;
      BOOL offscreen; /* drawable is offscreen */
      HWND hwnd;
-     DWORD hwnd_thread_id;
 +    HDC dc;
  };
  
@@ -7181,9 +7209,9 @@ index 7230b778cc5..b4d674f78e8 100644
      heap_free(surface);
  }
 @@ -322,6 +339,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
-     {
-         x11_surface->window = create_dummy_client_window();
-     }
+     x11_surface->hwnd = create_info->hwnd;
+     x11_surface->window = x11_surface->hwnd ? create_client_window(create_info->hwnd, &default_visual)
+                                             : create_dummy_client_window();
 +    x11_surface->dc = GetDC(create_info->hwnd);
      list_init(&x11_surface->entry);
  
@@ -7734,9 +7762,9 @@ index 2af04cc1d89..f2a2f736000 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
 @@ -610,6 +610,7 @@ extern void set_gl_drawable_parent( HWND hwnd, HWND parent ) DECLSPEC_HIDDEN;
+ extern void destroy_gl_drawable( HWND hwnd ) DECLSPEC_HIDDEN;
  extern void wine_vk_surface_destroy( HWND hwnd ) DECLSPEC_HIDDEN;
  extern void resize_vk_surfaces( HWND hwnd, Window active, int mask, XWindowChanges *changes ) DECLSPEC_HIDDEN;
- extern void vulkan_thread_detach(void) DECLSPEC_HIDDEN;
 +extern void sync_vk_surface( HWND hwnd, BOOL known_child ) DECLSPEC_HIDDEN;
  
  extern void wait_for_withdrawn_state( HWND hwnd, BOOL set ) DECLSPEC_HIDDEN;
