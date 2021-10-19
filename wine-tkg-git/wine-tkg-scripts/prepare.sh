@@ -1641,10 +1641,12 @@ EOM
 	    _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	  fi
 	  if [ "$_use_staging" = "true" ]; then
-	    if git merge-base --is-ancestor a7ec245f844762cce6fb789fe3ffb1bf42d44249 HEAD; then
+	    if git merge-base --is-ancestor 6dcaff421f87a93efe18b2efe0ec64d94ed1d483 HEAD; then
 	      _patchname='valve_proton_fullscreen_hack-staging.patch' && _patchmsg="Applied Proton fullscreen hack patch (staging)" && nonuser_patcher
 	    else
-	      if git merge-base --is-ancestor f46c4a3920ce8e96b37b606c207add7f596f1950 HEAD; then
+	      if git merge-base --is-ancestor a7ec245f844762cce6fb789fe3ffb1bf42d44249 HEAD; then
+	        _lastcommit="6dcaff4"
+	      elif git merge-base --is-ancestor f46c4a3920ce8e96b37b606c207add7f596f1950 HEAD; then
 	        _lastcommit="a7ec245"
 	      elif git merge-base --is-ancestor 8285f616030f27877922ff414530d4f909306ace HEAD; then
 	        _lastcommit="f46c4a3"
@@ -2856,7 +2858,7 @@ _polish() {
 
 	echo -e "\nRunning make_vulkan" >> "$_where"/prepare.log && dlls/winevulkan/make_vulkan >> "$_where"/prepare.log 2>&1
 	tools/make_requests
-	autoreconf -f
+	autoreconf -fiv
 
 	# The versioning string has moved with 1dd3051cca5cafe90ce44460731df61abb680b3b
 	# Since this is reverted by the hotfixer path, only use the new path on 0c249e6+ (deprecation of the hotfixer path)
