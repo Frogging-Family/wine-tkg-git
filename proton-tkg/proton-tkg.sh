@@ -97,21 +97,25 @@ function new_lib_path_check {
     _new_lib_paths_69="false"
     _i386_unix_path="$_nowhere/proton_dist_tmp/lib/wine/i386-unix/"
     _i386_windows_path="$_nowhere/proton_dist_tmp/lib/wine/"
+    _i386_windows_tail="/lib/wine"
   elif [ ! -d "$_nowhere/proton_dist_tmp/lib/wine/i386-unix" ] && [ -d "$_nowhere/proton_dist_tmp/lib/wine/i386-windows" ] && [ ! -e "$_nowhere"/proton_dist_tmp/lib/libwine.* ]; then
     _new_lib_paths="true"
     _new_lib_paths_69="false"
     _i386_unix_path="$_nowhere/proton_dist_tmp/lib/"
     _i386_windows_path="$_nowhere/proton_dist_tmp/lib/wine/i386-windows/"
+    _i386_windows_tail="/lib/wine/i386-windows"
   elif [ -d "$_nowhere/proton_dist_tmp/lib/wine/i386-unix" ] && [ -d "$_nowhere/proton_dist_tmp/lib/wine/i386-windows" ] && [ ! -e "$_nowhere"/proton_dist_tmp/lib/libwine.* ]; then
     _new_lib_paths="true"
     _new_lib_paths_69="true"
     _i386_unix_path="$_nowhere/proton_dist_tmp/lib/wine/i386-unix/"
     _i386_windows_path="$_nowhere/proton_dist_tmp/lib/wine/i386-windows/"
+    _i386_windows_tail="/lib/wine/i386-windows"
   else
     _new_lib_paths="false"
     _new_lib_paths_69="false"
     _i386_unix_path="$_nowhere/proton_dist_tmp/lib/"
     _i386_windows_path="$_nowhere/proton_dist_tmp/lib/wine/"
+    _i386_windows_tail="/lib/wine"
   fi
 
   # x86_64
@@ -120,21 +124,25 @@ function new_lib_path_check {
     _new_lib_paths_69="false"
     _x86_64_unix_path="$_nowhere/proton_dist_tmp/lib64/wine/x86_64-unix/"
     _x86_64_windows_path="$_nowhere/proton_dist_tmp/lib64/wine/"
+    _x86_64_windows_tail="/lib64/wine"
   elif [ ! -d "$_nowhere/proton_dist_tmp/lib64/wine/x86_64-unix" ] && [ -d "$_nowhere/proton_dist_tmp/lib64/wine/x86_64-windows" ] && [ ! -e "$_nowhere"/proton_dist_tmp/lib64/libwine.* ]; then
     _new_lib_paths="true"
     _new_lib_paths_69="false"
     _x86_64_unix_path="$_nowhere/proton_dist_tmp/lib64/"
     _x86_64_windows_path="$_nowhere/proton_dist_tmp/lib64/wine/x86_64-windows/"
+    _x86_64_windows_tail="lib64/wine/x86_64-windows"
   elif [ -d "$_nowhere/proton_dist_tmp/lib64/wine/x86_64-unix" ] && [ -d "$_nowhere/proton_dist_tmp/lib64/wine/x86_64-windows" ] && [ ! -e "$_nowhere"/proton_dist_tmp/lib64/libwine.* ]; then
     _new_lib_paths="true"
     _new_lib_paths_69="true"
     _x86_64_unix_path="$_nowhere/proton_dist_tmp/lib64/wine/x86_64-unix/"
     _x86_64_windows_path="$_nowhere/proton_dist_tmp/lib64/wine/x86_64-windows/"
+    _x86_64_windows_tail="lib64/wine/x86_64-windows"
   else
     _new_lib_paths="false"
     _new_lib_paths_69="false"
     _x86_64_unix_path="$_nowhere/proton_dist_tmp/lib64/"
     _x86_64_windows_path="$_nowhere/proton_dist_tmp/lib64/wine/"
+    _x86_64_windows_tail="/lib64/wine"
   fi
 
   echo "_i386_unix_path=$_i386_unix_path" >>"$_logdir"/proton-tkg.log 2>&1
@@ -1034,13 +1042,23 @@ else
     echo -e "Full version: $_protontkg_true_version\nStripped version: ${_standalone_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
 
     # Cleanup
-    find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.def' ')' -delete
+    find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.def' -or -iname '*.debug' ')' -delete
 
     # pefixup
     if [[ $_proton_branch != *3.* ]] && [[ $_proton_branch != *4.* ]] && [[ $_proton_branch != *5.* ]] && [ ${_standalone_start_vercheck//./} -ge 66 ]; then
       echo ''
-      echo "Fixing PE files..."
-      find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f -name "*.dll" -printf "%p\0" | xargs --verbose -0 -r -P$(nproc) -n1 "$_nowhere/proton_template/pefixup.py" >>"$_logdir"/proton-tkg.log 2>&1
+      echo "Fixing x86_64 PE files..."
+      ( cd "$_nowhere/proton_tkg_$_protontkg_version/files/$_x86_64_windows_tail"
+      if [ "$_pkg_strip" = "true" ]; then
+        find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096
+      fi
+      find -type f -name "*.dll" -printf "%p\0" | xargs -0 -r -P8 -n1 "$_nowhere/proton_template/pefixup.py" )
+      echo "Fixing i386 PE files..."
+      ( cd "$_nowhere/proton_tkg_$_protontkg_version/files/$_i386_windows_tail"
+      if [ "$_pkg_strip" = "true" ]; then
+        find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096
+      fi
+      find -type f -name "*.dll" -printf "%p\0" | xargs -0 -r -P8 -n1 "$_nowhere/proton_template/pefixup.py" )
     fi
 
     # perms

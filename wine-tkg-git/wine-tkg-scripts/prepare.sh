@@ -37,6 +37,7 @@ _exit_cleanup() {
     fi
     echo "_skip_uninstaller=${_skip_uninstaller}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_no_autoinstall=${_no_autoinstall}" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_pkg_strip=${_pkg_strip}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_nvapi_disable=${_proton_nvapi_disable}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_winedbg_disable=${_proton_winedbg_disable}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_conhost_disable=${_proton_conhost_disable}" >> "$_proton_tkg_path"/proton_tkg_token
