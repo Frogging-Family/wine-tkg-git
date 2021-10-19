@@ -2857,7 +2857,7 @@ _polish() {
 
 	echo -e "\nRunning make_vulkan" >> "$_where"/prepare.log && dlls/winevulkan/make_vulkan >> "$_where"/prepare.log 2>&1
 	tools/make_requests
-	autoreconf -f
+	autoreconf -fiv
 
 	# The versioning string has moved with 1dd3051cca5cafe90ce44460731df61abb680b3b
 	# Since this is reverted by the hotfixer path, only use the new path on 0c249e6+ (deprecation of the hotfixer path)
