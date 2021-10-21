@@ -51,10 +51,31 @@ _prebuild_common() {
 	echo "CROSSCFLAGS = ${CROSSCFLAGS}" >> "$_where"/last_build_config.log
 	echo "CROSSLDFLAGS = ${CROSSLDFLAGS}" >> "$_where"/last_build_config.log
 
-	# Disable tests by default, enable back with _enable_tests="true"
-	if [ "$_ENABLE_TESTS" != "true" ]; then
-	  _configure_args+=(--disable-tests)
+	if [ -z "$_localbuild" ]; then
+	  # Disable tests by default, enable back with _enable_tests="true"
+	  if [ "$_ENABLE_TESTS" != "true" ]; then
+	    _configure_args+=(--disable-tests)
+	  fi
+
+	  if [ "$_faudio_ignorecheck" != "true" ]; then
+	    _configure_args+=(--with-faudio)
+	  fi
+
+	  if [ "$_use_legacy_gallium_nine" = "true" ] && [ "$_use_staging" = "true" ] && ! git merge-base --is-ancestor e24b16247d156542b209ae1d08e2c366eee3071a HEAD; then
+	    _configure_args+=(--with-d3d9-nine)
+	  fi
+
+	  if [ "$_use_vkd3dlib" != "true" ]; then
+	    _configure_args+=(--without-vkd3d)
+	  fi
+
+	  # mingw-w64-gcc
+	  if [ "$_NOMINGW" = "true" ]; then
+	    _configure_args+=(--without-mingw)
+	  fi
 	fi
+
+	echo -e "\nconfigure arguments: ${_configure_args[@]}\n" >> "$_where"/last_build_config.log
 }
 
 _build() {

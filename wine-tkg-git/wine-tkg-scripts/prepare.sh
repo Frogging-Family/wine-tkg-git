@@ -434,9 +434,6 @@ _prepare() {
 	# grabs userdefined staging args if any
 	_staging_args+=($_staging_userargs)
 
-	# holds extra configure arguments, if applicable
-	_configure_args=()
-
 	if [ "$_use_staging" = "true" ] && [ "$_staging_upstreamignore" != "true" ]; then
 	  cd "${srcdir}"/"${_winesrcdir}"
 	  # change back to the wine upstream commit that this version of wine-staging is based in
@@ -550,13 +547,12 @@ _prepare() {
 	fi
 
 	if [ "$_use_vkd3dlib" != "true" ]; then
-	  _configure_args+=(--without-vkd3d)
 	  echo "Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)" >> "$_where"/last_build_config.log
 	fi
 
 	# mingw-w64-gcc
 	if [ "$_NOMINGW" = "true" ]; then
-	  _configure_args+=(--without-mingw)
+	  echo "Not using MinGW-gcc for building" >> "$_where"/last_build_config.log
 	fi
 
 	echo "" >> "$_where"/last_build_config.log
@@ -786,19 +782,9 @@ _prepare() {
 	    cd "${srcdir}"/"${_winesrcdir}"
 	    if git merge-base --is-ancestor 9422b844b59282db04af533451f50661de56b9ca HEAD; then
 	      _staging_args+=(-W xaudio2-revert -W xaudio2_7-CreateFX-FXEcho -W xaudio2_7-WMA_support -W xaudio2_CommitChanges) # Disable xaudio2 staging patchsets for faudio
-	      if [ "$_faudio_ignorecheck" != "true" ]; then
-	        _configure_args+=(--with-faudio)
-	      fi
 	    elif git merge-base --is-ancestor 47fbcece36cad190c4d18f7636df67d1382b7545 HEAD && ! git merge-base --is-ancestor 3e390b1aafff47df63376a8ca4293c515d74f4ba HEAD; then
 	      _patchname='faudio-exp.patch' && _patchmsg="Applied faudio for xaudio2 patch" && nonuser_patcher
 	      _staging_args+=(-W xaudio2_7-CreateFX-FXEcho -W xaudio2_7-WMA_support -W xaudio2_CommitChanges) # Disable xaudio2 staging patchsets for faudio
-	      if [ "$_faudio_ignorecheck" != "true" ]; then
-	        _configure_args+=(--with-faudio)
-	      fi
-	    fi
-	  else
-	    if [ "$_faudio_ignorecheck" != "true" ]; then
-	      _configure_args+=(--with-faudio)
 	    fi
 	  fi
 	  cd "${srcdir}"/"${_winesrcdir}"
@@ -1474,14 +1460,12 @@ EOM
 	  patch -Np1 < "$_where"/staging-helper.patch
 	  patch -Np1 < "$_where"/wine-d3d9.patch
 	  autoreconf -f
-	  _configure_args+=(--with-d3d9-nine)
 	elif [ "$_use_legacy_gallium_nine" = "true" ] && [ "$_use_staging" != "true" ] && ! git merge-base --is-ancestor e24b16247d156542b209ae1d08e2c366eee3071a HEAD; then
 	  wget -O "$_where"/wine-d3d9.patch https://raw.githubusercontent.com/sarnex/wine-d3d9-patches/master/wine-d3d9.patch
 	  wget -O "$_where"/d3d9-helper.patch https://raw.githubusercontent.com/sarnex/wine-d3d9-patches/master/d3d9-helper.patch
 	  patch -Np1 < "$_where"/d3d9-helper.patch
 	  patch -Np1 < "$_where"/wine-d3d9.patch
 	  autoreconf -f
-	  _configure_args+=(--with-d3d9-nine)
 	elif [ "$_use_legacy_gallium_nine" = "true" ] && git merge-base --is-ancestor e24b16247d156542b209ae1d08e2c366eee3071a HEAD; then
 	  echo "Legacy Gallium Nine disabled due to known issues with selected Wine version" >> "$_where"/last_build_config.log
 	fi
@@ -2839,7 +2823,6 @@ _polish() {
 	    fi
 	  fi
 	else
-	  _configure_args=()
 	  # output config to logfile
 	  echo "# Last $pkgname configuration - $(date) :" > "$_where"/last_build_config.log
 	  echo "" >> "$_where"/last_build_config.log
