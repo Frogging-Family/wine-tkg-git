@@ -376,42 +376,40 @@ function build_mediaconverter {
     source "$_nowhere"/proton_template/gstreamer && _gstreamer
   fi
 
-  if [ -d "$_nowhere"/Proton/media-converter ]; then
-    cd "$_nowhere"/Proton/media-converter
-    mkdir -p "$_nowhere"/Proton/build/mediaconv64
-    rm -rf "$_nowhere"/Proton/build/mediaconv64/*
+  if [ "$_build_mediaconv" = "true" ]; then
+    if [ -d "$_nowhere"/Proton/media-converter ]; then
+      cd "$_nowhere"/Proton/media-converter
 
-    # 32-bit
-    if [ "$_lib32_gstreamer" = "true" ]; then
+      # 32-bit
       mkdir -p "$_nowhere"/Proton/build/mediaconv32
       rm -rf "$_nowhere"/Proton/build/mediaconv32/*
-
       ( if [ -d '/usr/lib32/pkgconfig' ]; then # Typical Arch path
-      export PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib/pkgconfig:/usr/lib32/pkgconfig"
+        export PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib/pkgconfig:/usr/lib32/pkgconfig"
       elif [ -d '/usr/lib/i386-linux-gnu/pkgconfig' ]; then # Ubuntu 18.04/19.04 path
-      export PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib/pkgconfig:/usr/lib/i386-linux-gnu/pkgconfig"
+        export PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib/pkgconfig:/usr/lib/i386-linux-gnu/pkgconfig"
       else
-      export PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib/pkgconfig:/usr/lib/pkgconfig" # Pretty common path, possibly helpful for OpenSuse & Fedora
+        export PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib/pkgconfig:/usr/lib/pkgconfig" # Pretty common path, possibly helpful for OpenSuse & Fedora
       fi
       PKG_CONFIG_ALLOW_CROSS=1 cargo build --target i686-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv32 --release )
 
       cp -a "$_nowhere"/Proton/build/mediaconv32/i686-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib/gstreamer-1.0/
 
-      strip --strip-unneeded "$_nowhere"/gst/lib/gstreamer-1.0/*.so
+      # 64-bit
+      mkdir -p "$_nowhere"/Proton/build/mediaconv64
+      rm -rf "$_nowhere"/Proton/build/mediaconv64/*
+      ( if [ ! -d '/usr/lib32' ]; then # Fedora
+        PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib64/pkgconfig:/usr/lib64/pkgconfig"
+      elif [ -d '/usr/lib32' ] && [ -d '/usr/lib' ] && [ -e '/usr/lib64' ]; then # Arch
+        PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib64/pkgconfig:/usr/lib/pkgconfig"
+      fi
+      cargo build --target x86_64-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv64 --release )
+
+      cp -a "$_nowhere"/Proton/build/mediaconv64/x86_64-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib64/gstreamer-1.0/
     fi
-
-    # 64-bit
-    ( if [ ! -d '/usr/lib32' ]; then # Fedora
-      PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib64/pkgconfig:/usr/lib64/pkgconfig"
-    elif [ -d '/usr/lib32' ] && [ -d '/usr/lib' ] && [ -e '/usr/lib64' ]; then # Arch
-      PKG_CONFIG_PATH="$_proton_tkg_path/gst/lib64/pkgconfig:/usr/lib/pkgconfig"
-    fi
-    cargo build --target x86_64-unknown-linux-gnu --target-dir "$_nowhere"/Proton/build/mediaconv64 --release )
-
-    cp -a "$_nowhere"/Proton/build/mediaconv64/x86_64-unknown-linux-gnu/release/libprotonmediaconverter.so "$_nowhere"/gst/lib64/gstreamer-1.0/
-
-    strip --strip-unneeded "$_nowhere"/gst/lib64/gstreamer-1.0/*.so
   fi
+
+  strip --strip-unneeded "$_nowhere"/gst/lib/gstreamer-1.0/*.so || true
+  strip --strip-unneeded "$_nowhere"/gst/lib64/gstreamer-1.0/*.so || true
 
   cd "$_nowhere"
 }
@@ -1036,6 +1034,11 @@ else
     else
       sed -i 's/.*PROTON_USE_WINED3D11.*/     "PROTON_USE_WINED3D11": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
       sed -i 's/.*PROTON_USE_WINED3D9.*/     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+    fi
+
+    # Only use our local gstreamer when _build_gstreamer is enabled
+    if [ "$_build_gstreamer" = "true" ]; then
+      sed -i 's/"GST_PLUGIN_PATH_1_0"/"GST_PLUGIN_SYSTEM_PATH_1_0"/g' "proton_tkg_$_protontkg_version/proton"
     fi
 
     _standalone_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' )
