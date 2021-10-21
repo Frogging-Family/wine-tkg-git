@@ -311,7 +311,7 @@ _package_makepkg() {
 	  # freetype font smoothing for win32 applications
 	  install -d "$pkgdir"/usr/share/fontconfig/conf.{avail,default}
 	  install -m644 "$srcdir/30-win32-aliases.conf" "$pkgdir/usr/share/fontconfig/conf.avail/30-$pkgname-win32-aliases.conf"
-	  ln -s ../conf.avail/30-win32-aliases.conf "$pkgdir/usr/share/fontconfig/conf.default/30-$pkgname-win32-aliases.conf"
+	  ln -s "../conf.avail/30-$pkgname-win32-aliases.conf" "$pkgdir/usr/share/fontconfig/conf.default/30-$pkgname-win32-aliases.conf"
 	fi
 
 	# wine binfmt
