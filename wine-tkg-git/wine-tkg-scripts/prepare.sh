@@ -964,7 +964,11 @@ _prepare() {
 	  if ( [ "$_proton_fs_hack" != "true" ] && git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD ) || ( ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD ); then
 	    if git merge-base --is-ancestor 011fabb2c43d13402ea18b6ea7be3669b5e6c7a8 HEAD; then
 	      _staging_args+=(-W Pipelight -W winex11-Vulkan_support)
-	      _patchname='childwindow.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
+	      if git merge-base --is-ancestor bca1b7f2faeb0798f4af420c15ff5a1b1f7b40af HEAD; then
+	        _patchname='childwindow.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
+	      else
+	        _patchname='childwindow-bca1b7f.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
+	      fi
 	    else
 	      _patchname='childwindow-011fabb.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
 	    fi
