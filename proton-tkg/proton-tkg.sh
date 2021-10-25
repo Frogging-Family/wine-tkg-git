@@ -666,7 +666,7 @@ elif [ "$1" = "build_vkd3d" ]; then
 elif [ "$1" = "build_dxvk" ]; then
   build_dxvk
 elif [ "$1" = "build_mediaconv" ]; then
-  build_mediaconverter
+  _build_mediaconv="true" build_mediaconverter
 elif [ "$1" = "build_steamhelper" ]; then
   build_steamhelper
 else
