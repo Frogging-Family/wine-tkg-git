@@ -921,8 +921,12 @@ _prepare() {
 	fi
 
 	# The Sims 3 fix - reverts 6823abd521c0c12d20d9171fb5ae8b300009d082 to fix Sims 3 on older than 415.xx nvidia drivers - https://bugs.winehq.org/show_bug.cgi?id=45361
-	if [ "$_sims3_fix" = "true" ] && git merge-base --is-ancestor 6823abd521c0c12d20d9171fb5ae8b300009d082 HEAD; then
-	  _patchname='sims_3-oldnvidia.patch' && _patchmsg="Applied The Sims 3 Debian&co nvidia fix" && nonuser_patcher
+	if [ "$_sims3_fix" = "true" ]; then
+	  if git merge-base --is-ancestor 83c9e5243a663370296148471628a350ba9422c6 HEAD; then
+	    _patchname='sims_3-oldnvidia.patch' && _patchmsg="Applied The Sims 3 Debian&co nvidia fix" && nonuser_patcher
+	  elif git merge-base --is-ancestor 6823abd521c0c12d20d9171fb5ae8b300009d082 HEAD; then
+	    _patchname='sims_3-oldnvidia-83c9e52.patch' && _patchmsg="Applied The Sims 3 Debian&co nvidia fix" && nonuser_patcher
+	  fi
 	fi
 
 	# Python fix for <=3.18 (backported from zzhiyi's patches) - fix for python and needed for "The Sims 4" to work - replaces staging partial implementation - https://bugs.winehq.org/show_bug.cgi?id=44999 - The actual patch is applied after staging

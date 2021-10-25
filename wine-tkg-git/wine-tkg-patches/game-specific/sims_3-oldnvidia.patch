@@ -1,0 +1,116 @@
+--- a/dlls/wined3d/adapter_gl.c
++++ a/dlls/wined3d/adapter_gl.c
+@@ -821,17 +821,6 @@ static BOOL match_broken_arb_fog(const struct wined3d_gl_info *gl_info, struct w
+     return data[0] != 0x00ff0000 || data[3] != 0x0000ff00;
+ }
+ 
+-static BOOL match_broken_viewport_subpixel_bits(const struct wined3d_gl_info *gl_info,
+-        struct wined3d_caps_gl_ctx *ctx, const char *gl_renderer, enum wined3d_gl_vendor gl_vendor,
+-        enum wined3d_pci_vendor card_vendor, enum wined3d_pci_device device)
+-{
+-    if (!gl_info->supported[ARB_VIEWPORT_ARRAY])
+-        return FALSE;
+-    if (wined3d_settings.offscreen_rendering_mode != ORM_FBO)
+-        return FALSE;
+-    return !wined3d_caps_gl_ctx_test_viewport_subpixel_bits(ctx);
+-}
+-
+ static BOOL match_no_independent_bit_depths(const struct wined3d_gl_info *gl_info,
+         struct wined3d_caps_gl_ctx *ctx, const char *gl_renderer, enum wined3d_gl_vendor gl_vendor,
+         enum wined3d_pci_vendor card_vendor, enum wined3d_pci_device device)
+@@ -977,15 +966,6 @@ static void quirk_broken_arb_fog(struct wined3d_gl_info *gl_info)
+     gl_info->quirks |= WINED3D_QUIRK_BROKEN_ARB_FOG;
+ }
+ 
+-static void quirk_broken_viewport_subpixel_bits(struct wined3d_gl_info *gl_info)
+-{
+-    if (gl_info->supported[ARB_CLIP_CONTROL])
+-    {
+-        TRACE("Disabling ARB_clip_control.\n");
+-        gl_info->supported[ARB_CLIP_CONTROL] = FALSE;
+-    }
+-}
+-
+ static void quirk_no_independent_bit_depths(struct wined3d_gl_info *gl_info)
+ {
+     gl_info->quirks |= WINED3D_QUIRK_NO_INDEPENDENT_BIT_DEPTHS;
+@@ -1125,11 +1105,6 @@ static void fixup_extensions(struct wined3d_gl_info *gl_info, struct wined3d_cap
+             quirk_broken_arb_fog,
+             "ARBfp fogstart == fogend workaround"
+         },
+-        {
+-            match_broken_viewport_subpixel_bits,
+-            quirk_broken_viewport_subpixel_bits,
+-            "NVIDIA viewport subpixel bits bug"
+-        },
+         {
+             match_no_independent_bit_depths,
+             quirk_no_independent_bit_depths,
+--- a/dlls/wined3d/utils.c
++++ a/dlls/wined3d/utils.c
+@@ -3795,53 +3795,6 @@ static void init_format_gen_mipmap_info(const struct wined3d_adapter *adapter,
+     }
+ }
+ 
+-BOOL wined3d_caps_gl_ctx_test_viewport_subpixel_bits(struct wined3d_caps_gl_ctx *ctx)
+-{
+-    static const struct wined3d_color red = {1.0f, 0.0f, 0.0f, 1.0f};
+-    const struct wined3d_gl_info *gl_info = ctx->gl_info;
+-    static const float offset = -63.0f / 128.0f;
+-    GLuint texture, fbo;
+-    DWORD readback[4];
+-    unsigned int i;
+-
+-    gl_info->gl_ops.gl.p_glGenTextures(1, &texture);
+-    gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_2D, texture);
+-    gl_info->gl_ops.gl.p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+-    gl_info->gl_ops.gl.p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, ARRAY_SIZE(readback), 1, 0,
+-            GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
+-    gl_info->fbo_ops.glGenFramebuffers(1, &fbo);
+-    gl_info->fbo_ops.glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+-    gl_info->fbo_ops.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+-            GL_TEXTURE_2D, texture, 0);
+-    checkGLcall("create resources");
+-
+-    gl_info->gl_ops.gl.p_glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+-    gl_info->gl_ops.gl.p_glClear(GL_COLOR_BUFFER_BIT);
+-    GL_EXTCALL(glViewportIndexedf(0, offset, offset, 4.0f, 1.0f));
+-    draw_test_quad(ctx, NULL, &red);
+-    checkGLcall("draw");
+-
+-    gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_2D, texture);
+-    gl_info->gl_ops.gl.p_glGetTexImage(GL_TEXTURE_2D, 0,
+-            GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, readback);
+-    checkGLcall("readback");
+-
+-    TRACE("Readback colors are 0x%08x, 0x%08x, 0x%08x, 0x%08x.\n",
+-            readback[0], readback[1], readback[2], readback[3]);
+-
+-    gl_info->gl_ops.gl.p_glDeleteTextures(1, &texture);
+-    gl_info->fbo_ops.glDeleteFramebuffers(1, &fbo);
+-    gl_info->fbo_ops.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+-    checkGLcall("delete resources");
+-
+-    for (i = 0; i < ARRAY_SIZE(readback); ++i)
+-    {
+-        if (readback[i] != 0xffff0000)
+-            return FALSE;
+-    }
+-    return TRUE;
+-}
+-
+ static float wined3d_adapter_find_polyoffset_scale(struct wined3d_caps_gl_ctx *ctx, GLenum format)
+ {
+     const struct wined3d_gl_info *gl_info = ctx->gl_info;
+--- a/dlls/wined3d/wined3d_private.h
++++ a/dlls/wined3d/wined3d_private.h
+@@ -2710,8 +2710,6 @@ BOOL wined3d_adapter_gl_init_format_info(struct wined3d_adapter *adapter,
+ BOOL wined3d_adapter_no3d_init_format_info(struct wined3d_adapter *adapter) DECLSPEC_HIDDEN;
+ UINT64 adapter_adjust_memory(struct wined3d_adapter *adapter, INT64 amount) DECLSPEC_HIDDEN;
+ 
+-BOOL wined3d_caps_gl_ctx_test_viewport_subpixel_bits(struct wined3d_caps_gl_ctx *ctx) DECLSPEC_HIDDEN;
+-
+ void install_gl_compat_wrapper(struct wined3d_gl_info *gl_info, enum wined3d_gl_extension ext) DECLSPEC_HIDDEN;
+ 
+ enum wined3d_projection_type
+ 
