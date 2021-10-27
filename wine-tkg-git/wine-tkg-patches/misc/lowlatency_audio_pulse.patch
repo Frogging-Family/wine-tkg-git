@@ -1,27 +1,17 @@
-From 8eeb9e9a2ce69780bba88c98bca8f3833b937bb1 Mon Sep 17 00:00:00 2001
+From b6e658f5946df843a7709e22fd753442b98dcedc Mon Sep 17 00:00:00 2001
 From: X9VoiD <oscar.silvestrexx@gmail.com>
-Date: Tue, 26 Oct 2021 06:09:55 +0800
-Subject: [PATCH] Add PulseAudio period/duration override support
+Date: Thu, 28 Oct 2021 02:42:16 +0800
+Subject: [PATCH] Add PulseAudio/Pipewire latency overrides
 
 ---
- dlls/winepulse.drv/pulse.c | 21 +++++++++++++--------
- 1 file changed, 13 insertions(+), 8 deletions(-)
+ dlls/winepulse.drv/pulse.c | 26 +++++++++++++++++++++-----
+ 1 file changed, 21 insertions(+), 5 deletions(-)
 
 diff --git a/dlls/winepulse.drv/pulse.c b/dlls/winepulse.drv/pulse.c
-index bce70ac358c..87ddd97319a 100644
+index bce70ac358c..4d1c5fbdd3d 100644
 --- a/dlls/winepulse.drv/pulse.c
 +++ b/dlls/winepulse.drv/pulse.c
-@@ -91,9 +91,6 @@ static REFERENCE_TIME pulse_min_period[2], pulse_def_period[2];
- 
- static UINT g_phys_speakers_mask = 0;
- 
--static const REFERENCE_TIME MinimumPeriod = 30000;
--static const REFERENCE_TIME DefaultPeriod = 100000;
--
- static pthread_mutex_t pulse_mutex;
- static pthread_cond_t pulse_cond = PTHREAD_COND_INITIALIZER;
- 
-@@ -505,11 +502,12 @@ static void pulse_probe_settings(int render, WAVEFORMATEXTENSIBLE *fmt) {
+@@ -505,11 +505,20 @@ static void pulse_probe_settings(int render, WAVEFORMATEXTENSIBLE *fmt) {
      if (length)
          pulse_def_period[!render] = pulse_min_period[!render] = pa_bytes_to_usec(10 * length, &ss);
  
@@ -33,13 +23,21 @@ index bce70ac358c..87ddd97319a 100644
 +    const char *penv = getenv("STAGING_AUDIO_PERIOD");
 +    if (penv) {
 +        int val = atoi(penv);
-+        pulse_def_period[!render] = pulse_min_period[!render] = val;
-+        printf("Staging audio period set to %d.\n", val);
++        if (val > 0) {
++            pulse_def_period[!render] = pulse_min_period[!render] = val;
++            printf("Audio period set to %d.\n", val);
++        }
++        else if (val < 0) {
++            if (pulse_min_period[!render] < MinimumPeriod)
++                pulse_min_period[!render] = MinimumPeriod;
++            if (pulse_def_period[!render] < DefaultPeriod)
++                pulse_def_period[!render] = DefaultPeriod;
++        }
 +    }
  
      wfx->wFormatTag = WAVE_FORMAT_EXTENSIBLE;
      wfx->cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
-@@ -860,6 +858,13 @@ static NTSTATUS pulse_create_stream(void *args)
+@@ -860,6 +869,13 @@ static NTSTATUS pulse_create_stream(void *args)
      if (duration < 3 * period)
          duration = 3 * period;
  
