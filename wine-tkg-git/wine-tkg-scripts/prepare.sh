@@ -1331,7 +1331,7 @@ _prepare() {
 
 	# Low latency pulse/pipewire audio - https://blog.thepoon.fr/osuLinuxAudioLatency/
 	if [ "$_lowlatency_audio_pulse" = "true" ]; then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor f77af3dd6324fadaf153062d77b51f755f71faea HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor f77af3dd6324fadaf153062d77b51f755f71faea HEAD ); then
 	    _patchname='lowlatency_audio_pulse.patch' && _patchmsg="Applied low latency pulse/pipewire audio patch" && nonuser_patcher
 	  fi
 	fi
