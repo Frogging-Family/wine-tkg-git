@@ -1935,8 +1935,10 @@ EOM
 	    _patchname='staging-winex11-key_translation.patch' && _patchmsg="Applied non-fshack friendly staging winex11-key_translation patchset" && nonuser_patcher
 	  fi
 	  if [ "$_steamclient_noswap" != "true" ] && git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 72449b76e8e40f1690762545fd2c0021647da140 HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 1b9ada6cabd04ccb02c4ddcc82a53e62ea477948 HEAD ); then
 	      _patchname='proton-tkg-steamclient-swap.patch' && _patchmsg="Applied steamclient substitution hack" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 72449b76e8e40f1690762545fd2c0021647da140 HEAD ); then
+	      _patchname='proton-tkg-steamclient-swap-1b9ada6.patch' && _patchmsg="Applied steamclient substitution hack" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3190a5bcdd7fc043cf54ac070a5f602cb9dd140f HEAD ); then
 	      _patchname='proton-tkg-steamclient-swap-72449b7.patch' && _patchmsg="Applied steamclient substitution hack" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 5071a287437e624d2318a71218cb247522ac0d43 HEAD ); then
