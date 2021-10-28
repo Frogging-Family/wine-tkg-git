@@ -9,6 +9,8 @@ Wine-tkg is a build-system aiming at easier custom wine builds creation.
 
 (for dependencies, see the [wiki page](https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git) )
 
+**Independently of the distro used, you'll want MinGW compiler to build recent wine as it fails to build more often than not without it these days.**
+
 
 ## Download the source :
 
