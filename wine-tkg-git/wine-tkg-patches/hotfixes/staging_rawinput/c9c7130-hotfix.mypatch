@@ -1,0 +1,40 @@
+diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+index 8b9bea77a97..adba0503785 100644
+--- a/dlls/winex11.drv/mouse.c
++++ b/dlls/winex11.drv/mouse.c
+@@ -740,12 +740,6 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input, RAWINPUT *raw
+     x->value -= input->u.mi.dx;
+     y->value -= input->u.mi.dy;
+
+-    if (!(input->u.mi.dwFlags & MOUSEEVENTF_ABSOLUTE) && !input->u.mi.dx && !input->u.mi.dy)
+-    {
+-        TRACE( "accumulating motion\n" );
+-        return FALSE;
+-    }
+-
+     return TRUE;
+ }
+
+@@ -1918,9 +1912,21 @@ static BOOL X11DRV_RawMotion( XGenericEventCookie *xev )
+     if (!map_raw_event_coords( event, &input, &rawinput )) return FALSE;
+
+     if (!thread_data->xi2_rawinput_only)
++    {
++        if (!(input.u.mi.dwFlags & MOUSEEVENTF_ABSOLUTE) && !input.u.mi.dx && !input.u.mi.dy)
++        {
++            TRACE( "accumulating motion\n" );
++            return FALSE;
++        }
+         __wine_send_input( 0, &input, NULL );
++    }
+     else
+     {
++        if (!(input.u.mi.dwFlags & MOUSEEVENTF_ABSOLUTE) && !rawinput.data.mouse.lLastX && !rawinput.data.mouse.lLastY)
++        {
++            TRACE( "accumulating motion\n" );
++            return FALSE;
++        }
+         rawinput.header.dwType = RIM_TYPEMOUSE;
+         rawinput.header.dwSize = offsetof(RAWINPUT, data) + sizeof(RAWMOUSE);
+         rawinput.header.hDevice = ULongToHandle(1); /* WINE_MOUSE_HANDLE */
+
