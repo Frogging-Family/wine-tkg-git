@@ -108,7 +108,7 @@ def merge_user_dir(src, dst):
         else:
             extant_dirs += dst_dir
 
-def try_copy(src, dst, add_write_perm=True, copy_metadata=True, optional=False, follow_symlinks=True):
+def try_copy(src, dst, add_write_perm=True, copy_metadata=False, optional=False, follow_symlinks=True):
     try:
         if os.path.isdir(dst):
             dstfile = dst + "/" + os.path.basename(src)
@@ -648,13 +648,13 @@ class CompatData:
             if not os.path.exists(self.prefix_dir + "/user.reg"):
                 self.copy_pfx()
 
+            self.migrate_user_paths()
+
             if not os.path.lexists(self.prefix_dir + "/dosdevices/c:"):
                 os.symlink("../drive_c", self.prefix_dir + "/dosdevices/c:")
 
             if not os.path.lexists(self.prefix_dir + "/dosdevices/z:"):
                 os.symlink("/", self.prefix_dir + "/dosdevices/z:")
-
-            self.migrate_user_paths()
 
             # collect configuration info
             if "STEAM_COMPAT_CLIENT_INSTALL_PATH" in os.environ:
@@ -977,6 +977,7 @@ class CompatData:
                         self.prefix_dir + "drive_c/windows/syswow64/nvapi.dll")
                 g_session.dlloverrides["nvapi64"] = "n"
                 g_session.dlloverrides["nvapi"] = "n"
+                g_session.dlloverrides["nvcuda"] = "b"
             else:
                 nvapi64_dll = self.prefix_dir + "drive_c/windows/system32/nvapi64.dll"
                 nvapi32_dll = self.prefix_dir + "drive_c/windows/syswow64/nvapi.dll"
@@ -1109,6 +1110,25 @@ class Session:
         except (OSError, IOError, TypeError, KeyError):
             pass
 
+    def setup_logging(self, append_forever=False):
+        basedir = self.env.get("PROTON_LOG_DIR", os.environ["HOME"])
+
+        if append_forever:
+            #SteamGameId is not always available
+            lfile_path = basedir + "/steam-proton.log"
+        else:
+            if not "SteamGameId" in os.environ:
+                return False
+
+            lfile_path = basedir + "/steam-" + os.environ["SteamGameId"] + ".log"
+
+            if os.path.exists(lfile_path):
+                os.remove(lfile_path)
+
+        makedirs(basedir)
+        self.log_file = open(lfile_path, "a")
+        return True
+
     def init_session(self, update_prefix_files):
         self.env["WINEPREFIX"] = g_compatdata.prefix_dir
 
@@ -1140,6 +1160,9 @@ class Session:
 
         #default wine-mono override for FNA games
         self.env.setdefault("WINE_MONO_OVERRIDES", "Microsoft.Xna.Framework.*,Gac=n")
+
+        #temporarily disable dumping audio to disk
+        self.env.setdefault("MEDIACONV_AUDIO_DONT_DUMP", "1")
 
         if not self.check_environment("PROTON_USE_WINED3D", "wined3d"):
             self.check_environment("PROTON_USE_WINED3D11", "wined3d11only")
@@ -1243,6 +1266,14 @@ class Session:
                 self.log_file.write("Options: " + str(self.compat_config) + "\n")
                 self.try_log_slr_versions()
 
+                try:
+                    uname = os.uname()
+                    kernel_version = f"{uname.sysname} {uname.release} {uname.version} {uname.machine}"
+                except OSError:
+                    kernel_version = "unknown"
+
+                self.log_file.write(f"Kernel: {kernel_version}\n")
+
                 #dump some important variables into the log header
                 for var in ["WINEDLLOVERRIDES", "WINEDEBUG"]:
                     if var in os.environ:
@@ -1252,8 +1283,13 @@ class Session:
 
                 self.log_file.write("======================\n")
                 self.log_file.flush()
+            else:
+                self.env["WINEDEBUG"] = "-all"
+
+        if "PROTON_REMOTE_DEBUG_CMD" in self.env:
+            self.remote_debug_cmd = self.env.get("PROTON_REMOTE_DEBUG_CMD").split(" ")
         else:
-            self.env["WINEDEBUG"] = "-all"
+            self.remote_debug_cmd = None
 
         if update_prefix_files:
             g_compatdata.setup_prefix()
@@ -1347,7 +1383,7 @@ class Session:
             f.write("#Run winedbg with args\n\n")
             f.write("cd \"" + os.getcwd() + "\"\n")
             self.dump_dbg_env(f)
-            f.write("\t\"" + g_proton.wine64_bin + "\" winedbg \"$@\"\n")
+            f.write("\t\"" + g_proton.wine_bin + "\" winedbg \"$@\"\n")
         os.chmod(tmpdir + "winedbg", 0o755)
 
         with open(tmpdir + "winedbg_run", "w") as f:
@@ -1372,7 +1408,7 @@ class Session:
             f.write("#Run winedbg in gdb mode and auto-attach to already-running program\n\n")
             f.write("cd \"" + os.getcwd() + "\"\n")
             f.write("EXE_NAME=${1:-\"" + exe_name + "\"}\n")
-            f.write("WPID_HEX=$(\"" + tmpdir + "winedbg\" --command 'info process' | grep -i \"$EXE_NAME\" | cut -f2 -d' ' | tr -d '0')\n")
+            f.write("WPID_HEX=$(\"" + tmpdir + "winedbg\" --command 'info process' | grep -i \"$EXE_NAME\" | cut -f2 -d' ' | sed -e 's/^0*//')\n")
             f.write("if [ -z \"$WPID_HEX\" ]; then \n")
             f.write("    echo \"Program does not appear to be running: \\\"$EXE_NAME\\\"\"\n")
             f.write("    exit 1\n")
@@ -1413,7 +1449,7 @@ class Session:
                     f.write(" \"" + arg + "\"")
             f.write(")\n")
             self.dump_dbg_env(f)
-            f.write("\t\"" + g_proton.wine_bin + "\" \"${@:-${DEF_CMD[@]}}\"\n")
+            f.write("\t\"" + g_proton.wine64_bin + "\" \"${@:-${DEF_CMD[@]}}\"\n")
         os.chmod(tmpdir + "run", 0o755)
 
     def run_proc(self, args, local_env=None):
@@ -1436,6 +1472,12 @@ class Session:
                 comfile = open(comfile_path, "w")
                 comfile.write("Command: " + str(sys.argv[2:]) + "\n")
                 comfile.close()
+
+        if self.remote_debug_cmd:
+            remote_debug_proc = subprocess.Popen([g_proton.wine_bin] + self.remote_debug_cmd,
+                                                 env=self.env, stderr=self.log_file, stdout=self.log_file)
+        else:
+            remote_debug_proc = None
 
         commandstring = str(sys.argv[2:] + self.cmdlineappend)
 
@@ -1485,6 +1527,14 @@ class Session:
                             commandtorun=[g_proton.wine64_bin, "start.exe", "/b", "C:\\Program Files (x86)\\Steam\\Steam.exe"] + sys.argv[2:] + self.cmdlineappend
         self.run_proc(commandtorun)
 
+        if remote_debug_proc:
+            remote_debug_proc.kill()
+            try:
+                remote_debug_proc.communicate(2)
+            except subprocess.TimeoutExpired as e:
+                log("terminate remote debugger")
+                remote_debug_proc.terminate()
+                remote_debug_proc.communicate()
 
 if __name__ == "__main__":
     if not "STEAM_COMPAT_DATA_PATH" in os.environ:
