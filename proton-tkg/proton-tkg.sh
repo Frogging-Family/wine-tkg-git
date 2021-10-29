@@ -434,36 +434,69 @@ function build_steamhelper {
 
   if [[ $_proton_branch != *3.* ]]; then
     source "$_nowhere/proton_tkg_token" || true
+
     rm -rf Proton/build/steam.win32
     mkdir -p Proton/build/steam.win32
     cp -a Proton/steam_helper/* Proton/build/steam.win32
+
+    rm -rf Proton/build/steam.win64
+    mkdir -p Proton/build/steam.win64
+    cp -a Proton/steam_helper/* Proton/build/steam.win64
+
     cd Proton/build/steam.win32
 
     new_lib_path_check
 
     if [[ "$_proton_branch" = *4.11 ]]; then
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine -I$_nowhere/proton_dist_tmp/include/wine/msvcrt"
+      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
     elif [[ "$_proton_branch" = *4.2 ]] || [[ "$_proton_branch" = *5.0 ]] || [[ "$_proton_branch" = *5.13 ]]; then
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine"
+      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
+    elif [ "$_proton_branch" = "experimental_6.3" ]; then
+      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine -ldl"
+      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper/32/" -L"$_nowhere/Proton/steam_helper/64/" .
     else
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine -ldl"
+      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
     fi
 
-    winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
+    # 32-bit
     make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win32" -j$(nproc) && strip --strip-unneeded steam.exe.so
+
     if [ "$_new_lib_paths_69" = "true" ]; then
       winebuild --exe --fake-module -m32 -E "$_nowhere/Proton/lsteamclient/lsteamclient.spec" --dll-name=steam -o steam.exe.fake
     fi
+
+    # 64-bit
+    if [ "$_proton_branch" = "experimental_6.3" ]; then
+      cd "$_nowhere"/Proton/build/steam.win64
+      winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper/32/" -L"$_nowhere/Proton/steam_helper/64/" .
+      make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win64" -j$(nproc) && strip --strip-unneeded steam.exe.so
+    fi
+
     cd "$_nowhere"
 
     if [ "$_new_lib_paths" = "true" ]; then
       cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/i386-windows/steam.exe
+      if [ -e Proton/build/steam.win64/steam.exe.fake ]; then
+        cp -v Proton/build/steam.win64/steam.exe.fake proton_dist_tmp/lib64/wine/x86_64-windows/steam.exe
+      fi
       if [ "$_new_lib_paths_69" = "true" ]; then
         cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/i386-unix/
+        if [ -e Proton/build/steam.win64/steam.exe.so ]; then
+          cp -v Proton/build/steam.win64/steam.exe.so proton_dist_tmp/lib64/wine/x86_64-unix/
+        fi
       else
         cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
       fi
-      cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
+      if [ -e Proton/build/steam.win32/libsteam_api.so ]; then
+        cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
+      fi
+      if [ -e Proton/build/steam.win64/32/libsteam_api.so ]; then
+        cp -v Proton/build/steam.win64/32/libsteam_api.so proton_dist_tmp/lib/
+        cp -v Proton/build/steam.win64/64/libsteam_api.so proton_dist_tmp/lib64/
+      fi
     else
       cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/fakedlls/steam.exe
       cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
@@ -701,8 +734,7 @@ else
   # Wine-tkg-git has injected versioning and settings in the token for us, so get the values back
   source "$_nowhere/proton_tkg_token"
 
-  # We don't want experimental branches since they are a moving target and not useful to us, so fallback to regular by default
-  # Can by bypassed with _proton_branch_exp env var but you're on your own if using it
+  # We might not want experimental branches since they are a moving target and not useful to us, so fallback to regular by default unless _proton_branch_exp="true" is passed
   if [[ "$_proton_branch" = experimental* ]] && [ -z "$_proton_branch_exp" ]; then
     echo -e "#### Replacing experimental branch by regular ####"
     sed -i "s/experimental_/proton_/g" "$_nowhere/proton_tkg_token" && source "$_nowhere/proton_tkg_token"
@@ -798,6 +830,7 @@ else
     mkdir -p "$_nowhere/proton_dist_tmp/lib/wine/dxvk"
 
     # Build vrclient libs
+    # I'm not sure we actually need this considering VR support is broken, but it might be needed by other tools
     if [ "$_steamvr_support" = "true" ]; then
       build_vrclient
       cd Proton
@@ -927,14 +960,15 @@ else
     _prefix_version=$( echo ${_protontkg_true_version} | sed 's/.r/-/; s/.[^.]*//4g; s/\.[^.*-]*//2g;' )
     sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version\"|" "proton_tkg_$_protontkg_version/proton"
 
+    #### Disable VR support patch as our wine-side support reportedly doesn't work
     # Patch our proton script to allow for VR support
-    if [ "$_steamvr_support" = "true" ]; then
-      cd "$_nowhere/proton_tkg_$_protontkg_version"
-      _patchname="vr-support.patch"
-      echo -e "\nApplying $_patchname"
-      patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
-      cd "$_nowhere"
-    fi
+    #if [ "$_steamvr_support" = "true" ]; then
+    #  cd "$_nowhere/proton_tkg_$_protontkg_version"
+    #  _patchname="vr-support.patch"
+    #  echo -e "\nApplying $_patchname"
+    #  patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
+    #  cd "$_nowhere"
+    #fi
 
     # Patch our proton script to handle minimal d3d10 implementation for dxvk on Wine 5.3+
     if [ "$_dxvk_minimald3d10" = "true" ]; then

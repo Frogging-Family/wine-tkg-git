@@ -53,6 +53,7 @@ _exit_cleanup() {
     echo "_dxvk_version=${_dxvk_version}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_use_vkd3dlib='${_use_vkd3dlib}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_pkgdest='${pkgdir}'" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_proton_branch_exp='${_proton_branch_exp}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_steamvr_support='${_steamvr_support}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_NUKR='${_NUKR}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_winesrcdir='${_winesrcdir}'" >> "$_proton_tkg_path"/proton_tkg_token
@@ -246,9 +247,9 @@ msg2 ''
       _use_dxvk="release"
       _dxvk_dxgi="true"
     fi
-    if [ "$_ispkgbuild" = "true" ]; then
-      _steamvr_support="false"
-    fi
+    #if [ "$_ispkgbuild" = "true" ]; then
+    #  _steamvr_support="false"
+    #fi
     if [ "$_use_latest_mono" = "true" ]; then
       if ! [ -f "$_where"/$( curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.msi" | cut -d : -f 2,3 | tr -d \" | sed -e "s|.*/||") ]; then
         rm -f "$_where"/wine-mono* # Remove any existing older mono
@@ -2606,8 +2607,10 @@ EOM
 	    _patchname='proton-wined3d-additions.patch' && _patchmsg="Enable Proton non-vr-related wined3d additions" && nonuser_patcher
 	  fi
 	  if [ "$_steamvr_support" = "true" ] && [ "$_proton_fs_hack" = "true" ]; then
-	    if git merge-base --is-ancestor bff6bc6a79ffc3a915219a6dfe64c9bcabaaeceb HEAD; then
+	    if git merge-base --is-ancestor 12d33d21d33788fd46898ea42e9592d33b6e7c8e HEAD; then # 6.12
 	      _patchname='proton-vr.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
+	    elif git merge-base --is-ancestor bff6bc6a79ffc3a915219a6dfe64c9bcabaaeceb HEAD; then
+	      _patchname='proton-vr-12d33d2.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
 	    elif git merge-base --is-ancestor e447e86ae2fbfbd9dee1b488e38a653aaea5447e HEAD; then
 	      _patchname='proton-vr-bff6bc6.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
 	    elif git merge-base --is-ancestor a6d74b0545afcbf05d53fcbc9641ecc36c3be95c HEAD; then
