@@ -473,26 +473,34 @@ function build_steamhelper {
       cd "$_nowhere"/Proton/build/steam.win64
       winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper/32/" -L"$_nowhere/Proton/steam_helper/64/" .
       make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win64" -j$(nproc) && strip --strip-unneeded steam.exe.so
+
+      winebuild --exe --fake-module -m64 -E "$_nowhere/Proton/lsteamclient/lsteamclient.spec" --dll-name=steam -o steam.exe.fake
     fi
 
     cd "$_nowhere"
 
     if [ "$_new_lib_paths" = "true" ]; then
+      # .exe 32
       cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/i386-windows/steam.exe
+      # .exe 64
       if [ -e Proton/build/steam.win64/steam.exe.fake ]; then
         cp -v Proton/build/steam.win64/steam.exe.fake proton_dist_tmp/lib64/wine/x86_64-windows/steam.exe
       fi
       if [ "$_new_lib_paths_69" = "true" ]; then
+        # .so 32
         cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/i386-unix/
+        # .so 64
         if [ -e Proton/build/steam.win64/steam.exe.so ]; then
           cp -v Proton/build/steam.win64/steam.exe.so proton_dist_tmp/lib64/wine/x86_64-unix/
         fi
       else
         cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
       fi
+      # .so 32
       if [ -e Proton/build/steam.win32/libsteam_api.so ]; then
         cp -v Proton/build/steam.win32/libsteam_api.so proton_dist_tmp/lib/
       fi
+      # .so 64
       if [ -e Proton/build/steam.win64/32/libsteam_api.so ]; then
         cp -v Proton/build/steam.win64/32/libsteam_api.so proton_dist_tmp/lib/
         cp -v Proton/build/steam.win64/64/libsteam_api.so proton_dist_tmp/lib64/
