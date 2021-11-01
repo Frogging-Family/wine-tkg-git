@@ -1330,6 +1330,13 @@ _prepare() {
 	  _patchname='lowlatency_audio.patch' && _patchmsg="Applied low latency alsa audio patch" && nonuser_patcher
 	fi
 
+	# Low latency pulse/pipewire audio - https://blog.thepoon.fr/osuLinuxAudioLatency/
+	if [ "$_lowlatency_audio_pulse" = "true" ]; then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor f77af3dd6324fadaf153062d77b51f755f71faea HEAD ); then
+	    _patchname='lowlatency_audio_pulse.patch' && _patchmsg="Applied low latency pulse/pipewire audio patch" && nonuser_patcher
+	  fi
+	fi
+
 	# The Sims 2 fix - https://bugs.winehq.org/show_bug.cgi?id=8051
 	if [ "$_sims2_fix" = "true" ]; then
 	  if git merge-base --is-ancestor d88f12950761e9ff8d125a579de6e743979f4945 HEAD; then
