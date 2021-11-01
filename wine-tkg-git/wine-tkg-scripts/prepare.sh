@@ -1600,6 +1600,14 @@ EOM
 	    _patchname='fsync-spincounts.patch' && _patchmsg="Add a configurable spin count to fsync" && nonuser_patcher
 	  fi
 
+	  # futex_waitv
+	  if [ "$_staging_esync" = "true" ] || [ "$_use_esync" = "true" ]; then
+	    if [ "$_fsync_futex_waitv" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	      _patchname='fsync_futex_waitv.patch' && _patchmsg="Replace all fsync interfaces with futex_waitv" && nonuser_patcher
+	      _fsync_futex2="false"
+	    fi
+	  fi
+
 	  # futex2
 	  if [ "$_staging_esync" = "true" ] || [ "$_use_esync" = "true" ]; then
 	    if [ "$_fsync_futex2" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
