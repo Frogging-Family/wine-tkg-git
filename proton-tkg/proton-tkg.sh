@@ -20,7 +20,7 @@ _no_steampath="false"
 function resources_cleanup {
   # The symlinks switch doesn't need the recursive flag, but we'll use it temporarily
   # as a smoother transition for existing users with dirty trees
-  rm -rf "${_nowhere}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
+  rm -rf "${_nowhere}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko,steam-runtime}
 }
 
 trap resources_cleanup EXIT
@@ -28,7 +28,7 @@ trap resources_cleanup EXIT
 resources_cleanup
 
 _resources_path="${_nowhere}/external-resources"
-mkdir -p "${_resources_path}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
+mkdir -p "${_resources_path}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko,steam-runtime}
 ln -s "${_resources_path}"/Proton "${_nowhere}"/Proton
 ln -s "${_resources_path}"/vkd3d-proton "${_nowhere}"/vkd3d-proton
 ln -s "${_resources_path}"/dxvk-tools "${_nowhere}"/dxvk-tools
@@ -36,6 +36,7 @@ ln -s "${_resources_path}"/dxvk "${_nowhere}"/dxvk
 ln -s "${_resources_path}"/liberation-fonts "${_nowhere}"/liberation-fonts
 ln -s "${_resources_path}"/mono "${_nowhere}"/mono
 ln -s "${_resources_path}"/gecko "${_nowhere}"/gecko
+ln -s "${_resources_path}"/steam-runtime "${_nowhere}"/steam-runtime
 
 # Enforce using makepkg when using --makepkg
 if [ "$1" = "--makepkg" ]; then
@@ -52,8 +53,10 @@ else
   # Set Steam root path
   if [ -d "$HOME/.steam/root" ]; then # typical on Arch
     _steampath="$HOME/.steam/root"
+    _runtime="$HOME/.steam/root/ubuntu12_32/steam-runtime"
   elif [ -e "$HOME/.steam/steam.sh" ]; then # typical on Ubuntu
     _steampath="$HOME/.steam"
+    _runtime="$HOME/.steam/ubuntu12_32/steam-runtime"
   else
     read -rp "Your Steam install wasn't found! Do you want to continue anyway? N/y: " _no_steampath;
     if [ "$_no_steampath" != "y" ]; then
@@ -373,7 +376,11 @@ function build_mediaconverter {
   mkdir -p "$_nowhere/gst/lib/gstreamer-1.0"
 
   if [ "$_build_gstreamer" = "true" ]; then
-    source "$_nowhere"/proton_template/gstreamer && _gstreamer
+    if [ -n "$_runtime" ]; then
+      "$_nowhere"/steam-runtime/run.sh "$_nowhere"/proton_template/gstreamer.sh
+    else
+      "$_nowhere"/proton_template/gstreamer.sh
+    fi
   fi
 
   if [ "$_build_mediaconv" = "true" ]; then
@@ -480,20 +487,21 @@ function build_steamhelper {
     cd "$_nowhere"
 
     if [ "$_new_lib_paths" = "true" ]; then
-      # .exe 32
+      # .exe 32 - always there
       cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/lib/wine/i386-windows/steam.exe
       # .exe 64
       if [ -e Proton/build/steam.win64/steam.exe.fake ]; then
         cp -v Proton/build/steam.win64/steam.exe.fake proton_dist_tmp/lib64/wine/x86_64-windows/steam.exe
       fi
       if [ "$_new_lib_paths_69" = "true" ]; then
-        # .so 32
+        # .so 32 - always there
         cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/i386-unix/
         # .so 64
         if [ -e Proton/build/steam.win64/steam.exe.so ]; then
           cp -v Proton/build/steam.win64/steam.exe.so proton_dist_tmp/lib64/wine/x86_64-unix/
         fi
       else
+        # .so 32 - always there
         cp -v Proton/build/steam.win32/steam.exe.so proton_dist_tmp/lib/wine/
       fi
       # .so 32
@@ -730,13 +738,24 @@ else
 
   echo -e "Proton-tkg - $(date +"%m-%d-%Y %H:%M:%S")" > "$_logdir"/proton-tkg.log
 
+  if [ -n "$_runtime" ]; then
+    cp -R "$_runtime" external-resources/
+    rm -f steam-runtime/pinned_libs_32/*curl.so* # Use system curl libs for git
+    rm -f steam-runtime/pinned_libs_64/*curl.so* # Use system curl libs for git
+  fi
+
   # Now let's build
   cd "$_wine_tkg_git_path"
   if [ -e "/usr/bin/makepkg" ] && [ "$_nomakepkg" = "false" ]; then
     makepkg -s || true
   else
     rm -f "$_wine_tkg_git_path"/non-makepkg-builds/HL3_confirmed
-    ./non-makepkg-build.sh
+    if [ -n "$_runtime" ]; then
+      echo -e "Using Steam runtime\n"
+      "$_nowhere"/steam-runtime/run.sh ./non-makepkg-build.sh
+    else
+      ./non-makepkg-build.sh
+    fi
   fi
 
   # Wine-tkg-git has injected versioning and settings in the token for us, so get the values back

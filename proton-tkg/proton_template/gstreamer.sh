@@ -1,7 +1,7 @@
-_gstreamer() {
+#!/bin/bash
 
-  # Steam runtime path - We're disabling this for now since it reportedly can cause issues for some
-  #export LD_LIBRARY_PATH="$_steampath/ubuntu12_32/steam-runtime/pinned_libs_64"
+  _nowhere="$(dirname "$PWD")"
+  source "$_nowhere/proton_tkg_token"
 
   cd "$_nowhere"/Proton
 
@@ -557,7 +557,4 @@ _gstreamer() {
     )
   fi
 
-  #unset LD_LIBRARY_PATH
-
   cd "$_nowhere"
-}
