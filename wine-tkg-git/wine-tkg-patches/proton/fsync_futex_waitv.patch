@@ -527,3 +527,63 @@ index 261f45ac4bf..1291f3171a1 100644
 -- 
 2.33.1
 
+From a55a995020e09bfb844b12cac02351cf970287c7 Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Mon, 1 Nov 2021 14:25:42 +0200
+Subject: [PATCH] HAX: Disable fsync if we detect the old futex2 patches.
+
+futex_waitv() has been accepted into locking/core branch of kernel.org's
+tip repo and has a fixed syscall number.
+
+Even though the syscall number matches (449) there were changes that
+result in 100% CPU utilization at all times when running with the old,
+downstream version of the futex2 patches.
+
+The new patches do not come with the sysfs entries so we can use that
+for the detection.
+
+Fixes: https://github.com/ValveSoftware/wine/pull/128
+---
+ dlls/ntdll/unix/fsync.c | 8 ++++++++
+ server/fsync.c          | 9 +++++++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/dlls/ntdll/unix/fsync.c b/dlls/ntdll/unix/fsync.c
+index 1291f3171a1..8f07ed59ae0 100644
+--- a/dlls/ntdll/unix/fsync.c
++++ b/dlls/ntdll/unix/fsync.c
+@@ -164,6 +164,14 @@ int do_fsync(void)
+ 
+     if (do_fsync_cached == -1)
+     {
++        FILE *f;
++        if ((f = fopen( "/sys/kernel/futex2/wait", "r" )))
++        {
++            fclose(f);
++            do_fsync_cached = 0;
++            return do_fsync_cached;
++        }
++
+         syscall( __NR_futex_waitv, NULL, 0, 0, NULL, 0 );
+         do_fsync_cached = getenv("WINEFSYNC") && atoi(getenv("WINEFSYNC")) && errno != ENOSYS;
+         if (getenv("WINEFSYNC_SPINCOUNT"))
+diff --git a/server/fsync.c b/server/fsync.c
+index 237e8f2b4a4..45760bc0320 100644
+--- a/server/fsync.c
++++ b/server/fsync.c
+@@ -60,6 +60,15 @@ int do_fsync(void)
+ 
+     if (do_fsync_cached == -1)
+     {
++        FILE *f;
++        if ((f = fopen( "/sys/kernel/futex2/wait", "r" )))
++        {
++            fclose(f);
++            do_fsync_cached = 0;
++            fprintf( stderr, "fsync: old futex2 patches detected, disabling.\n" );
++            return do_fsync_cached;
++        }
++
+         syscall( __NR_futex_waitv, 0, 0, 0, 0, 0);
+         do_fsync_cached = getenv("WINEFSYNC") && atoi(getenv("WINEFSYNC")) && errno != ENOSYS;
+     }
