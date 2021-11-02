@@ -762,7 +762,7 @@ else
   source "$_nowhere/proton_tkg_token"
 
   # We might not want experimental branches since they are a moving target and not useful to us, so fallback to regular by default unless _proton_branch_exp="true" is passed
-  if [[ "$_proton_branch" = experimental* ]] && [ -z "$_proton_branch_exp" ]; then
+  if [[ "$_proton_branch" = experimental* ]] && [ "$_proton_branch_exp" != "true" ]; then
     echo -e "#### Replacing experimental branch by regular ####"
     sed -i "s/experimental_/proton_/g" "$_nowhere/proton_tkg_token" && source "$_nowhere/proton_tkg_token"
   fi
