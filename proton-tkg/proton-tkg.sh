@@ -459,12 +459,9 @@ function build_steamhelper {
     if [[ "$_proton_branch" = *4.11 ]]; then
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine -I$_nowhere/proton_dist_tmp/include/wine/msvcrt"
       winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
-    elif [[ "$_proton_branch" = *4.2 ]] || [[ "$_proton_branch" = *5.0 ]] || [[ "$_proton_branch" = *5.13 ]]; then
+    else
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine"
       winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
-    else
-      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine -ldl"
-      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper/" .
     fi
 
     # 32-bit
