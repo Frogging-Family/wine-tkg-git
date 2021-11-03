@@ -192,13 +192,13 @@ function build_vrclient {
 
   cd build/vrclient.win64
   winemaker $WINEMAKERFLAGS -L"$_nowhere/proton_dist_tmp/lib64/" -L"$_nowhere/proton_dist_tmp/lib64/wine/" -I"$_nowhere/Proton/build/vrclient.win64/vrclient_x64/" -I"$_nowhere/Proton/build/vrclient.win64/" vrclient_x64
-  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win64/vrclient_x64" -j$(nproc) && strip --strip-unneeded vrclient_x64/vrclient_x64.dll.so
+  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win64/vrclient_x64" -j$(nproc) && strip --strip-debug vrclient_x64/vrclient_x64.dll.so
   winebuild --dll --fake-module -E "$_nowhere/Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.spec" -o vrclient_x64.dll.fake
   cd ../..
 
   cd build/vrclient.win32
   winemaker $WINEMAKERFLAGS --wine32 -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" -I"$_nowhere/Proton/build/vrclient.win32/vrclient/" -I"$_nowhere/Proton/build/vrclient.win32/" vrclient
-  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win32/vrclient" -j$(nproc) && strip --strip-unneeded vrclient/vrclient.dll.so
+  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win32/vrclient" -j$(nproc) && strip --strip-debug vrclient/vrclient.dll.so
   winebuild --dll --fake-module -E "$_nowhere/Proton/build/vrclient.win32/vrclient/vrclient.spec" -o vrclient.dll.fake
   cd "$_nowhere"
 
@@ -249,7 +249,8 @@ function build_lsteamclient {
 
   cd build/lsteamclient.win64
   winemaker $WINEMAKERFLAGS --dll -DSTEAM_API_EXPORTS -Dprivate=public -Dprotected=public .
-  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip --strip-unneeded lsteamclient.dll.so
+  sed -re 's@_LDFLAGS=@_LDFLAGS= -static-libgcc -static-libstdc++ -ldl @' -i "$_nowhere/Proton/build/lsteamclient.win64/Makefile"
+  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win64" -j$(nproc) && strip --strip-debug lsteamclient.dll.so
   if [ "$_new_lib_paths_69" = "true" ]; then
     winebuild --dll --fake-module -m64 -E "$_nowhere/Proton/lsteamclient/lsteamclient.spec" --dll-name=lsteamclient -o lsteamclient.dll.fake
   fi
@@ -257,7 +258,8 @@ function build_lsteamclient {
 
   cd build/lsteamclient.win32
   winemaker $WINEMAKERFLAGS --dll -DSTEAM_API_EXPORTS -Dprivate=public -Dprotected=public --wine32 .
-  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip --strip-unneeded lsteamclient.dll.so
+  sed -re 's@_LDFLAGS=@_LDFLAGS= -static-libgcc -static-libstdc++ -ldl @' -i "$_nowhere/Proton/build/lsteamclient.win32/Makefile"
+  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/lsteamclient.win32" -j$(nproc) && strip --strip-debug lsteamclient.dll.so
   if [ "$_new_lib_paths_69" = "true" ]; then
     winebuild --dll --fake-module -m32 -E "$_nowhere/Proton/lsteamclient/lsteamclient.spec" --dll-name=lsteamclient -o lsteamclient.dll.fake
   fi
@@ -460,16 +462,17 @@ function build_steamhelper {
     elif [[ "$_proton_branch" = *4.2 ]] || [[ "$_proton_branch" = *5.0 ]] || [[ "$_proton_branch" = *5.13 ]]; then
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine"
       winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
-    elif [ "$_proton_branch" = "experimental_6.3" ]; then
-      export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine -ldl"
-      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper/32/" -L"$_nowhere/Proton/steam_helper/64/" .
     else
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine -ldl"
-      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
+      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper/" .
     fi
 
     # 32-bit
-    make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win32" -j$(nproc) && strip --strip-unneeded steam.exe.so
+    if [ -e "$_nowhere"/Proton/steam_helper/32/libsteam_api.so ]; then
+      make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win32" LIBRARIES="-L$_nowhere/Proton/steam_helper/32/ -L$_nowhere/Proton/steam_helper/64/ -lsteam_api -lole32 -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so
+    else
+      make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win32" LIBRARIES="-lsteam_api -lole32 -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so
+    fi
 
     if [ "$_new_lib_paths_69" = "true" ]; then
       winebuild --exe --fake-module -m32 -E "$_nowhere/Proton/lsteamclient/lsteamclient.spec" --dll-name=steam -o steam.exe.fake
@@ -479,7 +482,7 @@ function build_steamhelper {
     if [ "$_proton_branch" = "experimental_6.3" ]; then
       cd "$_nowhere"/Proton/build/steam.win64
       winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper/32/" -L"$_nowhere/Proton/steam_helper/64/" .
-      make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win64" -j$(nproc) && strip --strip-unneeded steam.exe.so
+      make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win64" LIBRARIES="-L$_nowhere/Proton/steam_helper/32/ -L$_nowhere/Proton/steam_helper/64/ -lsteam_api -lole32 -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so
 
       winebuild --exe --fake-module -m64 -E "$_nowhere/Proton/lsteamclient/lsteamclient.spec" --dll-name=steam -o steam.exe.fake
     fi
