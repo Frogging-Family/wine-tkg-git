@@ -23,6 +23,10 @@ user_settings = {
     #Enable DXVK's HUD
 #    "DXVK_HUD": "devinfo,fps",
 
+    #Enable AMD FSR
+     "WINE_FULLSCREEN_FSR": "1",
+     "WINE_FULLSCREEN_FSR_STRENGTH": "2",
+
     #Write the command proton sends to wine for targeted prefix (/prefix/path/launch_command) - Helpful to track bound executable
     "PROTON_LOG_COMMAND_TO_PREFIX": "1",
 
