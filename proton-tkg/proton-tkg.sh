@@ -28,7 +28,7 @@ trap resources_cleanup EXIT
 resources_cleanup
 
 _resources_path="${_nowhere}/external-resources"
-mkdir -p "${_resources_path}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko,steam-runtime}
+mkdir -p "${_resources_path}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
 ln -s "${_resources_path}"/Proton "${_nowhere}"/Proton
 ln -s "${_resources_path}"/vkd3d-proton "${_nowhere}"/vkd3d-proton
 ln -s "${_resources_path}"/dxvk-tools "${_nowhere}"/dxvk-tools
@@ -743,7 +743,14 @@ else
   echo -e "Proton-tkg - $(date +"%m-%d-%Y %H:%M:%S")" > "$_logdir"/proton-tkg.log
 
   if [ -n "$_runtime" ]; then
-    cp -R "$_runtime" external-resources/
+    rm -rf "${_nowhere}"/external-resources/steam-runtime
+    if [ -d /tmp ]; then
+      cp -R "$_runtime" /tmp/
+      ln -s /tmp/steam-runtime "${_nowhere}"/external-resources/
+    else
+      mkdir -p "${_resources_path}"/steam-runtime
+      cp -R "$_runtime" external-resources/
+    fi
     rm -f steam-runtime/pinned_libs_32/*curl.so* # Use system curl libs for git
     rm -f steam-runtime/pinned_libs_64/*curl.so* # Use system curl libs for git
   fi
