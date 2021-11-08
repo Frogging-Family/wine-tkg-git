@@ -1,58 +1,47 @@
-From 6d574d1275635d1fda1177707a8f3146249b52ce Mon Sep 17 00:00:00 2001
+From 7c046c7afd4253daa9cd8dbb6b2f466f128fecc9 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
-Date: Wed, 13 Oct 2021 15:19:37 +0200
+Date: Thu, 21 Oct 2021 10:44:29 +0200
 Subject: [PATCH] msvcrt: Write memory forward in memset.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-Instead of going backward, which may break the Linux kernel page fault
-optimizations.
+Instead of going backward, which breaks the Linux kernel transparent
+huge pages allocation assumptions.
+
+This can be reproduced by calling memset on large, newly allocated,
+memory regions.
+
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+Signed-off-by: Piotr Caban <piotr@codeweavers.com>
+Signed-off-by: Alexandre Julliard <julliard@winehq.org>
 ---
- dlls/msvcrt/string.c | 23 +++++++++++++----------
- 1 file changed, 13 insertions(+), 10 deletions(-)
+ dlls/msvcrt/string.c | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
 
 diff --git a/dlls/msvcrt/string.c b/dlls/msvcrt/string.c
-index 74409a6fb76..63a11c27e03 100644
+index 5655fbfe68a..48d44d3b72e 100644
 --- a/dlls/msvcrt/string.c
 +++ b/dlls/msvcrt/string.c
-@@ -2901,16 +2901,18 @@ __ASM_GLOBAL_FUNC( sse2_memset_aligned_32,
-         "pshufd $0, %xmm0, %xmm0\n\t"
-         "test $0x20, " LEN_REG "\n\t"
-         "je 1f\n\t"
-+        "add $0x20, " DEST_REG "\n\t"
-         "sub $0x20, " LEN_REG "\n\t"
--        "movdqa %xmm0, 0x00(" DEST_REG ", " LEN_REG ")\n\t"
--        "movdqa %xmm0, 0x10(" DEST_REG ", " LEN_REG ")\n\t"
-+        "movdqa %xmm0, -0x20(" DEST_REG ")\n\t"
-+        "movdqa %xmm0, -0x10(" DEST_REG ")\n\t"
-         "je 2f\n\t"
-         "1:\n\t"
-+        "add $0x40, " DEST_REG "\n\t"
-         "sub $0x40, " LEN_REG "\n\t"
--        "movdqa %xmm0, 0x00(" DEST_REG ", " LEN_REG ")\n\t"
--        "movdqa %xmm0, 0x10(" DEST_REG ", " LEN_REG ")\n\t"
--        "movdqa %xmm0, 0x20(" DEST_REG ", " LEN_REG ")\n\t"
--        "movdqa %xmm0, 0x30(" DEST_REG ", " LEN_REG ")\n\t"
-+        "movdqa %xmm0, -0x40(" DEST_REG ")\n\t"
-+        "movdqa %xmm0, -0x30(" DEST_REG ")\n\t"
-+        "movdqa %xmm0, -0x20(" DEST_REG ")\n\t"
-+        "movdqa %xmm0, -0x10(" DEST_REG ")\n\t"
-         "ja 1b\n\t"
-         "2:\n\t"
-         MEMSET_RET )
-@@ -2927,10 +2929,11 @@ static inline void memset_aligned_32(unsigned char *d, uint64_t v, size_t n)
+@@ -2857,13 +2857,14 @@ void * __cdecl memcpy(void *dst, const void *src, size_t n)
+ 
+ static inline void memset_aligned_32(unsigned char *d, uint64_t v, size_t n)
  {
-     while (n >= 32)
-     {
+-    while (n >= 32)
+-    {
 -        *(uint64_t *)(d + n - 32) = v;
 -        *(uint64_t *)(d + n - 24) = v;
 -        *(uint64_t *)(d + n - 16) = v;
 -        *(uint64_t *)(d + n -  8) = v;
+-        n -= 32;
++    unsigned char *end = d + n;
++    while (d < end)
++    {
 +        *(uint64_t *)(d + 0) = v;
 +        *(uint64_t *)(d + 8) = v;
 +        *(uint64_t *)(d + 16) = v;
 +        *(uint64_t *)(d + 24) = v;
 +        d += 32;
-         n -= 32;
      }
  }
---
-2.33.0
+ 
