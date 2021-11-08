@@ -442,35 +442,85 @@ _prepare() {
 	  git checkout "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)"
 	fi
 
-	# Community patches
-	if [ -n "$_community_patches" ]; then
-	  if [ ! -d "$_where/../../community-patches" ] && [ ! -d "$_where/../community-patches" ]; then
-	    { cd "$_where/../.."
-	      git clone https://github.com/Frogging-Family/community-patches.git
-	      _community_patches_repo_path="$_where/../../community-patches/wine-tkg-git"
-	    } || {
-	      msg2 "Cloning the community-patches repo inside the wine-tkg-git dir due to permission limitations in the current path.."
-	      cd "$_where/.."
-	      git clone https://github.com/Frogging-Family/community-patches.git
-	      _community_patches_repo_path="$_where/../community-patches/wine-tkg-git"
-	    }
-	    cd "${srcdir}"/"${_winesrcdir}"
-	  elif [ -d "$_where/../../community-patches" ]; then
-	    _community_patches_repo_path="$_where/../../community-patches/wine-tkg-git"
-	  elif [ -d "$_where/../community-patches" ]; then
-	    _community_patches_repo_path="$_where/../community-patches/wine-tkg-git"
-	  fi
-	  _community_patches=($_community_patches)
-	  ( msg2 "Updating community patches repo..." && cd "$_community_patches_repo_path" && git pull origin master )
-	  for _p in ${_community_patches[@]}; do
-	    if [ -e "$_community_patches_repo_path/$_p" ]; then
-	      ln -s "$_community_patches_repo_path/$_p" "$_where"/
-	    else
-	      warning "The requested community patch \"$_p\" wasn't found in the community-patches repo."
-	      msg2 "You can check https://github.com/Frogging-Family/community-patches.git for available patches."
-	    fi
-	  done
-	fi
+  # Community patches
+  if [ -n "$_community_patches" ]
+  then
+    _community_patches_repo_roots=()
+
+    for _p in "../.." ".." "."
+    do
+      _new_path="$(realpath -Lm "${_where}/${_p}/community-patches")"
+
+      if [[ ${#_community_patches_repo_roots[@]} -eq 0 ]] || [[ ! ${_new_path} == ${_community_patches_repo_roots[${#_community_patches_repo_roots[@]}-1]} ]]
+      then
+        _community_patches_repo_roots+=( "${_new_path}" )
+      fi
+    done
+
+    for _p in "${_community_patches_repo_roots[@]}"
+    do
+      if [[ -d ${_p} ]]
+      then
+        msg2 "Using \'${_p}\' as community-patches repo root"
+        _community_patches_repo_path="${_p}/wine-tkg-git"
+        break
+      fi
+    done
+
+    if [[ -z ${_community_patches_repo_path} ]]
+    then
+      unset _clone_failed
+
+      for _p in "${_community_patches_repo_roots[@]}"
+      do
+        if [ -z "${_clone_failed}" ]
+        then
+          msg2 "Cloning community-patches repo into \'${_p}\'..."
+        else
+          msg2 "Retrying into \'${_p}\'..."
+        fi
+
+        if git clone https://github.com/Frogging-Family/community-patches.git "${_p}"
+        then
+          unset _clone_failed
+          _community_patches_repo_path="${_p}/wine-tkg-git"
+          break
+        else
+          _clone_failed=1
+        fi
+      done
+
+      if [[ -n "${_clone_failed}" ]]
+      then
+        error "Error while attempting to clone community-patches repo"
+        exit 1
+      fi
+    else
+      msg2 "Updating community-patches repo..."
+
+      if ! git -C "${_community_patches_repo_path}" pull origin master
+      then
+        error "Error while updating community-patches repo"
+        exit 1
+      fi
+    fi
+
+    _community_patches=($_community_patches)
+
+    for _p in ${_community_patches[@]}
+    do
+      if [ -e "$_community_patches_repo_path/$_p" ]
+      then
+        ln -s "$_community_patches_repo_path/$_p" "$_where"/
+      else
+        warning "The requested community patch \"$_p\" wasn't found in the community-patches repo."
+        msg2 "You can check https://github.com/Frogging-Family/community-patches.git for available patches."
+        plain ""
+        plain "Press enter to continue."
+        read -r
+      fi
+    done
+  fi
 
 	# output config to logfile
 	echo "# Last $pkgname configuration - $(date) :" > "$_where"/last_build_config.log
