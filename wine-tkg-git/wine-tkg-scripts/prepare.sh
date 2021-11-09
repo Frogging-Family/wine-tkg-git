@@ -515,8 +515,8 @@ _prepare() {
       else
         warning "The requested community patch \"$_p\" wasn't found in the community-patches repo."
         msg2 "You can check https://github.com/Frogging-Family/community-patches.git for available patches."
-        plain ""
-        plain "Press enter to continue."
+        msg2 ""
+        msg2 "Press enter to continue."
         read -r
       fi
     done
