@@ -461,7 +461,7 @@ _prepare() {
     do
       if [[ -d ${_p} ]]
       then
-        msg2 "Using \'${_p}\' as community-patches repo root"
+        msg2 "Using '${_p}' as community-patches repo root"
         _community_patches_repo_path="${_p}/wine-tkg-git"
         break
       fi
