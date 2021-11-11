@@ -2930,16 +2930,27 @@ _polish() {
 	if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	  _versioning_path="${srcdir}/${_winesrcdir}/libs/wine/Makefile.in"
 	  _versioning_string="top_srcdir"
+	elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c6b5f4a406351e7faef33de23d64db4445ef9aea HEAD ); then
+	  _versioning_path="${srcdir}/${_winesrcdir}/configure.ac"
+	  _versioning_string="wine_srcdir"
 	else
 	  _versioning_path="${srcdir}/${_winesrcdir}/Makefile.in"
 	  _versioning_string="srcdir"
 	fi
 
 	if [ -n "$_localbuild" ] && [ -n "$_localbuild_versionoverride" ]; then
-	  sed -i "s/GIT_DIR=\$($_versioning_string)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_localbuild_versionoverride\"/g" "$_versioning_path"
+	  if [ "$_versioning_string" = "wine_srcdir" ]; then
+	    sed -i "s/GIT_DIR=\${$_versioning_string}.git git describe HEAD 2>\\/dev\\/null || echo \\\\\"wine-\\\\\$(PACKAGE_VERSION)\\\\\"/echo \\\\\"wine-$_localbuild_versionoverride\\\\\"/g" "$_versioning_path"
+	  else
+	    sed -i "s/GIT_DIR=\$($_versioning_string)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_localbuild_versionoverride\"/g" "$_versioning_path"
+	  fi
 	elif [ -z "$_localbuild" ]; then
 	  # Set custom version so that it reports the same as pkgver
-	  sed -i "s/GIT_DIR=\$($_versioning_string)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_realwineversion\"/g" "$_versioning_path"
+	  if [ "$_versioning_string" = "wine_srcdir" ]; then
+	    sed -i "s/GIT_DIR=\${$_versioning_string}.git git describe HEAD 2>\\/dev\\/null || echo \\\\\"wine-\\\\\$(PACKAGE_VERSION)\\\\\"/echo \\\\\"wine-$_realwineversion\\\\\"/g" "$_versioning_path"
+	  else
+	    sed -i "s/GIT_DIR=\$($_versioning_string)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_realwineversion\"/g" "$_versioning_path"
+	  fi
 
 	  # Set custom version tags
 	  local _version_tags=()
@@ -2966,7 +2977,11 @@ _polish() {
 	      _version_tags+=(Vkd3d DXVK-Compatible)
 	    fi
 	  fi
-	  sed -i "s/\"\\\1.*\"/\"\\\1  ( ${_version_tags[*]} )\"/g" "${_versioning_path}"
+	  if [ "$_versioning_string" = "wine_srcdir" ]; then
+	    sed -i "s/\\\\\"\\\\\\\1.*\"/\\\\\"\\\\\\\1  ( ${_version_tags[*]} )\\\\\"/g" "${_versioning_path}"
+	  else
+	    sed -i "s/\"\\\1.*\"/\"\\\1  ( ${_version_tags[*]} )\"/g" "${_versioning_path}"
+	  fi
 	  sed -i "s/\"\\\1.*\"/\"\\\1  ( ${_version_tags[*]} )\"/g" "${srcdir}"/"${_winesrcdir}"/dlls/ntdll/Makefile.in
 	fi
 
