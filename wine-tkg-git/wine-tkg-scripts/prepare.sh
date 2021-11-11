@@ -2851,6 +2851,11 @@ EOM
 	  fi
 	fi
 
+	# Proton Battleye
+	if [ "$_proton_battleye_support" = "true" ]; then
+	  _patchname='proton_battleye.patch' && _patchmsg="Add support for Proton's Battleye runtime" && nonuser_patcher
+	fi
+
 	# Proton-tkg needs to know if standard dlopen() is in use
 	if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD ); then
 	  _standard_dlopen="true"
