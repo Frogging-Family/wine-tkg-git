@@ -1083,7 +1083,7 @@ _prepare() {
 
 	if [ "$_use_staging" = "true" ] && [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW2" =~ [yY] ]]; then
 	  # We're converting our array to string to allow manipulation
-	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor b8ca0eae9f47491ba257c422a2bc03fc37d13c22 HEAD ); then
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor b8ca0eae9f47491ba257c422a2bc03fc37d13c22 HEAD ) || [ ! -d "${srcdir}"/"${_stgsrcdir}"/patches/ntdll-NtAlertThreadByThreadId ]; then
 	    _staging_args=$( printf "%s" "${_staging_args[*]}" | sed 's/-W ntdll-NtAlertThreadByThreadId // ; s/ -W ntdll-NtAlertThreadByThreadId// ; s/-W ntdll-NtAlertThreadByThreadId//' )
 	  else
 	    _staging_args=$( printf "%s" "${_staging_args[*]}" )
