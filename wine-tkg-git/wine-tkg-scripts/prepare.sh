@@ -2988,6 +2988,7 @@ _polish() {
 	  fi
 	  if [ "$_versioning_string" = "wine_srcdir" ]; then
 	    sed -i "s/\\\\\"\\\\\\\1.*\"/\\\\\"\\\\\\\1  ( ${_version_tags[*]} )\\\\\"/g" "${_versioning_path}"
+	    sed -i "s/\\\\\"\\\\\\\1.*\"/\\\\\"\\\\\\\1  ( ${_version_tags[*]} )\\\\\"/g" "${srcdir}/${_winesrcdir}/configure"
 	  else
 	    sed -i "s/\"\\\1.*\"/\"\\\1  ( ${_version_tags[*]} )\"/g" "${_versioning_path}"
 	  fi
