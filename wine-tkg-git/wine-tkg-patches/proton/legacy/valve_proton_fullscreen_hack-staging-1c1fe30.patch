@@ -4714,9 +4714,9 @@ index 211d78f830d..8025d23889a 100644
  extern HMODULE x11drv_module DECLSPEC_HIDDEN;
  extern char *process_name DECLSPEC_HIDDEN;
 @@ -578,6 +579,7 @@ struct x11drv_win_data
+     BOOL        shaped : 1;     /* is window using a custom region shape? */
+     BOOL        layered : 1;    /* is window layered and with valid attributes? */
      BOOL        use_alpha : 1;  /* does window use an alpha channel? */
-     BOOL        skip_taskbar : 1; /* does window should be deleted from taskbar */
-     BOOL        add_taskbar : 1; /* does window should be added to taskbar regardless of style */
 +    BOOL        fs_hack : 1;
      int         wm_state;       /* current value of the WM_STATE property */
      DWORD       net_wm_state;   /* bit mask of active x11drv_net_wm_state values */
@@ -5410,8 +5410,8 @@ index 338cdca4853..0812d1b5f63 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
 @@ -581,6 +581,7 @@ struct x11drv_win_data
-     BOOL        skip_taskbar : 1; /* does window should be deleted from taskbar */
-     BOOL        add_taskbar : 1; /* does window should be added to taskbar regardless of style */
+     BOOL        layered : 1;    /* is window layered and with valid attributes? */
+     BOOL        use_alpha : 1;  /* does window use an alpha channel? */
      BOOL        fs_hack : 1;
 +    BOOL        pending_fullscreen : 1;
      int         wm_state;       /* current value of the WM_STATE property */
@@ -5847,9 +5847,9 @@ index 46d46052796..123e89a4f81 100644
 --- a/dlls/winex11.drv/window.c
 +++ b/dlls/winex11.drv/window.c
 @@ -3033,6 +3033,9 @@ LRESULT CDECL X11DRV_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
-     case WM_X11DRV_DELETE_TAB:
-         taskbar_delete_tab( hwnd );
-         return 0;
+         return clip_cursor_notify( hwnd, (HWND)wp, (HWND)lp );
+     case WM_X11DRV_CLIP_CURSOR_REQUEST:
+         return clip_cursor_request( hwnd, (BOOL)wp, (BOOL)lp );
 +    case WM_X11DRV_RELEASE_CURSOR:
 +        ungrab_clipping_window();
 +        return 0;
@@ -5860,21 +5860,16 @@ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
 index 762323222da..9e7fd77e265 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
-@@ -592,11 +592,12 @@ enum x11drv_window_messages
+@@ -545,7 +545,8 @@ enum x11drv_window_messages
      WM_X11DRV_RESIZE_DESKTOP,
      WM_X11DRV_SET_CURSOR,
      WM_X11DRV_CLIP_CURSOR_NOTIFY,
-     WM_X11DRV_CLIP_CURSOR_REQUEST,
-     WM_X11DRV_DELETE_TAB,
--    WM_X11DRV_ADD_TAB
-+    WM_X11DRV_ADD_TAB,
+-    WM_X11DRV_CLIP_CURSOR_REQUEST
++    WM_X11DRV_CLIP_CURSOR_REQUEST,
 +    WM_X11DRV_RELEASE_CURSOR
  };
-
+ 
  /* _NET_WM_STATE properties that we keep track of */
- enum x11drv_net_wm_state
- {
-
 From 133f4d22976513e9483722e1a1edd35709adea83 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Mon, 7 Oct 2019 13:03:43 +0200
@@ -6557,7 +6552,7 @@ index f583e578d36..e18fcaf39d6 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
 @@ -585,6 +585,7 @@ struct x11drv_win_data
-     BOOL        add_taskbar : 1; /* does window should be added to taskbar regardless of style */
+     BOOL        use_alpha : 1;  /* does window use an alpha channel? */
      BOOL        fs_hack : 1;
      BOOL        pending_fullscreen : 1;
 +    ULONGLONG   take_focus_back;
