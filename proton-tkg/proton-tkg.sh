@@ -845,7 +845,7 @@ else
       fi
       # Clone Proton tree as we need to build some tools from it
       clone_proton
-      git pull --ff-only || cd .. && rm -rf Proton && clone_proton
+      git pull --ff-only || cd .. && rm -rf Proton && echo -e "######\nProton tree was force-pushed upstream.. Recloning clean to avoid issues..\n######" && clone_proton
       git checkout "$_proton_branch"
 
       _user_patches_no_confirm="true"
