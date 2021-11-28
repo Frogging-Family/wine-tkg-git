@@ -154,6 +154,13 @@ function new_lib_path_check {
   echo "_x86_64_windows_path=$_x86_64_windows_path" >>"$_logdir"/proton-tkg.log 2>&1
 }
 
+function clone_proton {
+  git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
+  cd Proton
+  git reset --hard HEAD
+  git clean -xdf
+}
+
 function build_vrclient {
   cd "$_nowhere"/Proton
   source "$_nowhere/proton_tkg_token"
@@ -837,11 +844,8 @@ else
         rm -rf Proton/*
       fi
       # Clone Proton tree as we need to build some tools from it
-      git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
-      cd Proton
-      git reset --hard HEAD
-      git clean -xdf
-      git pull
+      clone_proton
+      git pull --ff-only || cd .. && rm -rf Proton && clone_proton
       git checkout "$_proton_branch"
 
       _user_patches_no_confirm="true"
