@@ -434,11 +434,7 @@ function build_steamhelper {
         ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support-legacy.patch" || true )
       fi
     else
-      if ( cd Proton && git merge-base --is-ancestor 492bb580d167559d152f39746e9dfeb5789ba640 HEAD ); then
-        ( cd Proton && patch -Np1 < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system2.patch" || true )
-      else
-        ( cd Proton && patch -Np1 < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system.patch" || true )
-      fi
+      ( cd Proton && patch -Np1 < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system.patch" || true )
       if [ "$_steamvr_support" != "true" ]; then
         ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support.patch" || true )
       fi
