@@ -247,6 +247,7 @@
 	-Dopencv=disabled \
 	-Dvoamrwbenc=disabled \
 	-Dx265=disabled \
+	-Dopenexr=disabled \
 	-Dexamples=disabled \
 	-Dtests=disabled \
 	-Dintrospection=disabled \
