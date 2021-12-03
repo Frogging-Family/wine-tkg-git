@@ -806,7 +806,7 @@ _prepare() {
 	fi
 
 	# Fixes (partially) systray on plasma 5 - https://bugs.winehq.org/show_bug.cgi?id=38409
-	if [ "$_plasma_systray_fix" = "true" ]; then
+	if [ "$_plasma_systray_fix" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 8d6c33c3bfca4f4ed7b7653fd0b82dfbc12bd3cb HEAD ); then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	    _patchname='plasma_systray_fix.patch' && _patchmsg="Applied plasma 5 systray fix" && nonuser_patcher
 	  elif git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD; then
