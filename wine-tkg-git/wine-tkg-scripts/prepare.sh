@@ -1117,22 +1117,10 @@ _prepare() {
 	  if [ "$_use_staging" != "true" ]; then
 	    _use_esync="false"
 	    _use_fsync="false"
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor fa5759b9efad3b00e8ce349889e411792748f87f HEAD ); then
-	      _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
-	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 21f5597de417575d476a00b567d972a89903b4b6 HEAD ); then
-	      msg2 "Skipping non-rebased fastsync patchset"
-	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0cdc52c65cadd0e17153856e6026e8cfc9bec985 HEAD ); then
-	      _patchname='fastsync-mainline-21f5597.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
-	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor f3d41cc7897635311cf868759f95b4bf5253703b HEAD ); then
-	      _patchname='fastsync-mainline-0cdc52c.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
-	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3386560057c0d30461af0973fd9dac9871387143 HEAD ); then
-	      _patchname='fastsync-mainline-f3d41cc.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
-	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 5df0f5f6fb90e1326b71cd1094a7b710b94916d4 HEAD ); then
-	      _patchname='fastsync-mainline-3386560.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
-	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 340cc46287d7861ce6cae19401752e65f4089ae9 HEAD ); then
-	      _patchname='fastsync-mainline-5df0f5f.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
-	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 3c9b5379d1a57f69fa14f87f64f2079171becb6c HEAD ); then
-	      _patchname='fastsync-mainline-340cc46.patch' && _patchmsg="Using fastsync patchset" && nonuser_patcher
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD); then
+	      _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
+	      _patchname='fastsync-mainline-0e931f.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
 	    fi
 	  else
 	    warning "! _use_fastsync is enabled, but _use_staging disables it. Please disable _use_staging in your .cfg to use fastsync !"
