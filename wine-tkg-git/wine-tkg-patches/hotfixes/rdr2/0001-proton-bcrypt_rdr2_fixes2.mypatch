@@ -135,19 +135,19 @@ index 9e0d06e9cc7..889f6ce85ea 100644
 +    {
 +        if (bitlen < 512)
 +        {
-+            heap_free( key );
++            free( key );
 +            return STATUS_INVALID_PARAMETER;
 +        }
 +        pubkey_len = sizeof(BCRYPT_DH_KEY_BLOB) + bitlen / 8 * 3;
-+        if (!(key->u.a.privkey = heap_alloc( bitlen / 8 )))
++        if (!(key->u.a.privkey = malloc( bitlen / 8 )))
 +        {
-+            heap_free( key );
++            free( key );
 +            return STATUS_NO_MEMORY;
 +        }
 +    }
      key->u.a.pubkey_len = pubkey_len;
 
-     if (!(key->u.a.pubkey = heap_alloc( pubkey_len )))
+     if (!(key->u.a.pubkey = malloc( pubkey_len )))
 @@ -1063,6 +1109,7 @@ static NTSTATUS key_import( BCRYPT_ALG_HANDLE algorithm, const WCHAR *type, BCRY
  static NTSTATUS key_export( struct key *key, const WCHAR *type, UCHAR *output, ULONG output_len, ULONG *size )
  {
@@ -258,7 +258,7 @@ index 9e0d06e9cc7..889f6ce85ea 100644
 
 +        if (key_orig->alg_id == ALG_ID_DH && key_orig->u.a.privkey)
 +        {
-+            if (!(buffer = heap_alloc( key_orig->u.a.bitlen / 8 ))) return STATUS_NO_MEMORY;
++            if (!(buffer = malloc( key_orig->u.a.bitlen / 8 ))) return STATUS_NO_MEMORY;
 +            memcpy( buffer, key_orig->u.a.privkey, key_orig->u.a.bitlen / 8 );
 +            key_copy->u.a.privkey = buffer;
 +        }
@@ -266,14 +266,14 @@ index 9e0d06e9cc7..889f6ce85ea 100644
          params.key_orig = key_orig;
          params.key_copy = key_copy;
          if ((status = UNIX_CALL( key_asymmetric_duplicate, &params ))) return status;
-@@ -1699,6 +1808,7 @@ static void key_destroy( struct key *key )
+@@ -1726,6 +1835,7 @@ static void key_destroy( struct key *key )
      {
          UNIX_CALL( key_asymmetric_destroy, key );
-         heap_free( key->u.a.pubkey );
-+        heap_free( key->u.a.privkey );
+         free( key->u.a.pubkey );
++        free( key->u.a.privkey );
      }
      key->hdr.magic = 0;
-     heap_free( key );
+     free( key );
 @@ -1732,6 +1842,7 @@ NTSTATUS WINAPI BCryptImportKeyPair( BCRYPT_ALG_HANDLE algorithm, BCRYPT_KEY_HAN
                                       BCRYPT_KEY_HANDLE *ret_key, UCHAR *input, ULONG input_len, ULONG flags )
  {
@@ -324,34 +324,35 @@ index 9e0d06e9cc7..889f6ce85ea 100644
          return set_key_property( key, prop, value, size, flags );
      }
      default:
-@@ -2043,31 +2180,54 @@ NTSTATUS WINAPI BCryptDeriveKeyPBKDF2( BCRYPT_ALG_HANDLE handle, UCHAR *pwd, ULO
-
+@@ -2070,31 +2207,54 @@ NTSTATUS WINAPI BCryptDeriveKeyPBKDF2( BCRYPT_ALG_HANDLE handle, UCHAR *pwd, ULO
+ 
  NTSTATUS WINAPI BCryptSecretAgreement(BCRYPT_KEY_HANDLE privatekey, BCRYPT_KEY_HANDLE publickey, BCRYPT_SECRET_HANDLE *handle, ULONG flags)
  {
 +    struct key_secret_agreement_params params;
      struct key *privkey = privatekey;
      struct key *pubkey = publickey;
      struct secret *secret;
-+    NTSTATUS status;
-
+-
 -    FIXME( "%p, %p, %p, %08x\n", privatekey, publickey, handle, flags );
++    NTSTATUS status;
++    
 +    TRACE( "%p, %p, %p, %08x\n", privatekey, publickey, handle, flags );
-
+ 
      if (!privkey || privkey->hdr.magic != MAGIC_KEY) return STATUS_INVALID_HANDLE;
      if (!pubkey || pubkey->hdr.magic != MAGIC_KEY) return STATUS_INVALID_HANDLE;
      if (!handle) return STATUS_INVALID_PARAMETER;
 +    if (key_is_symmetric( privkey ) || privkey->alg_id != pubkey->alg_id) return STATUS_INVALID_PARAMETER;
 +    if (!(privkey->u.a.flags & pubkey->u.a.flags & KEY_FLAG_FINALIZED)) return STATUS_INVALID_PARAMETER;
 +    if (privkey->u.a.bitlen != pubkey->u.a.bitlen) return STATUS_INVALID_PARAMETER;
-
-     if (!(secret = heap_alloc_zero( sizeof(*secret) ))) return STATUS_NO_MEMORY;
+ 
+     if (!(secret = calloc( 1, sizeof(*secret) ))) return STATUS_NO_MEMORY;
 -    secret->hdr.magic = MAGIC_SECRET;
-+    if (!(secret->data = heap_alloc( privkey->u.a.bitlen / 8 )))
++    if (!(secret->data = malloc( privkey->u.a.bitlen / 8 )))
 +    {
-+        heap_free( secret );
++        free( secret );
 +        return STATUS_NO_MEMORY;
 +    }
-
+ 
 -    *handle = secret;
 -    return STATUS_SUCCESS;
 +    params.privkey = privkey;
@@ -360,8 +361,8 @@ index 9e0d06e9cc7..889f6ce85ea 100644
 +
 +    if ((status = UNIX_CALL( key_secret_agreement, &params )))
 +    {
-+        heap_free( secret );
-+        heap_free( secret->data );
++        free( secret );
++        free( secret->data );
 +    }
 +    else
 +    {
@@ -370,18 +371,18 @@ index 9e0d06e9cc7..889f6ce85ea 100644
 +    }
 +    return status;
  }
-
+ 
  NTSTATUS WINAPI BCryptDestroySecret(BCRYPT_SECRET_HANDLE handle)
  {
      struct secret *secret = handle;
-
+ 
 -    FIXME( "%p\n", handle );
 +    TRACE( "%p\n", handle );
-
+ 
      if (!secret || secret->hdr.magic != MAGIC_SECRET) return STATUS_INVALID_HANDLE;
      secret->hdr.magic = 0;
-+    heap_free( secret->data );
-     heap_free( secret );
++    free( secret->data );
+     free( secret );
      return STATUS_SUCCESS;
  }
 diff --git a/dlls/bcrypt/gnutls.c b/dlls/bcrypt/gnutls.c
@@ -724,7 +725,7 @@ index a099f2f4b0e..7abcb50a43c 100644
 +{
 +    ULONG dwMagic;
 +    ULONG cbKey;
-+} BCRYPT_DH_KEY_BLOB, *PBCRYPT_DH_KEY_BLOB;
++} BCRYPT_DH_KEY_BLOB, *BCrypt_DH_KEY_BLOB;
 +
 +#define BCRYPT_DH_PUBLIC_MAGIC  0x42504844
 +#define BCRYPT_DH_PRIVATE_MAGIC 0x56504844
@@ -734,7 +735,7 @@ index a099f2f4b0e..7abcb50a43c 100644
      DSA_HASH_ALGORITHM_SHA1,
 @@ -357,6 +375,15 @@ typedef struct _BCRYPT_KEY_DATA_BLOB_HEADER
      ULONG cbKeyData;
- } BCRYPT_KEY_DATA_BLOB_HEADER, *PBCRYPT_KEY_DATA_BLOB_HEADER;
+ } BCRYPT_KEY_DATA_BLOB_HEADER, *BCrypt_KEY_DATA_BLOB_HEADER;
 
 +typedef struct _BCRYPT_DH_PARAMETER_HEADER
 +{
@@ -932,10 +933,10 @@ index 48910aafe3c..e1742fa7a01 100644
 +        }
 +        else
 +        {
-+            UCHAR *output = heap_alloc(hash_length);
++            UCHAR *output = malloc(hash_length);
 +            hash_finish(&hash, hash_alg_id, output, hash_length);
 +            memcpy(derived, output, derived_size);
-+            heap_free(output);
++            free(output);
 +            *result = derived_size;
 +        }
 +
@@ -951,21 +952,21 @@ index fb5ac03b039..22ab7ff0b19 100644
 +++ b/dlls/bcrypt/tests/bcrypt.c
 @@ -2276,7 +2276,7 @@ static void test_ECDH(void)
      buf = HeapAlloc(GetProcessHeap(), 0, size);
-     status = pBCryptDeriveKey(secret, BCRYPT_KDF_HASH, &hash_params, buf, size, &size, 0);
+     status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, &hash_params, buf, size, &size, 0);
      ok(status == STATUS_SUCCESS, "got %08x\n", status);
 -    ok(!(memcmp(hashed_secret, buf, size)), "wrong data\n");
 +    todo_wine ok(!(memcmp(hashed_secret, buf, size)), "wrong data\n");
      HeapFree(GetProcessHeap(), 0, buf);
 
      /* ulVersion is not verified */
-@@ -2801,7 +2801,6 @@ static void test_SecretAgreement(void)
+@@ -2927,7 +2927,6 @@ static void test_SecretAgreement(void)
      ok(status == STATUS_INVALID_PARAMETER, "got %08x\n", status);
 
-     status = pBCryptDeriveKey(secret, L"HASH", NULL, NULL, 0, &size, 0);
+     status = BCryptDeriveKey(secret, L"HASH", NULL, NULL, 0, &size, 0);
 -    todo_wine
      ok(status == STATUS_SUCCESS, "got %08x\n", status);
 
-     status = pBCryptDestroyHash(secret);
+     status = BCryptDestroyHash(secret);
 --
 2.31.1
 
@@ -1053,17 +1054,17 @@ index 22ab7ff0b19..abeae48ab5b 100644
 +    unsigned int i;
 +    ULONG size;
 +
-+    status = pBCryptOpenAlgorithmProvider(&alg, BCRYPT_DH_ALGORITHM, NULL, 0);
++    status = BCryptOpenAlgorithmProvider(&alg, BCRYPT_DH_ALGORITHM, NULL, 0);
 +    ok(!status, "got %08x\n", status);
 +    if (status)
 +        return;
 +
 +    key = NULL;
 +
-+    status = pBCryptGenerateKeyPair(alg, &key, 256, 0);
++    status = BCryptGenerateKeyPair(alg, &key, 256, 0);
 +    ok(status == STATUS_INVALID_PARAMETER, "got %08x\n", status);
 +
-+    status = pBCryptGenerateKeyPair(alg, &key, length, 0);
++    status = BCryptGenerateKeyPair(alg, &key, length, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +    ok(key != NULL, "key not set\n");
 +
@@ -1074,7 +1075,7 @@ index 22ab7ff0b19..abeae48ab5b 100644
 +    status = BCryptExportKey(key, NULL, BCRYPT_DH_PUBLIC_BLOB, buffer, sizeof(buffer), &size, 0);
 +    ok(status == STATUS_INVALID_HANDLE, "got %08x\n", status);
 +
-+    status = pBCryptFinalizeKeyPair(key, 0);
++    status = BCryptFinalizeKeyPair(key, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
 +    size = 0xdeadbeef;
@@ -1097,7 +1098,7 @@ index 22ab7ff0b19..abeae48ab5b 100644
 +    ok(dh_header->cbKeyLength == length / 8, "Got unexpected length %u.\n", dh_header->cbKeyLength);
 +    ok(dh_header->dwMagic == BCRYPT_DH_PARAMETERS_MAGIC, "Got unexpected magic %#x.\n", dh_header->dwMagic);
 +
-+    status = pBCryptDestroyKey(key);
++    status = BCryptDestroyKey(key);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
 +    dh_key_blob = (BCRYPT_DH_KEY_BLOB *)buffer;
@@ -1126,7 +1127,7 @@ index 22ab7ff0b19..abeae48ab5b 100644
 +    ok(dh_key_blob->cbKey == length / 8, "Got unexpected length %u.\n", dh_key_blob->cbKey);
 +    ok(!memcmp(dh_key_blob + 1, private_key_data, length / 8 * 3), "Key data does not match.\n");
 +
-+    status = pBCryptGenerateKeyPair(alg, &key2, length, 0);
++    status = BCryptGenerateKeyPair(alg, &key2, length, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +    dh_header = (BCRYPT_DH_PARAMETER_HEADER *)buffer;
 +    dh_header->dwMagic = BCRYPT_DH_PARAMETERS_MAGIC;
@@ -1135,7 +1136,7 @@ index 22ab7ff0b19..abeae48ab5b 100644
 +    memcpy(dh_header + 1, private_key_data, length / 8 * 2);
 +    status = BCryptSetProperty(key2, BCRYPT_DH_PARAMETERS, buffer, dh_header->cbLength, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
-+    status = pBCryptFinalizeKeyPair(key2, 0);
++    status = BCryptFinalizeKeyPair(key2, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
 +    status = BCryptExportKey(key2, NULL, BCRYPT_DH_PUBLIC_BLOB, buffer, sizeof(buffer), &size, 0);
@@ -1156,50 +1157,50 @@ index 22ab7ff0b19..abeae48ab5b 100644
 +    ok(dh_key_blob->cbKey == length / 8, "Got unexpected length %u.\n", dh_key_blob->cbKey);
 +    ok(!memcmp(dh_key_blob + 1, private_key_data, length / 8 * 4), "Private key data does not match.\n");
 +
-+    status = pBCryptSecretAgreement(NULL, key, &secret, 0);
++    status = BCryptSecretAgreement(NULL, key, &secret, 0);
 +    ok(status == STATUS_INVALID_HANDLE, "got %08x\n", status);
 +
-+    status = pBCryptSecretAgreement(key, NULL, &secret, 0);
++    status = BCryptSecretAgreement(key, NULL, &secret, 0);
 +    ok(status == STATUS_INVALID_HANDLE, "got %08x\n", status);
 +
-+    status = pBCryptSecretAgreement(key, key, NULL, 0);
++    status = BCryptSecretAgreement(key, key, NULL, 0);
 +    ok(status == STATUS_INVALID_PARAMETER, "got %08x\n", status);
 +
-+    status = pBCryptSecretAgreement(key, key, &secret, 0);
++    status = BCryptSecretAgreement(key, key, &secret, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
-+    status = pBCryptDeriveKey(NULL, L"HASH", NULL, NULL, 0, &size, 0);
++    status = BCryptDeriveKey(NULL, L"HASH", NULL, NULL, 0, &size, 0);
 +    ok(status == STATUS_INVALID_HANDLE, "got %08x\n", status);
 +
-+    status = pBCryptDeriveKey(key, L"HASH", NULL, NULL, 0, &size, 0);
++    status = BCryptDeriveKey(key, L"HASH", NULL, NULL, 0, &size, 0);
 +    ok(status == STATUS_INVALID_HANDLE, "got %08x\n", status);
 +
-+    status = pBCryptDeriveKey(secret, NULL, NULL, NULL, 0, &size, 0);
++    status = BCryptDeriveKey(secret, NULL, NULL, NULL, 0, &size, 0);
 +    ok(status == STATUS_INVALID_PARAMETER, "got %08x\n", status);
 +
 +    size = 0xdeadbeef;
-+    status = pBCryptDeriveKey(secret, L"HASH", NULL, NULL, 0, &size, 0);
++    status = BCryptDeriveKey(secret, L"HASH", NULL, NULL, 0, &size, 0);
 +    ok(size == 20, "Got unexpected size %u.\n", size);
 +
 +    size = 0xdeadbeef;
-+    status = pBCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, NULL, 0, &size, 0);
++    status = BCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, NULL, 0, &size, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +    ok(size == length / 8, "Got unexpected size %u.\n", size);
 +
-+    status = pBCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, buffer, 128, &size, 0);
++    status = BCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, buffer, 128, &size, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +    ok(size == length / 8, "Got unexpected size %u.\n", size);
 +    ok(!memcmp(buffer, raw_shared_secret, size), "Raw shared secret data does not match.\n");
 +
 +    size = sizeof(buffer);
 +    memset(buffer, 0xcc, sizeof(buffer));
-+    status = pBCryptDeriveKey(secret, BCRYPT_KDF_HASH, NULL, buffer, 128, &size, 0);
++    status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, NULL, buffer, 128, &size, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +    ok(size == 20, "Got unexpected size %u.\n", size);
 +    ok(!memcmp(buffer, sha1_shared_secret, sizeof(sha1_shared_secret)), "sha1 shared secret data does not match.\n");
 +
 +    size = sizeof(buffer);
-+    status = pBCryptDeriveKey(secret, BCRYPT_KDF_HASH, &hash_params, buffer, size, &size, 0);
++    status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, &hash_params, buffer, size, &size, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +    ok(size == 32, "Got unexpected size %u.\n", size);
 +    ok(!memcmp(buffer, sha256_shared_secret, sizeof(sha256_shared_secret)), "sha1 shared secret data does not match.\n");
@@ -1209,41 +1210,41 @@ index 22ab7ff0b19..abeae48ab5b 100644
 +            break;
 +    ok(i == sizeof(buffer), "Buffer modified at %i, value %#x.\n", i, buffer[i]);
 +
-+    status = pBCryptDestroySecret(secret);
++    status = BCryptDestroySecret(secret);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
-+    status = pBCryptSecretAgreement(key, key2, &secret, 0);
++    status = BCryptSecretAgreement(key, key2, &secret, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
-+    status = pBCryptSecretAgreement(key2, key, &secret2, 0);
++    status = BCryptSecretAgreement(key2, key, &secret2, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
-+    status = pBCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, buffer, 128, &size, 0);
++    status = BCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, buffer, 128, &size, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
-+    status = pBCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, buffer + size, 128, &size, 0);
++    status = BCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, buffer + size, 128, &size, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +    ok(!memcmp(buffer, buffer + size, size), "Shared secrets do not match.\n");
 +
-+    status = pBCryptDestroyHash(secret);
++    status = BCryptDestroyHash(secret);
 +    ok(status == STATUS_INVALID_PARAMETER, "got %08x\n", status);
 +
-+    status = pBCryptDestroyKey(secret);
++    status = BCryptDestroyKey(secret);
 +    ok(status == STATUS_INVALID_HANDLE, "got %08x\n", status);
 +
-+    status = pBCryptDestroySecret(NULL);
++    status = BCryptDestroySecret(NULL);
 +    ok(status == STATUS_INVALID_HANDLE, "got %08x\n", status);
 +
-+    status = pBCryptDestroySecret(alg);
++    status = BCryptDestroySecret(alg);
 +    ok(status == STATUS_INVALID_HANDLE, "got %08x\n", status);
 +
-+    status = pBCryptDestroySecret(secret);
++    status = BCryptDestroySecret(secret);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
-+    status = pBCryptDestroyKey(key);
++    status = BCryptDestroyKey(key);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
-+    status = pBCryptDestroyKey(key2);
++    status = BCryptDestroyKey(key2);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
-+    status = pBCryptCloseAlgorithmProvider(alg, 0);
++    status = BCryptCloseAlgorithmProvider(alg, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +}
 +
@@ -1305,7 +1306,7 @@ index 22ab7ff0b19..abeae48ab5b 100644
 +    NTSTATUS status;
 +    ULONG size;
 +
-+    status = pBCryptOpenAlgorithmProvider(&alg, BCRYPT_DH_ALGORITHM, NULL, 0);
++    status = BCryptOpenAlgorithmProvider(&alg, BCRYPT_DH_ALGORITHM, NULL, 0);
 +    ok(!status, "got %08x\n", status);
 +
 +    dh_key_blob = (BCRYPT_DH_KEY_BLOB *)buffer;
@@ -1314,7 +1315,7 @@ index 22ab7ff0b19..abeae48ab5b 100644
 +    memcpy(dh_key_blob + 1, private_key_data, sizeof(private_key_data));
 +
 +    size = sizeof(*dh_key_blob) + length / 8 * 4;
-+    status = pBCryptImportKeyPair(alg, NULL, BCRYPT_DH_PRIVATE_BLOB, &key, buffer, size, 0);
++    status = BCryptImportKeyPair(alg, NULL, BCRYPT_DH_PRIVATE_BLOB, &key, buffer, size, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
 +    dh_key_blob = (BCRYPT_DH_KEY_BLOB *)buffer;
@@ -1323,22 +1324,22 @@ index 22ab7ff0b19..abeae48ab5b 100644
 +    memcpy(dh_key_blob + 1, peer_key_data, sizeof(peer_key_data));
 +
 +    size = sizeof(*dh_key_blob) + length / 8 * 3;
-+    status = pBCryptImportKeyPair(alg, NULL, BCRYPT_DH_PUBLIC_BLOB, &key2, buffer, size, 0);
++    status = BCryptImportKeyPair(alg, NULL, BCRYPT_DH_PUBLIC_BLOB, &key2, buffer, size, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
-+    status = pBCryptSecretAgreement(key, key2, &secret, 0);
++    status = BCryptSecretAgreement(key, key2, &secret, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +
-+    status = pBCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, buffer, 128, &size, 0);
++    status = BCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, buffer, 128, &size, 0);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +    ok(size == length / 8, "Got unexpected size %u.\n", size);
 +    ok(!memcmp(buffer, raw_shared_secret, size), "Raw shared secret data does not match.\n");
 +
-+    status = pBCryptDestroySecret(secret);
++    status = BCryptDestroySecret(secret);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
-+    status = pBCryptDestroyKey(key);
++    status = BCryptDestroyKey(key);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
-+    status = pBCryptDestroyKey(key2);
++    status = BCryptDestroyKey(key2);
 +    ok(status == STATUS_SUCCESS, "got %08x\n", status);
 +}
 +
