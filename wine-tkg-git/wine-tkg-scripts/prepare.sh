@@ -1114,17 +1114,26 @@ _prepare() {
 
 	# winesync / fastsync
 	if [ "$_use_fastsync" = "true" ]; then
-	  if [ "$_use_staging" != "true" ]; then
-	    _use_esync="false"
-	    _use_fsync="false"
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD); then
-	      _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
-	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	      _patchname='fastsync-mainline-0e931f.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
+	  if [ "$_use_staging" = "true" ]; then
+	    if [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
+	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
+	        _patchname='fastsync-staging-prep.patch' && _patchmsg="Using fastsync prepare" && nonuser_patcher
+	      fi
+	    else
+	      warning "! _use_fastsync is enabled, but it depends on _use_fsync. Please enable it in your .cfg to use fastsync !"
+	      _use_fastsync="false"
 	    fi
 	  else
-	    warning "! _use_fastsync is enabled, but _use_staging disables it. Please disable _use_staging in your .cfg to use fastsync !"
-	    _use_fastsync="false"
+	    if [ "$_use_esync" = "false" ] && [ "$_use_fsync" = "false" ]; then
+	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD); then
+	        _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
+	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
+	        _patchname='fastsync-mainline-0e931f.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
+	      fi
+	    else
+	      warning "! _use_fastsync is enabled, but _use_esync/_use_fsync disables it. Please disable them in your .cfg to use fastsync !"
+	      _use_fastsync="false"
+	    fi
 	  fi
 	fi
 
@@ -1675,6 +1684,17 @@ EOM
 	fi
 
 	echo -e "" >> "$_where"/last_build_config.log
+
+	# winesync / fastsync
+	if [ "$_use_fastsync" = "true" ]; then
+	  if [ "$_use_staging" = "true" ] &&  [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
+	      _patchname='fastsync-staging.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
+	      _patchname='fastsync-staging-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	    fi
+	  fi
+	fi
 
 	# Legacy Proton Fullscreen inline patching
 	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD ); then
