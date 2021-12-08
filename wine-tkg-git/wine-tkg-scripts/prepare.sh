@@ -1720,10 +1720,12 @@ EOM
 	    _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	  fi
 	  if [ "$_use_staging" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 1c1fe30cc50da2b0596096b04b75d8c1e598f8e7 HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 548bc54bf396d74b5b928bf9be835272ddda1886 HEAD ); then
 	      _patchname='valve_proton_fullscreen_hack-staging.patch' && _patchmsg="Applied Proton fullscreen hack patch (staging)" && nonuser_patcher
 	    else
-	      if git merge-base --is-ancestor d1290b6ec7b1f1d0a18742f4da939a8839f55857 HEAD; then
+	      if git merge-base --is-ancestor 1c1fe30cc50da2b0596096b04b75d8c1e598f8e7 HEAD; then
+	        _lastcommit="548bc54"
+	      elif git merge-base --is-ancestor d1290b6ec7b1f1d0a18742f4da939a8839f55857 HEAD; then
 	        _lastcommit="1c1fe30"
 	      elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor c9c7130f3cc51c1861a5ef3e703fd442e8942ba4 HEAD ); then
 	        _lastcommit="d1290b6"
@@ -2068,7 +2070,7 @@ EOM
 	fi
 
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD || ([ "$_protonify" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 850083d088b831b5ce59393d06c9d2f6fc5200a6 HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 548bc54bf396d74b5b928bf9be835272ddda1886 HEAD ); then
 	    if [ "$_use_staging" = "true" ]; then
 	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD; then
 	        _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/3" && nonuser_patcher
@@ -2158,7 +2160,11 @@ EOM
 	      fi
 	    fi
 	  else
-	    if git merge-base --is-ancestor e843605b238a754c819f0a1f80242ee7f35deda1 HEAD; then
+	    if git merge-base --is-ancestor 850083d088b831b5ce59393d06c9d2f6fc5200a6 HEAD; then
+	      _lastcommit="548bc54"
+	      _rpc="1"
+	      _stmbits="1"
+	    elif git merge-base --is-ancestor e843605b238a754c819f0a1f80242ee7f35deda1 HEAD; then
 	      _lastcommit="850083d"
 	      _rpc="1"
 	      _stmbits="1"
