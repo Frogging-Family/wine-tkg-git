@@ -3027,6 +3027,13 @@ _polish() {
 	  sed -i "s/\"\\\1.*\"/\"\\\1  ( ${_version_tags[*]} )\"/g" "${srcdir}"/"${_winesrcdir}"/dlls/ntdll/Makefile.in
 	fi
 
+	# Fix libldap detection on Arch
+	if [ -e /usr/bin/pacman ]; then
+	  if pacman -Qq libldap &> /dev/null; then
+	    sed -i "s|-lldap_r|-lldap|" "$srcdir/$_winesrcdir/configure"
+	  fi
+	fi
+
 	# fix path of opencl headers
 	sed 's|OpenCL/opencl.h|CL/opencl.h|g' -i configure*
 
