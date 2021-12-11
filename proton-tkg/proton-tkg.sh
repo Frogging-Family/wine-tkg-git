@@ -1003,7 +1003,7 @@ else
     cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
 
     # Inject current wine tree prefix version value in a proton-friendly format - major.minor-commitnumber
-    _prefix_version=$( echo ${_protontkg_true_version} | sed 's/.r/-/; s/.[^.]*//4g; s/\.[^.*-]*//2g;' )
+    _prefix_version=$( echo ${_protontkg_true_version} | sed 's/rc[0-9]//g; s/.r/-/; s/.[^.]*//4g; s/\.[^.*-]*//2g;' )
     sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version\"|" "proton_tkg_$_protontkg_version/proton"
 
     #### Disable VR support patch as our wine-side support reportedly doesn't work
@@ -1121,7 +1121,7 @@ else
       sed -i 's/"GST_PLUGIN_PATH_1_0"/"GST_PLUGIN_SYSTEM_PATH_1_0"/g' "proton_tkg_$_protontkg_version/proton"
     fi
 
-    _standalone_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' )
+    _standalone_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' | sed 's/rc[0-9]//g;')
     echo -e "Full version: $_protontkg_true_version\nStripped version: ${_standalone_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
 
     # Cleanup
