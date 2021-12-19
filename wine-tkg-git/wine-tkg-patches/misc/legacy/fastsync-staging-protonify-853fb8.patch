@@ -108,7 +108,7 @@ index 33266c596da..1fccb813670 100644
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
 +    no_get_fast_sync,          /* get_fast_sync */
-     no_close_handle,           /* close_handle */
+     completion_close,          /* close_handle */
      completion_destroy         /* destroy */
  };
 diff --git a/server/console.c b/server/console.c
@@ -901,7 +901,7 @@ new file mode 100644
 index 00000000000..07bba420c1d
 --- /dev/null
 +++ b/server/fast_sync.c
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,298 @@
 +/*
 + * Fast synchronization primitives
 + *
@@ -931,7 +931,9 @@ index 00000000000..07bba420c1d
 +#endif
 +#include <stdint.h>
 +#include <stdio.h>
-+#include <sys/ioctl.h>
++#ifdef HAVE_SYS_IOCTL_H
++# include <sys/ioctl.h>
++#endif
 +#include <sys/stat.h>
 +#include <unistd.h>
 +
@@ -1564,15 +1566,16 @@ diff --git a/server/completion.c b/server/completion.c
 index 1fccb813670..733c6433a5f 100644
 --- a/server/completion.c
 +++ b/server/completion.c
-@@ -61,10 +61,12 @@ struct completion
-     struct object  obj;
+@@ -61,11 +61,13 @@ struct completion
      struct list    queue;
      unsigned int   depth;
+     int            abandoned;
 +    struct fast_sync *fast_sync;
  };
  
  static void completion_dump( struct object*, int );
  static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static int completion_close( struct object *obj, struct process *process, obj_handle_t handle );
 +static struct fast_sync *completion_get_fast_sync( struct object *obj );
  static void completion_destroy( struct object * );
  
@@ -1583,7 +1586,7 @@ index 1fccb813670..733c6433a5f 100644
      no_kernel_obj_list,        /* get_kernel_obj_list */
 -    no_get_fast_sync,          /* get_fast_sync */
 +    completion_get_fast_sync,  /* get_fast_sync */
-     no_close_handle,           /* close_handle */
+     completion_close,          /* close_handle */
      completion_destroy         /* destroy */
  };
 @@ -112,6 +114,7 @@ static void completion_destroy( struct object *obj)
@@ -2267,9 +2270,9 @@ index 99b81292d92..0294e2a4e17 100644
      process_destroy              /* destroy */
  };
 @@ -680,6 +681,7 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
-     process->rawinput_kbd    = NULL;
      process->esync_fd        = -1;
      process->fsync_idx       = 0;
+     process->cpu_override.cpu_count = 0;
 +    process->fast_sync       = NULL;
      list_init( &process->kernel_object );
      list_init( &process->thread_list );
@@ -2313,9 +2316,9 @@ index ae272e521dc..65f59057083 100644
 --- a/server/process.h
 +++ b/server/process.h
 @@ -91,6 +91,7 @@ struct process
-     struct list          kernel_object;   /* list of kernel object pointers */
      int                  esync_fd;        /* esync file descriptor (signaled on exit) */
      unsigned int         fsync_idx;
+     struct cpu_topology_override cpu_override; /* Overridden CPUs to host CPUs mapping. */
 +    struct fast_sync    *fast_sync;       /* fast synchronization object */
  };
  
@@ -3765,7 +3768,7 @@ diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
 index 4fdec59ca4a..374001d2454 100644
 --- a/dlls/ntdll/unix/sync.c
 +++ b/dlls/ntdll/unix/sync.c
-@@ -30,9 +30,11 @@
+@@ -30,9 +30,13 @@
  #include <assert.h>
  #include <errno.h>
  #include <fcntl.h>
@@ -3773,10 +3776,12 @@ index 4fdec59ca4a..374001d2454 100644
  #include <limits.h>
  #include <signal.h>
  #include <sys/types.h>
++#ifdef HAVE_SYS_IOCTL_H
 +#include <sys/ioctl.h>
++#endif
+ #ifdef HAVE_SYS_MMAN_H
  #include <sys/mman.h>
- #ifdef HAVE_SYS_SYSCALL_H
- #include <sys/syscall.h>
+ #endif
 @@ -49,6 +53,7 @@
  #endif
  #include <string.h>
