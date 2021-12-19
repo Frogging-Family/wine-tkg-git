@@ -1693,25 +1693,6 @@ EOM
 
 	echo -e "" >> "$_where"/last_build_config.log
 
-	# winesync / fastsync
-	if [ "$_use_fastsync" = "true" ]; then
-	  if [ "$_use_staging" = "true" ] &&  [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
-	    if [ "$_protonify" = "true" ]; then
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
-	        _patchname='fastsync-staging-protonify.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	        _patchname='fastsync-staging-protonify-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      fi
-	    else
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
-	        _patchname='fastsync-staging.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	        _patchname='fastsync-staging-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      fi
-	    fi
-	  fi
-	fi
-
 	# Legacy Proton Fullscreen inline patching
 	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD ); then
 	  echo -e "\nLegacy Proton Fullscreen inline patching" >> "$_where"/prepare.log
@@ -2653,6 +2634,25 @@ EOM
 	    _patchname='proton-cpu-topology-overrides-44699c3.patch' && _patchmsg="Enable Proton's CPU topology override support" && nonuser_patcher
 	  else
 	    _patchname='proton-cpu-topology-overrides-7999af8.patch' && _patchmsg="Enable Proton's CPU topology override support" && nonuser_patcher
+	  fi
+	fi
+
+	# winesync / fastsync
+	if [ "$_use_fastsync" = "true" ]; then
+	  if [ "$_use_staging" = "true" ] &&  [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
+	    if [ "$_protonify" = "true" ]; then
+	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
+	        _patchname='fastsync-staging-protonify.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
+	        _patchname='fastsync-staging-protonify-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	      fi
+	    else
+	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
+	        _patchname='fastsync-staging.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
+	        _patchname='fastsync-staging-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	      fi
+	    fi
 	  fi
 	fi
 
