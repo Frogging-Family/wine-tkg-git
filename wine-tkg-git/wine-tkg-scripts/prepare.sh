@@ -793,7 +793,7 @@ _prepare() {
 
 	# use CLOCK_MONOTONIC instead of CLOCK_MONOTONIC_RAW in ntdll/server - lowers overhead
 	if [ "$_use_staging" != "true" ]; then
-	  if [ "$_clock_monotonic" = "true" ] && [ "$_use_fastsync" != "true" ]; then
+	  if [ "$_clock_monotonic" = "true" ]; then
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	      _patchname='use_clock_monotonic.patch' && _patchmsg="Applied clock_monotonic patch" && nonuser_patcher
 	    else
@@ -1098,7 +1098,7 @@ _prepare() {
 
 	# use CLOCK_MONOTONIC instead of CLOCK_MONOTONIC_RAW in ntdll/server - lowers overhead
 	if [ "$_use_staging" = "true" ]; then
-	  if [ "$_clock_monotonic" = "true" ] && [ "$_use_fastsync" != "true" ]; then
+	  if [ "$_clock_monotonic" = "true" ]; then
 	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor a1a2d654886fe71af49f9f64210e21d743976ffe HEAD ); then
 	      _patchname='use_clock_monotonic-staging.patch' && _patchmsg="Applied clock_monotonic patch" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
@@ -1129,6 +1129,9 @@ _prepare() {
 	        _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
 	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
 	        _patchname='fastsync-mainline-0e931f.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
+	      fi
+	      if [ "$_clock_monotonic" = "true" ]; then
+	        _patchname='fastsync-clock_monotonic-fixup.patch' && _patchmsg="Applied fastsync fix due clock_monotonic" && nonuser_patcher
 	      fi
 	    else
 	      warning "! _use_fastsync is enabled, but _use_esync/_use_fsync disables it. Please disable them in your .cfg to use fastsync !"
@@ -2652,6 +2655,9 @@ EOM
 	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
 	        _patchname='fastsync-staging-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
 	      fi
+	    fi
+	    if [ "$_clock_monotonic" = "true" ]; then
+	      _patchname='fastsync-clock_monotonic-fixup.patch' && _patchmsg="Applied fastsync fix due clock_monotonic" && nonuser_patcher
 	    fi
 	  fi
 	fi
