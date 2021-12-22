@@ -20,7 +20,7 @@ _no_steampath="false"
 function resources_cleanup {
   # The symlinks switch doesn't need the recursive flag, but we'll use it temporarily
   # as a smoother transition for existing users with dirty trees
-  rm -rf "${_nowhere}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko,steam-runtime}
+  rm -rf "${_nowhere}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko,steam-runtime,openvr}
 }
 
 trap resources_cleanup EXIT
@@ -28,7 +28,7 @@ trap resources_cleanup EXIT
 resources_cleanup
 
 _resources_path="${_nowhere}/external-resources"
-mkdir -p "${_resources_path}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko}
+mkdir -p "${_resources_path}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko,openvr}
 ln -s "${_resources_path}"/Proton "${_nowhere}"/Proton
 ln -s "${_resources_path}"/vkd3d-proton "${_nowhere}"/vkd3d-proton
 ln -s "${_resources_path}"/dxvk-tools "${_nowhere}"/dxvk-tools
@@ -37,6 +37,7 @@ ln -s "${_resources_path}"/liberation-fonts "${_nowhere}"/liberation-fonts
 ln -s "${_resources_path}"/mono "${_nowhere}"/mono
 ln -s "${_resources_path}"/gecko "${_nowhere}"/gecko
 ln -s "${_resources_path}"/steam-runtime "${_nowhere}"/steam-runtime
+ln -s "${_resources_path}"/openvr "${_nowhere}"/openvr
 
 # Enforce using makepkg when using --makepkg
 if [ "$1" = "--makepkg" ]; then
@@ -157,12 +158,12 @@ function new_lib_path_check {
 function clone_proton {
   git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
   cd Proton
-  git reset --hard HEAD
+  git reset --hard origin/HEAD
   git clean -xdf
 }
 
 function build_vrclient {
-  cd "$_nowhere"/Proton
+  cd "$_nowhere"
   source "$_nowhere/proton_tkg_token"
   git clone https://github.com/ValveSoftware/openvr.git || true # It'll complain the path already exists on subsequent builds
   cd openvr
@@ -170,7 +171,7 @@ function build_vrclient {
   git clean -xdf
   git pull origin master
   #git checkout 52065df3d6f3af96300dac98cdf7397f26abfcd7
-  cd ..
+  #cd ..
 
   export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --dll -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_nowhere/proton_dist_tmp/include/wine/"
   export CFLAGS="-O2 -g"
@@ -179,11 +180,11 @@ function build_vrclient {
   if [[ "$_proton_branch" = *6.* ]]; then
     WINEMAKERFLAGS+=" -ldl"
   elif [ "$_standard_dlopen" = "true" ] && [[ "$_proton_branch" != *5.13 ]]; then
-    patch -Np1 < "$_nowhere/proton_template/vrclient-remove-library.h-dep.patch" || true
-    patch -Np1 < "$_nowhere/proton_template/vrclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch" || true
+    patch -Np1 < "$_nowhere/proton_template/vrclient-remove-library.h-dep.patch" || exit 1
+    patch -Np1 < "$_nowhere/proton_template/vrclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch" || exit 1
     WINEMAKERFLAGS+=" -ldl"
   elif [[ "$_proton_branch" = *5.13 ]]; then
-    patch -Np1 < "$_nowhere/proton_template/vrclient-remove-library.h-dep.patch" || true
+    patch -Np1 < "$_nowhere/proton_template/vrclient-remove-library.h-dep.patch" || exit 1
     WINEMAKERFLAGS+=" -ldl"
   fi
 
@@ -194,32 +195,32 @@ function build_vrclient {
   mkdir -p build/vrclient.win64
   mkdir -p build/vrclient.win32
 
-  cp -a vrclient_x64/* build/vrclient.win64
-  cp -a vrclient_x64/* build/vrclient.win32 && mv build/vrclient.win32/vrclient_x64 build/vrclient.win32/vrclient && mv build/vrclient.win32/vrclient/vrclient_x64.spec build/vrclient.win32/vrclient/vrclient.spec
+  cp -a "${_nowhere}"/Proton/vrclient_x64/* build/vrclient.win64
+  cp -a "${_nowhere}"/Proton/vrclient_x64/* build/vrclient.win32 && mv build/vrclient.win32/vrclient_x64 build/vrclient.win32/vrclient && mv build/vrclient.win32/vrclient/vrclient_x64.spec build/vrclient.win32/vrclient/vrclient.spec
 
   cd build/vrclient.win64
-  winemaker $WINEMAKERFLAGS -L"$_nowhere/proton_dist_tmp/lib64/" -L"$_nowhere/proton_dist_tmp/lib64/wine/" -I"$_nowhere/Proton/build/vrclient.win64/vrclient_x64/" -I"$_nowhere/Proton/build/vrclient.win64/" vrclient_x64
-  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win64/vrclient_x64" -j$(nproc) && strip --strip-debug vrclient_x64/vrclient_x64.dll.so
-  winebuild --dll --fake-module -E "$_nowhere/Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.spec" -o vrclient_x64.dll.fake
+  winemaker $WINEMAKERFLAGS -L"$_nowhere/proton_dist_tmp/lib64/" -L"$_nowhere/proton_dist_tmp/lib64/wine/" -I"$_nowhere/openvr/build/vrclient.win64/vrclient_x64/" -I"$_nowhere/openvr/build/vrclient.win64/" vrclient_x64
+  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/openvr/build/vrclient.win64/vrclient_x64" -j$(nproc) && strip --strip-debug vrclient_x64/vrclient_x64.dll.so
+  winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win64/vrclient_x64/vrclient_x64.spec" -o vrclient_x64.dll.fake
   cd ../..
 
   cd build/vrclient.win32
-  winemaker $WINEMAKERFLAGS --wine32 -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" -I"$_nowhere/Proton/build/vrclient.win32/vrclient/" -I"$_nowhere/Proton/build/vrclient.win32/" vrclient
-  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/vrclient.win32/vrclient" -j$(nproc) && strip --strip-debug vrclient/vrclient.dll.so
-  winebuild --dll --fake-module -E "$_nowhere/Proton/build/vrclient.win32/vrclient/vrclient.spec" -o vrclient.dll.fake
+  winemaker $WINEMAKERFLAGS --wine32 -L"$_nowhere/proton_dist_tmp/lib/" -L"$_nowhere/proton_dist_tmp/lib/wine/" -I"$_nowhere/openvr/build/vrclient.win32/vrclient/" -I"$_nowhere/openvr/build/vrclient.win32/" vrclient
+  make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/openvr/build/vrclient.win32/vrclient" -j$(nproc) && strip --strip-debug vrclient/vrclient.dll.so
+  winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win32/vrclient/vrclient.spec" -o vrclient.dll.fake
   cd "$_nowhere"
 
-  cp -v Proton/openvr/bin/win32/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/openvr_api_dxvk.dll
-  cp -v Proton/openvr/bin/win64/openvr_api.dll proton_dist_tmp/lib64/wine/dxvk/openvr_api_dxvk.dll
+  cp -v "${_nowhere}"/openvr/bin/win32/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/openvr_api_dxvk.dll
+  cp -v "${_nowhere}"/openvr/bin/win64/openvr_api.dll proton_dist_tmp/lib64/wine/dxvk/openvr_api_dxvk.dll
 
   if [ "$_new_lib_paths" = "true" ]; then
     if [ "$_new_lib_paths_69" = "true" ] && [ -d proton_dist_tmp/lib/wine/i386-windows ] && [ -d proton_dist_tmp/lib64/wine/x86_64-windows ]; then
-      cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/x86_64-unix/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/x86_64-windows/vrclient_x64.dll
-      cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/i386-unix/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/i386-windows/vrclient.dll
+      cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/x86_64-unix/ && cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/x86_64-windows/vrclient_x64.dll
+      cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/i386-unix/ && cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/i386-windows/vrclient.dll
     fi
   else
-    cp -v Proton/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/ && cp -v Proton/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/fakedlls/vrclient_x64.dll
-    cp -v Proton/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/ && cp -v Proton/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/vrclient.dll
+    cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/lib64/wine/ && cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/lib64/wine/fakedlls/vrclient_x64.dll
+    cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/lib/wine/ && cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/lib/wine/fakedlls/vrclient.dll
   fi
 }
 
@@ -233,11 +234,11 @@ function build_lsteamclient {
   if [[ "$_proton_branch" != *3.* ]] && [[ "$_proton_branch" != *4.* ]]; then
     _cxx_addon="-std=gnu++11"
     if [[ "$_proton_branch" = *5.0 ]] && [ "$_standard_dlopen" = "true" ]; then
-      patch -Np1 < "$_nowhere/proton_template/steamclient-remove-library.h-dep.patch" || true
-      patch -Np1 < "$_nowhere/proton_template/steamclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch" || true
+      patch -Np1 < "$_nowhere/proton_template/steamclient-remove-library.h-dep.patch" || exit 1
+      patch -Np1 < "$_nowhere/proton_template/steamclient-use_standard_dlopen_instead_of_the_libwine_wrappers.patch" || exit 1
       WINEMAKERFLAGS+=" -ldl"
     elif [[ "$_proton_branch" = *5.13 ]]; then
-      patch -Np1 < "$_nowhere/proton_template/steamclient-remove-library.h-dep.patch" || true
+      patch -Np1 < "$_nowhere/proton_template/steamclient-remove-library.h-dep.patch" || exit 1
       WINEMAKERFLAGS+=" -ldl"
     else
       WINEMAKERFLAGS+=" -ldl"
@@ -440,16 +441,17 @@ function build_steamhelper {
     _cxx_addon="-std=c++17"
     if [ "$_no_loader_array" = "true" ]; then
       if [ "$_steamvr_support" != "true" ]; then
-        ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support-legacy.patch" || true )
+        ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support-legacy.patch" ) || exit 1
       fi
     else
       if [ -d "$_nowhere"/Proton/steam_helper/64 ]; then
-        ( cd Proton && patch -Np1 < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system2.patch" || true )
+        ( cd Proton && patch -Np1 < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system2.patch" ) || exit 1
+        #( cd Proton && patch -Np1 < "$_nowhere/proton_template/SHGetFolderPathW_nuke.patch" ) || exit 1
       else
-        ( cd Proton && patch -Np1 < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system.patch" || true )
+        ( cd Proton && patch -Np1 < "$_nowhere/proton_template/steamhelper_remove__wine_make_process_system.patch" || exit 1 )
       fi
       if [ "$_steamvr_support" != "true" ]; then
-        ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support.patch" || true )
+        ( cd Proton && patch -Np1 -R < "$_nowhere/proton_template/steamhelper_revert_openvr-support.patch" ) || exit 1
       fi
     fi
   fi
@@ -471,10 +473,10 @@ function build_steamhelper {
 
     if [[ "$_proton_branch" = *4.11 ]]; then
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine -I$_nowhere/proton_dist_tmp/include/wine/msvcrt"
-      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
+      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
     else
       export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine"
-      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
+      winemaker $WINEMAKERFLAGS --wine32 --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
     fi
 
     # 32-bit
@@ -492,7 +494,7 @@ function build_steamhelper {
     # 64-bit
     if [ "$_proton_branch" = "experimental_6.3" ]; then
       cd "$_nowhere"/Proton/build/steam.win64
-      winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/Proton/openvr/headers/" -L"$_nowhere/Proton/steam_helper/32/" -L"$_nowhere/Proton/steam_helper/64/" .
+      winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/openvr/headers/" -L"$_nowhere/Proton/steam_helper/32/" -L"$_nowhere/Proton/steam_helper/64/" .
       make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win64" LIBRARIES="-L$_nowhere/Proton/steam_helper/32/ -L$_nowhere/Proton/steam_helper/64/ -lsteam_api -lole32 -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so
 
       touch "$_nowhere/Proton/build/steam.win64/steam.spec"
@@ -841,11 +843,17 @@ else
 
     if [ "$_NUKR" != "debug" ]; then
       if [ -d Proton ] && [ ! -f Proton/proton ]; then
-        rm -rf Proton/*
+        rm -rf "$_resources_path"/Proton/*
       fi
       # Clone Proton tree as we need to build some tools from it
       clone_proton
-      git pull --ff-only || cd .. && rm -rf Proton && echo -e "######\nProton tree was force-pushed upstream.. Recloning clean to avoid issues..\n######" && clone_proton
+      if ! git pull --ff-only; then
+        cd ..
+        rm -rf "$_resources_path"/Proton/*
+        echo -e "######\nProton tree was force-pushed upstream.. Recloning clean to avoid issues..\n######"
+        clone_proton
+        git pull origin
+      fi
       git checkout "$_proton_branch"
 
       _user_patches_no_confirm="true"
