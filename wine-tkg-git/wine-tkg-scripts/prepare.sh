@@ -1094,38 +1094,6 @@ _prepare() {
 	  _commitmsg="03-staging" _committer
 	fi
 
-	# winesync / fastsync
-	if [ "$_use_fastsync" = "true" ]; then
-	  if [ "$_use_staging" = "true" ]; then
-	    if [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	        _patchname='fastsync-staging-prep.patch' && _patchmsg="Using fastsync prepare" && nonuser_patcher
-	      fi
-	    else
-	      warning "! _use_fastsync is enabled, but it depends on _use_fsync. Please enable it in your .cfg to use fastsync !"
-	      _use_fastsync="false"
-	    fi
-	  else
-	    if [ "$_use_esync" = "false" ] && [ "$_use_fsync" = "false" ]; then
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 751a3325a6ac93d11f08088c40b45a9ae05b52de HEAD); then
-	        _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e5d69d9ee6b01e359abe0ea326c5e13bf81e3042 HEAD ); then
-	        _patchname='fastsync-mainline-751a33.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
-	        _patchname='fastsync-mainline-e5d69d.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	        _patchname='fastsync-mainline-0e931f.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
-	      fi
-	      if [ "$_clock_monotonic" = "true" ]; then
-	        _patchname='fastsync-clock_monotonic-fixup.patch' && _patchmsg="Applied fastsync fix due clock_monotonic" && nonuser_patcher
-	      fi
-	    else
-	      warning "! _use_fastsync is enabled, but _use_esync/_use_fsync disables it. Please disable them in your .cfg to use fastsync !"
-	      _use_fastsync="false"
-	    fi
-	  fi
-	fi
-
 	# esync
 	if [ "$_use_esync" = "true" ]; then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e3001b6a7c087da5a680b412d82da878e0149e8b HEAD ); then
@@ -2628,31 +2596,51 @@ EOM
 
 	# winesync / fastsync
 	if [ "$_use_fastsync" = "true" ]; then
-	  if [ "$_use_staging" = "true" ] &&  [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
-	    if [ "$_protonify" = "true" ]; then
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 751a3325a6ac93d11f08088c40b45a9ae05b52de HEAD ); then
-	        _patchname='fastsync-staging-protonify.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e5d69d9ee6b01e359abe0ea326c5e13bf81e3042 HEAD ); then
-	        _patchname='fastsync-staging-protonify-155e98.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
-	        _patchname='fastsync-staging-protonify-853fb8.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	        _patchname='fastsync-staging-protonify-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	  if [ "$_use_staging" = "true" ]; then
+	    if [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
+	      if [ "$_protonify" = "true" ]; then
+	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 751a3325a6ac93d11f08088c40b45a9ae05b52de HEAD ); then
+	          _patchname='fastsync-staging-protonify.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e5d69d9ee6b01e359abe0ea326c5e13bf81e3042 HEAD ); then
+	          _patchname='fastsync-staging-protonify-155e98.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
+	          _patchname='fastsync-staging-protonify-853fb8.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
+	          _patchname='fastsync-staging-protonify-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        fi
+	      else
+	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 751a3325a6ac93d11f08088c40b45a9ae05b52de HEAD ); then
+	          _patchname='fastsync-staging.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e5d69d9ee6b01e359abe0ea326c5e13bf81e3042 HEAD ); then
+	          _patchname='fastsync-staging-155e98.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
+	          _patchname='fastsync-staging-853fb8.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
+	          _patchname='fastsync-staging-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        fi
 	      fi
 	    else
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 751a3325a6ac93d11f08088c40b45a9ae05b52de HEAD ); then
-	        _patchname='fastsync-staging.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	      warning "! _use_fastsync is enabled, but it depends on _use_esync and_use_fsync. Please enable it in your .cfg to use fastsync !"
+	      _use_fastsync="false"
+	    fi
+	  else
+	    if [ "$_use_esync" = "false" ] && [ "$_use_fsync" = "false" ]; then
+	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 751a3325a6ac93d11f08088c40b45a9ae05b52de HEAD); then
+	        _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
 	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e5d69d9ee6b01e359abe0ea326c5e13bf81e3042 HEAD ); then
-	        _patchname='fastsync-staging-155e98.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        _patchname='fastsync-mainline-751a33.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
 	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
-	        _patchname='fastsync-staging-853fb8.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        _patchname='fastsync-mainline-e5d69d.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
 	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	        _patchname='fastsync-staging-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        _patchname='fastsync-mainline-0e931f.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
 	      fi
+	    else
+	      warning "! _use_fastsync is enabled, but _use_esync/_use_fsync disables it. Please disable them in your .cfg to use fastsync !"
+	      _use_fastsync="false"
 	    fi
-	    if [ "$_clock_monotonic" = "true" ]; then
-	      _patchname='fastsync-clock_monotonic-fixup.patch' && _patchmsg="Applied fastsync fix due clock_monotonic" && nonuser_patcher
-	    fi
+	  fi
+	  if [ "$_use_fastsync" = "true" ] && [ "$_clock_monotonic" = "true" ]; then
+	    _patchname='fastsync-clock_monotonic-fixup.patch' && _patchmsg="Applied fastsync fix due clock_monotonic" && nonuser_patcher
 	  fi
 	fi
 
