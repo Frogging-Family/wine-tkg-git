@@ -2257,8 +2257,8 @@ index e12ed3a668a..34d4c80eee5 100644
  
  WINE_DEFAULT_DEBUG_CHANNEL(server);
 @@ -134,7 +135,7 @@ timeout_t server_start_time = 0;  /* time of server startup */
+ sigset_t server_block_set;  /* signals to block during server calls */
  static int fd_socket = -1;  /* socket to exchange file descriptors with the server */
- static int initial_cwd = -1;
  static pid_t server_pid;
 -static pthread_mutex_t fd_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 +pthread_mutex_t fd_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -2662,9 +2662,9 @@ index d1e3cae8919..78635f3fae1 100644
      no_signal,                        /* signal */
      console_get_fd,                   /* get_fd */
 @@ -133,6 +135,7 @@ struct console_server
-     unsigned int          once_input : 1; /* flag if input thread has already been requested */
-     int                   term_fd;        /* UNIX terminal fd */
-     struct termios        termios;        /* original termios */
+     int                   busy;        /* flag if server processing an ioctl */
+     int                   term_fd;     /* UNIX terminal fd */
+     struct termios        termios;     /* original termios */
 +    int                   esync_fd;    /* esync file descriptor */
  };
  
@@ -4070,9 +4070,9 @@ index 1b6ddb1b982..df50955f621 100644
      no_signal,                     /* signal */
      no_get_fd,                     /* get_fd */
 @@ -541,6 +546,7 @@ struct process *create_process( int fd, struct process *parent, int inherit_all,
+     process->trace_data      = 0;
      process->rawinput_mouse  = NULL;
      process->rawinput_kbd    = NULL;
-     memset( &process->image_info, 0, sizeof(process->image_info) );
 +    process->esync_fd        = -1;
      list_init( &process->kernel_object );
      list_init( &process->thread_list );
@@ -4114,9 +4114,9 @@ index 56092e5b1ac..eec69ddbcaf 100644
 --- a/server/process.h
 +++ b/server/process.h
 @@ -98,6 +98,7 @@ struct process
+     const struct rawinput_device *rawinput_mouse; /* rawinput mouse device, if any */
      const struct rawinput_device *rawinput_kbd;   /* rawinput keyboard device, if any */
      struct list          kernel_object;   /* list of kernel object pointers */
-     pe_image_info_t      image_info;      /* main exe image info */
 +    int                  esync_fd;        /* esync file descriptor (signaled on exit) */
  };
  
