@@ -1161,7 +1161,7 @@ else
     # Remove gst-editing-services on pacman distros
     if [ -e /usr/bin/pacman ]; then
       if pacman -Qq gst-editing-services &> /dev/null; then
-        warning '! found gst-editing-services package, known to break wine prefix creation !'
+        echo '! found gst-editing-services package, known to break wine prefix creation !'
         read -rp "  Uninstall it?"$'\n> N/y : ' _gst_editing_services;
         if [[ "$_gst_editing_services" =~ [yY] ]]; then
           sudo pacman -R gst-editing-services
