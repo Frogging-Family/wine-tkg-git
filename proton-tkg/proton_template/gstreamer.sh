@@ -66,7 +66,7 @@
     cd FAudio
     git reset --hard HEAD
     git clean -xdf
-    git pull origin master
+    git checkout d6b3e87720691bddd421673e4a9ea47a690b8fab # Last commit before gstreamer support removal - which we currently still need for wma playback
     cd ..
     rm -rf FAudio32 && cp -R FAudio FAudio32
     rm -rf "$_nowhere"/Proton/build/faudio*
