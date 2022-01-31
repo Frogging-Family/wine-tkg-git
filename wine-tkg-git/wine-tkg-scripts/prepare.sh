@@ -1559,7 +1559,7 @@ EOM
 	fi
 
 	# fsync - experimental replacement for esync introduced with Proton 4.11-1
-	if [ "$_use_fsync" = "true" ]; then
+	if [ "$_use_fsync" = "true" ] || [ "$_fsync_futex_waitv" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	  if [ "$_staging_esync" = "true" ]; then
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e3001b6a7c087da5a680b412d82da878e0149e8b HEAD ); then
 	      _patchname='fsync-unix-staging.patch' && _patchmsg="Applied fsync, an experimental replacement for esync (unix, staging)" && nonuser_patcher
