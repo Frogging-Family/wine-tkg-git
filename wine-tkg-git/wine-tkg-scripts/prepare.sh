@@ -495,7 +495,8 @@ _prepare() {
         error "Error while attempting to clone community-patches repo"
         exit 1
       fi
-    else
+    elif [[ "${_community_patches_auto_update}" != "false" ]]
+    then
       msg2 "Updating community-patches repo..."
 
       if ! git -C "${_community_patches_repo_path}" pull origin master
