@@ -2760,8 +2760,10 @@ EOM
 	    _patchname='proton-wined3d-additions.patch' && _patchmsg="Enable Proton non-vr-related wined3d additions" && nonuser_patcher
 	  fi
 	  if [ "$_steamvr_support" = "true" ]; then
-	    if git merge-base --is-ancestor 12d33d21d33788fd46898ea42e9592d33b6e7c8e HEAD; then # 6.12
+	    if git merge-base --is-ancestor 831ff102008e2ba93a403344646b5ed67258eaeb HEAD; then
 	      _patchname='proton-vr.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
+	    elif git merge-base --is-ancestor 12d33d21d33788fd46898ea42e9592d33b6e7c8e HEAD; then # 6.12
+	      _patchname='proton-vr-831ff10.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
 	    elif git merge-base --is-ancestor bff6bc6a79ffc3a915219a6dfe64c9bcabaaeceb HEAD && [ "$_proton_fs_hack" = "true" ]; then
 	      _patchname='proton-vr-12d33d2.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
 	    elif git merge-base --is-ancestor e447e86ae2fbfbd9dee1b488e38a653aaea5447e HEAD && [ "$_proton_fs_hack" = "true" ]; then
