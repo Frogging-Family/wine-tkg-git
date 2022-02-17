@@ -177,7 +177,7 @@ function build_vrclient {
   export CFLAGS="-O2 -g"
   export CXXFLAGS="-Wno-attributes -std=c++0x -O2 -g"
   PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
-  if [[ "$_proton_branch" = *6.* ]]; then
+  if [[ "$_proton_branch" = *6.* ]] || [[ "$_proton_branch" = *7.* ]]; then
     WINEMAKERFLAGS+=" -ldl"
   elif [ "$_standard_dlopen" = "true" ] && [[ "$_proton_branch" != *5.13 ]]; then
     patch -Np1 < "$_nowhere/proton_template/vrclient-remove-library.h-dep.patch" || exit 1
