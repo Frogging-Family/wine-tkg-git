@@ -20,6 +20,8 @@ You can use your own wine patches by giving them the .mypatch extension.
 
 You can also revert wine patches by giving them the .myrevert extension.
 
+*You can also apply/revert patches late (after make_vulkan/make_requests/autoreconf) by giving them the .mylatepatch or .mylaterevert extension following the logic above.*
+
 
 ## For wine staging patchsets - meaning your patches will be applied to the staging patches tree BEFORE being applied to the wine tree
 You can use your own wine-staging patches by giving them the .mystagingpatch extension.

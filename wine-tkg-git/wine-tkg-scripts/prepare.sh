@@ -3066,14 +3066,22 @@ _polish() {
 	  fi
 	fi
 
+	echo -e "\nRunning make_vulkan" >> "$_where"/prepare.log && dlls/winevulkan/make_vulkan >> "$_where"/prepare.log 2>&1
+	tools/make_requests
+	autoreconf -fiv
+
+	# wine late user patches - Applied after make_vulkan/make_requests/autoreconf
+	_userpatch_target="plain-wine"
+	_userpatch_ext="mylate"
+	cd "${srcdir}"/"${_winesrcdir}"
+	if [ "$_user_patches" = "true" ]; then
+	  user_patcher && _commitmsg="07-late-userpatches" _committer
+	fi
+
 	# Get rid of temp patches
 	rm -rf "$_where"/*.patch
 	rm -rf "$_where"/*.my*
 	rm -rf "$_where"/*.orig
-
-	echo -e "\nRunning make_vulkan" >> "$_where"/prepare.log && dlls/winevulkan/make_vulkan >> "$_where"/prepare.log 2>&1
-	tools/make_requests
-	autoreconf -fiv
 
 	# The versioning string has moved with 1dd3051cca5cafe90ce44460731df61abb680b3b
 	# Since this is reverted by the hotfixer path, only use the new path on 0c249e6+ (deprecation of the hotfixer path)
