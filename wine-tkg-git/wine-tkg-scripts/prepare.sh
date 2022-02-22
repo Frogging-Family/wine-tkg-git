@@ -849,6 +849,9 @@ _prepare() {
 	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 76f8eb15f17ff9ae52f6c2b61824978762d421ef HEAD ) && [ -e "${srcdir}/${_stgsrcdir}/patches/imm32-com-initialization/definition" ] && ! grep -Fxq 'Disabled: true' "${srcdir}/${_stgsrcdir}/patches/imm32-com-initialization/definition"; then
 	      _staging_args+=(-W imm32-com-initialization)
 	    fi
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ) && [ -e "${srcdir}/${_stgsrcdir}/patches/winex11-MWM_Decorations/definition" ] && ! grep -Fxq 'Disabled: true' "${srcdir}/${_stgsrcdir}/patches/winex11-MWM_Decorations/definition"; then
+	      _staging_args+=(-W winex11-MWM_Decorations -W winex11-key_translation)
+	    fi
 	  fi
 	#fi
 
