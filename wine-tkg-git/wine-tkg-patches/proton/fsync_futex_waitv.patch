@@ -691,3 +691,749 @@ index c6869b62b4b..6d69c643244 100644
 -- 
 2.34.1
 
+From fba9f1e54417eb8096fe7967b94dc17508969ef7 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Thu, 1 Apr 2021 20:19:35 +0300
+Subject: [PATCH] esync, fsync: Yield execution before alertable wait for AC
+ Odyssey.
+
+CW-Bug-ID: #18881
+---
+ dlls/ntdll/unix/esync.c        | 11 +++++++++++
+ dlls/ntdll/unix/fsync.c        |  9 +++++++++
+ dlls/ntdll/unix/loader.c       | 21 +++++++++++++++++++++
+ dlls/ntdll/unix/unix_private.h |  2 ++
+ 4 files changed, 43 insertions(+)
+
+diff --git a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
+index 29d65d275c4..55c5695964d 100644
+--- a/dlls/ntdll/unix/esync.c
++++ b/dlls/ntdll/unix/esync.c
+@@ -948,6 +948,8 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
+
+                     if (event->signaled)
+                     {
++                        if (ac_odyssey && alertable)
++                            usleep( 0 );
+                         if ((size = read( obj->fd, &value, sizeof(value) )) == sizeof(value))
+                         {
+                             TRACE("Woken up by handle %p [%d].\n", handles[i], i);
+@@ -963,6 +965,12 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
+
+                     if (event->signaled)
+                     {
++                        if (ac_odyssey && alertable)
++                        {
++                            usleep( 0 );
++                            if (!event->signaled)
++                                break;
++                        }
+                         TRACE("Woken up by handle %p [%d].\n", handles[i], i);
+                         return i;
+                     }
+@@ -991,6 +999,9 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
+
+         while (1)
+         {
++            if (ac_odyssey && alertable)
++                usleep( 0 );
++
+             ret = do_poll( fds, pollcount, timeout ? &end : NULL );
+             if (ret > 0)
+             {
+diff --git a/dlls/ntdll/unix/fsync.c b/dlls/ntdll/unix/fsync.c
+index 8b54f82a5f5..39d969f061d 100644
+--- a/dlls/ntdll/unix/fsync.c
++++ b/dlls/ntdll/unix/fsync.c
+@@ -925,6 +925,9 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+                         {
+                             if (__sync_val_compare_and_swap( &event->signaled, 1, 0 ))
+                             {
++                                if (ac_odyssey && alertable)
++                                    usleep( 0 );
++
+                                 TRACE("Woken up by handle %p [%d].\n", handles[i], i);
+                                 return i;
+                             }
+@@ -944,6 +947,9 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+                         {
+                             if (__atomic_load_n( &event->signaled, __ATOMIC_SEQ_CST ))
+                             {
++                                if (ac_odyssey && alertable)
++                                    usleep( 0 );
++
+                                 TRACE("Woken up by handle %p [%d].\n", handles[i], i);
+                                 return i;
+                             }
+@@ -974,6 +980,9 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+
+             /* Looks like everything is contended, so wait. */
+
++            if (ac_odyssey && alertable)
++                usleep( 0 );
++
+             if (timeout && !timeout->QuadPart)
+             {
+                 /* Unlike esync, we already know that we've timed out, so we
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 3790baa9fae..7f3d7834a6c 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -2194,6 +2194,26 @@ static struct unix_funcs unix_funcs =
+     write_crash_log,
+ };
+
++BOOL ac_odyssey;
++
++static void hacks_init(void)
++{
++    static const char ac_odyssey_exe[] = "ACOdyssey.exe";
++    char cur_exe[MAX_PATH];
++    DWORD cur_exe_len;
++    int fd;
++
++    fd = open("/proc/self/comm", O_RDONLY);
++    cur_exe_len = read(fd, cur_exe, sizeof(cur_exe));
++    close(fd);
++    cur_exe[cur_exe_len - 1] = 0;
++
++    if (!strcasecmp(cur_exe, ac_odyssey_exe))
++    {
++        ERR("HACK: AC Odyssey sync tweak on.\n");
++        ac_odyssey = TRUE;
++    }
++}
+
+ /***********************************************************************
+  *           start_main_thread
+@@ -2209,6 +2229,7 @@ static void start_main_thread(void)
+     signal_init_thread( teb );
+     dbg_init();
+     startup_info_size = server_init_process();
++    hacks_init();
+     fsync_init();
+     esync_init();
+     virtual_map_user_shared_data();
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 61d41c817ac..8e2e7d93a38 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -146,6 +146,8 @@ extern BOOL is_wow64 DECLSPEC_HIDDEN;
+ extern struct ldt_copy __wine_ldt_copy DECLSPEC_HIDDEN;
+ #endif
+
++extern BOOL ac_odyssey DECLSPEC_HIDDEN;
++
+ extern void init_environment( int argc, char *argv[], char *envp[] ) DECLSPEC_HIDDEN;
+ extern void init_startup_info(void) DECLSPEC_HIDDEN;
+ extern void *create_startup_info( const UNICODE_STRING *nt_image, const RTL_USER_PROCESS_PARAMETERS *params,
+From 5726c4a62f9febce68a352d1e8a99a15325fe25c Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 6 Apr 2021 19:43:48 +0300
+Subject: [PATCH] ntdll: Simulate async file read and IO cancellation to
+ workaround AC:Odyssey out of order dialogues bug.
+
+CW-Bug-ID: #18881
+---
+ dlls/ntdll/unix/file.c   | 237 +++++++++++++++++++++++++++++++++++++++
+ dlls/ntdll/unix/loader.c |   6 +-
+ 2 files changed, 242 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 3f60060bb38..850c70a6b2b 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -5295,6 +5295,230 @@ static NTSTATUS set_pending_write( HANDLE device )
+     return status;
+ }
+
++static pthread_mutex_t async_file_read_mutex = PTHREAD_MUTEX_INITIALIZER;
++static pthread_cond_t async_file_read_cond = PTHREAD_COND_INITIALIZER;
++
++struct async_file_read_job
++{
++    HANDLE handle;
++    int unix_handle;
++    int needs_close;
++    HANDLE event;
++    IO_STATUS_BLOCK *io;
++    void *buffer;
++    ULONG length;
++    LARGE_INTEGER offset;
++    DWORD thread_id;
++    LONG  cancelled;
++    struct list queue_entry;
++    struct async_file_read_job *next;
++};
++
++
++static struct list async_file_read_queue = LIST_INIT( async_file_read_queue );
++static struct async_file_read_job *async_file_read_running, *async_file_read_free;
++
++static void async_file_complete_io( struct async_file_read_job *job, NTSTATUS status, ULONG total )
++{
++    job->io->u.Status = status;
++    job->io->Information = total;
++
++    if (job->event) NtSetEvent( job->event, NULL );
++}
++
++static void *async_file_read_thread(void *dummy)
++{
++    struct async_file_read_job *job, *ptr;
++    ULONG buffer_length = 0;
++    void *buffer = NULL;
++    struct list *entry;
++    NTSTATUS status;
++    ULONG total;
++    int result;
++
++    pthread_mutex_lock( &async_file_read_mutex );
++    while (1)
++    {
++        while (!(entry = list_head( &async_file_read_queue )))
++        {
++            pthread_cond_wait( &async_file_read_cond, &async_file_read_mutex );
++            continue;
++        }
++
++        job = LIST_ENTRY( entry, struct async_file_read_job, queue_entry );
++        list_remove( entry );
++
++        total = 0;
++
++        if ( job->cancelled )
++        {
++            pthread_mutex_unlock( &async_file_read_mutex );
++            status = STATUS_CANCELLED;
++            goto done;
++        }
++
++        job->next = async_file_read_running;
++        async_file_read_running = job;
++        pthread_mutex_unlock( &async_file_read_mutex );
++
++        if (!buffer_length)
++        {
++            buffer = malloc(job->length);
++            buffer_length = job->length;
++        }
++        else if (buffer_length < job->length)
++        {
++            buffer = realloc(buffer, job->length);
++            buffer_length = job->length;
++        }
++
++        while ((result = pread( job->unix_handle, buffer, job->length, job->offset.QuadPart )) == -1)
++        {
++            if (errno != EINTR)
++            {
++                status = errno_to_status( errno );
++                goto done;
++            }
++            if (job->cancelled)
++                break;
++        }
++
++        total = result;
++        status = (total || !job->length) ? STATUS_SUCCESS : STATUS_END_OF_FILE;
++done:
++        if (job->needs_close) close( job->unix_handle );
++
++        if (!InterlockedCompareExchange(&job->cancelled, 1, 0))
++        {
++            if (status == STATUS_SUCCESS)
++                memcpy( job->buffer, buffer, total );
++
++            async_file_complete_io( job, status, total );
++        }
++
++        pthread_mutex_lock( &async_file_read_mutex );
++
++        if (status != STATUS_CANCELLED)
++        {
++            ptr = async_file_read_running;
++            if (job == ptr)
++            {
++                async_file_read_running = job->next;
++            }
++            else
++            {
++                while (ptr && ptr->next != job)
++                    ptr = ptr->next;
++
++                assert( ptr );
++                ptr->next = job->next;
++            }
++        }
++
++        job->next = async_file_read_free;
++        async_file_read_free = job;
++    }
++
++    return NULL;
++}
++
++static pthread_once_t async_file_read_once = PTHREAD_ONCE_INIT;
++
++static void async_file_read_init(void)
++{
++    pthread_t async_file_read_thread_id;
++    pthread_attr_t pthread_attr;
++
++    ERR("HACK: AC Odyssey async read workaround.\n");
++
++    pthread_attr_init( &pthread_attr );
++    pthread_attr_setscope( &pthread_attr, PTHREAD_SCOPE_SYSTEM );
++    pthread_attr_setdetachstate( &pthread_attr, PTHREAD_CREATE_DETACHED );
++
++    pthread_create( &async_file_read_thread_id, &pthread_attr, (void * (*)(void *))async_file_read_thread, NULL);
++    pthread_attr_destroy( &pthread_attr );
++}
++
++static NTSTATUS queue_async_file_read( HANDLE handle, int unix_handle, int needs_close, HANDLE event,
++                            IO_STATUS_BLOCK *io, void *buffer, ULONG length, LARGE_INTEGER *offset )
++{
++    struct async_file_read_job *job;
++
++    pthread_once( &async_file_read_once, async_file_read_init );
++
++    NtResetEvent( event, NULL );
++
++    pthread_mutex_lock( &async_file_read_mutex );
++
++    if (async_file_read_free)
++    {
++        job = async_file_read_free;
++        async_file_read_free = async_file_read_free->next;
++    }
++    else
++    {
++        if (!(job = malloc( sizeof(*job) )))
++        {
++            pthread_mutex_unlock( &async_file_read_mutex );
++            return STATUS_NO_MEMORY;
++        }
++    }
++
++    job->handle = handle;
++    job->unix_handle = unix_handle;
++    job->needs_close = needs_close;
++    job->event = event;
++    job->io = io;
++    job->buffer = buffer;
++    job->length = length;
++    job->offset = *offset;
++    job->thread_id = GetCurrentThreadId();
++    job->cancelled = 0;
++
++    list_add_tail( &async_file_read_queue, &job->queue_entry );
++
++    pthread_cond_signal( &async_file_read_cond );
++    pthread_mutex_unlock( &async_file_read_mutex );
++
++    return STATUS_PENDING;
++}
++
++static NTSTATUS cancel_async_file_read( HANDLE handle, IO_STATUS_BLOCK *io )
++{
++    DWORD thread_id = GetCurrentThreadId();
++    struct async_file_read_job *job;
++    unsigned int count = 0;
++
++    TRACE( "handle %p, io %p.\n", handle, io );
++
++    pthread_mutex_lock( &async_file_read_mutex );
++    job = async_file_read_running;
++    while (job)
++    {
++        if (((io && job->io == io)
++                || (!io && job->handle == handle && job->thread_id == thread_id))
++                && !InterlockedCompareExchange(&job->cancelled, 1, 0))
++        {
++            async_file_complete_io( job, STATUS_CANCELLED, 0 );
++            ++count;
++        }
++        job = job->next;
++    }
++
++    LIST_FOR_EACH_ENTRY( job, &async_file_read_queue, struct async_file_read_job, queue_entry )
++    {
++        if (((io && job->io == io)
++                || (!io && job->handle == handle && job->thread_id == thread_id))
++                && !InterlockedCompareExchange(&job->cancelled, 1, 0))
++        {
++            async_file_complete_io( job, STATUS_CANCELLED, 0 );
++            ++count;
++        }
++    }
++
++    pthread_mutex_unlock( &async_file_read_mutex );
++    return count ? STATUS_SUCCESS : STATUS_NOT_FOUND;
++}
+
+ /******************************************************************************
+  *              NtReadFile   (NTDLL.@)
+@@ -5336,6 +5560,13 @@ NTSTATUS WINAPI NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, vo
+             goto done;
+         }
+
++        if (ac_odyssey && async_read && length && event && !apc)
++        {
++            status = queue_async_file_read( handle, unix_handle, needs_close, event, io, buffer, length, offset );
++            needs_close = 0;
++            goto err;
++        }
++
+         if (offset && offset->QuadPart != FILE_USE_FILE_POINTER_POSITION)
+         {
+             /* async I/O doesn't make sense on regular files */
+@@ -6118,6 +6349,9 @@ NTSTATUS WINAPI NtCancelIoFile( HANDLE handle, IO_STATUS_BLOCK *io_status )
+
+     TRACE( "%p %p\n", handle, io_status );
+
++    if (ac_odyssey && !cancel_async_file_read( handle, NULL ))
++        return (io_status->u.Status = STATUS_SUCCESS);
++
+     SERVER_START_REQ( cancel_async )
+     {
+         req->handle      = wine_server_obj_handle( handle );
+@@ -6143,6 +6377,9 @@ NTSTATUS WINAPI NtCancelIoFileEx( HANDLE handle, IO_STATUS_BLOCK *io, IO_STATUS_
+
+     TRACE( "%p %p %p\n", handle, io, io_status );
+
++    if (ac_odyssey && !cancel_async_file_read( handle, io ))
++        return (io_status->u.Status = STATUS_SUCCESS);
++
+     SERVER_START_REQ( cancel_async )
+     {
+         req->handle = wine_server_obj_handle( handle );
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 7f3d7834a6c..0f3ec16c52f 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -2210,7 +2210,11 @@ static void hacks_init(void)
+
+     if (!strcasecmp(cur_exe, ac_odyssey_exe))
+     {
+-        ERR("HACK: AC Odyssey sync tweak on.\n");
++        if (do_esync() || do_fsync())
++            ERR("HACK: AC Odyssey sync tweak on.\n");
++        else
++            ERR("Not enabling AC Odyssey sync tweak as esync and fsync are disabled.\n");
++
+         ac_odyssey = TRUE;
+     }
+ }
+From eb42ad0e4ac6451b1361d2d39b6e5a4160ec6234 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 18 Feb 2022 12:56:58 +0300
+Subject: [PATCH 1/2] fsync: Fix semaphore grab attempt on wait all path.
+
+CW-Bug-Id: #20189
+---
+ dlls/ntdll/unix/fsync.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/fsync.c b/dlls/ntdll/unix/fsync.c
+index 0f19c63a5f2..8addadeab33 100644
+--- a/dlls/ntdll/unix/fsync.c
++++ b/dlls/ntdll/unix/fsync.c
+@@ -1146,7 +1146,10 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+                 case FSYNC_SEMAPHORE:
+                 {
+                     struct semaphore *semaphore = obj->shm;
+-                    if (__sync_fetch_and_sub( &semaphore->count, 1 ) <= 0)
++                    int current;
++
++                    if (!(current = __atomic_load_n( &semaphore->count, __ATOMIC_SEQ_CST ))
++                            || __sync_val_compare_and_swap( &semaphore->count, current, current - 1 ) != current)
+                         goto tooslow;
+                     break;
+                 }
+
+From 764196e0ee2ae9dad0362a3f99b3fb0eda356092 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 18 Feb 2022 12:58:53 +0300
+Subject: [PATCH 2/2] fsync: Always check for NULL object on wait all path.
+
+CW-Bug-Id: #20189
+---
+ dlls/ntdll/unix/fsync.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/dlls/ntdll/unix/fsync.c b/dlls/ntdll/unix/fsync.c
+index 8addadeab33..aa6c5229893 100644
+--- a/dlls/ntdll/unix/fsync.c
++++ b/dlls/ntdll/unix/fsync.c
+@@ -1127,6 +1127,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+             for (i = 0; i < count; i++)
+             {
+                 struct fsync *obj = objs[i];
++                if (!obj) continue;
+                 switch (obj->type)
+                 {
+                 case FSYNC_MUTEX:
+@@ -1191,6 +1192,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+             for (--i; i >= 0; i--)
+             {
+                 struct fsync *obj = objs[i];
++                if (!obj) continue;
+                 switch (obj->type)
+                 {
+                 case FSYNC_MUTEX:
+From c6bad6f294f1d15a7825df71585e695f73bc8561 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 3 Nov 2021 18:07:13 +0300
+Subject: [PATCH] ntdll: HACK: Enable WINESTEAMNOEXEC for Mafia II.
+
+CW-Bug-Id: #19605
+---
+ dlls/ntdll/unix/loader.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 0f3ec16c52f..0a05fb3f10b 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -2201,6 +2201,7 @@ static void hacks_init(void)
+     static const char ac_odyssey_exe[] = "ACOdyssey.exe";
+     char cur_exe[MAX_PATH];
+     DWORD cur_exe_len;
++    const char *sgi;
+     int fd;
+
+     fd = open("/proc/self/comm", O_RDONLY);
+@@ -2216,7 +2217,12 @@ static void hacks_init(void)
+             ERR("Not enabling AC Odyssey sync tweak as esync and fsync are disabled.\n");
+
+         ac_odyssey = TRUE;
++        return;
+     }
++
++    sgi = getenv("SteamGameId");
++    if (sgi && !strcmp(sgi, "50130"))
++        setenv("WINESTEAMNOEXEC", "1", 0);
+ }
+
+ /***********************************************************************
+
+From 6f2c9858d6bb957b807411b28f8ffd77199eafd4 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 14 Feb 2022 22:40:40 +0300
+Subject: [PATCH] fixup! esync, fsync: Yield execution before alertable wait
+ for AC Odyssey.
+
+CW-Bug-Id: #18881
+---
+ dlls/ntdll/unix/loader.c | 16 ++--------------
+ 1 file changed, 2 insertions(+), 14 deletions(-)
+
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 1d4160727e4..301a11c0419 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -2241,23 +2241,11 @@ BOOL ac_odyssey;
+ static void hacks_init(void)
+ {
+     static const char ac_odyssey_exe[] = "ACOdyssey.exe";
+-    char cur_exe[MAX_PATH];
+-    DWORD cur_exe_len;
+     const char *sgi;
+-    int fd;
+-
+-    fd = open("/proc/self/comm", O_RDONLY);
+-    cur_exe_len = read(fd, cur_exe, sizeof(cur_exe));
+-    close(fd);
+-    cur_exe[cur_exe_len - 1] = 0;
+
+-    if (!strcasecmp(cur_exe, ac_odyssey_exe))
++    if (main_argc > 1 && strstr(main_argv[1], ac_odyssey_exe))
+     {
+-        if (do_esync() || do_fsync())
+-            ERR("HACK: AC Odyssey sync tweak on.\n");
+-        else
+-            ERR("Not enabling AC Odyssey sync tweak as esync and fsync are disabled.\n");
+-
++        ERR("HACK: AC Odyssey sync tweak on.\n");
+         ac_odyssey = TRUE;
+         return;
+     }
+From d6a237166626d197b1d642f8f7a71900759df2b6 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 15 Feb 2022 17:20:40 +0300
+Subject: [PATCH] fsync: Add WINE_FSYNC_SIMULATE_SCHED_QUANTUM config option.
+
+And auto enable it for Uplay laucher.
+
+CW-Bug-Id: #20155
+---
+ dlls/ntdll/unix/fsync.c        | 20 +++++++++++++++++++-
+ dlls/ntdll/unix/loader.c       | 15 ++++++++++++---
+ dlls/ntdll/unix/unix_private.h |  1 +
+ 3 files changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/dlls/ntdll/unix/fsync.c b/dlls/ntdll/unix/fsync.c
+index d468782667a..f42e30d0245 100644
+--- a/dlls/ntdll/unix/fsync.c
++++ b/dlls/ntdll/unix/fsync.c
+@@ -112,6 +112,18 @@ static inline void futex_vector_set( struct futex_waitv *waitv, int *addr, int v
+     waitv->__reserved = 0;
+ }
+
++static void simulate_sched_quantum(void)
++{
++    LARGE_INTEGER now;
++    ULONG64 wait_end;
++
++    if (!fsync_simulate_sched_quantum) return;
++
++    NtQuerySystemTime( &now );
++    wait_end = (now.QuadPart / 10 + 499) / 500;
++    usleep( wait_end * 500 - (now.QuadPart / 10) );
++}
++
+ static inline int futex_wait_multiple( const struct futex_waitv *futexes,
+         int count, const ULONGLONG *end )
+ {
+@@ -756,8 +768,8 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+
+     struct futex_waitv futexes[MAXIMUM_WAIT_OBJECTS + 1];
+     struct fsync *objs[MAXIMUM_WAIT_OBJECTS];
++    BOOL msgwait = FALSE, waited = FALSE;
+     int has_fsync = 0, has_server = 0;
+-    BOOL msgwait = FALSE;
+     int dummy_futex = 0;
+     unsigned int spin;
+     LONGLONG timeleft;
+@@ -879,6 +891,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+                                     && __sync_val_compare_and_swap( &semaphore->count, current, current - 1 ) == current)
+                             {
+                                 TRACE("Woken up by handle %p [%d].\n", handles[i], i);
++                                if (waited) simulate_sched_quantum();
+                                 return i;
+                             }
+                             small_pause();
+@@ -896,6 +909,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+                         {
+                             TRACE("Woken up by handle %p [%d].\n", handles[i], i);
+                             mutex->count++;
++                            if (waited) simulate_sched_quantum();
+                             return i;
+                         }
+
+@@ -905,6 +919,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+                             {
+                                 TRACE("Woken up by handle %p [%d].\n", handles[i], i);
+                                 mutex->count = 1;
++                                if (waited) simulate_sched_quantum();
+                                 return i;
+                             }
+                             else if (tid == ~0 && (tid = __sync_val_compare_and_swap( &mutex->tid, ~0, GetCurrentThreadId() )) == ~0)
+@@ -932,6 +947,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+                                     usleep( 0 );
+
+                                 TRACE("Woken up by handle %p [%d].\n", handles[i], i);
++                                if (waited) simulate_sched_quantum();
+                                 return i;
+                             }
+                             small_pause();
+@@ -954,6 +970,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+                                     usleep( 0 );
+
+                                 TRACE("Woken up by handle %p [%d].\n", handles[i], i);
++                                if (waited) simulate_sched_quantum();
+                                 return i;
+                             }
+                             small_pause();
+@@ -1008,6 +1025,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
+                 TRACE("Wait timed out.\n");
+                 return STATUS_TIMEOUT;
+             }
++            else waited = TRUE;
+         } /* while (1) */
+     }
+     else
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 301a11c0419..f078a967be8 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -2237,11 +2237,13 @@ static struct unix_funcs unix_funcs =
+ };
+
+ BOOL ac_odyssey;
++BOOL fsync_simulate_sched_quantum;
+
+ static void hacks_init(void)
+ {
++    static const char upc_exe[] = "Ubisoft Game Launcher\\upc.exe";
+     static const char ac_odyssey_exe[] = "ACOdyssey.exe";
+-    const char *sgi;
++    const char *env_str;
+
+     if (main_argc > 1 && strstr(main_argv[1], ac_odyssey_exe))
+     {
+@@ -2249,9 +2251,16 @@ static void hacks_init(void)
+         ac_odyssey = TRUE;
+         return;
+     }
++    env_str = getenv("WINE_FSYNC_SIMULATE_SCHED_QUANTUM");
++    if (env_str)
++        fsync_simulate_sched_quantum = !!atoi(env_str);
++    else if (main_argc > 1)
++        fsync_simulate_sched_quantum = !!strstr(main_argv[1], upc_exe);
++    if (fsync_simulate_sched_quantum)
++        ERR("HACK: Simulating sched quantum in fsync.\n");
+
+-    sgi = getenv("SteamGameId");
+-    if (sgi && !strcmp(sgi, "50130"))
++    env_str = getenv("SteamGameId");
++    if (env_str && !strcmp(env_str, "50130"))
+         setenv("WINESTEAMNOEXEC", "1", 0);
+ }
+
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index d1840de8876..4bf0e7cb84e 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -148,6 +148,7 @@ extern struct ldt_copy __wine_ldt_copy DECLSPEC_HIDDEN;
+ #endif
+
+ extern BOOL ac_odyssey DECLSPEC_HIDDEN;
++extern BOOL fsync_simulate_sched_quantum DECLSPEC_HIDDEN;
+
+ extern void init_environment( int argc, char *argv[], char *envp[] ) DECLSPEC_HIDDEN;
+ extern void init_startup_info(void) DECLSPEC_HIDDEN;
+From b3fb8a5543db15280952042152f5218ee994b011 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 15 Feb 2022 22:00:23 +0300
+Subject: [PATCH] fixup! fsync: Add WINE_FSYNC_SIMULATE_SCHED_QUANTUM config
+ option.
+
+---
+ dlls/ntdll/unix/fsync.c | 11 ++++-------
+ 1 file changed, 4 insertions(+), 7 deletions(-)
+
+diff --git a/dlls/ntdll/unix/fsync.c b/dlls/ntdll/unix/fsync.c
+index f42e30d0245..0f19c63a5f2 100644
+--- a/dlls/ntdll/unix/fsync.c
++++ b/dlls/ntdll/unix/fsync.c
+@@ -114,14 +114,11 @@ static inline void futex_vector_set( struct futex_waitv *waitv, int *addr, int v
+
+ static void simulate_sched_quantum(void)
+ {
+-    LARGE_INTEGER now;
+-    ULONG64 wait_end;
+-
+     if (!fsync_simulate_sched_quantum) return;
+-
+-    NtQuerySystemTime( &now );
+-    wait_end = (now.QuadPart / 10 + 499) / 500;
+-    usleep( wait_end * 500 - (now.QuadPart / 10) );
++    /* futex wait is often very quick to resume a waiting thread when woken.
++     * That reveals synchonization bugs in some games which happen to work on
++     * Windows due to the waiting threads having some minimal delay to wake up. */
++    usleep(0);
+ }
+
+ static inline int futex_wait_multiple( const struct futex_waitv *futexes,
