@@ -1546,10 +1546,10 @@ index 4010a727a08..ef9a640a771 100644
          return WSAENOBUFS;
 
 
-From f0b709b13fbb5f269f929cfe67b62b8704d1e800 Mon Sep 17 00:00:00 2001
+From 5d0bdb1470b47224bf359456be9f6c78a43704f7 Mon Sep 17 00:00:00 2001
 From: Zebediah Figura <z.figura12@gmail.com>
 Date: Wed, 20 Jun 2018 15:07:28 -0500
-Subject: [PATCH] HACK: user32: Remove hooks that time out.
+Subject: [PATCH] user32: Remove hooks that time out.
 
 In accordance with Win7+ behaviour.
 ---
@@ -1557,18 +1557,18 @@ In accordance with Win7+ behaviour.
  1 file changed, 11 insertions(+), 6 deletions(-)
 
 diff --git a/dlls/user32/hook.c b/dlls/user32/hook.c
-index 159797020f2..e8a31100646 100644
+index b6a3b3661f7..aff8cae262f 100644
 --- a/dlls/user32/hook.c
 +++ b/dlls/user32/hook.c
-@@ -387,6 +387,7 @@ void *get_hook_proc( void *proc, const WCHAR *module, HMODULE *free_module )
+@@ -382,6 +382,7 @@ void *get_hook_proc( void *proc, const WCHAR *module, HMODULE *free_module )
  static LRESULT call_hook( struct hook_info *info, INT code, WPARAM wparam, LPARAM lparam )
  {
      DWORD_PTR ret = 0;
-+    LRESULT lres = 0;
-
++    LRESULT lres;
+ 
      if (info->tid)
      {
-@@ -400,20 +401,24 @@ static LRESULT call_hook( struct hook_info *info, INT code, WPARAM wparam, LPARA
+@@ -395,20 +396,24 @@ static LRESULT call_hook( struct hook_info *info, INT code, WPARAM wparam, LPARA
          switch(info->id)
          {
          case WH_KEYBOARD_LL:
@@ -1760,6 +1760,104 @@ index fbc6716e94e..1ca8c3ed0fd 100644
      if (IS_OPTION_TRUE(*buf))
  	CheckDlgButton(dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED);
      else
+From a58fde69e0ac1945d2e2733d9506cfe4bfe145e7 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Wed, 26 Jun 2019 08:09:27 -0500
+Subject: [PATCH] Revert "winex11.drv: Activate window when restoring from
+ iconic state."
+
+This reverts commit 82c6ec3a32f44e8b3e0cc88b7f10e0c0d7fa1b89.
+
+Causes alt-tab problems with several games.
+---
+ dlls/winex11.drv/event.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+index 236c9f862af..d1c15b1de94 100644
+--- a/dlls/winex11.drv/event.c
++++ b/dlls/winex11.drv/event.c
+@@ -1342,8 +1342,6 @@ static void handle_wm_state_notify( HWND hwnd, XPropertyEvent *event, BOOL updat
+             {
+                 TRACE( "restoring win %p/%lx\n", data->hwnd, data->whole_window );
+                 release_win_data( data );
+-                if ((style & (WS_MINIMIZE | WS_VISIBLE)) == (WS_MINIMIZE | WS_VISIBLE))
+-                    SetActiveWindow( hwnd );
+                 SendMessageW( hwnd, WM_SYSCOMMAND, SC_RESTORE, 0 );
+                 return;
+             }
+
+From f649de43236f67943a44ae89dfbbd3d4c7d9eeb4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Thu, 17 Dec 2020 18:47:44 +0100
+Subject: [PATCH] HACK: steam: winex11.drv: Check Steam overlay presence and
+ drop events when enabled.
+
+---
+ dlls/winex11.drv/event.c       | 7 ++++++-
+ dlls/winex11.drv/x11drv.h      | 1 +
+ dlls/winex11.drv/x11drv_main.c | 5 +++++
+ 3 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+index 89a9974529b..baec41d0296 100644
+--- a/dlls/winex11.drv/event.c
++++ b/dlls/winex11.drv/event.c
+@@ -433,13 +433,18 @@ static BOOL process_events( Display *display, Bool (*filter)(Display*, XEvent*,X
+ {
+     XEvent event, prev_event;
+     int count = 0;
+-    BOOL queued = FALSE;
++    BOOL queued = FALSE, overlay_enabled = FALSE;
+     enum event_merge_action action = MERGE_DISCARD;
++    ULONG_PTR overlay_filter = QS_KEY | QS_MOUSEBUTTON | QS_MOUSEMOVE;
++
++    if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0)
++        overlay_enabled = TRUE;
+ 
+     prev_event.type = 0;
+     while (XCheckIfEvent( display, &event, filter, (char *)arg ))
+     {
+         count++;
++        if (overlay_enabled && filter_event( display, &event, (char *)overlay_filter )) continue;
+         if (XFilterEvent( &event, None ))
+         {
+             /*
+diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+index 147087e3220..e4164eba5d2 100644
+--- a/dlls/winex11.drv/x11drv.h
++++ b/dlls/winex11.drv/x11drv.h
+@@ -412,6 +412,7 @@ extern int xrender_error_base DECLSPEC_HIDDEN;
+ extern HMODULE x11drv_module DECLSPEC_HIDDEN;
+ extern char *process_name DECLSPEC_HIDDEN;
+ extern Display *clipboard_display DECLSPEC_HIDDEN;
++extern HANDLE steam_overlay_event DECLSPEC_HIDDEN;
+ 
+ /* atoms */
+ 
+diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+index f23ce260a7f..17d80458c54 100644
+--- a/dlls/winex11.drv/x11drv_main.c
++++ b/dlls/winex11.drv/x11drv_main.c
+@@ -90,6 +90,7 @@ DWORD thread_data_tls_index = TLS_OUT_OF_INDEXES;
+ int xrender_error_base = 0;
+ HMODULE x11drv_module = 0;
+ char *process_name = NULL;
++HANDLE steam_overlay_event;
+ 
+ static x11drv_error_callback err_callback;   /* current callback for error */
+ static Display *err_callback_display;        /* display callback is set for */
+@@ -738,6 +739,10 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
+         DisableThreadLibraryCalls( hinst );
+         x11drv_module = hinst;
+         ret = process_attach();
++        steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
++        break;
++    case DLL_PROCESS_DETACH:
++        CloseHandle(steam_overlay_event);
+         break;
+     }
+     return ret;
 From 2452b57e7fed9ac5036df9bcace5c28366a8eb41 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Fri, 8 Jan 2021 13:47:39 -0600

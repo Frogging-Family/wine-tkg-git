@@ -1753,10 +1753,12 @@ EOM
 	    _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	  fi
 	  if [ "$_use_staging" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 548bc54bf396d74b5b928bf9be835272ddda1886 HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then
 	      _patchname='valve_proton_fullscreen_hack-staging.patch' && _patchmsg="Applied Proton fullscreen hack patch (staging)" && nonuser_patcher
 	    else
-	      if git merge-base --is-ancestor 1c1fe30cc50da2b0596096b04b75d8c1e598f8e7 HEAD; then
+	      if git merge-base --is-ancestor 548bc54bf396d74b5b928bf9be835272ddda1886 HEAD; then
+	        _lastcommit="656edbb"
+	      elif git merge-base --is-ancestor 1c1fe30cc50da2b0596096b04b75d8c1e598f8e7 HEAD; then
 	        _lastcommit="548bc54"
 	      elif git merge-base --is-ancestor d1290b6ec7b1f1d0a18742f4da939a8839f55857 HEAD; then
 	        _lastcommit="1c1fe30"
@@ -2069,8 +2071,10 @@ EOM
 	    _patchname='staging-winex11-key_translation.patch' && _patchmsg="Applied non-fshack friendly staging winex11-key_translation patchset" && nonuser_patcher
 	  fi
 	  if [ "$_steamclient_noswap" != "true" ] && git merge-base --is-ancestor b7db0b52cee65a008f503ce727befcad3ba8d28a HEAD; then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor d10410eac2b598699a3619d6e3f908e256af3afb HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then
 	      _patchname='proton-tkg-steamclient-swap.patch' && _patchmsg="Applied steamclient substitution hack" && nonuser_patcher
+	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor d10410eac2b598699a3619d6e3f908e256af3afb HEAD ); then
+	      _patchname='proton-tkg-steamclient-swap-656edbb.patch' && _patchmsg="Applied steamclient substitution hack" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 1b9ada6cabd04ccb02c4ddcc82a53e62ea477948 HEAD ); then
 	      _patchname='proton-tkg-steamclient-swap-d10410e.patch' && _patchmsg="Applied steamclient substitution hack" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 72449b76e8e40f1690762545fd2c0021647da140 HEAD ); then
@@ -2110,15 +2114,17 @@ EOM
 	fi
 
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] && ! git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD || ([ "$_protonify" = "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD); then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8714eb2fef7182a9c73b9963493935decca89fdc HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then
 	    if [ "$_use_staging" = "true" ]; then
 	      if ! git merge-base --is-ancestor dedd5ccc88547529ffb1101045602aed59fa0170 HEAD; then
 	        _patchname='proton-tkg-staging-rpc.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 1/3" && nonuser_patcher
 	      fi
 	      _patchname='proton-tkg-staging.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 2/3" && nonuser_patcher
 	      if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
-	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bf811fdcaf70883634691d2c7262c3d80fe32323 HEAD ); then
+	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bf811fdcaf70883634691d2c7262c3d80fe32323 HEAD ); then
+	          _patchname='proton-steam-bits-656edbb.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 61e217c40a78011bbc37305a063b902582d49429 HEAD ); then
 	          _patchname='proton-steam-bits-bf811fd.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 23d2d0c5a7421f3c71db430356fdaed7606fea00 HEAD ); then
@@ -2164,8 +2170,10 @@ EOM
 	      fi
 	      _patchname='proton-tkg.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 2/3" && nonuser_patcher
 	      if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
-	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bf811fdcaf70883634691d2c7262c3d80fe32323 HEAD ); then
+	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 3/3" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bf811fdcaf70883634691d2c7262c3d80fe32323 HEAD ); then
+	          _patchname='proton-steam-bits-656edbb.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 61e217c40a78011bbc37305a063b902582d49429 HEAD ); then
 	          _patchname='proton-steam-bits-bf811fd.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 23d2d0c5a7421f3c71db430356fdaed7606fea00 HEAD ); then
@@ -2200,7 +2208,11 @@ EOM
 	      fi
 	    fi
 	  else
-	    if git merge-base --is-ancestor ae5ebeaff9f73bf4c006dead20d3cb84327c7234 HEAD; then
+	    if git merge-base --is-ancestor 8714eb2fef7182a9c73b9963493935decca89fdc HEAD; then
+	      _lastcommit="656edbb"
+	      _rpc="1"
+	      _stmbits="1"
+	    elif git merge-base --is-ancestor ae5ebeaff9f73bf4c006dead20d3cb84327c7234 HEAD; then
 	      _lastcommit="8714eb2"
 	      _rpc="1"
 	      _stmbits="1"
@@ -2533,8 +2545,10 @@ EOM
 	      fi
 	      _patchname="proton-tkg-staging-$_lastcommit.patch" && _patchmsg="Using Steam-specific Proton-tkg patches (staging-$_lastcommit) 2/2" && nonuser_patcher
 	      if [ "$_stmbits" = "1" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
-	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bf811fdcaf70883634691d2c7262c3d80fe32323 HEAD ); then
+	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bf811fdcaf70883634691d2c7262c3d80fe32323 HEAD ); then
+	          _patchname='proton-steam-bits-656edbb.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 61e217c40a78011bbc37305a063b902582d49429 HEAD ); then
 	          _patchname='proton-steam-bits-bf811fd.patch' && _patchmsg="Using Steam-specific Proton-tkg patches (staging) 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 23d2d0c5a7421f3c71db430356fdaed7606fea00 HEAD ); then
@@ -2580,8 +2594,10 @@ EOM
 	      fi
 	      _patchname="proton-tkg-$_lastcommit.patch" && _patchmsg="Using Steam-specific Proton-tkg patches ($_lastcommit) 2/2" && nonuser_patcher
 	      if [ "$_stmbits" = "1" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ]; then
-	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bf811fdcaf70883634691d2c7262c3d80fe32323 HEAD ); then
+	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then
 	          _patchname='proton-steam-bits.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 3/3" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bf811fdcaf70883634691d2c7262c3d80fe32323 HEAD ); then
+	          _patchname='proton-steam-bits-656edbb.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 61e217c40a78011bbc37305a063b902582d49429 HEAD ); then
 	          _patchname='proton-steam-bits-bf811fd.patch' && _patchmsg="Using Steam-specific Proton-tkg patches 3/3" && nonuser_patcher
 	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 23d2d0c5a7421f3c71db430356fdaed7606fea00 HEAD ); then
@@ -2782,8 +2798,10 @@ EOM
 	    _patchname='proton-wined3d-additions.patch' && _patchmsg="Enable Proton non-vr-related wined3d additions" && nonuser_patcher
 	  fi
 	  if [ "$_steamvr_support" = "true" ]; then
-	    if git merge-base --is-ancestor 831ff102008e2ba93a403344646b5ed67258eaeb HEAD; then
+	    if git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD; then
 	      _patchname='proton-vr.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
+	    elif git merge-base --is-ancestor 831ff102008e2ba93a403344646b5ed67258eaeb HEAD; then
+	      _patchname='proton-vr-656edbb.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
 	    elif git merge-base --is-ancestor 12d33d21d33788fd46898ea42e9592d33b6e7c8e HEAD; then # 6.12
 	      _patchname='proton-vr-831ff10.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
 	    elif git merge-base --is-ancestor bff6bc6a79ffc3a915219a6dfe64c9bcabaaeceb HEAD && [ "$_proton_fs_hack" = "true" ]; then
