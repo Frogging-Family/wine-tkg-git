@@ -2615,7 +2615,7 @@ EOM
 	      _patchname='proton-pa-staging-fa6d22b.patch' && _patchmsg="Enable Proton's PA additions" && nonuser_patcher
 	    fi
 	  fi
-	  if [ "$_EXTERNAL_INSTALL" = "proton" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 9ca95e32651d6a50dc787af4dc53fb907f1c4e2b HEAD ); then
+	  if [ "$_EXTERNAL_INSTALL" = "proton" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 9ca95e32651d6a50dc787af4dc53fb907f1c4e2b HEAD ) && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 53cb28e6d9daa7cbcc190cd02aeaba37c297adc4 HEAD ); then
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 1aa359a100bae859b278007e8bf90673eebd7db0 HEAD ); then
 	      if [ "$_use_staging" = "false" ]; then
 	        _patchname='proton-gstreamer.patch' && _patchmsg="Enable Proton's gstreamer additions" && nonuser_patcher
