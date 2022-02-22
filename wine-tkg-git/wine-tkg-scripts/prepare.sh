@@ -1001,8 +1001,8 @@ _prepare() {
 	  fi
 	fi
 
-	# Child window support for vk - Fixes World of Final Fantasy and others - https://bugs.winehq.org/show_bug.cgi?id=45277
-	if [ "$_childwindow_fix" = "true" ]; then
+	# Child window support for vk - Fixes World of Final Fantasy and others - https://bugs.winehq.org/show_bug.cgi?id=45277 - legacy (newer patchset from proton fshack applied later in the script for newer trees)
+	if [ "$_childwindow_fix" = "true" ] && ! git merge-base --is-ancestor d318f43559dbb0093e22bab1aa0eb9dc01170cc2 HEAD; then
 	  if ( [ "$_proton_fs_hack" != "true" ] && git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD ) || ( ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD ); then
 	    if git merge-base --is-ancestor 011fabb2c43d13402ea18b6ea7be3669b5e6c7a8 HEAD; then
 	      _staging_args+=(-W Pipelight -W winex11-Vulkan_support)
@@ -1872,6 +1872,13 @@ EOM
 	  # Legacy split realmodes patchset
 	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 734918298c4a6eb1cb23f31e21481f2ef58a0970 HEAD ); then
 	    _patchname='valve_proton_fullscreen_hack_realmodes.patch' && _patchmsg="Using real modes in FS hack addon" && nonuser_patcher
+	  fi
+	fi
+
+	# Standalone child window support for vk - Fixes World of Final Fantasy and others - https://bugs.winehq.org/show_bug.cgi?id=45277 - legacy patchset for older trees applied at an earlier stage in the script
+	if ( [ "$_childwindow_fix" = "true" ] && [ "$_proton_fs_hack" != "true" ] ); then
+	  if git merge-base --is-ancestor d318f43559dbb0093e22bab1aa0eb9dc01170cc2 HEAD; then
+	    _patchname='childwindow-proton.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
 	  fi
 	fi
 
