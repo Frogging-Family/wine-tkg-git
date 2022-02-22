@@ -2718,8 +2718,10 @@ EOM
 
 	# SDL Joystick support - from Proton
 	if [ "$_sdl_joy_support" = "true" ] && [ "$_use_staging" = "true" ]; then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 43f0c8096b2d81052a30d8542372adc46dab8292 HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then # Proton 7.0
 	    _patchname='proton-sdl-joy.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
+	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 43f0c8096b2d81052a30d8542372adc46dab8292 HEAD ); then
+	    _patchname='proton-sdl-joy-656edbb.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 914633723383f321303d78eb62cb19e8a6fb7bb4 HEAD ); then
 	    _patchname='proton-sdl-joy-43f0c80.patch' && _patchmsg="Enable SDL Joystick support (from Proton)" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 01d3527065e6f29997eb0ec88e36aeeecbf8ff76 HEAD ); then
@@ -2760,7 +2762,7 @@ EOM
 	    # Gamepad additions - from Proton
 	    if ( [ "$_gamepad_additions" = "true" ] && [ "$_use_staging" = "true" ] && ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD ); then
 	      if git merge-base --is-ancestor 6cb3d0fb3778f660546e581787b1734e2b1d2955 HEAD; then
-	        _patchname='proton-gamepad-additions.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
+	        _patchname='proton-gamepad-additions-656edbb.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
 	      elif git merge-base --is-ancestor c074966b9d75d9519e8640e87725ad439f4ffa0c HEAD; then
 	        _patchname='proton-gamepad-additions-6cb3d0f.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
 	      elif git merge-base --is-ancestor aa482426dc4d6f291e6d1dd75be4701636cab31d HEAD; then
@@ -2786,6 +2788,9 @@ EOM
 	      fi
 	    elif ( [ "$_gamepad_additions" = "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && ! git merge-base --is-ancestor b71cea76ed24ca940783e01da54917eefa0bb36b HEAD ); then
 	      _patchname='proton-gamepad-additions-exp.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton exp)" && nonuser_patcher
+	    elif ( [ "$_gamepad_additions" = "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then
+	      # Proton 7.0
+	      _patchname='proton-gamepad-additions.patch' && _patchmsg="Enable xinput hacks and other gamepad additions (from Proton)" && nonuser_patcher
 	    fi
 	  fi
 	fi
