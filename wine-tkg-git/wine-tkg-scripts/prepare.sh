@@ -1753,10 +1753,12 @@ EOM
 	    _patchname='FS_bypass_compositor.patch' && _patchmsg="Applied Fullscreen compositor bypass patch" && nonuser_patcher
 	  fi
 	  if [ "$_use_staging" = "true" ]; then
-	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 439fb2519091c282094d484ecdae98959fe26142 HEAD ); then
 	      _patchname='valve_proton_fullscreen_hack-staging.patch' && _patchmsg="Applied Proton fullscreen hack patch (staging)" && nonuser_patcher
 	    else
-	      if git merge-base --is-ancestor 548bc54bf396d74b5b928bf9be835272ddda1886 HEAD; then
+	      if git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD; then
+	        _lastcommit="439fb25"
+	      elif git merge-base --is-ancestor 548bc54bf396d74b5b928bf9be835272ddda1886 HEAD; then
 	        _lastcommit="656edbb"
 	      elif git merge-base --is-ancestor 1c1fe30cc50da2b0596096b04b75d8c1e598f8e7 HEAD; then
 	        _lastcommit="548bc54"
