@@ -97,7 +97,7 @@ pkgver() {
 _nomakepkgsrcinit() {
   # Wine source
   if [ -n "$_custom_wine_source" ]; then
-    _winesrcdir=$( sed 's|/|-|g' <<< $(sed 's|.*://.[^/]*/||g' <<< $_custom_wine_source))
+    _winesrcdir=$( sed 's|/|-|g' <<< $(sed 's|.*://.[^/]*/||g' <<< ${_custom_wine_source//./}))
     _winesrctarget="$_custom_wine_source"
   else
     if [ "$_plain_mirrorsrc" = "true" ]; then

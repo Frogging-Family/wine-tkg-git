@@ -264,7 +264,7 @@ msg2 ''
     exit
   fi
   # Disable undesirable patchsets when using official proton wine source
-  if [ "$_custom_wine_source" = "https://github.com/ValveSoftware/wine" ]; then
+  if [[ "$_custom_wine_source" = *"ValveSoftware"* ]] || [[ "$_custom_wine_source" = *"GloriousEggroll"* ]]; then
     _clock_monotonic="false"
     _FS_bypass_compositor="false"
     _use_esync="false"
@@ -274,9 +274,16 @@ msg2 ''
     _large_address_aware="false"
     _proton_mf_hacks="false"
     _update_winevulkan="false"
+    _steam_fix="false"
     _mtga_fix="false"
     _protonify="false"
     _childwindow_fix="false"
+    _plasma_systray_fix="false"
+    _wined3d_additions="false"
+    _re4_fix="false"
+    _assettocorsa_hudperf_fix="false"
+    _msvcrt_nativebuiltin="false"
+    _use_josh_flat_theme="false"
     _unfrog="true"
   fi
 }
@@ -2812,7 +2819,7 @@ EOM
 	  if [ "$_wined3d_additions" = "true" ] && [ "$_use_staging" = "false" ]; then
 	    _patchname='proton-wined3d-additions.patch' && _patchmsg="Enable Proton non-vr-related wined3d additions" && nonuser_patcher
 	  fi
-	  if [ "$_steamvr_support" = "true" ]; then
+	  if [ "$_steamvr_support" = "true" ] && [ "$_unfrog" != "true" ]; then
 	    if [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD; then
 	      _patchname='proton-vr.patch' && _patchmsg="Enable Proton vr-related wined3d additions" && nonuser_patcher
 	    elif git merge-base --is-ancestor 831ff102008e2ba93a403344646b5ed67258eaeb HEAD; then
@@ -3003,12 +3010,17 @@ EOM
 	fi
 
 	# Proton Battleye
-	if [ "$_proton_battleye_support" = "true" ]; then
+	if [ "$_proton_battleye_support" = "true" ] && [ "$_unfrog" != "true" ]; then
 	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 15bf49bf9b938eadd1368922a2d8e2c71824049d HEAD ); then
 	    _patchname='proton_battleye.patch' && _patchmsg="Add support for Proton's Battleye runtime" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 12d33d21d33788fd46898ea42e9592d33b6e7c8e HEAD ); then
 	    _patchname='proton_battleye-15bf49b.patch' && _patchmsg="Add support for Proton's Battleye runtime" && nonuser_patcher
 	  fi
+	fi
+
+	# Fix compilation error due to not using valve's container while building valve proton tree
+	if [ "$_unfrog" = "true" ]; then
+	  ( patch -Np1 < "$_where"/wine-tkg-patches/hotfixes/valve/futex_waitv.mypatch )
 	fi
 
 	# Proton-tkg needs to know if standard dlopen() is in use

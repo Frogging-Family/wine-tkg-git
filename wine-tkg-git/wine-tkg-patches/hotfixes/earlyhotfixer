@@ -1,5 +1,9 @@
 #!/bin/bash
 
+if [[ "$_custom_wine_source" = *"ValveSoftware"* ]] || [[ "$_custom_wine_source" = *"GloriousEggroll"* ]]; then
+  _unfrog="true"
+fi
+
 if [ -d "${srcdir}"/"${_stgsrcdir}" ]; then
 
     if [ "$_use_staging" = "true" ] && grep -Fxq 'Disabled: True' "${srcdir}/${_stgsrcdir}/patches/mfplat-streaming-support/definition"; then
@@ -9,13 +13,26 @@ if [ -d "${srcdir}"/"${_stgsrcdir}" ]; then
     # Community Patches
 
     # Disable the 0002-proton_QPC patch when using 488a00c or newer
+    if [ "$_unfrog" = "true" ]; then
+      warning "Disabling any known to be broken community patch on valve proton tree"
+      _community_patches=$(echo $_community_patches | sed "s/0001-ntdll-Use-kernel-soft-dirty-flags-for-write-watches-.mypatch//g" | tr -s " ")
+      _community_patches=$(echo $_community_patches | sed "s/0002-proton_QPC.mypatch//g" | tr -s " ")
+      _community_patches=$(echo $_community_patches | sed "s/EA_desktop_fix.mypatch//g" | tr -s " ")
+      _community_patches=$(echo $_community_patches | sed "s/amdags-proton.mypatch//g" | tr -s " ")
+      _community_patches=$(echo $_community_patches | sed "s/atiadlxx-proton.mypatch//g" | tr -s " ")
+      _community_patches=$(echo $_community_patches | sed "s/ntdll_Map_top-down_if_dll_characteristics_include_DYNAMIC_BASE.mypatch//g" | tr -s " ")
+      _community_patches=$(echo $_community_patches | sed "s/amd_fsr_fshack.mypatch//g" | tr -s " ")
+      _community_patches=$(echo $_community_patches | sed "s/unhide-prefix-update-window.mypatch//g" | tr -s " ")
+    fi
+
+    # Disable the 0002-proton_QPC patch when using 488a00c or newer
     if ( [ "$_protonify" = "true" ] || [ "$_EXTERNAL_INSTALL" = "proton" ] ) && [[ ${_community_patches[*]} =~ "0002-proton_QPC.mypatch" ]] && ( git merge-base --is-ancestor 488a00c3be2e4ef0dd0c945ac96e0f1a49c449f8 HEAD ); then
       warning "Disabling the 0002-proton_QPC community patch since it's superseded by your current protonify patchset"
       _community_patches=$(echo $_community_patches | sed "s/0002-proton_QPC.mypatch//g" | tr -s " ")
     fi
 
     # Disable the amd_fsr_fshack patch if _proton_fs_hack is disabled.
-    if [[ ${_community_patches[*]} =~ "amd_fsr_fshack.mypatch" ]]; then
+    if [[ ${_community_patches[*]} =~ "amd_fsr_fshack.mypatch" ]] && [ "$_unfrog" != "true" ]; then
       if [ "$_use_staging" = "true" ] && [ "$_proton_fs_hack" = "true" ]; then
         _steamvr_support="true"
       elif [ "$_proton_fs_hack" != "true" ] || [ "$_use_staging" != "true" ]; then
