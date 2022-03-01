@@ -34,7 +34,7 @@ _prebuild_common() {
 	  export CROSSLDFLAGS="${_CROSS_LD_FLAGS}"
 	  echo "With predefined optimizations:" >> "$_where"/last_build_config.log
 	else
-	  export CROSSCFLAGS="$(echo "$CFLAGS" | sed -e "s/-fstack-protector-strong//" -e "s/-fno-plt//")"
+	  export CROSSCFLAGS="$(echo "$CFLAGS" | sed -e "s/-fstack-protector-strong//" -e "s/-fno-plt//" -e "s/-fstack-clash-protection//")"
 	  export CROSSLDFLAGS="$(echo "$CFLAGS" | sed -e "s/-fstack-protector-strong//" -e "s/,-z,now//" -e "s/-fno-plt//")"
 	  echo "Using /etc/makepkg.conf settings for compiler optimization flags" >> "$_where"/last_build_config.log
 	fi
@@ -42,9 +42,9 @@ _prebuild_common() {
 	# workaround for FS#55128
 	# https://bugs.archlinux.org/task/55128
 	# https://bugs.winehq.org/show_bug.cgi?id=43530
-	export CFLAGS="$(echo "$CFLAGS" | sed -e "s/-fstack-protector-strong//" -e "s/-fno-plt//")"
+	export CFLAGS="$(echo "$CFLAGS" | sed -e "s/-fstack-protector-strong//" -e "s/-fno-plt//" -e "s/-fstack-clash-protection//")"
 	export LDFLAGS="$(echo "$LDFLAGS" | sed -e "s/-fstack-protector-strong//" -e "s/,-z,now//" -e "s/-fno-plt//")"
-	export CROSSCFLAGS="$(echo "$CROSSCFLAGS" | sed -e "s/-fstack-protector-strong//" -e "s/-fno-plt//")"
+	export CROSSCFLAGS="$(echo "$CROSSCFLAGS" | sed -e "s/-fstack-protector-strong//" -e "s/-fno-plt//" -e "s/-fstack-clash-protection//")"
 	export CROSSLDFLAGS="$(echo "$CROSSLDFLAGS" | sed -e "s/-fstack-protector-strong//" -e "s/,-z,now//" -e "s/-fno-plt//")"
 	echo "CFLAGS = ${CFLAGS}" >> "$_where"/last_build_config.log
 	echo "LDFLAGS = ${LDFLAGS}" >> "$_where"/last_build_config.log
