@@ -1443,8 +1443,10 @@ _prepare() {
 
 	# Fix for LoL 9.20+ crashing - https://bugs.winehq.org/show_bug.cgi?id=47198
 	if [ "$_lol920_fix" = "true" ] && [ "$_use_staging" = "true" ]; then
-	  if git merge-base --is-ancestor 3513a176fd325492e5b5e498e4eebf3f820f8cc6 HEAD; then
-	    _patchname='leagueoflolfix.patch' && _patchmsg="Applied LoL 9.20+ fix - Requires vdso32 disabled (echo 0 > /proc/sys/abi/vsyscall32)" && nonuser_patcher
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 766e1ee8f8876f21b64b3bbd5c9322a476abc5bd HEAD ); then
+	    _patchname='leagueoflolfix.patch' && _patchmsg="Applied LoL 9.20+ fix - Requires vdso32 disabled (echo 0 > /proc/sys/abi/vsyscall32 and disabling libglesv2 dll)" && nonuser_patcher
+	  elif git merge-base --is-ancestor 3513a176fd325492e5b5e498e4eebf3f820f8cc6 HEAD; then
+	    _patchname='leagueoflolfix-766e1ee.patch' && _patchmsg="Applied LoL 9.20+ fix - Requires vdso32 disabled (echo 0 > /proc/sys/abi/vsyscall32)" && nonuser_patcher
 	  elif git merge-base --is-ancestor 7f144646ffac6f3632d0c39b217dbd433c1154a0 HEAD; then
 	    _patchname='leagueoflolfix-3513a17.patch' && _patchmsg="Applied LoL 9.20+ fix - Requires vdso32 disabled (echo 0 > /proc/sys/abi/vsyscall32)" && nonuser_patcher
 	  elif git merge-base --is-ancestor bd9a1e23f2a1eb97492ff977dcb0d96fde8ab2ad HEAD; then
