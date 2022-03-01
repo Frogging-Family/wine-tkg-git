@@ -1,0 +1,83 @@
+From 9509bc29d7a6d0514f2573007b2aa3399f4d2095 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Thu, 10 Feb 2022 09:57:10 +0100
+Subject: [PATCH 77/88] winegstreamer: Implement H264 decoder ProcessOutput.
+
+For: Call of Duty III, Mortal Kombat 11, Shadow Warrior 2,
+Yakuza 4 Remastered, Hard Reset Redux.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=45988
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=47084
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=49715
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=52183
+CW-Bug-Id: #16839
+CW-Bug-Id: #18678
+CW-Bug-Id: #19362
+---
+ dlls/winegstreamer/h264_decoder.c | 50 +++++++++++++++++++++++++++++--
+ 1 file changed, 48 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winegstreamer/h264_decoder.c b/dlls/winegstreamer/h264_decoder.c
+index 268262a0f18..44d55ae061f 100644
+--- a/dlls/winegstreamer/h264_decoder.c
++++ b/dlls/winegstreamer/h264_decoder.c
+@@ -539,8 +539,54 @@ done:
+ static HRESULT WINAPI h264_decoder_ProcessOutput(IMFTransform *iface, DWORD flags, DWORD count,
+         MFT_OUTPUT_DATA_BUFFER *samples, DWORD *status)
+ {
+-    FIXME("iface %p, flags %#lx, count %lu, samples %p, status %p stub!\n", iface, flags, count, samples, status);
+-    return E_NOTIMPL;
++    struct h264_decoder *decoder = impl_from_IMFTransform(iface);
++    struct wg_sample wg_sample = {0};
++    IMFMediaBuffer *media_buffer;
++    MFT_OUTPUT_STREAM_INFO info;
++    DWORD buffer_size;
++    HRESULT hr;
++
++    TRACE("iface %p, flags %#lx, count %lu, samples %p, status %p.\n", iface, flags, count, samples, status);
++
++    if (count > 1)
++    {
++        FIXME("Not implemented count %lu\n", count);
++        return E_NOTIMPL;
++    }
++
++    if (FAILED(hr = IMFTransform_GetOutputStreamInfo(iface, 0, &info)))
++        return hr;
++
++    if (!decoder->wg_transform)
++        return MF_E_TRANSFORM_TYPE_NOT_SET;
++
++    *status = 0;
++    samples[0].dwStatus = 0;
++    if (!samples[0].pSample)
++    {
++        samples[0].dwStatus = MFT_OUTPUT_DATA_BUFFER_NO_SAMPLE;
++        return MF_E_TRANSFORM_NEED_MORE_INPUT;
++    }
++
++    if (FAILED(hr = IMFSample_ConvertToContiguousBuffer(samples[0].pSample, &media_buffer)))
++        return hr;
++
++    if (FAILED(hr = IMFMediaBuffer_Lock(media_buffer, &wg_sample.data, &buffer_size, NULL)))
++        goto done;
++    wg_sample.size = buffer_size;
++
++    if (wg_sample.size < info.cbSize)
++        hr = MF_E_BUFFERTOOSMALL;
++    else if (SUCCEEDED(hr = wg_transform_read_data(decoder->wg_transform, &wg_sample)))
++        hr = IMFMediaBuffer_SetCurrentLength(media_buffer, wg_sample.size);
++
++    IMFMediaBuffer_Unlock(media_buffer);
++
++done:
++    if (FAILED(hr))
++        IMFMediaBuffer_SetCurrentLength(media_buffer, 0);
++    IMFMediaBuffer_Release(media_buffer);
++    return hr;
+ }
+ 
+ static const IMFTransformVtbl h264_decoder_vtbl =
+-- 
+2.34.1
+

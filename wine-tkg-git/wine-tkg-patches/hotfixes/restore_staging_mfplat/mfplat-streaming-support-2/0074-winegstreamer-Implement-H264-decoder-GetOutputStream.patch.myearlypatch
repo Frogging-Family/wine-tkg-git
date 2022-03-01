@@ -1,0 +1,55 @@
+From a0aa60794e90bd635983dfb7158ba19bdb4e3485 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Thu, 10 Feb 2022 09:56:35 +0100
+Subject: [PATCH 74/88] winegstreamer: Implement H264 decoder
+ GetOutputStreamInfo.
+
+For: Call of Duty III, Mortal Kombat 11, Shadow Warrior 2,
+Yakuza 4 Remastered, Hard Reset Redux.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=45988
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=47084
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=49715
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=52183
+CW-Bug-Id: #16839
+CW-Bug-Id: #18678
+CW-Bug-Id: #19362
+---
+ dlls/winegstreamer/h264_decoder.c | 21 +++++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winegstreamer/h264_decoder.c b/dlls/winegstreamer/h264_decoder.c
+index 1ccb5f39908..eadb28cdaaa 100644
+--- a/dlls/winegstreamer/h264_decoder.c
++++ b/dlls/winegstreamer/h264_decoder.c
+@@ -243,8 +243,25 @@ static HRESULT WINAPI h264_decoder_GetInputStreamInfo(IMFTransform *iface, DWORD
+ 
+ static HRESULT WINAPI h264_decoder_GetOutputStreamInfo(IMFTransform *iface, DWORD id, MFT_OUTPUT_STREAM_INFO *info)
+ {
+-    FIXME("iface %p, id %#lx, info %p stub!\n", iface, id, info);
+-    return E_NOTIMPL;
++    struct h264_decoder *decoder = impl_from_IMFTransform(iface);
++    IMFMediaType *media_type;
++    UINT32 sample_size;
++    HRESULT hr;
++
++    TRACE("iface %p, id %#lx, info %p.\n", iface, id, info);
++
++    if (!decoder->input_type || !decoder->output_type)
++        return MF_E_TRANSFORM_TYPE_NOT_SET;
++
++    media_type = decoder->output_type;
++
++    info->dwFlags = MFT_OUTPUT_STREAM_WHOLE_SAMPLES | MFT_OUTPUT_STREAM_SINGLE_SAMPLE_PER_BUFFER | MFT_OUTPUT_STREAM_FIXED_SAMPLE_SIZE;
++    if (FAILED(hr = IMFMediaType_GetUINT32(media_type, &MF_MT_SAMPLE_SIZE, &sample_size)))
++        sample_size = 1920 * 1080 * 2;
++    info->cbSize = sample_size;
++    info->cbAlignment = 0;
++
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI h264_decoder_GetAttributes(IMFTransform *iface, IMFAttributes **attributes)
+-- 
+2.34.1
+

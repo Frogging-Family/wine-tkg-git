@@ -1,0 +1,60 @@
+From effc9dd4081fe44b67080b3cb73f51be21e0bd51 Mon Sep 17 00:00:00 2001
+From: Zebediah Figura <z.figura12@gmail.com>
+Date: Tue, 28 Jan 2020 14:30:43 -0600
+Subject: [PATCH 02/88] winegstreamer: HACK: Try harder to register
+ winegstreamer filters.
+
+---
+ dlls/quartz/filtergraph.c | 17 +++++++++++++++++
+ dlls/winegstreamer/main.c |  2 ++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/dlls/quartz/filtergraph.c b/dlls/quartz/filtergraph.c
+index 1849174cf97..55462244ea9 100644
+--- a/dlls/quartz/filtergraph.c
++++ b/dlls/quartz/filtergraph.c
+@@ -5600,11 +5600,28 @@ static const IUnknownVtbl IInner_VTable =
+     FilterGraphInner_Release
+ };
+ 
++static BOOL CALLBACK register_winegstreamer_proc(INIT_ONCE *once, void *param, void **ctx)
++{
++    HMODULE mod = LoadLibraryW(L"winegstreamer.dll");
++    if (mod)
++    {
++        HRESULT (WINAPI *proc)(void) = (void *)GetProcAddress(mod, "DllRegisterServer");
++        proc();
++        FreeLibrary(mod);
++    }
++    return TRUE;
++}
++
+ static HRESULT filter_graph_common_create(IUnknown *outer, IUnknown **out, BOOL threaded)
+ {
++    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+     struct filter_graph *object;
+     HRESULT hr;
+ 
++    /* HACK: our build system makes it difficult to load gstreamer on prefix
++     * creation, so it won't get registered. Do that here instead. */
++    InitOnceExecuteOnce(&once, register_winegstreamer_proc, NULL, NULL);
++
+     *out = NULL;
+ 
+     if (!(object = calloc(1, sizeof(*object))))
+diff --git a/dlls/winegstreamer/main.c b/dlls/winegstreamer/main.c
+index f85e9995525..95b22abebb7 100644
+--- a/dlls/winegstreamer/main.c
++++ b/dlls/winegstreamer/main.c
+@@ -564,6 +564,8 @@ HRESULT WINAPI DllRegisterServer(void)
+ 
+     TRACE(".\n");
+ 
++    init_gstreamer();
++
+     if (FAILED(hr = __wine_register_resources()))
+         return hr;
+ 
+-- 
+2.34.1
+

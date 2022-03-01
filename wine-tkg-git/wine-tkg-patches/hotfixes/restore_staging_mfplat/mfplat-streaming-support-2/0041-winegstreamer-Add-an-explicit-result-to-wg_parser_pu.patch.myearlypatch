@@ -1,0 +1,190 @@
+From 6cc6888966a9d0d7da6ed866ece791ca0e6afd61 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 15 Dec 2021 11:26:41 +0100
+Subject: [PATCH 41/88] winegstreamer: Add an explicit result to
+ wg_parser_push_data.
+
+---
+ dlls/winegstreamer/gst_private.h   |  2 +-
+ dlls/winegstreamer/main.c          |  3 ++-
+ dlls/winegstreamer/media_source.c  |  4 ++--
+ dlls/winegstreamer/quartz_parser.c |  2 +-
+ dlls/winegstreamer/unixlib.h       |  9 +++++++++
+ dlls/winegstreamer/wg_parser.c     | 19 ++++++++++++++++++-
+ dlls/winegstreamer/wm_reader.c     |  8 ++++----
+ 7 files changed, 37 insertions(+), 10 deletions(-)
+
+diff --git a/dlls/winegstreamer/gst_private.h b/dlls/winegstreamer/gst_private.h
+index 6149ae5959c..c156d87450c 100644
+--- a/dlls/winegstreamer/gst_private.h
++++ b/dlls/winegstreamer/gst_private.h
+@@ -74,7 +74,7 @@ void wg_parser_begin_flush(struct wg_parser *parser);
+ void wg_parser_end_flush(struct wg_parser *parser);
+ 
+ bool wg_parser_get_next_read_offset(struct wg_parser *parser, uint64_t *offset, uint32_t *size);
+-void wg_parser_push_data(struct wg_parser *parser, const void *data, uint32_t size);
++void wg_parser_push_data(struct wg_parser *parser, enum wg_read_result result, const void *data, uint32_t size);
+ 
+ uint32_t wg_parser_get_stream_count(struct wg_parser *parser);
+ struct wg_parser_stream *wg_parser_get_stream(struct wg_parser *parser, uint32_t index);
+diff --git a/dlls/winegstreamer/main.c b/dlls/winegstreamer/main.c
+index 66b7a1195ee..db05594f464 100644
+--- a/dlls/winegstreamer/main.c
++++ b/dlls/winegstreamer/main.c
+@@ -120,11 +120,12 @@ bool wg_parser_get_next_read_offset(struct wg_parser *parser, uint64_t *offset,
+     return true;
+ }
+ 
+-void wg_parser_push_data(struct wg_parser *parser, const void *data, uint32_t size)
++void wg_parser_push_data(struct wg_parser *parser, enum wg_read_result result, const void *data, uint32_t size)
+ {
+     struct wg_parser_push_data_params params =
+     {
+         .parser = parser,
++        .result = result,
+         .data = data,
+         .size = size,
+     };
+diff --git a/dlls/winegstreamer/media_source.c b/dlls/winegstreamer/media_source.c
+index c97348cc2d6..fd6479d9879 100644
+--- a/dlls/winegstreamer/media_source.c
++++ b/dlls/winegstreamer/media_source.c
+@@ -644,7 +644,7 @@ static DWORD CALLBACK read_thread(void *arg)
+          * an error when reading past the file size. */
+         if (!size)
+         {
+-            wg_parser_push_data(source->wg_parser, data, 0);
++            wg_parser_push_data(source->wg_parser, WG_READ_SUCCESS, data, 0);
+             continue;
+         }
+ 
+@@ -662,7 +662,7 @@ static DWORD CALLBACK read_thread(void *arg)
+             ERR("Failed to read %u bytes at offset %I64u, hr %#lx.\n", size, offset, hr);
+         else if (ret_size != size)
+             ERR("Unexpected short read: requested %u bytes, got %lu.\n", size, ret_size);
+-        wg_parser_push_data(source->wg_parser, SUCCEEDED(hr) ? data : NULL, ret_size);
++        wg_parser_push_data(source->wg_parser, SUCCEEDED(hr) ? WG_READ_SUCCESS : WG_READ_FAILURE, data, ret_size);
+     }
+ 
+     free(data);
+diff --git a/dlls/winegstreamer/quartz_parser.c b/dlls/winegstreamer/quartz_parser.c
+index 8ea9291904e..c44bd141c56 100644
+--- a/dlls/winegstreamer/quartz_parser.c
++++ b/dlls/winegstreamer/quartz_parser.c
+@@ -876,7 +876,7 @@ static DWORD CALLBACK read_thread(void *arg)
+         if (FAILED(hr))
+             ERR("Failed to read %u bytes at offset %I64u, hr %#lx.\n", size, offset, hr);
+ 
+-        wg_parser_push_data(filter->wg_parser, SUCCEEDED(hr) ? data : NULL, size);
++        wg_parser_push_data(filter->wg_parser, SUCCEEDED(hr) ? WG_READ_SUCCESS : WG_READ_FAILURE, data, size);
+     }
+ 
+     free(data);
+diff --git a/dlls/winegstreamer/unixlib.h b/dlls/winegstreamer/unixlib.h
+index fc9d0c3c80d..f20ee5bb52f 100644
+--- a/dlls/winegstreamer/unixlib.h
++++ b/dlls/winegstreamer/unixlib.h
+@@ -125,6 +125,14 @@ enum wg_parser_event_type
+     WG_PARSER_EVENT_SEGMENT,
+ };
+ 
++enum wg_read_result
++{
++    WG_READ_SUCCESS,
++    WG_READ_FAILURE,
++    WG_READ_FLUSHING,
++    WG_READ_EOS,
++};
++
+ struct wg_parser_event
+ {
+     enum wg_parser_event_type type;
+@@ -177,6 +185,7 @@ struct wg_parser_get_next_read_offset_params
+ struct wg_parser_push_data_params
+ {
+     struct wg_parser *parser;
++    enum wg_read_result result;
+     const void *data;
+     UINT32 size;
+ };
+diff --git a/dlls/winegstreamer/wg_parser.c b/dlls/winegstreamer/wg_parser.c
+index f70c1a449c7..df4dca4a69f 100644
+--- a/dlls/winegstreamer/wg_parser.c
++++ b/dlls/winegstreamer/wg_parser.c
+@@ -647,16 +647,33 @@ static NTSTATUS wg_parser_get_next_read_offset(void *args)
+     return S_OK;
+ }
+ 
++static GstFlowReturn wg_read_result_to_gst(enum wg_read_result result)
++{
++    switch (result)
++    {
++    case WG_READ_SUCCESS: return GST_FLOW_OK;
++    case WG_READ_FAILURE: return GST_FLOW_ERROR;
++    case WG_READ_FLUSHING: return GST_FLOW_FLUSHING;
++    case WG_READ_EOS: return GST_FLOW_EOS;
++    }
++    return GST_FLOW_ERROR;
++}
++
+ static NTSTATUS wg_parser_push_data(void *args)
+ {
+     const struct wg_parser_push_data_params *params = args;
+     struct wg_parser *parser = params->parser;
++    enum wg_read_result result = params->result;
+     const void *data = params->data;
+     uint32_t size = params->size;
+ 
+     pthread_mutex_lock(&parser->mutex);
+ 
+-    if (data)
++    if (result != WG_READ_SUCCESS)
++    {
++            parser->read_request.ret = wg_read_result_to_gst(result);
++    }
++    else if (data)
+     {
+         if (size)
+         {
+diff --git a/dlls/winegstreamer/wm_reader.c b/dlls/winegstreamer/wm_reader.c
+index d40afb66afd..ee37abee811 100644
+--- a/dlls/winegstreamer/wm_reader.c
++++ b/dlls/winegstreamer/wm_reader.c
+@@ -573,7 +573,7 @@ static DWORD CALLBACK read_thread(void *arg)
+ 
+         if (!size)
+         {
+-            wg_parser_push_data(reader->wg_parser, data, 0);
++            wg_parser_push_data(reader->wg_parser, WG_READ_SUCCESS, data, 0);
+             continue;
+         }
+ 
+@@ -592,7 +592,7 @@ static DWORD CALLBACK read_thread(void *arg)
+                     || !ReadFile(file, data, size, &ret_size, NULL))
+             {
+                 ERR("Failed to read %u bytes at offset %I64u, error %lu.\n", size, offset, GetLastError());
+-                wg_parser_push_data(reader->wg_parser, NULL, 0);
++                wg_parser_push_data(reader->wg_parser, WG_READ_FAILURE, NULL, 0);
+                 continue;
+             }
+         }
+@@ -603,14 +603,14 @@ static DWORD CALLBACK read_thread(void *arg)
+             if (FAILED(hr))
+             {
+                 ERR("Failed to read %u bytes at offset %I64u, hr %#lx.\n", size, offset, hr);
+-                wg_parser_push_data(reader->wg_parser, NULL, 0);
++                wg_parser_push_data(reader->wg_parser, WG_READ_FAILURE, NULL, 0);
+                 continue;
+             }
+         }
+ 
+         if (ret_size != size)
+             ERR("Unexpected short read: requested %u bytes, got %lu.\n", size, ret_size);
+-        wg_parser_push_data(reader->wg_parser, data, ret_size);
++        wg_parser_push_data(reader->wg_parser, WG_READ_SUCCESS, data, ret_size);
+     }
+ 
+     free(data);
+-- 
+2.34.1
+

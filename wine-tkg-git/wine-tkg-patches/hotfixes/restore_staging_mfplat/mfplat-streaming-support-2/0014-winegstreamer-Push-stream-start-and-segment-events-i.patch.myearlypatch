@@ -1,0 +1,60 @@
+From c8a074d72e06a8e44cb9390126e656800d249e08 Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 10 Mar 2021 10:43:03 -0500
+Subject: [PATCH 14/88] winegstreamer: Push stream-start and segment events in
+ push mode.
+
+Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
+---
+ dlls/winegstreamer/wg_parser.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/dlls/winegstreamer/wg_parser.c b/dlls/winegstreamer/wg_parser.c
+index d7412409a27..c6e8bbcb26b 100644
+--- a/dlls/winegstreamer/wg_parser.c
++++ b/dlls/winegstreamer/wg_parser.c
+@@ -1449,6 +1449,7 @@ static void *push_data(void *arg)
+ {
+     struct wg_parser *parser = arg;
+     GstBuffer *buffer;
++    GstSegment *segment;
+     guint max_size;
+ 
+     GST_DEBUG("Starting push thread.");
+@@ -1461,6 +1462,12 @@ static void *push_data(void *arg)
+ 
+     max_size = parser->stop_offset ? parser->stop_offset : parser->file_size;
+ 
++    gst_pad_push_event(parser->my_src, gst_event_new_stream_start("wg_stream"));
++
++    segment = gst_segment_new();
++    gst_segment_init(segment, GST_FORMAT_BYTES);
++    gst_pad_push_event(parser->my_src, gst_event_new_segment(segment));
++
+     for (;;)
+     {
+         ULONG size;
+@@ -1595,6 +1602,7 @@ static gboolean src_perform_seek(struct wg_parser *parser, GstEvent *event)
+     GstEvent *flush_event;
+     GstSeekFlags flags;
+     gint64 cur, stop;
++    GstSegment *seg;
+     guint32 seqnum;
+     gdouble rate;
+ 
+@@ -1628,7 +1636,12 @@ static gboolean src_perform_seek(struct wg_parser *parser, GstEvent *event)
+         gst_event_set_seqnum(flush_event, seqnum);
+         gst_pad_push_event(parser->my_src, flush_event);
+         if (thread)
++        {
+             gst_pad_set_active(parser->my_src, 1);
++            seg = gst_segment_new();
++            gst_segment_init(seg, GST_FORMAT_BYTES);
++            gst_pad_push_event(parser->my_src, gst_event_new_segment(seg));
++        }
+     }
+ 
+     return TRUE;
+-- 
+2.34.1
+

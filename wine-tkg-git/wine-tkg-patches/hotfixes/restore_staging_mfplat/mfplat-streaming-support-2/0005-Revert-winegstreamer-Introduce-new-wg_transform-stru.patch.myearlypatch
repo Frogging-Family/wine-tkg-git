@@ -1,0 +1,293 @@
+From 51f5ec2a0fd00995b4ff155a89e46c7dff8e338b Mon Sep 17 00:00:00 2001
+From: Thomas Crider <gloriouseggroll@gmail.com>
+Date: Sat, 19 Feb 2022 16:58:23 -0700
+Subject: [PATCH 05/88] Revert "winegstreamer: Introduce new wg_transform
+ struct."
+
+This reverts commit 51a262d368afca3ec1edf50a850dbd5339194280.
+---
+ dlls/winegstreamer/Makefile.in    |  1 -
+ dlls/winegstreamer/gst_private.h  |  3 --
+ dlls/winegstreamer/main.c         | 14 -----
+ dlls/winegstreamer/unix_private.h |  5 --
+ dlls/winegstreamer/unixlib.h      |  8 ---
+ dlls/winegstreamer/wg_parser.c    | 13 +----
+ dlls/winegstreamer/wg_transform.c | 88 -------------------------------
+ dlls/winegstreamer/wma_decoder.c  | 11 ----
+ 8 files changed, 2 insertions(+), 141 deletions(-)
+ delete mode 100644 dlls/winegstreamer/wg_transform.c
+
+diff --git a/dlls/winegstreamer/Makefile.in b/dlls/winegstreamer/Makefile.in
+index 0bcdb3eec65..d9805e3d797 100644
+--- a/dlls/winegstreamer/Makefile.in
++++ b/dlls/winegstreamer/Makefile.in
+@@ -14,7 +14,6 @@ C_SRCS = \
+ 	quartz_parser.c \
+ 	wg_format.c \
+ 	wg_parser.c \
+-	wg_transform.c \
+ 	wm_asyncreader.c \
+ 	wm_reader.c \
+ 	wm_syncreader.c \
+diff --git a/dlls/winegstreamer/gst_private.h b/dlls/winegstreamer/gst_private.h
+index 8bc9f838d29..3584f465218 100644
+--- a/dlls/winegstreamer/gst_private.h
++++ b/dlls/winegstreamer/gst_private.h
+@@ -96,9 +96,6 @@ uint64_t wg_parser_stream_get_duration(struct wg_parser_stream *stream);
+ void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
+         uint64_t start_pos, uint64_t stop_pos, DWORD start_flags, DWORD stop_flags);
+ 
+-struct wg_transform *wg_transform_create(void);
+-void wg_transform_destroy(struct wg_transform *transform);
+-
+ unsigned int wg_format_get_max_size(const struct wg_format *format);
+ 
+ HRESULT avi_splitter_create(IUnknown *outer, IUnknown **out);
+diff --git a/dlls/winegstreamer/main.c b/dlls/winegstreamer/main.c
+index af5a691371d..51a71d3b4a5 100644
+--- a/dlls/winegstreamer/main.c
++++ b/dlls/winegstreamer/main.c
+@@ -254,20 +254,6 @@ void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
+     __wine_unix_call(unix_handle, unix_wg_parser_stream_seek, &params);
+ }
+ 
+-struct wg_transform *wg_transform_create(void)
+-{
+-    struct wg_transform_create_params params = {0};
+-
+-    if (__wine_unix_call(unix_handle, unix_wg_transform_create, &params))
+-        return NULL;
+-    return params.transform;
+-}
+-
+-void wg_transform_destroy(struct wg_transform *transform)
+-{
+-    __wine_unix_call(unix_handle, unix_wg_transform_destroy, transform);
+-}
+-
+ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
+ {
+     if (reason == DLL_PROCESS_ATTACH)
+diff --git a/dlls/winegstreamer/unix_private.h b/dlls/winegstreamer/unix_private.h
+index f9c4da2f6ea..b483638403d 100644
+--- a/dlls/winegstreamer/unix_private.h
++++ b/dlls/winegstreamer/unix_private.h
+@@ -25,13 +25,8 @@
+ 
+ #include <gst/gst.h>
+ 
+-extern bool init_gstreamer(void) DECLSPEC_HIDDEN;
+-
+ extern void wg_format_from_caps(struct wg_format *format, const GstCaps *caps) DECLSPEC_HIDDEN;
+ extern bool wg_format_compare(const struct wg_format *a, const struct wg_format *b) DECLSPEC_HIDDEN;
+ extern GstCaps *wg_format_to_caps(const struct wg_format *format) DECLSPEC_HIDDEN;
+ 
+-extern NTSTATUS wg_transform_create(void *args) DECLSPEC_HIDDEN;
+-extern NTSTATUS wg_transform_destroy(void *args) DECLSPEC_HIDDEN;
+-
+ #endif /* __WINE_WINEGSTREAMER_UNIX_PRIVATE_H */
+diff --git a/dlls/winegstreamer/unixlib.h b/dlls/winegstreamer/unixlib.h
+index 8e3f5e84bfb..45ec606fc6a 100644
+--- a/dlls/winegstreamer/unixlib.h
++++ b/dlls/winegstreamer/unixlib.h
+@@ -229,11 +229,6 @@ struct wg_parser_stream_seek_params
+     DWORD start_flags, stop_flags;
+ };
+ 
+-struct wg_transform_create_params
+-{
+-    struct wg_transform *transform;
+-};
+-
+ enum unix_funcs
+ {
+     unix_wg_parser_create,
+@@ -262,9 +257,6 @@ enum unix_funcs
+ 
+     unix_wg_parser_stream_get_duration,
+     unix_wg_parser_stream_seek,
+-
+-    unix_wg_transform_create,
+-    unix_wg_transform_destroy,
+ };
+ 
+ #endif /* __WINE_WINEGSTREAMER_UNIXLIB_H */
+diff --git a/dlls/winegstreamer/wg_parser.c b/dlls/winegstreamer/wg_parser.c
+index 40c394c3caf..66f60d27477 100644
+--- a/dlls/winegstreamer/wg_parser.c
++++ b/dlls/winegstreamer/wg_parser.c
+@@ -1586,13 +1586,6 @@ static void init_gstreamer_once(void)
+             gst_version_string(), GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO);
+ }
+ 
+-bool init_gstreamer(void)
+-{
+-    static pthread_once_t init_once = PTHREAD_ONCE_INIT;
+-
+-    return !pthread_once(&init_once, init_gstreamer_once);
+-}
+-
+ static NTSTATUS wg_parser_create(void *args)
+ {
+     static const init_gst_cb init_funcs[] =
+@@ -1603,10 +1596,11 @@ static NTSTATUS wg_parser_create(void *args)
+         [WG_PARSER_WAVPARSE] = wave_parser_init_gst,
+     };
+ 
++    static pthread_once_t once = PTHREAD_ONCE_INIT;
+     struct wg_parser_create_params *params = args;
+     struct wg_parser *parser;
+ 
+-    if (!init_gstreamer())
++    if (pthread_once(&once, init_gstreamer_once))
+         return E_FAIL;
+ 
+     if (!(parser = calloc(1, sizeof(*parser))))
+@@ -1673,7 +1667,4 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
+ 
+     X(wg_parser_stream_get_duration),
+     X(wg_parser_stream_seek),
+-
+-    X(wg_transform_create),
+-    X(wg_transform_destroy),
+ };
+diff --git a/dlls/winegstreamer/wg_transform.c b/dlls/winegstreamer/wg_transform.c
+deleted file mode 100644
+index 2f225e5bc55..00000000000
+--- a/dlls/winegstreamer/wg_transform.c
++++ /dev/null
+@@ -1,88 +0,0 @@
+-/*
+- * GStreamer transform backend
+- *
+- * Copyright 2022 Rémi Bernon for CodeWeavers
+- *
+- * This library is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU Lesser General Public
+- * License as published by the Free Software Foundation; either
+- * version 2.1 of the License, or (at your option) any later version.
+- *
+- * This library is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- * Lesser General Public License for more details.
+- *
+- * You should have received a copy of the GNU Lesser General Public
+- * License along with this library; if not, write to the Free Software
+- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+- */
+-
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+-#include "config.h"
+-
+-#include <assert.h>
+-#include <stdarg.h>
+-#include <stdio.h>
+-
+-#include <gst/gst.h>
+-#include <gst/video/video.h>
+-#include <gst/audio/audio.h>
+-
+-#include "ntstatus.h"
+-#define WIN32_NO_STATUS
+-#include "winternl.h"
+-#include "dshow.h"
+-
+-#include "unix_private.h"
+-
+-GST_DEBUG_CATEGORY_EXTERN(wine);
+-#define GST_CAT_DEFAULT wine
+-
+-struct wg_transform
+-{
+-    int dummy;
+-};
+-
+-NTSTATUS wg_transform_destroy(void *args)
+-{
+-    struct wg_transform *transform = args;
+-
+-    free(transform);
+-    return STATUS_SUCCESS;
+-}
+-
+-NTSTATUS wg_transform_create(void *args)
+-{
+-    struct wg_transform_create_params *params = args;
+-    struct wg_transform *transform;
+-    NTSTATUS status;
+-
+-    if (!init_gstreamer())
+-        return STATUS_UNSUCCESSFUL;
+-
+-    status = STATUS_NO_MEMORY;
+-
+-    if (!(transform = calloc(1, sizeof(*transform))))
+-        goto done;
+-
+-    status = STATUS_SUCCESS;
+-
+-done:
+-    if (status)
+-    {
+-        GST_ERROR("Failed to create winegstreamer transform.");
+-        if (transform)
+-            wg_transform_destroy(transform);
+-    }
+-    else
+-    {
+-        GST_INFO("Created winegstreamer transform %p.", transform);
+-        params->transform = transform;
+-    }
+-
+-    return status;
+-}
+diff --git a/dlls/winegstreamer/wma_decoder.c b/dlls/winegstreamer/wma_decoder.c
+index b14261706a7..31f735a5b1d 100644
+--- a/dlls/winegstreamer/wma_decoder.c
++++ b/dlls/winegstreamer/wma_decoder.c
+@@ -53,8 +53,6 @@ struct wma_decoder
+     LONG refcount;
+     IMFMediaType *input_type;
+     IMFMediaType *output_type;
+-
+-    struct wg_transform *wg_transform;
+ };
+ 
+ static inline struct wma_decoder *impl_from_IUnknown(IUnknown *iface)
+@@ -66,10 +64,6 @@ static HRESULT try_create_wg_transform(struct wma_decoder *decoder)
+ {
+     struct wg_format input_format, output_format;
+ 
+-    if (decoder->wg_transform)
+-        wg_transform_destroy(decoder->wg_transform);
+-    decoder->wg_transform = NULL;
+-
+     mf_media_type_to_wg_format(decoder->input_type, &input_format);
+     if (input_format.major_type == WG_MAJOR_TYPE_UNKNOWN)
+         return MF_E_INVALIDMEDIATYPE;
+@@ -78,9 +72,6 @@ static HRESULT try_create_wg_transform(struct wma_decoder *decoder)
+     if (output_format.major_type == WG_MAJOR_TYPE_UNKNOWN)
+         return MF_E_INVALIDMEDIATYPE;
+ 
+-    if (!(decoder->wg_transform = wg_transform_create()))
+-        return E_FAIL;
+-
+     return S_OK;
+ }
+ 
+@@ -128,8 +119,6 @@ static ULONG WINAPI unknown_Release(IUnknown *iface)
+ 
+     if (!refcount)
+     {
+-        if (decoder->wg_transform)
+-            wg_transform_destroy(decoder->wg_transform);
+         if (decoder->input_type)
+             IMFMediaType_Release(decoder->input_type);
+         if (decoder->output_type)
+-- 
+2.34.1
+

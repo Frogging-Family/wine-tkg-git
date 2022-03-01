@@ -1,0 +1,89 @@
+From 34491aae12bd533db2ceb8fdbfcbc0a1ccc54004 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Thu, 10 Feb 2022 09:54:51 +0100
+Subject: [PATCH 69/88] winegstreamer: Implement H264 decoder SetInputType.
+
+For: Call of Duty III, Mortal Kombat 11, Shadow Warrior 2,
+Yakuza 4 Remastered, Hard Reset Redux.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=45988
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=47084
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=49715
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=52183
+CW-Bug-Id: #16839
+CW-Bug-Id: #18678
+CW-Bug-Id: #19362
+---
+ dlls/winegstreamer/h264_decoder.c | 37 +++++++++++++++++++++++++++++--
+ 1 file changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winegstreamer/h264_decoder.c b/dlls/winegstreamer/h264_decoder.c
+index 55f40ad7660..e0634bedcaa 100644
+--- a/dlls/winegstreamer/h264_decoder.c
++++ b/dlls/winegstreamer/h264_decoder.c
+@@ -30,10 +30,16 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
+ 
++static const GUID *h264_decoder_input_types[] =
++{
++    &MFVideoFormat_H264,
++};
++
+ struct h264_decoder
+ {
+     IMFTransform IMFTransform_iface;
+     LONG refcount;
++    IMFMediaType *input_type;
+ };
+ 
+ static struct h264_decoder *impl_from_IMFTransform(IMFTransform *iface)
+@@ -78,7 +84,11 @@ static ULONG WINAPI h264_decoder_Release(IMFTransform *iface)
+     TRACE("iface %p decreasing refcount to %lu.\n", decoder, refcount);
+ 
+     if (!refcount)
++    {
++        if (decoder->input_type)
++            IMFMediaType_Release(decoder->input_type);
+         free(decoder);
++    }
+ 
+     return refcount;
+ }
+@@ -166,8 +176,31 @@ static HRESULT WINAPI h264_decoder_GetOutputAvailableType(IMFTransform *iface, D
+ 
+ static HRESULT WINAPI h264_decoder_SetInputType(IMFTransform *iface, DWORD id, IMFMediaType *type, DWORD flags)
+ {
+-    FIXME("iface %p, id %#lx, type %p, flags %#lx stub!\n", iface, id, type, flags);
+-    return E_NOTIMPL;
++    struct h264_decoder *decoder = impl_from_IMFTransform(iface);
++    GUID major, subtype;
++    HRESULT hr;
++    ULONG i;
++
++    TRACE("iface %p, id %#lx, type %p, flags %#lx.\n", iface, id, type, flags);
++
++    if (FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major)) ||
++        FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
++        return E_INVALIDARG;
++
++    if (!IsEqualGUID(&major, &MFMediaType_Video))
++        return MF_E_INVALIDMEDIATYPE;
++
++    for (i = 0; i < ARRAY_SIZE(h264_decoder_input_types); ++i)
++        if (IsEqualGUID(&subtype, h264_decoder_input_types[i]))
++            break;
++    if (i == ARRAY_SIZE(h264_decoder_input_types))
++        return MF_E_INVALIDMEDIATYPE;
++
++    if (decoder->input_type)
++        IMFMediaType_Release(decoder->input_type);
++    IMFMediaType_AddRef((decoder->input_type = type));
++
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI h264_decoder_SetOutputType(IMFTransform *iface, DWORD id, IMFMediaType *type, DWORD flags)
+-- 
+2.34.1
+

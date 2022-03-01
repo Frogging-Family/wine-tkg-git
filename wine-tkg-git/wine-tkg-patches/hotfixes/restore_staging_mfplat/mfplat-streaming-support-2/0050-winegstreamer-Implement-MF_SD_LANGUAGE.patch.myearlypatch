@@ -1,0 +1,184 @@
+From 3d8fddbac3026e1eed86f718452f833ac2d6b5c6 Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Thu, 18 Mar 2021 15:25:17 -0400
+Subject: [PATCH 50/88] winegstreamer: Implement MF_SD_LANGUAGE.
+
+---
+ dlls/winegstreamer/gst_private.h  |  1 +
+ dlls/winegstreamer/main.c         | 12 ++++++++++++
+ dlls/winegstreamer/media_source.c | 20 +++++++++++++++++++-
+ dlls/winegstreamer/unixlib.h      |  8 ++++++++
+ dlls/winegstreamer/wg_parser.c    | 30 ++++++++++++++++++++++++++++++
+ 5 files changed, 70 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/winegstreamer/gst_private.h b/dlls/winegstreamer/gst_private.h
+index 6e7c53782c8..49879fe416d 100644
+--- a/dlls/winegstreamer/gst_private.h
++++ b/dlls/winegstreamer/gst_private.h
+@@ -94,6 +94,7 @@ void wg_parser_stream_notify_qos(struct wg_parser_stream *stream,
+ 
+ /* Returns the duration in 100-nanosecond units. */
+ uint64_t wg_parser_stream_get_duration(struct wg_parser_stream *stream);
++bool wg_parser_stream_get_language(struct wg_parser_stream *stream, char *buffer, uint32_t size);
+ /* start_pos and stop_pos are in 100-nanosecond units. */
+ void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
+         uint64_t start_pos, uint64_t stop_pos, DWORD start_flags, DWORD stop_flags);
+diff --git a/dlls/winegstreamer/main.c b/dlls/winegstreamer/main.c
+index 316becdbc97..a9a9c72136d 100644
+--- a/dlls/winegstreamer/main.c
++++ b/dlls/winegstreamer/main.c
+@@ -253,6 +253,18 @@ uint64_t wg_parser_stream_get_duration(struct wg_parser_stream *stream)
+     return params.duration;
+ }
+ 
++bool wg_parser_stream_get_language(struct wg_parser_stream *stream, char *buffer, uint32_t size)
++{
++    struct wg_parser_stream_get_language_params params =
++    {
++        .stream = stream,
++        .buffer = buffer,
++        .size = size,
++    };
++
++    return !__wine_unix_call(unix_handle, unix_wg_parser_stream_get_language, &params);
++}
++
+ void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
+         uint64_t start_pos, uint64_t stop_pos, DWORD start_flags, DWORD stop_flags)
+ {
+diff --git a/dlls/winegstreamer/media_source.c b/dlls/winegstreamer/media_source.c
+index fd6479d9879..11040ac159a 100644
+--- a/dlls/winegstreamer/media_source.c
++++ b/dlls/winegstreamer/media_source.c
+@@ -1492,7 +1492,25 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
+     descriptors = malloc(object->stream_count * sizeof(IMFStreamDescriptor *));
+     for (i = 0; i < object->stream_count; i++)
+     {
+-        IMFMediaStream_GetStreamDescriptor(&object->streams[i]->IMFMediaStream_iface, &descriptors[object->stream_count - 1 - i]);
++        IMFStreamDescriptor **descriptor = &descriptors[object->stream_count - 1 - i];
++        char language[128];
++        DWORD language_len;
++        WCHAR *languageW;
++
++        IMFMediaStream_GetStreamDescriptor(&object->streams[i]->IMFMediaStream_iface, descriptor);
++
++        if (wg_parser_stream_get_language(object->streams[i]->wg_stream, language, sizeof(language)))
++        {
++            if ((language_len = MultiByteToWideChar(CP_UTF8, 0, language, -1, NULL, 0)))
++            {
++                languageW = malloc(language_len * sizeof(WCHAR));
++                if (MultiByteToWideChar(CP_UTF8, 0, language, -1, languageW, language_len))
++                {
++                    IMFStreamDescriptor_SetString(*descriptor, &MF_SD_LANGUAGE, languageW);
++                }
++                free(languageW);
++            }
++        }
+     }
+ 
+     if (FAILED(hr = MFCreatePresentationDescriptor(object->stream_count, descriptors, &object->pres_desc)))
+diff --git a/dlls/winegstreamer/unixlib.h b/dlls/winegstreamer/unixlib.h
+index 17b5c606014..fdcecfc96d5 100644
+--- a/dlls/winegstreamer/unixlib.h
++++ b/dlls/winegstreamer/unixlib.h
+@@ -254,6 +254,13 @@ struct wg_parser_stream_get_duration_params
+     UINT64 duration;
+ };
+ 
++struct wg_parser_stream_get_language_params
++{
++    struct wg_parser_stream *stream;
++    char *buffer;
++    UINT32 size;
++};
++
+ struct wg_parser_stream_seek_params
+ {
+     struct wg_parser_stream *stream;
+@@ -290,6 +297,7 @@ enum unix_funcs
+     unix_wg_parser_stream_notify_qos,
+ 
+     unix_wg_parser_stream_get_duration,
++    unix_wg_parser_stream_get_language,
+     unix_wg_parser_stream_seek,
+ 
+     unix_wg_parser_stream_drain,
+diff --git a/dlls/winegstreamer/wg_parser.c b/dlls/winegstreamer/wg_parser.c
+index 06e07b874bf..dc655b275bd 100644
+--- a/dlls/winegstreamer/wg_parser.c
++++ b/dlls/winegstreamer/wg_parser.c
+@@ -110,6 +110,7 @@ struct wg_parser_stream
+     bool flushing, eos, enabled, has_caps;
+ 
+     uint64_t duration;
++    gchar *language_code;
+ };
+ 
+ static enum wg_audio_format wg_audio_format_from_gst(GstAudioFormat format)
+@@ -871,6 +872,14 @@ static NTSTATUS wg_parser_stream_get_duration(void *args)
+     return S_OK;
+ }
+ 
++static NTSTATUS wg_parser_stream_get_language(void *args)
++{
++    struct wg_parser_stream_get_language_params *params = args;
++    if (params->stream->language_code)
++        lstrcpynA(params->buffer, params->stream->language_code, params->size);
++    return params->stream->language_code ? S_OK : E_FAIL;
++}
++
+ static NTSTATUS wg_parser_stream_seek(void *args)
+ {
+     GstSeekType start_type = GST_SEEK_TYPE_SET, stop_type = GST_SEEK_TYPE_SET;
+@@ -1321,6 +1330,9 @@ static void free_stream(struct wg_parser_stream *stream)
+     pthread_cond_destroy(&stream->event_cond);
+     pthread_cond_destroy(&stream->event_empty_cond);
+ 
++    if (stream->language_code)
++        g_free(stream->language_code);
++
+     free(stream);
+ }
+ 
+@@ -1931,6 +1943,22 @@ static gboolean src_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
+     return ret;
+ }
+ 
++static gchar *query_language(GstPad *pad)
++{
++    GstTagList *tag_list;
++    GstEvent *tag_event;
++    gchar *ret = NULL;
++
++    if ((tag_event = gst_pad_get_sticky_event(pad, GST_EVENT_TAG, 0)))
++    {
++        gst_event_parse_tag(tag_event, &tag_list);
++        gst_tag_list_get_string(tag_list, "language-code", &ret);
++        gst_event_unref(tag_event);
++    }
++
++    return ret;
++}
++
+ static HRESULT wg_parser_connect_inner(struct wg_parser *parser)
+ {
+     GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE("wine_src",
+@@ -2066,6 +2094,7 @@ static NTSTATUS wg_parser_connect(void *args)
+                 pthread_cond_wait(&parser->init_cond, &parser->mutex);
+             }
+         }
++        stream->language_code = query_language(stream->their_src);
+     }
+ 
+     pthread_mutex_unlock(&parser->mutex);
+@@ -2561,6 +2590,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
+     X(wg_parser_stream_notify_qos),
+ 
+     X(wg_parser_stream_get_duration),
++    X(wg_parser_stream_get_language),
+     X(wg_parser_stream_seek),
+ 
+     X(wg_parser_stream_drain),
+-- 
+2.34.1
+

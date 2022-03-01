@@ -1,0 +1,116 @@
+From 39e3d198d51eab196cf884835fdedb02fee0861d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 21 Jan 2022 14:32:39 +0100
+Subject: [PATCH 65/88] winegstreamer: Support XMAudio2 input format in WMA
+ decoder.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=51931
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=52391
+CW-Bug-Id: #19854
+---
+ dlls/winegstreamer/mfplat.c       | 18 +++++++++++-------
+ dlls/winegstreamer/wg_transform.c | 10 ++++++++--
+ dlls/winegstreamer/wma_decoder.c  |  3 +++
+ 3 files changed, 22 insertions(+), 9 deletions(-)
+
+diff --git a/dlls/winegstreamer/mfplat.c b/dlls/winegstreamer/mfplat.c
+index ca64ce3f7b9..5633331359d 100644
+--- a/dlls/winegstreamer/mfplat.c
++++ b/dlls/winegstreamer/mfplat.c
+@@ -29,6 +29,8 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
+ 
++DEFINE_MEDIATYPE_GUID(MFAudioFormat_XMAudio2, 0x0166);
++
+ struct video_processor
+ {
+     IMFTransform IMFTransform_iface;
+@@ -893,8 +895,8 @@ void mf_media_type_to_wg_format(IMFMediaType *type, struct wg_format *format)
+         FIXME("Unrecognized major type %s.\n", debugstr_guid(&major_type));
+ }
+ 
+-static void mf_media_type_to_wg_encoded_format_wma(IMFMediaType *type, struct wg_encoded_format *format,
+-        UINT32 version)
++static void mf_media_type_to_wg_encoded_format_xwma(IMFMediaType *type, struct wg_encoded_format *format,
++        enum wg_encoded_type encoded_type, UINT32 version)
+ {
+     UINT32 rate, depth, channels, block_align, bytes_per_second, codec_data_len;
+     BYTE codec_data[64];
+@@ -930,7 +932,7 @@ static void mf_media_type_to_wg_encoded_format_wma(IMFMediaType *type, struct wg
+         bytes_per_second = 0;
+     }
+ 
+-    format->encoded_type = WG_ENCODED_TYPE_WMA;
++    format->encoded_type = encoded_type;
+     format->u.xwma.version = version;
+     format->u.xwma.bitrate = bytes_per_second * 8;
+     format->u.xwma.rate = rate;
+@@ -961,13 +963,15 @@ void mf_media_type_to_wg_encoded_format(IMFMediaType *type, struct wg_encoded_fo
+     if (IsEqualGUID(&major_type, &MFMediaType_Audio))
+     {
+         if (IsEqualGUID(&subtype, &MEDIASUBTYPE_MSAUDIO1))
+-            mf_media_type_to_wg_encoded_format_wma(type, format, 1);
++            mf_media_type_to_wg_encoded_format_xwma(type, format, WG_ENCODED_TYPE_WMA, 1);
+         else if (IsEqualGUID(&subtype, &MFAudioFormat_WMAudioV8))
+-            mf_media_type_to_wg_encoded_format_wma(type, format, 2);
++            mf_media_type_to_wg_encoded_format_xwma(type, format, WG_ENCODED_TYPE_WMA, 2);
+         else if (IsEqualGUID(&subtype, &MFAudioFormat_WMAudioV9))
+-            mf_media_type_to_wg_encoded_format_wma(type, format, 3);
++            mf_media_type_to_wg_encoded_format_xwma(type, format, WG_ENCODED_TYPE_WMA, 3);
+         else if (IsEqualGUID(&subtype, &MFAudioFormat_WMAudio_Lossless))
+-            mf_media_type_to_wg_encoded_format_wma(type, format, 4);
++            mf_media_type_to_wg_encoded_format_xwma(type, format, WG_ENCODED_TYPE_WMA, 4);
++        else if (IsEqualGUID(&subtype, &MFAudioFormat_XMAudio2))
++            mf_media_type_to_wg_encoded_format_xwma(type, format, WG_ENCODED_TYPE_XMA, 2);
+         else
+             FIXME("Unimplemented audio subtype %s.\n", debugstr_guid(&subtype));
+     }
+diff --git a/dlls/winegstreamer/wg_transform.c b/dlls/winegstreamer/wg_transform.c
+index 1f8b35920b4..256e77429a0 100644
+--- a/dlls/winegstreamer/wg_transform.c
++++ b/dlls/winegstreamer/wg_transform.c
+@@ -64,12 +64,18 @@ static GstCaps *wg_format_to_caps_xwma(const struct wg_encoded_format *format)
+     GstCaps *caps;
+ 
+     if (format->encoded_type == WG_ENCODED_TYPE_WMA)
++    {
+         caps = gst_caps_new_empty_simple("audio/x-wma");
++        if (format->u.xwma.version)
++            gst_caps_set_simple(caps, "wmaversion", G_TYPE_INT, format->u.xwma.version, NULL);
++    }
+     else
++    {
+         caps = gst_caps_new_empty_simple("audio/x-xma");
++        if (format->u.xwma.version)
++            gst_caps_set_simple(caps, "xmaversion", G_TYPE_INT, format->u.xwma.version, NULL);
++    }
+ 
+-    if (format->u.xwma.version)
+-        gst_caps_set_simple(caps, "wmaversion", G_TYPE_INT, format->u.xwma.version, NULL);
+     if (format->u.xwma.bitrate)
+         gst_caps_set_simple(caps, "bitrate", G_TYPE_INT, format->u.xwma.bitrate, NULL);
+     if (format->u.xwma.rate)
+diff --git a/dlls/winegstreamer/wma_decoder.c b/dlls/winegstreamer/wma_decoder.c
+index cac345be269..d6ae7d93a39 100644
+--- a/dlls/winegstreamer/wma_decoder.c
++++ b/dlls/winegstreamer/wma_decoder.c
+@@ -30,12 +30,15 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(wmadec);
+ 
++DEFINE_MEDIATYPE_GUID(MFAudioFormat_XMAudio2, 0x0166);
++
+ static const GUID *const wma_decoder_input_types[] =
+ {
+     &MEDIASUBTYPE_MSAUDIO1,
+     &MFAudioFormat_WMAudioV8,
+     &MFAudioFormat_WMAudioV9,
+     &MFAudioFormat_WMAudio_Lossless,
++    &MFAudioFormat_XMAudio2,
+ };
+ static const GUID *const wma_decoder_output_types[] =
+ {
+-- 
+2.34.1
+
