@@ -510,18 +510,18 @@ index 5d8d2384e69..4592b095ff5 100644
 --- a/dlls/winebus.sys/bus_udev.c
 +++ b/dlls/winebus.sys/bus_udev.c
 @@ -25,6 +25,7 @@
-
+ #include "config.h"
  #include <errno.h>
  #include <fcntl.h>
 +#include <limits.h>
  #include <stdarg.h>
  #include <stdlib.h>
- #include <unistd.h>
+ #include <stdio.h>
 @@ -500,7 +501,303 @@ static struct base_device *find_device_from_syspath(const char *path)
 
  #define test_bit(arr,bit) (((BYTE*)(arr))[(bit)>>3]&(1<<((bit)&7)))
 
--static const USAGE_AND_PAGE *what_am_I(struct udev_device *dev, int fd)
+-static const BYTE* what_am_I(struct udev_device *dev)
 +/* Minimal compatibility with code taken from steam-runtime-tools */
 +typedef int gboolean;
 +#define g_debug(fmt, ...) TRACE(fmt "\n", ## __VA_ARGS__)
@@ -818,19 +818,19 @@ index 5d8d2384e69..4592b095ff5 100644
 +  return flags;
 +}
 +
-+static const USAGE_AND_PAGE *what_am_I(struct udev_device *dev, int fd)
++static const BYTE* what_am_I(struct udev_device *dev, int fd)
  {
-     static const USAGE_AND_PAGE Unknown     = {.UsagePage = HID_USAGE_PAGE_GENERIC, .Usage = 0};
-     static const USAGE_AND_PAGE Mouse       = {.UsagePage = HID_USAGE_PAGE_GENERIC, .Usage = HID_USAGE_GENERIC_MOUSE};
+     static const BYTE Unknown[2]     = {HID_USAGE_PAGE_GENERIC, 0};
+     static const BYTE Mouse[2]       = {HID_USAGE_PAGE_GENERIC, HID_USAGE_GENERIC_MOUSE};
 @@ -510,6 +807,7 @@ static const BYTE* what_am_I(struct udev_device *dev)
-     static const USAGE_AND_PAGE Tablet      = {.UsagePage = HID_USAGE_PAGE_DIGITIZER, .Usage = HID_USAGE_DIGITIZER_PEN};
-     static const USAGE_AND_PAGE Touchscreen = {.UsagePage = HID_USAGE_PAGE_DIGITIZER, .Usage = HID_USAGE_DIGITIZER_TOUCH_SCREEN};
-     static const USAGE_AND_PAGE Touchpad    = {.UsagePage = HID_USAGE_PAGE_DIGITIZER, .Usage = HID_USAGE_DIGITIZER_TOUCH_PAD};
+     static const BYTE Tablet[2]      = {HID_USAGE_PAGE_DIGITIZER, HID_USAGE_DIGITIZER_PEN};
+     static const BYTE Touchscreen[2] = {HID_USAGE_PAGE_DIGITIZER, HID_USAGE_DIGITIZER_TOUCH_SCREEN};
+     static const BYTE Touchpad[2]    = {HID_USAGE_PAGE_DIGITIZER, HID_USAGE_DIGITIZER_TOUCH_PAD};
 +    SrtEvdevCapabilities caps;
 
      struct udev_device *parent = dev;
 
-@@ -533,6 +831,33 @@ static const BYTE* what_am_I(struct udev_device *dev)
+@@ -533,6 +831,34 @@ static const BYTE* what_am_I(struct udev_device *dev)
 
          parent = udev_device_get_parent_with_subsystem_devtype(parent, "input", NULL);
      }
@@ -845,25 +845,36 @@ index 5d8d2384e69..4592b095ff5 100644
 +
 +        if (guessed_type & (SRT_INPUT_DEVICE_TYPE_FLAGS_MOUSE
 +                            | SRT_INPUT_DEVICE_TYPE_FLAGS_POINTING_STICK))
-+            return &Mouse;
++            return Mouse;
 +        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_KEYBOARD)
-+            return &Keyboard;
++            return Keyboard;
 +        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_JOYSTICK)
-+            return &Gamepad;
++            return Gamepad;
 +        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_HAS_KEYS)
-+            return &Keypad;
++            return Keypad;
 +        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_TOUCHPAD)
-+            return &Touchpad;
++            return Touchpad;
 +        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_TOUCHSCREEN)
-+            return &Touchscreen;
++            return Touchscreen;
 +        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_TABLET)
-+            return &Tablet;
++            return Tablet;
 +
 +        /* Mapped to Unknown: ACCELEROMETER, TABLET_PAD, SWITCH. */
 +    }
-
-     return &Unknown;
++
+     return Unknown;
  }
+
+@@ -587,8 +913,8 @@ static NTSTATUS build_report_descriptor(struct unix_device *iface, struct udev_d
+     USHORT count = 0;
+     USAGE usages[16];
+     INT i, button_count, abs_count, rel_count, hat_count;
+-    const BYTE *device_usage = what_am_I(dev);
+     struct lnxev_device *impl = lnxev_impl_from_unix_device(iface);
++    const BYTE *device_usage = what_am_I(dev, impl->base.device_fd);
+
+     if (ioctl(impl->base.device_fd, EVIOCGBIT(EV_REL, sizeof(relbits)), relbits) == -1)
+     {
 From 7926577b40f525e5c4081328e8c2f1dd113ef13b Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Tue, 15 Dec 2020 12:23:31 -0600
