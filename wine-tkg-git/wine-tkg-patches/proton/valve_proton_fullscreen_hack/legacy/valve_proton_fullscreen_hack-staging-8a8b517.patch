@@ -3236,22 +3236,22 @@ controllers.
 
 CW-Bug-Id: #19011
 ---
- dlls/win32u/input.c | 6 ++++++
+ dlls/user32/focus.c | 6 ++++++
  1 file changed, 6 insertions(+)
 
-diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+diff --git a/dlls/user32/focus.c b/dlls/user32/focus.c
 index 34cc3880cc9..2e1362eaff5 100644
---- a/dlls/win32u/input.c
-+++ b/dlls/win32u/input.c
-@@ -1222,6 +1222,12 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+--- a/dlls/user32/focus.c
++++ b/dlls/user32/focus.c
+@@ -164,6 +164,12 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
                        (LPARAM)previous );
-         if (NtUserGetAncestor( hwnd, GA_PARENT ) == get_desktop_window())
-             post_message( get_desktop_window(), WM_PARENTNOTIFY, WM_NCACTIVATE, (LPARAM)hwnd );
+         if (GetAncestor( hwnd, GA_PARENT ) == GetDesktopWindow())
+             PostMessageW( GetDesktopWindow(), WM_PARENTNOTIFY, WM_NCACTIVATE, (LPARAM)hwnd );
 +
-+        if (NtUserGetProp( hwnd, L"__WINE_RESTORE_WINDOW" ))
++        if (GetPropW( hwnd, L"__WINE_RESTORE_WINDOW" ))
 +        {
-+            NtUserSetProp( hwnd, L"__WINE_RESTORE_WINDOW", NULL );
-+            send_message( hwnd, WM_SYSCOMMAND, SC_RESTORE, 0 );
++            SetPropW( hwnd, L"__WINE_RESTORE_WINDOW", NULL );
++            SendMessageW( hwnd, WM_SYSCOMMAND, SC_RESTORE, 0 );
 +        }
      }
 
@@ -10086,25 +10086,12 @@ Subject: [PATCH] revert 656edbb and 587f377 to retain fshack compat patch
  compatibility
 
 ---
- dlls/win32u/win32u_private.h |   2 +-
  dlls/win32u/sysparams.c      |  14 ++---
  dlls/winex11.drv/Makefile.in |   2 +-
  dlls/winex11.drv/display.c   | 109 ++++++++++++++++++++++++++++++++++-
  include/ntuser.h             |   2 -
- 5 files changed, 112 insertions(+), 17 deletions(-)
+ 4 files changed, 111 insertions(+), 16 deletions(-)
 
-diff --git a/dlls/win32u/win32u_private.h b/dlls/win32u/win32u_private.h
---- a/dlls/win32u/win32u_private.h
-+++ b/dlls/win32u/win32u_private.h
-@@ -1474,7 +1474,7 @@ RECT get_display_rect( const WCHAR *display )
- extern RECT get_display_rect( const WCHAR *display ) DECLSPEC_HIDDEN;
- extern UINT get_monitor_dpi( HMONITOR monitor ) DECLSPEC_HIDDEN;
- extern UINT get_win_monitor_dpi( HWND hwnd ) DECLSPEC_HIDDEN;
--extern RECT get_primary_monitor_rect( UINT dpi ) DECLSPEC_HIDDEN;
-+extern RECT get_primary_monitor_rect(void) DECLSPEC_HIDDEN;
- extern UINT get_system_dpi(void) DECLSPEC_HIDDEN;
- extern int get_system_metrics( int index ) DECLSPEC_HIDDEN;
- extern UINT get_thread_dpi(void) DECLSPEC_HIDDEN;
 diff --git a/dlls/win32u/sysparams.c b/dlls/win32u/sysparams.c
 index 58bd22a3adf..7af1e20f008 100644
 --- a/dlls/win32u/sysparams.c
@@ -10113,8 +10100,8 @@ index 58bd22a3adf..7af1e20f008 100644
      return map_dpi_rect( rect, system_dpi, get_thread_dpi() );
  }
 
--RECT get_primary_monitor_rect( UINT dpi )
-+RECT get_primary_monitor_rect(void)
+-static RECT get_primary_monitor_rect( UINT dpi )
++static RECT get_primary_monitor_rect(void)
  {
      struct monitor *monitor;
      RECT rect = {0};
@@ -10159,27 +10146,6 @@ index 58bd22a3adf..7af1e20f008 100644
      case NtUserMessageBeep:
          return message_beep( arg );
      /* temporary exports */
-diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
---- a/dlls/win32u/window.c
-+++ b/dlls/win32u/window.c
-@@ -1074,7 +1074,7 @@ BOOL get_window_rects( HWND hwnd, enum coords_relative relative, RECT *window_rect,
-         }
-         else
-         {
--            rect = get_primary_monitor_rect( dpi );
-+            rect = get_primary_monitor_rect();
-         }
-         if (window_rect) *window_rect = rect;
-         if (client_rect) *client_rect = rect;
-@@ -1593,7 +1593,7 @@ static RECT get_maximized_work_rect( HWND hwnd )
-     if ((get_window_long( hwnd, GWL_STYLE ) & (WS_MINIMIZE | WS_MAXIMIZE)) == WS_MAXIMIZE)
-     {
-         if (!get_work_rect( hwnd, &work_rect ))
--            work_rect = get_primary_monitor_rect( get_thread_dpi() );
-+            work_rect = get_primary_monitor_rect();
-     }
-     return work_rect;
- }
 diff --git a/dlls/winex11.drv/Makefile.in b/dlls/winex11.drv/Makefile.in
 index 93a975d7f63..64df2075cc4 100644
 --- a/dlls/winex11.drv/Makefile.in
