@@ -1136,7 +1136,7 @@ else
     find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.def' -or -iname '*.debug' ')' -delete
 
     # pefixup
-    if [[ $_proton_branch != *3.* ]] && [[ $_proton_branch != *4.* ]] && [[ $_proton_branch != *5.* ]] && [ ${_standalone_start_vercheck//./} -ge 66 ]; then
+    if [ "$_unfrog" = "true" ] || ( [[ $_proton_branch != *3.* ]] && [[ $_proton_branch != *4.* ]] && [[ $_proton_branch != *5.* ]] && [ ${_standalone_start_vercheck//./} -ge 66 ] ); then
       echo ''
       echo "Fixing x86_64 PE files..."
       ( cd "$_nowhere/proton_tkg_$_protontkg_version/files/$_x86_64_windows_tail"

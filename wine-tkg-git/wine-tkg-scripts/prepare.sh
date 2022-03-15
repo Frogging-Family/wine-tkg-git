@@ -68,6 +68,7 @@ _exit_cleanup() {
     echo "_build_gstreamer='${_build_gstreamer}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_lib32_gstreamer='${_lib32_gstreamer}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_build_faudio='${_build_faudio}'" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_unfrog='${_unfrog}'" >> "$_proton_tkg_path"/proton_tkg_token
   fi
 
   rm -f "$_where"/BIG_UGLY_FROGMINER && msg2 'Removed BIG_UGLY_FROGMINER - Ribbit' # state tracker end
@@ -226,14 +227,11 @@ msg2 ''
     fi
   fi
 
-  # Load preset configuration files if present and selected. All values will overwrite customization.cfg ones.
-  if [ -n "$_LOCAL_PRESET" ] && [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
-    source "$_where"/wine-tkg-profiles/wine-tkg.cfg && source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg && msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
-  fi
-
   # Check for proton-tkg token to prevent broken state as we need to enforce some defaults
   if [ -e "$_proton_tkg_path"/proton_tkg_token ] && [ -n "$_proton_tkg_path" ]; then
-    _LOCAL_PRESET=""
+    if [ "$_LOCAL_PRESET" != "valve" ] && [ "$_LOCAL_PRESET" != "valve-exp" ]; then
+      _LOCAL_PRESET=""
+	fi
     _EXTERNAL_INSTALL="proton"
     _EXTERNAL_NOVER="false"
     _nomakepkg_nover="true"
@@ -263,6 +261,16 @@ msg2 ''
     _exit_cleanup
     exit
   fi
+
+  # Load preset configuration files if present and selected. All values will overwrite customization.cfg ones.
+  if [ -n "$_LOCAL_PRESET" ] && [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
+    if [ "$_LOCAL_PRESET" = "valve" ] || [ "$_LOCAL_PRESET" = "valve-exp" ]; then
+      source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg && msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
+    else
+      source "$_where"/wine-tkg-profiles/wine-tkg.cfg && source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg && msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
+	fi
+  fi
+
   # Disable undesirable patchsets when using official proton wine source
   if [[ "$_custom_wine_source" = *"ValveSoftware"* ]] || [[ "$_custom_wine_source" = *"GloriousEggroll"* ]]; then
     _clock_monotonic="false"
@@ -3038,11 +3046,6 @@ EOM
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 12d33d21d33788fd46898ea42e9592d33b6e7c8e HEAD ); then
 	    _patchname='proton_battleye-15bf49b.patch' && _patchmsg="Add support for Proton's Battleye runtime" && nonuser_patcher
 	  fi
-	fi
-
-	# Fix compilation error due to not using valve's container while building valve proton tree
-	if [ "$_unfrog" = "true" ]; then
-	  ( patch -Np1 < "$_where"/wine-tkg-patches/hotfixes/valve/futex_waitv.mypatch )
 	fi
 
 	# Proton-tkg needs to know if standard dlopen() is in use
