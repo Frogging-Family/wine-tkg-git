@@ -1158,8 +1158,10 @@ _prepare() {
 
 	# esync
 	if [ "$_use_esync" = "true" ]; then
-	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 5b56bad50b85acb05244894990053f8b0de2e458 HEAD ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 9e945c8d1cf2287cfc5a9a2bf077e72c635fc7a4 HEAD ); then
 	    _patchname='esync-unix-mainline.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
+	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 5b56bad50b85acb05244894990053f8b0de2e458 HEAD ); then
+	    _patchname='esync-unix-mainline-9e945c8.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 751a3325a6ac93d11f08088c40b45a9ae05b52de HEAD ); then
 	    _patchname='esync-unix-mainline-5b56bad.patch' && _patchmsg="Using Esync (unix, mainline) patchset" && nonuser_patcher
 	  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e3001b6a7c087da5a680b412d82da878e0149e8b HEAD ); then
