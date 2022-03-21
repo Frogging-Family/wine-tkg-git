@@ -3069,6 +3069,13 @@ EOM
 	  fi
 	fi
 
+	# Proton EAC
+	if [ "$_proton_eac_support" = "true" ] && [ "$_unfrog" != "true" ]; then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bf42dca35f05bce9996e91f59cc47b5a9e6996b2 HEAD ); then
+	    _patchname='proton-eac_bridge.patch' && _patchmsg="Add support for Proton's EAC bridge" && nonuser_patcher
+	  fi
+	fi
+
 	# Proton-tkg needs to know if standard dlopen() is in use
 	if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD ); then
 	  _standard_dlopen="true"
