@@ -2723,6 +2723,10 @@ EOM
 	      _patchname='proton-windows.gaming.input.patch' && _patchmsg="Enable Proton's legacy wine.gaming.input patchset for Death Stranding" && nonuser_patcher
 	    fi
 	  fi
+	  # tabtip - 7.2+
+	  if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_tabtip" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bf42dca35f05bce9996e91f59cc47b5a9e6996b2 HEAD ); then
+	    _patchname='proton-tabtip.patch' && _patchmsg="Enable Proton's SteamDeck additions" && nonuser_patcher
+	  fi
 	fi
 
 	# Proton RDR2 fixes from Paul Gofman - Bound to the "Protonify the staging syscall emu" hotfix
