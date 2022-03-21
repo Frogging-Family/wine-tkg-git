@@ -292,6 +292,7 @@ msg2 ''
     _assettocorsa_hudperf_fix="false"
     _msvcrt_nativebuiltin="false"
     _use_josh_flat_theme="false"
+    _tabtip="false"
     _unfrog="true"
   fi
 }
