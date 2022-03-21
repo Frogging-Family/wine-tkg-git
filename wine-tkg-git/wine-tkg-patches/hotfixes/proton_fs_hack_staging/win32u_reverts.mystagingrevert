@@ -1,0 +1,183 @@
+From 8fb1779241b02af85e920a0a7b944855126c4148 Mon Sep 17 00:00:00 2001
+From: Alistair Leslie-Hughes <leslie_alistair@hotmail.com>
+Date: Sun, 20 Mar 2022 08:45:32 +1100
+Subject: [PATCH] Fixed rebase
+
+---
+ ...te-a-candidate-window-s-position-wit.patch | 18 ++++++++++----
+ ...v-Add-support-for-_NET_ACTIVE_WINDOW.patch | 24 ++++++++++++-------
+ 2 files changed, 29 insertions(+), 13 deletions(-)
+
+diff --git a/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch b/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
+index df950bb96..7d7cec741 100644
+--- a/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
++++ b/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
+@@ -1,4 +1,4 @@
+-From 9b42107e6396b8fa014ef258ff7e705d7048dc33 Mon Sep 17 00:00:00 2001
++From 72a7f7ad3dffa132367cec29b1aa20fcaca6d316 Mon Sep 17 00:00:00 2001
+ From: Felix Yan <felixonmars@gmail.com>
+ Date: Tue, 23 Sep 2014 23:22:17 +0800
+ Subject: [PATCH] winex11.drv: Update a candidate window's position with
+@@ -19,12 +19,12 @@ received a lot of help from Sebastian Lackner.
+ ---
+  dlls/user32/caret.c       |  3 ++
+  dlls/user32/driver.c      |  7 ++++
+- dlls/win32u/driver.c      |  7 ++++
++ dlls/win32u/driver.c      |  8 +++++
+  dlls/winex11.drv/init.c   |  1 +
+  dlls/winex11.drv/x11drv.h |  1 +
+  dlls/winex11.drv/xim.c    | 72 ++++++++++++++++++++++++++++++++++++++-
+  include/wine/gdi_driver.h |  6 ++++
+- 7 files changed, 96 insertions(+), 1 deletion(-)
++ 7 files changed, 97 insertions(+), 1 deletion(-)
+
+ diff --git a/dlls/user32/caret.c b/dlls/user32/caret.c
+ index 8bf4962b708..33954123efe 100644
+@@ -80,7 +80,7 @@ index fbbf630a80e..7ce98f4a0f9 100644
+      NULL,
+  };
+ diff --git a/dlls/win32u/driver.c b/dlls/win32u/driver.c
+-index d1062cb5f3a..02b09aecf52 100644
++index d1062cb5f3a..50fc011e19f 100644
+ --- a/dlls/win32u/driver.c
+ +++ b/dlls/win32u/driver.c
+ @@ -914,6 +914,7 @@ static BOOL CDECL nulldrv_SystemParametersInfo( UINT action, UINT int_param, voi
+@@ -103,7 +103,15 @@ index d1062cb5f3a..02b09aecf52 100644
+  static void CDECL nulldrv_ThreadDetach( void )
+  {
+  }
+-@@ -1287,6 +1293,7 @@ void CDECL __wine_set_display_driver( struct user_driver_funcs *driver, UINT ver
++@@ -1223,6 +1229,7 @@ static const struct user_driver_funcs lazy_load_driver =
++     loaderdrv_wine_get_vulkan_driver,
++     /* opengl support */
++     nulldrv_wine_get_wgl_driver,
+++    nulldrv_UpdateCandidatePos,
++     /* thread management */
++     nulldrv_ThreadDetach,
++ };
++@@ -1287,6 +1294,7 @@ void CDECL __wine_set_display_driver( struct user_driver_funcs *driver, UINT ver
+      SET_USER_FUNC(SystemParametersInfo);
+      SET_USER_FUNC(wine_get_vulkan_driver);
+      SET_USER_FUNC(wine_get_wgl_driver);
+diff --git a/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch b/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch
+index 153ff1b03..9a2496354 100644
+--- a/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch
++++ b/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch
+@@ -1,4 +1,4 @@
+-From 3bfac39d5222d7ae92940ac70b7369f79006a4ba Mon Sep 17 00:00:00 2001
++From 7b5c53667c808c6714464bca34ba278a698fa8aa Mon Sep 17 00:00:00 2001
+ From: Dmitry Timoshkov <dmitry@baikal.ru>
+ Date: Wed, 10 Feb 2016 15:09:29 +0800
+ Subject: [PATCH] winex11.drv: Add support for _NET_ACTIVE_WINDOW. (v2)
+@@ -8,20 +8,20 @@ And use it as a backend in user32.SetActiveWindow().
+ For bug #2155.
+ ---
+  dlls/user32/driver.c           |  5 ++++
+- dlls/win32u/driver.c           |  5 ++++
++ dlls/win32u/driver.c           |  6 +++++
+  dlls/winex11.drv/event.c       |  5 ++++
+  dlls/winex11.drv/init.c        |  1 +
+  dlls/winex11.drv/window.c      | 48 ++++++++++++++++++++++++++++++++++
+  dlls/winex11.drv/x11drv.h      |  3 +++
+  dlls/winex11.drv/x11drv_main.c |  1 +
+  include/wine/gdi_driver.h      |  1 +
+- 8 files changed, 69 insertions(+)
++ 8 files changed, 70 insertions(+)
+
+ diff --git a/dlls/user32/driver.c b/dlls/user32/driver.c
+-index af279b2ce17..c5a78393684 100644
++index 7ce98f4a0f9..0a0d4c429ea 100644
+ --- a/dlls/user32/driver.c
+ +++ b/dlls/user32/driver.c
+-@@ -95,6 +95,10 @@ static void CDECL nulldrv_SetWindowIcon( HWND hwnd, UINT type, HICON icon )
++@@ -86,6 +86,10 @@ static void CDECL nulldrv_SetWindowIcon( HWND hwnd, UINT type, HICON icon )
+  {
+  }
+
+@@ -32,7 +32,7 @@ index af279b2ce17..c5a78393684 100644
+  static void CDECL nulldrv_SetWindowText( HWND hwnd, LPCWSTR text )
+  {
+  }
+-@@ -188,6 +192,7 @@ static struct user_driver_funcs lazy_load_driver =
++@@ -155,6 +159,7 @@ static struct user_driver_funcs lazy_load_driver =
+      NULL,
+      NULL,
+      NULL,
+@@ -41,7 +41,7 @@ index af279b2ce17..c5a78393684 100644
+      NULL,
+      nulldrv_SetWindowIcon,
+ diff --git a/dlls/win32u/driver.c b/dlls/win32u/driver.c
+-index 8eb412f7368..7d092027ee7 100644
++index 50fc011e19f..9ad6c32b1f3 100644
+ --- a/dlls/win32u/driver.c
+ +++ b/dlls/win32u/driver.c
+ @@ -842,6 +842,10 @@ static BOOL CDECL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
+@@ -55,7 +55,15 @@ index 8eb412f7368..7d092027ee7 100644
+  static void CDECL nulldrv_SetCapture( HWND hwnd, UINT flags )
+  {
+  }
+-@@ -1262,6 +1266,7 @@ void CDECL __wine_set_display_driver( struct user_driver_funcs *driver, UINT ver
++@@ -1209,6 +1213,7 @@ static const struct user_driver_funcs lazy_load_driver =
++     nulldrv_MsgWaitForMultipleObjectsEx,
++     nulldrv_ReleaseDC,
++     nulldrv_ScrollDC,
+++    nulldrv_SetActiveWindow,
++     nulldrv_SetCapture,
++     nulldrv_SetFocus,
++     loaderdrv_SetLayeredWindowAttributes,
++@@ -1277,6 +1282,7 @@ void CDECL __wine_set_display_driver( struct user_driver_funcs *driver, UINT ver
+      SET_USER_FUNC(MsgWaitForMultipleObjectsEx);
+      SET_USER_FUNC(ReleaseDC);
+      SET_USER_FUNC(ScrollDC);
+diff --git a/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch b/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
+index c6238a9f4..df950bb96 100644
+--- a/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
++++ b/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
+@@ -1,4 +1,4 @@
+-From 91dfacc1a9c0af50534563975d2ef9f2262559f4 Mon Sep 17 00:00:00 2001
++From 9b42107e6396b8fa014ef258ff7e705d7048dc33 Mon Sep 17 00:00:00 2001
+ From: Felix Yan <felixonmars@gmail.com>
+ Date: Tue, 23 Sep 2014 23:22:17 +0800
+ Subject: [PATCH] winex11.drv: Update a candidate window's position with
+@@ -55,11 +55,11 @@ index 8bf4962b708..33954123efe 100644
+      }
+      return ret;
+ diff --git a/dlls/user32/driver.c b/dlls/user32/driver.c
+-index 72ea5ad17bd..af279b2ce17 100644
++index fbbf630a80e..7ce98f4a0f9 100644
+ --- a/dlls/user32/driver.c
+ +++ b/dlls/user32/driver.c
+-@@ -146,6 +146,11 @@ static BOOL CDECL loaderdrv_CreateWindow( HWND hwnd )
+-     return load_driver()->pCreateWindow( hwnd );
++@@ -113,6 +113,11 @@ static void CDECL loaderdrv_UpdateClipboard(void)
++     load_driver()->pUpdateClipboard();
+  }
+
+ +static void CDECL loaderdrv_UpdateCandidatePos( HWND hwnd, const RECT *caret_rect )
+@@ -70,7 +70,7 @@ index 72ea5ad17bd..af279b2ce17 100644
+  static struct user_driver_funcs lazy_load_driver =
+  {
+      { NULL },
+-@@ -200,6 +205,8 @@ static struct user_driver_funcs lazy_load_driver =
++@@ -167,6 +172,8 @@ static struct user_driver_funcs lazy_load_driver =
+      NULL,
+      /* opengl support */
+      NULL,
+@@ -80,7 +80,7 @@ index 72ea5ad17bd..af279b2ce17 100644
+      NULL,
+  };
+ diff --git a/dlls/win32u/driver.c b/dlls/win32u/driver.c
+-index afe44e1c4a3..8eb412f7368 100644
++index d1062cb5f3a..02b09aecf52 100644
+ --- a/dlls/win32u/driver.c
+ +++ b/dlls/win32u/driver.c
+ @@ -914,6 +914,7 @@ static BOOL CDECL nulldrv_SystemParametersInfo( UINT action, UINT int_param, voi
+@@ -103,7 +103,7 @@ index afe44e1c4a3..8eb412f7368 100644
+  static void CDECL nulldrv_ThreadDetach( void )
+  {
+  }
+-@@ -1273,6 +1279,7 @@ void CDECL __wine_set_display_driver( struct user_driver_funcs *driver, UINT ver
++@@ -1287,6 +1293,7 @@ void CDECL __wine_set_display_driver( struct user_driver_funcs *driver, UINT ver
+      SET_USER_FUNC(SystemParametersInfo);
+      SET_USER_FUNC(wine_get_vulkan_driver);
+      SET_USER_FUNC(wine_get_wgl_driver);
