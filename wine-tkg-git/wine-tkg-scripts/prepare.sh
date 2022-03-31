@@ -810,7 +810,7 @@ _prepare() {
 
 	# use CLOCK_MONOTONIC instead of CLOCK_MONOTONIC_RAW in ntdll/server - lowers overhead
 	if [ "$_use_staging" != "true" ]; then
-	  if [ "$_clock_monotonic" = "true" ] && [ "$_use_fastsync" != "true" ]; then
+	  if [ "$_clock_monotonic" = "true" ]; then
 	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
 	      _patchname='use_clock_monotonic.patch' && _patchmsg="Applied clock_monotonic patch" && nonuser_patcher
 	    else
@@ -1118,7 +1118,7 @@ _prepare() {
 
 	# use CLOCK_MONOTONIC instead of CLOCK_MONOTONIC_RAW in ntdll/server - lowers overhead
 	if [ "$_use_staging" = "true" ]; then
-	  if [ "$_clock_monotonic" = "true" ] && [ "$_use_fastsync" != "true" ]; then
+	  if [ "$_clock_monotonic" = "true" ]; then
 	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor a1a2d654886fe71af49f9f64210e21d743976ffe HEAD ); then
 	      _patchname='use_clock_monotonic-staging.patch' && _patchmsg="Applied clock_monotonic patch" && nonuser_patcher
 	    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
@@ -1128,31 +1128,6 @@ _prepare() {
 	    fi
 	    if git merge-base --is-ancestor 13e11d3fcbcf8790e031c4bc52f5f550b1377b3b HEAD && ! git merge-base --is-ancestor cd215bb49bc240cdce5415c80264f8daa557636a HEAD; then
 	      _patchname='use_clock_monotonic-2.patch' && _patchmsg="Applied clock_monotonic addon patch for 13e11d3" && nonuser_patcher
-	    fi
-	  fi
-	fi
-
-	# winesync / fastsync
-	if [ "$_use_fastsync" = "true" ]; then
-	  if [ "$_use_staging" = "true" ]; then
-	    if [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	        _patchname='fastsync-staging-prep.patch' && _patchmsg="Using fastsync prepare" && nonuser_patcher
-	      fi
-	    else
-	      warning "! _use_fastsync is enabled, but it depends on _use_fsync. Please enable it in your .cfg to use fastsync !"
-	      _use_fastsync="false"
-	    fi
-	  else
-	    if [ "$_use_esync" = "false" ] && [ "$_use_fsync" = "false" ]; then
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD); then
-	        _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	        _patchname='fastsync-mainline-0e931f.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
-	      fi
-	    else
-	      warning "! _use_fastsync is enabled, but _use_esync/_use_fsync disables it. Please disable them in your .cfg to use fastsync !"
-	      _use_fastsync="false"
 	    fi
 	  fi
 	fi
@@ -1733,25 +1708,6 @@ EOM
 	fi
 
 	echo -e "" >> "$_where"/last_build_config.log
-
-	# winesync / fastsync
-	if [ "$_use_fastsync" = "true" ]; then
-	  if [ "$_use_staging" = "true" ] &&  [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
-	    if [ "$_protonify" = "true" ]; then
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
-	        _patchname='fastsync-staging-protonify.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	        _patchname='fastsync-staging-protonify-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      fi
-	    else
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 0e931fa5fd5141bd845bacac5b89cf4c744f1c6d HEAD ); then
-	        _patchname='fastsync-staging.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 832724282bc1bc4f59e06d4978ff807e433a1ac5 HEAD ); then
-	        _patchname='fastsync-staging-7e42d0.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
-	      fi
-	    fi
-	  fi
-	fi
 
 	# Legacy Proton Fullscreen inline patching
 	if [ "$_proton_rawinput" = "true" ] && [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD ); then
