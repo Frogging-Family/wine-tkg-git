@@ -161,6 +161,9 @@ _build() {
 	    # make using makepkg settings
 	    _buildtime32=$( time ( schedtool -B -n 1 -e ionice -n 1 make 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime32=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 )
 	  fi
+	  if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
+	    _debuntu_64
+	  fi
 	fi
 }
 
