@@ -897,7 +897,7 @@ else
     build_steamhelper
 
     # gst/mediaconverter
-    if [ "$_build_mediaconv" = "true" ]; then
+    if [ "$_build_mediaconv" = "true" ] || [ "$_build_gstreamer" = "true" ]; then
       mv "$_nowhere"/gst/lib64/* proton_dist_tmp/lib64/
       if [ "$_lib32_gstreamer" = "true" ]; then
         mv "$_nowhere"/gst/lib/* proton_dist_tmp/lib/

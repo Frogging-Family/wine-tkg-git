@@ -187,8 +187,9 @@
     -D gst-editing-services:validate=disabled
   )
 
-  meson "$_nowhere"/Proton/build/gst64 --prefix="$_nowhere/gst" --libdir="lib64" --buildtype=plain -Dpkg_config_path=$_nowhere/gst/lib64/pkgconfig "${meson_options[@]}"
+  meson "$_nowhere"/Proton/build/gst64 --prefix="$_nowhere/gst" --libdir="lib64" --buildtype=plain -Dpkg_config_path="$_nowhere/gst/lib64/pkgconfig" "${meson_options[@]}"
   meson compile -C "$_nowhere"/Proton/build/gst64
+  meson install -C "$_nowhere"/Proton/build/gst64
 
   # FAudio
   if [ "$_build_faudio" = "true" ]; then
@@ -404,6 +405,7 @@
 
     meson "$_nowhere"/Proton/build/gst32 --prefix="$_nowhere/gst" --libdir="lib" --buildtype=plain "${meson32_options[@]}"
     meson compile -C "$_nowhere"/Proton/build/gst32
+    meson install -C "$_nowhere"/Proton/build/gst32
 
     # FAudio
     if [ "$_build_faudio" = "true" ]; then
