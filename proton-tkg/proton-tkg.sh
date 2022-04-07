@@ -871,7 +871,7 @@ else
     fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationMono-Regular" "CourierNew" "Courier New" "Courier New"
 
     # Build GST/mediaconverter
-    if [ "$_build_mediaconv" = "true" ]; then
+    if [ "$_build_mediaconv" = "true" ] || [ "$_build_gstreamer" = "true" ]; then
       build_mediaconverter
     fi
 
