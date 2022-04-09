@@ -1,30 +1,65 @@
 From ce0c255a1fd40bfa9a1de6f6765b83a4dcf9d0dd Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Fri, 21 May 2021 14:57:46 +0200
-Subject: [PATCH] win32u: Implement rudimentary EnableMouseInPointer support.
+Subject: [PATCH] user32: Implement rudimentary EnableMouseInPointer support.
 
 CW-Bug-Id: 18943
 ---
- dlls/win32u/input.c          | 12 ++++++++++++
- dlls/win32u/message.c        | 32 ++++++++++++++++++++++++++++++++
- dlls/win32u/win32u_private.h |  1 +
- include/winuser.h            | 26 ++++++++++++++++++++++++++
- 4 files changed, 71 insertions(+), 0 deletions(-)
+ dlls/user32/input.c        |  9 +++++----
+ dlls/user32/message.c      | 32 ++++++++++++++++++++++++++++++++
+ dlls/user32/user_private.h |  1 +
+ include/winuser.h          | 26 ++++++++++++++++++++++++++
+ 4 files changed, 64 insertions(+), 4 deletions(-)
 
-diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+diff --git a/dlls/user32/input.c b/dlls/user32/input.c
 index 455f857d9d0..dbfc9f36819 100644
+--- a/dlls/user32/input.c
++++ b/dlls/user32/input.c
+@@ -1324,17 +1324,6 @@ int WINAPI GetMouseMovePointsEx( UINT size, LPMOUSEMOVEPOINT ptin, LPMOUSEMOVEPO
+     return copied;
+ }
+
+-/***********************************************************************
+- *		EnableMouseInPointer (USER32.@)
+- */
+-BOOL WINAPI EnableMouseInPointer(BOOL enable)
+-{
+-    FIXME("(%#x) stub\n", enable);
+-
+-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+-    return FALSE;
+-}
+-
+ static DWORD CALLBACK devnotify_window_callback(HANDLE handle, DWORD flags, DEV_BROADCAST_HDR *header)
+ {
+     rawinput_update_device_list();
+diff --git a/dlls/user32/user32.spec b/dlls/user32/user32.spec
+index ea984ef8e10..2edd8c682dd 100644
+--- a/dlls/user32/user32.spec
++++ b/dlls/user32/user32.spec
+@@ -204,7 +204,7 @@
+ @ stdcall EditWndProc(long long long long) EditWndProcA
+ @ stdcall EmptyClipboard()
+ @ stdcall EnableMenuItem(long long long)
+-@ stdcall EnableMouseInPointer(long)
++@ stdcall EnableMouseInPointer(long) NtUserEnableMouseInPointer
+ @ stdcall EnableNonClientDpiScaling(long)
+ @ stdcall EnableScrollBar(long long long)
+ @ stdcall EnableWindow(long long)
+diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+index b611195bd8e..23dc478d068 100644
 --- a/dlls/win32u/input.c
 +++ b/dlls/win32u/input.c
-@@ -1041,6 +1041,18 @@ int WINAPI GetMouseMovePointsEx( UINT size, LPMOUSEMOVEPOINT ptin, LPMOUSEMOVEPO
+@@ -1153,6 +1153,18 @@ int WINAPI NtUserGetMouseMovePointsEx( UINT size, MOUSEMOVEPOINT *ptin, MOUSEMOV
      return copied;
  }
 
 +BOOL enable_mouse_in_pointer = FALSE;
 +
 +/***********************************************************************
-+*		EnableMouseInPointer (win32u.@)
-+*/
-+BOOL WINAPI EnableMouseInPointer(BOOL enable)
++ *		NtUserEnableMouseInPointer (win32u.@)
++ */
++BOOL WINAPI NtUserEnableMouseInPointer( BOOL enable )
 +{
 +    FIXME("(%#x) semi-stub\n", enable);
 +    enable_mouse_in_pointer = TRUE;
@@ -38,7 +73,7 @@ diff --git a/dlls/win32u/message.c b/dlls/win32u/message.c
 index a54ecccc7cd..57baea203e5 100644
 --- a/dlls/win32u/message.c
 +++ b/dlls/win32u/message.c
-@@ -1580,6 +1580,38 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
+@@ -2590,6 +2590,38 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
         in the WM_SETCURSOR message even if it's non-client mouse message */
      send_message( msg->hwnd, WM_SETCURSOR, (WPARAM)msg->hwnd, MAKELONG( hittest, msg->message ));
 
@@ -75,22 +110,86 @@ index a54ecccc7cd..57baea203e5 100644
 +    }
 +
      msg->message = message;
-     return !eatMsg;
+     return !eat_msg;
  }
+diff --git a/dlls/win32u/syscall.c b/dlls/win32u/syscall.c
+index 2be2cfce3bf..a8c3090a814 100644
+--- a/dlls/win32u/syscall.c
++++ b/dlls/win32u/syscall.c
+@@ -111,6 +111,7 @@ static void * const syscalls[] =
+     NtUserCreateDesktopEx,
+     NtUserCreateWindowStation,
+     NtUserDestroyAcceleratorTable,
++    NtUserEnableMouseInPointer,
+     NtUserFindExistingCursorIcon,
+     NtUserGetAncestor,
+     NtUserGetAtomName,
+diff --git a/dlls/win32u/win32u.spec b/dlls/win32u/win32u.spec
+index d1104df7371..2b840e587d1 100644
+--- a/dlls/win32u/win32u.spec
++++ b/dlls/win32u/win32u.spec
+@@ -861,7 +861,7 @@
+ @ stub NtUserEnableChildWindowDpiMessage
+ @ stub NtUserEnableIAMAccess
+ @ stub NtUserEnableMenuItem
+-@ stub NtUserEnableMouseInPointer
++@ stdcall -syscall NtUserEnableMouseInPointer(long)
+ @ stub NtUserEnableMouseInPointerForWindow
+ @ stub NtUserEnableMouseInputForCursorSuppression
+ @ stub NtUserEnableNonClientDpiScaling
 diff --git a/dlls/win32u/win32u_private.h b/dlls/win32u/win32u_private.h
-index 5a36f9bb7aa..0910e453f13 100644
+index b91cf7d9002..697f7806595 100644
 --- a/dlls/win32u/win32u_private.h
 +++ b/dlls/win32u/win32u_private.h
-@@ -320,6 +320,7 @@ static inline BOOL is_broadcast( HWND hwnd )
- extern BOOL WINAPI release_capture(void) DECLSPEC_HIDDEN;
- extern BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret ) DECLSPEC_HIDDEN;
- extern BOOL set_foreground_window( HWND hwnd, BOOL mouse ) DECLSPEC_HIDDEN;
-+extern BOOL enable_mouse_in_pointer DECLSPEC_HIDDEN;
+@@ -343,6 +343,7 @@ extern LRESULT call_hooks( INT id, INT code, WPARAM wparam, LPARAM lparam, BOOL
+ extern BOOL unhook_windows_hook( INT id, HOOKPROC proc ) DECLSPEC_HIDDEN;
 
- /* menu.c */
- extern HMENU get_menu( HWND hwnd ) DECLSPEC_HIDDEN;
+ /* input.c */
++extern BOOL enable_mouse_in_pointer DECLSPEC_HIDDEN;
+ extern LONG global_key_state_counter DECLSPEC_HIDDEN;
+ extern HWND get_active_window(void) DECLSPEC_HIDDEN;
+ extern BOOL get_cursor_pos( POINT *pt ) DECLSPEC_HIDDEN;
+diff --git a/dlls/wow64win/syscall.h b/dlls/wow64win/syscall.h
+index a90c4c20d40..0434cae6459 100644
+--- a/dlls/wow64win/syscall.h
++++ b/dlls/wow64win/syscall.h
+@@ -98,6 +98,7 @@
+     SYSCALL_ENTRY( NtUserCreateDesktopEx ) \
+     SYSCALL_ENTRY( NtUserCreateWindowStation ) \
+     SYSCALL_ENTRY( NtUserDestroyAcceleratorTable ) \
++    SYSCALL_ENTRY( NtUserEnableMouseInPointer ) \
+     SYSCALL_ENTRY( NtUserFindExistingCursorIcon ) \
+     SYSCALL_ENTRY( NtUserGetAncestor ) \
+     SYSCALL_ENTRY( NtUserGetAtomName ) \
+diff --git a/dlls/wow64win/user.c b/dlls/wow64win/user.c
+index 9d957673ceb..dccfef4527d 100644
+--- a/dlls/wow64win/user.c
++++ b/dlls/wow64win/user.c
+@@ -606,3 +606,10 @@ NTSTATUS WINAPI wow64_NtUserDestroyAcceleratorTable( UINT *args )
+
+     return NtUserDestroyAcceleratorTable( handle );
+ }
++
++NTSTATUS WINAPI wow64_NtUserEnableMouseInPointer( UINT *args )
++{
++    BOOL enable = get_ulong( &args );
++
++    return NtUserEnableMouseInPointer( enable );
++}
+diff --git a/include/ntuser.h b/include/ntuser.h
+index e0cdc930faf..89e611a5e52 100644
+--- a/include/ntuser.h
++++ b/include/ntuser.h
+@@ -573,6 +573,7 @@ HWINSTA WINAPI NtUserCreateWindowStation( OBJECT_ATTRIBUTES *attr, ACCESS_MASK m
+ HDWP    WINAPI NtUserDeferWindowPosAndBand( HDWP hdwp, HWND hwnd, HWND after, INT x, INT y,
+                                             INT cx, INT cy, UINT flags, UINT unk1, UINT unk2 );
+ BOOL    WINAPI NtUserDestroyAcceleratorTable( HACCEL handle );
++BOOL    WINAPI NtUserEnableMouseInPointer( BOOL enable );
+ BOOL    WINAPI NtUserDestroyCursor( HCURSOR cursor, ULONG arg );
+ BOOL    WINAPI NtUserDestroyMenu( HMENU menu );
+ BOOL    WINAPI NtUserDestroyWindow( HWND hwnd );
 diff --git a/include/winuser.h b/include/winuser.h
-index fe82613e590..402fbee9dc4 100644
+index b91cf7d9002..697f7806595 100644
 --- a/include/winuser.h
 +++ b/include/winuser.h
 @@ -3474,6 +3474,32 @@ typedef struct tagMENUGETOBJECTINFO
@@ -126,4 +225,3 @@ index fe82613e590..402fbee9dc4 100644
  #if defined(_WINGDI_) && !defined(NOGDI)
  WINUSERAPI LONG        WINAPI ChangeDisplaySettingsA(LPDEVMODEA,DWORD);
  WINUSERAPI LONG        WINAPI ChangeDisplaySettingsW(LPDEVMODEW,DWORD);
-
