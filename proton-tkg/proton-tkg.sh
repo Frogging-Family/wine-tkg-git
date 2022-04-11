@@ -1012,7 +1012,12 @@ else
 
     # Inject current wine tree prefix version value in a proton-friendly format - major.minor-commitnumber
     _prefix_version=$( echo ${_protontkg_true_version} | sed 's/rc[0-9]//g; s/.r/-/; s/.[^.]*//4g; s/\.[^.*-]*//2g;' )
-    sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version\"|" "proton_tkg_$_protontkg_version/proton"
+    if [[ "$_prefix_version" = *.*-* ]]; then
+      sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version\"|" "proton_tkg_$_protontkg_version/proton"
+    else
+      _prefix_version=$( echo "$_proton_branch" | egrep -o '[0-9].[0-9]' )
+      sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version-999\"|" "proton_tkg_$_protontkg_version/proton"
+    fi
 
     #### Disable VR support patch as our wine-side support reportedly doesn't work
     # Patch our proton script to allow for VR support
