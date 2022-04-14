@@ -1,0 +1,209 @@
+diff --git a/patches/user32-Mouse_Message_Hwnd/0005-server-Add-support-for-a-layered-window-region.-v2.patch b/patches/user32-Mouse_Message_Hwnd/0005-server-Add-support-for-a-layered-window-region.-v2.patch
+index ef9ef29e..fef6904a 100644
+--- a/patches/user32-Mouse_Message_Hwnd/0005-server-Add-support-for-a-layered-window-region.-v2.patch
++++ b/patches/user32-Mouse_Message_Hwnd/0005-server-Add-support-for-a-layered-window-region.-v2.patch
+@@ -1,4 +1,4 @@
+-From 12ce79099a67aebe6bc2e035090627e367fa2c92 Mon Sep 17 00:00:00 2001
++From af8ff96fc86939f89544deea506116064384bf28 Mon Sep 17 00:00:00 2001
+ From: Dmitry Timoshkov <dmitry@baikal.ru>
+ Date: Wed, 17 May 2017 23:55:55 +0800
+ Subject: [PATCH] server: Add support for a layered window region. (v3)
+@@ -11,7 +11,7 @@ Subject: [PATCH] server: Add support for a layered window region. (v3)
+  4 files changed, 84 insertions(+), 2 deletions(-)
+ 
+ diff --git a/dlls/user32/tests/input.c b/dlls/user32/tests/input.c
+-index fe832f4e00c..9b764d2c985 100644
++index 07856c402a0..0265695de21 100644
+ --- a/dlls/user32/tests/input.c
+ +++ b/dlls/user32/tests/input.c
+ @@ -3695,13 +3695,11 @@ static void test_Input_mouse(void)
+@@ -29,18 +29,18 @@ index fe832f4e00c..9b764d2c985 100644
+              got_button_up = TRUE;
+              break;
+ diff --git a/dlls/winex11.drv/bitblt.c b/dlls/winex11.drv/bitblt.c
+-index bae0784be78..77c5ef44dd0 100644
++index fad183b0b01..a6fbb755a7e 100644
+ --- a/dlls/winex11.drv/bitblt.c
+ +++ b/dlls/winex11.drv/bitblt.c
+-@@ -46,6 +46,7 @@
+- #include "winbase.h"
++@@ -48,6 +48,7 @@
++ #include "winuser.h"
+  #include "x11drv.h"
+  #include "winternl.h"
+ +#include "wine/server.h"
+  #include "wine/debug.h"
+  
+  WINE_DEFAULT_DEBUG_CHANNEL(bitblt);
+-@@ -1623,6 +1624,48 @@ static inline void add_row( HRGN rgn, RGNDATA *data, int x, int y, int len )
++@@ -1613,6 +1614,48 @@ static inline void add_row( HRGN rgn, RGNDATA *data, int x, int y, int len )
+  }
+  #endif
+  
+@@ -89,7 +89,7 @@ index bae0784be78..77c5ef44dd0 100644
+  /***********************************************************************
+   *           update_surface_region
+   */
+-@@ -1641,6 +1684,7 @@ static void update_surface_region( struct x11drv_window_surface *surface )
++@@ -1631,6 +1674,7 @@ static void update_surface_region( struct x11drv_window_surface *surface )
+      if (!surface->is_argb && surface->color_key == CLR_INVALID)
+      {
+          XShapeCombineMask( gdi_display, surface->window, ShapeBounding, 0, 0, None, ShapeSet );
+@@ -97,19 +97,19 @@ index bae0784be78..77c5ef44dd0 100644
+          return;
+      }
+  
+-@@ -1751,6 +1795,7 @@ static void update_surface_region( struct x11drv_window_surface *surface )
++@@ -1741,6 +1785,7 @@ static void update_surface_region( struct x11drv_window_surface *surface )
+          HeapFree( GetProcessHeap(), 0, data );
+      }
+  
+ +    set_layer_region( surface, rgn );
+-     NtGdiDeleteObjectApp( rgn );
++     DeleteObject( rgn );
+  #endif
+  }
+ diff --git a/server/protocol.def b/server/protocol.def
+-index d9bed6855e9..933e2185ba4 100644
++index b6135a24f5d..cfa774d45d2 100644
+ --- a/server/protocol.def
+ +++ b/server/protocol.def
+-@@ -2501,6 +2501,13 @@ enum coords_relative
++@@ -2493,6 +2493,13 @@ enum coords_relative
+  @END
+  
+  
+@@ -124,7 +124,7 @@ index d9bed6855e9..933e2185ba4 100644
+  @REQ(get_update_region)
+      user_handle_t  window;        /* handle to the window */
+ diff --git a/server/window.c b/server/window.c
+-index 7675cd1103d..21475ffdae0 100644
++index ec8ee2f1790..24059aac0fe 100644
+ --- a/server/window.c
+ +++ b/server/window.c
+ @@ -71,6 +71,7 @@ struct window
+@@ -176,7 +176,7 @@ index 7675cd1103d..21475ffdae0 100644
+      free_user_handle( win->handle );
+      win->handle = 0;
+      release_object( win );
+-@@ -2672,6 +2686,24 @@ DECL_HANDLER(set_window_region)
++@@ -2667,6 +2681,24 @@ DECL_HANDLER(set_window_region)
+  }
+  
+  
+diff --git a/patches/winex11-UpdateLayeredWindow/0001-winex11-Fix-alpha-blending-in-X11DRV_UpdateLayeredWi.patch b/patches/winex11-UpdateLayeredWindow/0001-winex11-Fix-alpha-blending-in-X11DRV_UpdateLayeredWi.patch
+index 1a26e194..2c43aa01 100644
+--- a/patches/winex11-UpdateLayeredWindow/0001-winex11-Fix-alpha-blending-in-X11DRV_UpdateLayeredWi.patch
++++ b/patches/winex11-UpdateLayeredWindow/0001-winex11-Fix-alpha-blending-in-X11DRV_UpdateLayeredWi.patch
+@@ -1,18 +1,18 @@
+-From 4dab3f34431e3bcb91a17128fd7f3dca7c49f764 Mon Sep 17 00:00:00 2001
++From 5fe1a81fa6564f2d201bd3e225ac3bc4f41a2d2e Mon Sep 17 00:00:00 2001
+ From: Sebastian Lackner <sebastian@fds-team.de>
+ Date: Tue, 24 Jan 2017 12:37:46 +0100
+ Subject: [PATCH] winex11: Fix alpha blending in X11DRV_UpdateLayeredWindow.
+ 
+ Based on a patch by Dmitry Timoshkov.
+ ---
+- dlls/winex11.drv/window.c | 27 +++++++++++++--------------
+- 1 file changed, 13 insertions(+), 14 deletions(-)
++ dlls/winex11.drv/window.c | 31 +++++++++++++++----------------
++ 1 file changed, 15 insertions(+), 16 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+-index b3202847bb7..4f00371d178 100644
++index 4dfb1bb6f76..8fb1a4a2786 100644
+ --- a/dlls/winex11.drv/window.c
+ +++ b/dlls/winex11.drv/window.c
+-@@ -436,14 +436,11 @@ static void sync_window_region( struct x11drv_win_data *data, HRGN win_region )
++@@ -434,14 +434,11 @@ static void sync_window_region( struct x11drv_win_data *data, HRGN win_region )
+  
+  
+  /***********************************************************************
+@@ -30,7 +30,7 @@ index b3202847bb7..4f00371d178 100644
+  
+      if (opacity == 0xffffffff)
+          XDeleteProperty( display, win, x11drv_atom(_NET_WM_WINDOW_OPACITY) );
+-@@ -1615,7 +1612,7 @@ static void create_whole_window( struct x11drv_win_data *data )
++@@ -1608,7 +1605,7 @@ static void create_whole_window( struct x11drv_win_data *data )
+  
+      /* set the window opacity */
+      if (!GetLayeredWindowAttributes( data->hwnd, &key, &alpha, &layered_flags )) layered_flags = 0;
+@@ -39,7 +39,7 @@ index b3202847bb7..4f00371d178 100644
+  
+      XFlush( data->display );  /* make sure the window exists before we start painting to it */
+  
+-@@ -1747,7 +1744,7 @@ void X11DRV_SetWindowStyle( HWND hwnd, INT offset, STYLESTRUCT *style )
++@@ -1740,7 +1737,7 @@ void CDECL X11DRV_SetWindowStyle( HWND hwnd, INT offset, STYLESTRUCT *style )
+      {
+          data->layered = FALSE;
+          set_window_visual( data, &default_visual, FALSE );
+@@ -48,7 +48,7 @@ index b3202847bb7..4f00371d178 100644
+          if (data->surface) set_surface_color_key( data->surface, CLR_INVALID );
+      }
+  done:
+-@@ -2674,7 +2671,7 @@ void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWO
++@@ -2668,7 +2665,7 @@ void CDECL X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alph
+          set_window_visual( data, &default_visual, FALSE );
+  
+          if (data->whole_window)
+@@ -57,7 +57,7 @@ index b3202847bb7..4f00371d178 100644
+          if (data->surface)
+              set_surface_color_key( data->surface, (flags & LWA_COLORKEY) ? key : CLR_INVALID );
+  
+-@@ -2698,7 +2695,7 @@ void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWO
++@@ -2692,7 +2689,7 @@ void CDECL X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alph
+          Window win = X11DRV_get_whole_window( hwnd );
+          if (win)
+          {
+@@ -66,7 +66,7 @@ index b3202847bb7..4f00371d178 100644
+              if (flags & LWA_COLORKEY)
+                  FIXME( "LWA_COLORKEY not supported on foreign process window %p\n", hwnd );
+          }
+-@@ -2714,7 +2711,6 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
++@@ -2708,7 +2705,6 @@ BOOL CDECL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO
+  {
+      struct window_surface *surface;
+      struct x11drv_win_data *data;
+@@ -74,7 +74,7 @@ index b3202847bb7..4f00371d178 100644
+      COLORREF color_key = (info->dwFlags & ULW_COLORKEY) ? info->crKey : CLR_INVALID;
+      char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+      BITMAPINFO *bmi = (BITMAPINFO *)buffer;
+-@@ -2742,6 +2738,10 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
++@@ -2736,6 +2732,10 @@ BOOL CDECL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO
+      }
+      else set_surface_color_key( surface, color_key );
+  
+@@ -85,22 +85,24 @@ index b3202847bb7..4f00371d178 100644
+      if (surface) window_surface_add_ref( surface );
+      mapped = data->mapped;
+      release_win_data( data );
+-@@ -2776,16 +2776,15 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
++@@ -2769,16 +2769,15 @@ BOOL CDECL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO
+      {
+          IntersectRect( &rect, &rect, info->prcDirty );
+          memcpy( src_bits, dst_bits, bmi->bmiHeader.biSizeImage );
+--        NtGdiPatBlt( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS );
++-        PatBlt( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS );
+      }
+      src_rect = rect;
+      if (info->pptSrc) OffsetRect( &src_rect, info->pptSrc->x, info->pptSrc->y );
+-     NtGdiTransformPoints( info->hdcSrc, (POINT *)&src_rect, (POINT *)&src_rect, 2, NtGdiDPtoLP );
++     DPtoLP( info->hdcSrc, (POINT *)&src_rect, 2 );
+  
+--    ret = NtGdiAlphaBlend( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+-+    ret = NtGdiStretchBlt( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+-                            info->hdcSrc, src_rect.left, src_rect.top,
+-                            src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
+--                           (info->dwFlags & ULW_ALPHA) ? *info->pblend : blend, 0 );
+-+                           SRCCOPY, 0 );
++-    ret = GdiAlphaBlend( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
++-                         info->hdcSrc, src_rect.left, src_rect.top,
++-                         src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
++-                         (info->dwFlags & ULW_ALPHA) ? *info->pblend : blend );
+++    ret = StretchBlt( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+++                      info->hdcSrc, src_rect.left, src_rect.top,
+++                      src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
+++                      SRCCOPY );
+      if (ret)
+      {
+          memcpy( dst_bits, src_bits, bmi->bmiHeader.biSizeImage );
