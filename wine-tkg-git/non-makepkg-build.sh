@@ -150,6 +150,12 @@ _nomakepkgsrcinit() {
     git checkout --force --no-track -B makepkg origin/HEAD
     if [ -n "$_plain_version" ] && [ "$_use_staging" != "true" ]; then
       git checkout "${_plain_version}"
+      if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
+        if [ -z "$_bleeding_tag" ]; then
+          _bleeding_tag=$(git tag -l --sort=-creatordate | grep "bleeding" | head -n 1)
+        fi
+        git checkout "${_bleeding_tag}"
+      fi
     fi
 
     popd &>/dev/null

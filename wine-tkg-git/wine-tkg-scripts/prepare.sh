@@ -229,7 +229,7 @@ msg2 ''
 
   # Check for proton-tkg token to prevent broken state as we need to enforce some defaults
   if [ -e "$_proton_tkg_path"/proton_tkg_token ] && [ -n "$_proton_tkg_path" ]; then
-    if [ "$_LOCAL_PRESET" != "valve" ] && [ "$_LOCAL_PRESET" != "valve-exp" ]; then
+    if [ "$_LOCAL_PRESET" != "valve" ] && [[ "$_LOCAL_PRESET" != valve-exp* ]]; then
       _LOCAL_PRESET=""
 	fi
     _EXTERNAL_INSTALL="proton"
@@ -264,7 +264,7 @@ msg2 ''
 
   # Load preset configuration files if present and selected. All values will overwrite customization.cfg ones.
   if [ -n "$_LOCAL_PRESET" ] && [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
-    if [ "$_LOCAL_PRESET" = "valve" ] || [ "$_LOCAL_PRESET" = "valve-exp" ]; then
+    if [ "$_LOCAL_PRESET" = "valve" ] || [[ "$_LOCAL_PRESET" = valve-exp* ]]; then
       source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg && msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
     else
       source "$_where"/wine-tkg-profiles/wine-tkg.cfg && source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg && msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
