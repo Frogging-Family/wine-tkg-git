@@ -105,10 +105,18 @@ _build() {
 	  fi
 	  if [ "$_LOCAL_OPTIMIZED" = 'true' ]; then
 	    # make using all available threads
-	    _buildtime64=$( time ( schedtool -B -n 1 -e ionice -n 1 make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime64=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 )
+	    if [ "$_log_errors_to_file" = "true" ]; then
+	      make -j$(nproc) 2> "$_where/debug.log"
+	    else
+	      _buildtime64=$( time ( schedtool -B -n 1 -e ionice -n 1 make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime64=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 )
+	    fi
 	  else
 	    # make using makepkg settings
-	    _buildtime64=$( time ( schedtool -B -n 1 -e ionice -n 1 make 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime64=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 )
+	    if [ "$_log_errors_to_file" = "true" ]; then
+	      make -j$(nproc) 2> "$_where/debug.log"
+	    else
+	      _buildtime64=$( time ( schedtool -B -n 1 -e ionice -n 1 make 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime64=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 )
+	    fi
 	  fi
 	fi
 
@@ -156,10 +164,18 @@ _build() {
 	  fi
 	  if [ "$_LOCAL_OPTIMIZED" = 'true' ]; then
 	    # make using all available threads
-	    _buildtime32=$( time ( schedtool -B -n 1 -e ionice -n 1 make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime32=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 )
+	    if [ "$_log_errors_to_file" = "true" ]; then
+	      make -j$(nproc) 2> "$_where/debug.log"
+	    else
+	      _buildtime32=$( time ( schedtool -B -n 1 -e ionice -n 1 make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime32=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 )
+	    fi
 	  else
 	    # make using makepkg settings
-	    _buildtime32=$( time ( schedtool -B -n 1 -e ionice -n 1 make 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime32=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 )
+	    if [ "$_log_errors_to_file" = "true" ]; then
+	      make -j$(nproc) 2> "$_where/debug.log"
+	    else
+	      _buildtime32=$( time ( schedtool -B -n 1 -e ionice -n 1 make 2>&1 ) 3>&1 1>&2 2>&3 ) || _buildtime32=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 )
+	    fi
 	  fi
 	  if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
 	    _debuntu_64
