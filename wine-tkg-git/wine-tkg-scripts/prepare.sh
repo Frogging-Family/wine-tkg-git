@@ -777,7 +777,11 @@ _prepare() {
 	if [ "$_NUKR" != "debug" ] && [ "$_unfrog" != "true" ] || [[ "$_DEBUGANSW2" =~ [yY] ]]; then
 	  if [ "$_use_staging" = "true" ]; then
 	    if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ]; then
-	      cd "${srcdir}"/"${_stgsrcdir}" && _userpatch_target="wine-staging" _userpatch_ext="mystaging" hotfixer && _commitmsg="01-staging-hotfixes" _committer && cd "${srcdir}"/"${_winesrcdir}"
+	      cd "${srcdir}"/"${_stgsrcdir}"
+	      _userpatch_target="wine-staging" _userpatch_ext="earlystaging" hotfixer
+	      _userpatch_target="wine-staging" _userpatch_ext="mystaging" hotfixer
+	      _commitmsg="01-staging-hotfixes" _committer
+	      cd "${srcdir}"/"${_winesrcdir}"
 	    fi
 	  fi
 	fi

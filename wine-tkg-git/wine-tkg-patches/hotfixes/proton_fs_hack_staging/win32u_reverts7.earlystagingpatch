@@ -1,0 +1,374 @@
+diff --git a/patches/user32-rawinput-mouse-experimental/0005-winex11.drv-Add-support-for-absolute-RawMotion-event.patch b/patches/user32-rawinput-mouse-experimental/0005-winex11.drv-Add-support-for-absolute-RawMotion-event.patch
+index a8ab2e84..c7a523a8 100644
+--- a/patches/user32-rawinput-mouse-experimental/0005-winex11.drv-Add-support-for-absolute-RawMotion-event.patch
++++ b/patches/user32-rawinput-mouse-experimental/0005-winex11.drv-Add-support-for-absolute-RawMotion-event.patch
+@@ -1,4 +1,4 @@
+-From 8d0252f43188cbc9b50dbc8280ae60de04f41a71 Mon Sep 17 00:00:00 2001
++From 0f6a1e69470980663ec359edadcbf2083ac56efc Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Thu, 28 Oct 2021 09:18:37 +0200
+ Subject: [PATCH] winex11.drv: Add support for absolute RawMotion events.
+@@ -8,10 +8,10 @@ Subject: [PATCH] winex11.drv: Add support for absolute RawMotion events.
+  1 file changed, 22 insertions(+), 6 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index 179032d5c83..445d0a78c6a 100644
++index 0a48be26bd0..e6a2266855a 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+-@@ -339,12 +339,18 @@ static void update_relative_valuators( XIAnyClassInfo **classes, int num_classes
++@@ -340,12 +340,18 @@ static void update_relative_valuators( XIAnyClassInfo **classes, int num_classes
+      {
+          valuator = (XIValuatorClassInfo *)classes[num_classes];
+          if (classes[num_classes]->type != XIValuatorClass) continue;
+@@ -32,11 +32,11 @@ index 179032d5c83..445d0a78c6a 100644
+  
+      thread_data->x_valuator.value = 0;
+      thread_data->y_valuator.value = 0;
+-@@ -1951,7 +1957,15 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input )
++@@ -758,7 +764,15 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input )
+      if (thread_data->xi2_state != xi_enabled) return FALSE;
+      if (event->deviceid != thread_data->xi2_core_pointer) return FALSE;
+  
+--    virtual_rect = NtUserGetVirtualScreenRect();
++-    virtual_rect = get_virtual_screen_rect();
+ +    if (x->mode == XIModeRelative && y->mode == XIModeRelative)
+ +        input->u.mi.dwFlags &= ~(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK);
+ +    else if (x->mode == XIModeAbsolute && y->mode == XIModeAbsolute)
+@@ -45,11 +45,11 @@ index 179032d5c83..445d0a78c6a 100644
+ +        FIXME( "Unsupported relative/absolute X/Y axis mismatch\n." );
+ +
+ +    if (input->u.mi.dwFlags & MOUSEEVENTF_VIRTUALDESK) SetRect( &virtual_rect, 0, 0, 65535, 65535 );
+-+    else virtual_rect = NtUserGetVirtualScreenRect();
+++    else virtual_rect = get_virtual_screen_rect();
+  
+      if (x->max <= x->min) x_scale = 1;
+      else x_scale = (virtual_rect.right - virtual_rect.left) / (x->max - x->min);
+-@@ -1964,12 +1978,14 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input )
++@@ -771,12 +785,14 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input )
+          if (i == x->number)
+          {
+              x_value = *values;
+@@ -66,7 +66,7 @@ index 179032d5c83..445d0a78c6a 100644
+          }
+          values++;
+      }
+-@@ -1982,7 +1998,7 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input )
++@@ -789,7 +805,7 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input )
+      x->value -= input->u.mi.dx;
+      y->value -= input->u.mi.dy;
+  
+@@ -76,5 +76,5 @@ index 179032d5c83..445d0a78c6a 100644
+          TRACE( "accumulating motion\n" );
+          return FALSE;
+ -- 
+-2.35.1
++2.33.0
+ 
+diff --git a/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch b/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
+index cfd16054..9f11e259 100644
+--- a/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
++++ b/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
+@@ -1,4 +1,4 @@
+-From 9c9c16e92e50527474f567372b90c5dfa178c797 Mon Sep 17 00:00:00 2001
++From e880574bf3be3467af6238cdb020e593878e2dca Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Thu, 23 Jan 2020 11:00:19 +0100
+ Subject: [PATCH] winex11.drv: Support XInput2 events for individual windows.
+@@ -14,7 +14,7 @@ which can bring additional information.
+  5 files changed, 65 insertions(+), 17 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/desktop.c b/dlls/winex11.drv/desktop.c
+-index a89824772d0..6b19f8274a8 100644
++index 0ac538d06ed..482b9c2c94d 100644
+ --- a/dlls/winex11.drv/desktop.c
+ +++ b/dlls/winex11.drv/desktop.c
+ @@ -358,6 +358,7 @@ BOOL CDECL X11DRV_create_desktop( UINT width, UINT height )
+@@ -26,7 +26,7 @@ index a89824772d0..6b19f8274a8 100644
+  
+      X11DRV_init_desktop( win, width, height );
+ diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+-index eb2f0c6626c..e75ae679106 100644
++index 170111e9c28..bbb39135d88 100644
+ --- a/dlls/winex11.drv/event.c
+ +++ b/dlls/winex11.drv/event.c
+ @@ -238,6 +238,13 @@ static Bool filter_event( Display *display, XEvent *event, char *arg )
+@@ -44,7 +44,7 @@ index eb2f0c6626c..e75ae679106 100644
+      case MotionNotify:
+      case EnterNotify:
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index dbf438a8b22..ea5e34059ec 100644
++index 121f42eb541..27a1e326cc2 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -304,20 +304,32 @@ void x11drv_xinput_init(void)
+@@ -185,10 +185,10 @@ index dbf438a8b22..ea5e34059ec 100644
+      }
+      else if (prev_clip_hwnd)
+ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+-index 8b191ca23ed..ca6cbc8129c 100644
++index 29473ceba06..460e1a7983a 100644
+ --- a/dlls/winex11.drv/window.c
+ +++ b/dlls/winex11.drv/window.c
+-@@ -378,6 +378,7 @@ static void sync_window_style( struct x11drv_win_data *data )
++@@ -375,6 +375,7 @@ static void sync_window_style( struct x11drv_win_data *data )
+          int mask = get_window_attributes( data, &attr );
+  
+          XChangeWindowAttributes( data->display, data->whole_window, mask, &attr );
+@@ -196,7 +196,7 @@ index 8b191ca23ed..ca6cbc8129c 100644
+      }
+  }
+  
+-@@ -1605,6 +1606,7 @@ static void create_whole_window( struct x11drv_win_data *data )
++@@ -1594,6 +1595,7 @@ static void create_whole_window( struct x11drv_win_data *data )
+                                          data->vis.visual, mask, &attr );
+      if (!data->whole_window) goto done;
+  
+@@ -204,19 +204,19 @@ index 8b191ca23ed..ca6cbc8129c 100644
+      set_initial_wm_hints( data->display, data->whole_window );
+      set_wm_hints( data );
+  
+-@@ -1919,6 +1921,7 @@ BOOL X11DRV_CreateWindow( HWND hwnd )
++@@ -1908,6 +1910,7 @@ BOOL CDECL X11DRV_CreateWindow( HWND hwnd )
+          data->clip_window = XCreateWindow( data->display, root_window, 0, 0, 1, 1, 0, 0,
+                                             InputOnly, default_visual.visual,
+                                             CWOverrideRedirect | CWEventMask, &attr );
+ +        x11drv_xinput_enable( data->display, data->clip_window, attr.event_mask );
+          XFlush( data->display );
+-         NtUserSetProp( hwnd, clip_window_prop, (HANDLE)data->clip_window );
++         SetPropA( hwnd, clip_window_prop, (HANDLE)data->clip_window );
+          X11DRV_InitClipboard();
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index 2130a35336d..344625aff71 100644
++index 3f3e386ea4a..3eff6f23e22 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -248,6 +248,8 @@ extern void X11DRV_ThreadDetach(void) DECLSPEC_HIDDEN;
++@@ -249,6 +249,8 @@ extern void CDECL X11DRV_ThreadDetach(void) DECLSPEC_HIDDEN;
+  extern void X11DRV_Xcursor_Init(void) DECLSPEC_HIDDEN;
+  extern void x11drv_xinput_load(void) DECLSPEC_HIDDEN;
+  extern void x11drv_xinput_init(void) DECLSPEC_HIDDEN;
+@@ -225,7 +225,7 @@ index 2130a35336d..344625aff71 100644
+  
+  extern DWORD copy_image_bits( BITMAPINFO *info, BOOL is_r8g8b8, XImage *image,
+                                const struct gdi_image_bits *src_bits, struct gdi_image_bits *dst_bits,
+-@@ -368,6 +370,14 @@ struct x11drv_escape_flush_gl_drawable
++@@ -370,6 +372,14 @@ struct x11drv_escape_flush_gl_drawable
+   * X11 USER driver
+   */
+  
+@@ -240,7 +240,7 @@ index 2130a35336d..344625aff71 100644
+  struct x11drv_thread_data
+  {
+      Display *display;
+-@@ -383,7 +393,7 @@ struct x11drv_thread_data
++@@ -385,7 +395,7 @@ struct x11drv_thread_data
+      HWND     clip_hwnd;            /* message window stored in desktop while clipping is active */
+      DWORD    clip_reset;           /* time when clipping was last reset */
+  #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+@@ -250,5 +250,5 @@ index 2130a35336d..344625aff71 100644
+      int      xi2_device_count;
+      XIValuatorClassInfo x_valuator;
+ -- 
+-2.35.1
++2.34.1
+ 
+diff --git a/patches/user32-rawinput-mouse/0003-winex11.drv-Advertise-XInput2-version-2.1-support.patch b/patches/user32-rawinput-mouse/0003-winex11.drv-Advertise-XInput2-version-2.1-support.patch
+index dfe78d2a..ee287919 100644
+--- a/patches/user32-rawinput-mouse/0003-winex11.drv-Advertise-XInput2-version-2.1-support.patch
++++ b/patches/user32-rawinput-mouse/0003-winex11.drv-Advertise-XInput2-version-2.1-support.patch
+@@ -1,4 +1,4 @@
+-From c49e3afea43630cefb5c8ee9012b2ffd48a819e5 Mon Sep 17 00:00:00 2001
++From fe6fb7ca2e0dce4a023c13480293dd4860027eac Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Sun, 24 Oct 2021 22:30:56 +0200
+ Subject: [PATCH] winex11.drv: Advertise XInput2 version 2.1 support.
+@@ -22,7 +22,7 @@ device events only and get rid of slave device id tracking.
+  2 files changed, 5 insertions(+), 40 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index ea5e34059ec..b9ff9f38014 100644
++index 27a1e326cc2..1e3b9ad2be0 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -284,7 +284,7 @@ void x11drv_xinput_init(void)
+@@ -90,7 +90,7 @@ index ea5e34059ec..b9ff9f38014 100644
+      data->xi2_state = xi_disabled;
+  #endif
+  }
+-@@ -1860,7 +1847,6 @@ static BOOL X11DRV_DeviceChanged( XGenericEventCookie *xev )
++@@ -1857,7 +1844,6 @@ static BOOL X11DRV_DeviceChanged( XGenericEventCookie *xev )
+      if (event->reason != XISlaveSwitch) return FALSE;
+  
+      update_relative_valuators( event->classes, event->num_classes );
+@@ -98,7 +98,7 @@ index ea5e34059ec..b9ff9f38014 100644
+      return TRUE;
+  }
+  
+-@@ -1876,25 +1862,7 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input )
++@@ -1873,25 +1859,7 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input )
+      if (x->number < 0 || y->number < 0) return FALSE;
+      if (!event->valuators.mask_len) return FALSE;
+      if (thread_data->xi2_state != xi_enabled) return FALSE;
+@@ -123,13 +123,13 @@ index ea5e34059ec..b9ff9f38014 100644
+ -    if (event->deviceid != thread_data->xi2_current_slave) return FALSE;
+ +    if (event->deviceid != thread_data->xi2_core_pointer) return FALSE;
+  
+-     virtual_rect = NtUserGetVirtualScreenRect();
++     virtual_rect = get_virtual_screen_rect();
+  
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index 344625aff71..3e4d49d3dcf 100644
++index 3eff6f23e22..8cddfa05904 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -394,12 +394,9 @@ struct x11drv_thread_data
++@@ -396,12 +396,9 @@ struct x11drv_thread_data
+      DWORD    clip_reset;           /* time when clipping was last reset */
+  #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+      enum xi2_state xi2_state;      /* XInput2 state */
+@@ -143,5 +143,5 @@ index 344625aff71..3e4d49d3dcf 100644
+  };
+  
+ -- 
+-2.35.1
++2.34.1
+ 
+diff --git a/patches/winex11-UpdateLayeredWindow/0001-winex11-Fix-alpha-blending-in-X11DRV_UpdateLayeredWi.patch b/patches/winex11-UpdateLayeredWindow/0001-winex11-Fix-alpha-blending-in-X11DRV_UpdateLayeredWi.patch
+index 05a90272..1a26e194 100644
+--- a/patches/winex11-UpdateLayeredWindow/0001-winex11-Fix-alpha-blending-in-X11DRV_UpdateLayeredWi.patch
++++ b/patches/winex11-UpdateLayeredWindow/0001-winex11-Fix-alpha-blending-in-X11DRV_UpdateLayeredWi.patch
+@@ -1,4 +1,4 @@
+-From 0c3858177e20be4689445e8f71b705a5792baa93 Mon Sep 17 00:00:00 2001
++From 4dab3f34431e3bcb91a17128fd7f3dca7c49f764 Mon Sep 17 00:00:00 2001
+ From: Sebastian Lackner <sebastian@fds-team.de>
+ Date: Tue, 24 Jan 2017 12:37:46 +0100
+ Subject: [PATCH] winex11: Fix alpha blending in X11DRV_UpdateLayeredWindow.
+@@ -9,10 +9,10 @@ Based on a patch by Dmitry Timoshkov.
+  1 file changed, 13 insertions(+), 14 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+-index 8b191ca23ed..37c46e6413b 100644
++index b3202847bb7..4f00371d178 100644
+ --- a/dlls/winex11.drv/window.c
+ +++ b/dlls/winex11.drv/window.c
+-@@ -440,14 +440,11 @@ static void sync_window_region( struct x11drv_win_data *data, HRGN win_region )
++@@ -436,14 +436,11 @@ static void sync_window_region( struct x11drv_win_data *data, HRGN win_region )
+  
+  
+  /***********************************************************************
+@@ -30,16 +30,16 @@ index 8b191ca23ed..37c46e6413b 100644
+  
+      if (opacity == 0xffffffff)
+          XDeleteProperty( display, win, x11drv_atom(_NET_WM_WINDOW_OPACITY) );
+-@@ -1620,7 +1617,7 @@ static void create_whole_window( struct x11drv_win_data *data )
++@@ -1615,7 +1612,7 @@ static void create_whole_window( struct x11drv_win_data *data )
+  
+      /* set the window opacity */
+-     if (!NtUserGetLayeredWindowAttributes( data->hwnd, &key, &alpha, &layered_flags )) layered_flags = 0;
++     if (!GetLayeredWindowAttributes( data->hwnd, &key, &alpha, &layered_flags )) layered_flags = 0;
+ -    sync_window_opacity( data->display, data->whole_window, key, alpha, layered_flags );
+ +    set_window_opacity( data->display, data->whole_window, (layered_flags & LWA_ALPHA) ? alpha : 0xff );
+  
+      XFlush( data->display );  /* make sure the window exists before we start painting to it */
+  
+-@@ -1752,7 +1749,7 @@ void X11DRV_SetWindowStyle( HWND hwnd, INT offset, STYLESTRUCT *style )
++@@ -1747,7 +1744,7 @@ void X11DRV_SetWindowStyle( HWND hwnd, INT offset, STYLESTRUCT *style )
+      {
+          data->layered = FALSE;
+          set_window_visual( data, &default_visual, FALSE );
+@@ -48,7 +48,7 @@ index 8b191ca23ed..37c46e6413b 100644
+          if (data->surface) set_surface_color_key( data->surface, CLR_INVALID );
+      }
+  done:
+-@@ -2679,7 +2676,7 @@ void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWO
++@@ -2674,7 +2671,7 @@ void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWO
+          set_window_visual( data, &default_visual, FALSE );
+  
+          if (data->whole_window)
+@@ -57,7 +57,7 @@ index 8b191ca23ed..37c46e6413b 100644
+          if (data->surface)
+              set_surface_color_key( data->surface, (flags & LWA_COLORKEY) ? key : CLR_INVALID );
+  
+-@@ -2703,7 +2700,7 @@ void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWO
++@@ -2698,7 +2695,7 @@ void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWO
+          Window win = X11DRV_get_whole_window( hwnd );
+          if (win)
+          {
+@@ -66,7 +66,7 @@ index 8b191ca23ed..37c46e6413b 100644
+              if (flags & LWA_COLORKEY)
+                  FIXME( "LWA_COLORKEY not supported on foreign process window %p\n", hwnd );
+          }
+-@@ -2719,7 +2716,6 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
++@@ -2714,7 +2711,6 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
+  {
+      struct window_surface *surface;
+      struct x11drv_win_data *data;
+@@ -74,7 +74,7 @@ index 8b191ca23ed..37c46e6413b 100644
+      COLORREF color_key = (info->dwFlags & ULW_COLORKEY) ? info->crKey : CLR_INVALID;
+      char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+      BITMAPINFO *bmi = (BITMAPINFO *)buffer;
+-@@ -2747,6 +2743,10 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
++@@ -2742,6 +2738,10 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
+      }
+      else set_surface_color_key( surface, color_key );
+  
+@@ -85,7 +85,7 @@ index 8b191ca23ed..37c46e6413b 100644
+      if (surface) window_surface_add_ref( surface );
+      mapped = data->mapped;
+      release_win_data( data );
+-@@ -2781,16 +2781,15 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
++@@ -2776,16 +2776,15 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
+      {
+          IntersectRect( &rect, &rect, info->prcDirty );
+          memcpy( src_bits, dst_bits, bmi->bmiHeader.biSizeImage );
+@@ -105,5 +105,5 @@ index 8b191ca23ed..37c46e6413b 100644
+      {
+          memcpy( dst_bits, src_bits, bmi->bmiHeader.biSizeImage );
+ -- 
+-2.35.1
++2.34.1
+ 
+diff --git a/patches/winex11-Window_Style/0001-winex11-Fix-handling-of-window-attributes-for-WS_EX_.patch b/patches/winex11-Window_Style/0001-winex11-Fix-handling-of-window-attributes-for-WS_EX_.patch
+index ae709983..d494392d 100644
+--- a/patches/winex11-Window_Style/0001-winex11-Fix-handling-of-window-attributes-for-WS_EX_.patch
++++ b/patches/winex11-Window_Style/0001-winex11-Fix-handling-of-window-attributes-for-WS_EX_.patch
+@@ -1,4 +1,4 @@
+-From 3f9023d5bc2872b835f99cc6657c60ea086d23a0 Mon Sep 17 00:00:00 2001
++From 70372a81598712fc6f66557ce494fa08c8aa5de4 Mon Sep 17 00:00:00 2001
+ From: Dmitry Timoshkov <dmitry@baikal.ru>
+ Date: Sat, 24 Jan 2015 05:12:49 +0100
+ Subject: [PATCH] winex11: Fix handling of window attributes for WS_EX_LAYERED
+@@ -9,10 +9,10 @@ Subject: [PATCH] winex11: Fix handling of window attributes for WS_EX_LAYERED
+  1 file changed, 2 insertions(+), 2 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+-index 8b191ca23ed..5c4b37130ac 100644
++index 89549461cce..7e8f9352716 100644
+ --- a/dlls/winex11.drv/window.c
+ +++ b/dlls/winex11.drv/window.c
+-@@ -325,7 +325,7 @@ static unsigned long get_mwm_decorations( struct x11drv_win_data *data,
++@@ -324,7 +324,7 @@ static unsigned long get_mwm_decorations( struct x11drv_win_data *data,
+      if (data->shaped) return 0;
+  
+      if (ex_style & WS_EX_TOOLWINDOW) return 0;
+@@ -21,15 +21,15 @@ index 8b191ca23ed..5c4b37130ac 100644
+  
+      if ((style & WS_CAPTION) == WS_CAPTION)
+      {
+-@@ -2526,7 +2526,7 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
++@@ -2529,7 +2529,7 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
+              BOOL needs_map = TRUE;
+  
+              /* layered windows are mapped only once their attributes are set */
+--            if (NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED)
+-+            if ((NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & (WS_EX_LAYERED | WS_EX_COMPOSITED)) == WS_EX_LAYERED)
++-            if (GetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED)
+++            if ((GetWindowLongW( hwnd, GWL_EXSTYLE ) & (WS_EX_LAYERED | WS_EX_COMPOSITED)) == WS_EX_LAYERED)
+                  needs_map = data->layered || IsRectEmpty( rectWindow );
+              release_win_data( data );
+              if (needs_icon) fetch_icon_data( hwnd, 0, 0 );
+ -- 
+-2.35.1
++2.29.2
+ 
