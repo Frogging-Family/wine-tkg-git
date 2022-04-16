@@ -519,7 +519,7 @@ index c844ad35bb3..d702105c64b 100644
          FIXME("Support for allocation callbacks not implemented yet\n");
 
 -    /* TODO: support child window rendering. */
--    if (create_info->hwnd && NtUserGetAncestor(create_info->hwnd, GA_PARENT) != NtUserGetDesktopWindow())
+-    if (create_info->hwnd && GetAncestor(create_info->hwnd, GA_PARENT) != GetDesktopWindow())
 -    {
 -        FIXME("Application requires child window rendering, which is not implemented yet!\n");
 -        return VK_ERROR_INCOMPATIBLE_DRIVER;
@@ -534,13 +534,13 @@ index c844ad35bb3..d702105c64b 100644
      {
 +        x11_surface->hdc = GetDC(create_info->hwnd);
          x11_surface->window = create_client_window(create_info->hwnd, &default_visual);
-         x11_surface->hwnd_thread_id = NtUserGetWindowThread(x11_surface->hwnd, NULL);
+         x11_surface->hwnd_thread_id = GetWindowThreadProcessId(x11_surface->hwnd, NULL);
      }
 @@ -390,6 +449,15 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
          goto err;
      }
 
-+    if (create_info->hwnd && (GetWindow( create_info->hwnd, GW_CHILD ) || NtUserGetAncestor( create_info->hwnd, GA_PARENT ) != NtUserGetDesktopWindow()))
++    if (create_info->hwnd && (GetWindow( create_info->hwnd, GW_CHILD ) || GetAncestor( create_info->hwnd, GA_PARENT ) != GetDesktopWindow()))
 +    {
 +        if (!wine_vk_surface_set_offscreen(x11_surface, TRUE))
 +        {
@@ -560,25 +560,25 @@ index 916350c685a..77c5d4ea480 100644
  {
      struct x11drv_win_data *data;
      DWORD changed = style->styleNew ^ style->styleOld;
-+    HWND parent = NtUserGetAncestor( hwnd, GA_PARENT );
++    HWND parent = GetAncestor( hwnd, GA_PARENT );
 +
 +    if (offset == GWL_STYLE && (changed & WS_CHILD))
 +    {
-+        if (GetWindow( parent, GW_CHILD ) || NtUserGetAncestor( parent, GA_PARENT ) != NtUserGetDesktopWindow())
++        if (GetWindow( parent, GW_CHILD ) || GetAncestor( parent, GA_PARENT ) != GetDesktopWindow())
 +            sync_vk_surface( parent, TRUE );
 +        else
 +            sync_vk_surface( parent, FALSE );
 +    }
 
-     if (hwnd == NtUserGetDesktopWindow()) return;
+     if (hwnd == GetDesktopWindow()) return;
      if (!(data = get_win_data( hwnd ))) return;
 @@ -1767,6 +1776,10 @@ void CDECL X11DRV_DestroyWindow( HWND hwnd )
  {
      struct x11drv_thread_data *thread_data = x11drv_thread_data();
      struct x11drv_win_data *data;
-+    HWND parent = NtUserGetAncestor( hwnd, GA_PARENT );
++    HWND parent = GetAncestor( hwnd, GA_PARENT );
 +
-+    if (!GetWindow( parent, GW_CHILD ) && NtUserGetAncestor( parent, GA_PARENT ) == NtUserGetDesktopWindow())
++    if (!GetWindow( parent, GW_CHILD ) && GetAncestor( parent, GA_PARENT ) == GetDesktopWindow())
 +        sync_vk_surface( parent, FALSE );
 
      if (!(data = get_win_data( hwnd ))) return;
