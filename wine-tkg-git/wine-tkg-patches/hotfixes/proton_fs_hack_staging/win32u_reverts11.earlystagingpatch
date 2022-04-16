@@ -1,0 +1,329 @@
+diff --git a/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch b/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
+index 67d9ea1a..fb2bcb13 100644
+--- a/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
++++ b/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
+@@ -1,4 +1,4 @@
+-From d3ea251f51035613f67f6ee730a12d8775cb4b6b Mon Sep 17 00:00:00 2001
++From 509c461b58dce1eeaa6a9a3c572dfb6031ed3b75 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Thu, 19 Dec 2019 22:34:44 +0100
+ Subject: [PATCH] winex11.drv: Keep track of pointer and device button
+@@ -16,7 +16,7 @@ Original patch by Andrew Eikum <aeikum@codeweavers.com>.
+  4 files changed, 106 insertions(+), 8 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/keyboard.c b/dlls/winex11.drv/keyboard.c
+-index a55eaf071fe..148e4a7f62b 100644
++index de849066b95..a65e0ee6441 100644
+ --- a/dlls/winex11.drv/keyboard.c
+ +++ b/dlls/winex11.drv/keyboard.c
+ @@ -1882,13 +1882,24 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
+@@ -32,10 +32,10 @@ index a55eaf071fe..148e4a7f62b 100644
+ +        XRefreshKeyboardMapping( &event->xmapping );
+ +        X11DRV_InitKeyboard( event->xmapping.display );
+ +
+-+        hwnd = get_focus();
+-+        if (!hwnd) hwnd = get_active_window();
+-+        NtUserPostMessage( hwnd, WM_INPUTLANGCHANGEREQUEST,
+-+                           0 /*FIXME*/, (LPARAM)NtUserGetKeyboardLayout(0) );
+++        hwnd = GetFocus();
+++        if (!hwnd) hwnd = GetActiveWindow();
+++        PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST,
+++                     0 /*FIXME*/, (LPARAM)GetKeyboardLayout(0));
+ +        break;
+ +
+ +    case MappingPointer:
+@@ -43,15 +43,15 @@ index a55eaf071fe..148e4a7f62b 100644
+ +        break;
+ +    }
+  
+--    hwnd = get_focus();
+--    if (!hwnd) hwnd = get_active_window();
+--    NtUserPostMessage( hwnd, WM_INPUTLANGCHANGEREQUEST,
+--                       0 /*FIXME*/, (LPARAM)NtUserGetKeyboardLayout(0) );
++-    hwnd = GetFocus();
++-    if (!hwnd) hwnd = GetActiveWindow();
++-    PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST,
++-                 0 /*FIXME*/, (LPARAM)GetKeyboardLayout(0));
+      return TRUE;
+  }
+  
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index 174c8a3b022..6d0861ad145 100644
++index ea50c6bfbee..81be9d87862 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -26,6 +26,9 @@
+@@ -150,7 +150,7 @@ index 174c8a3b022..6d0861ad145 100644
+  #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+  /***********************************************************************
+   *              update_relative_valuators
+-@@ -1847,6 +1922,8 @@ static BOOL X11DRV_DeviceChanged( XGenericEventCookie *xev )
++@@ -1844,6 +1919,8 @@ static BOOL X11DRV_DeviceChanged( XGenericEventCookie *xev )
+      if (event->reason != XISlaveSwitch) return FALSE;
+  
+      update_relative_valuators( event->classes, event->num_classes );
+@@ -159,7 +159,7 @@ index 174c8a3b022..6d0861ad145 100644
+      return TRUE;
+  }
+  
+-@@ -1933,13 +2010,12 @@ static BOOL X11DRV_RawMotion( XGenericEventCookie *xev )
++@@ -1930,13 +2007,12 @@ static BOOL X11DRV_RawMotion( XGenericEventCookie *xev )
+  
+  #endif /* HAVE_X11_EXTENSIONS_XINPUT2_H */
+  
+@@ -174,7 +174,7 @@ index 174c8a3b022..6d0861ad145 100644
+      int event, error;
+      void *libxi_handle = dlopen( SONAME_LIBXI, RTLD_NOW );
+  
+-@@ -1955,11 +2031,20 @@ void x11drv_xinput_load(void)
++@@ -1952,11 +2028,20 @@ void x11drv_xinput_load(void)
+          return; \
+      }
+  
+@@ -196,10 +196,10 @@ index 174c8a3b022..6d0861ad145 100644
+  
+      xinput2_available = XQueryExtension( gdi_display, "XInputExtension", &xinput2_opcode, &event, &error );
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index e49a772325a..b78eab78dd1 100644
++index 6db02f5f033..cbd3b240bd4 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -696,6 +696,7 @@ extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
++@@ -698,6 +698,7 @@ extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
+  extern BOOL clip_fullscreen_window( HWND hwnd, BOOL reset ) DECLSPEC_HIDDEN;
+  extern void move_resize_window( HWND hwnd, int dir ) DECLSPEC_HIDDEN;
+  extern void X11DRV_InitKeyboard( Display *display ) DECLSPEC_HIDDEN;
+@@ -208,10 +208,10 @@ index e49a772325a..b78eab78dd1 100644
+                                                   DWORD mask, DWORD flags ) DECLSPEC_HIDDEN;
+  
+ diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+-index d8d4f4c172c..fecd98daf8e 100644
++index 036a139da1a..e45d58cd926 100644
+ --- a/dlls/winex11.drv/x11drv_main.c
+ +++ b/dlls/winex11.drv/x11drv_main.c
+-@@ -706,6 +706,7 @@ static BOOL process_attach(void)
++@@ -625,6 +625,7 @@ static BOOL process_attach(void)
+      if (use_xkb) use_xkb = XkbUseExtension( gdi_display, NULL, NULL );
+  #endif
+      X11DRV_InitKeyboard( gdi_display );
+@@ -220,5 +220,5 @@ index d8d4f4c172c..fecd98daf8e 100644
+  
+      init_user_driver();
+ -- 
+-2.34.1
++2.35.1
+ 
+diff --git a/patches/winex11-WM_WINDOWPOSCHANGING/0001-winex11.drv-Send-WM_WINDOWPOSCHANGING-WM_WINDOWPOSCH.patch b/patches/winex11-WM_WINDOWPOSCHANGING/0001-winex11.drv-Send-WM_WINDOWPOSCHANGING-WM_WINDOWPOSCH.patch
+index 33efc3d9..4895d48c 100644
+--- a/patches/winex11-WM_WINDOWPOSCHANGING/0001-winex11.drv-Send-WM_WINDOWPOSCHANGING-WM_WINDOWPOSCH.patch
++++ b/patches/winex11-WM_WINDOWPOSCHANGING/0001-winex11.drv-Send-WM_WINDOWPOSCHANGING-WM_WINDOWPOSCH.patch
+@@ -1,4 +1,4 @@
+-From 0c9b32515c444dcd3fb76473c80adcc368f9e8fd Mon Sep 17 00:00:00 2001
++From 78775e9afb77bd36a01a4b44292d0a654c13d3de Mon Sep 17 00:00:00 2001
+ From: Dmitry Timoshkov <dmitry@baikal.ru>
+ Date: Tue, 27 Dec 2016 17:45:05 +0800
+ Subject: [PATCH] winex11.drv: Send WM_WINDOWPOSCHANGING/WM_WINDOWPOSCHANGED
+@@ -9,7 +9,7 @@ Subject: [PATCH] winex11.drv: Send WM_WINDOWPOSCHANGING/WM_WINDOWPOSCHANGED
+  1 file changed, 12 insertions(+), 1 deletion(-)
+ 
+ diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+-index 9a19eb9b446..d518c81d3e9 100644
++index c1c52a4130a..d0f467a32e9 100644
+ --- a/dlls/winex11.drv/event.c
+ +++ b/dlls/winex11.drv/event.c
+ @@ -592,16 +592,27 @@ static void set_input_focus( struct x11drv_win_data *data )
+@@ -27,7 +27,7 @@ index 9a19eb9b446..d518c81d3e9 100644
+      x11drv_thread_data()->active_window = hwnd;
+  
+      TRACE( "setting foreground window to %p\n", hwnd );
+-     NtUserSetForegroundWindow( hwnd, FALSE );
++     SetForegroundWindow( hwnd );
+  
+ +    /* Some applications expect that a being deactivated topmost window
+ +     * receives the WM_WINDOWPOSCHANGING/WM_WINDOWPOSCHANGED messages,
+@@ -39,8 +39,8 @@ index 9a19eb9b446..d518c81d3e9 100644
+ +        NtUserSetWindowPos( old_active, hwnd, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER );
+ +
+      threadinfo.cbSize = sizeof(threadinfo);
+-     NtUserGetGUIThreadInfo( 0, &threadinfo );
++     GetGUIThreadInfo(0, &threadinfo);
+      focus = threadinfo.hwndFocus;
+ -- 
+-2.34.1
++2.35.1
+ 
+diff --git a/patches/winex11-XEMBED/0001-winex11-Enable-disable-windows-when-they-are-un-mapped.patch b/patches/winex11-XEMBED/0001-winex11-Enable-disable-windows-when-they-are-un-mapped.patch
+index b7d57ae1..540f0cf7 100644
+--- a/patches/winex11-XEMBED/0001-winex11-Enable-disable-windows-when-they-are-un-mapped.patch
++++ b/patches/winex11-XEMBED/0001-winex11-Enable-disable-windows-when-they-are-un-mapped.patch
+@@ -1,4 +1,4 @@
+-From e1440086421942267ff1df00fdb11e724bd0119b Mon Sep 17 00:00:00 2001
++From 44c4620a48a2d15269a083d9c04bcf9e4ee77e58 Mon Sep 17 00:00:00 2001
+ From: Sebastian Lackner <sebastian@fds-team.de>
+ Date: Fri, 22 Nov 2013 18:54:18 +0100
+ Subject: [PATCH] winex11: Enable/disable windows when they are (un)mapped by
+@@ -9,7 +9,7 @@ Subject: [PATCH] winex11: Enable/disable windows when they are (un)mapped by
+  1 file changed, 17 insertions(+)
+ 
+ diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+-index 147865e7af6..92504a248ca 100644
++index eb2f0c6626c..2f0606d1adc 100644
+ --- a/dlls/winex11.drv/event.c
+ +++ b/dlls/winex11.drv/event.c
+ @@ -981,6 +981,7 @@ static BOOL X11DRV_Expose( HWND hwnd, XEvent *xev )
+@@ -21,7 +21,7 @@ index 147865e7af6..92504a248ca 100644
+      if (event->xany.window == x11drv_thread_data()->clip_window) return TRUE;
+  
+ @@ -992,7 +993,12 @@ static BOOL X11DRV_MapNotify( HWND hwnd, XEvent *event )
+-         if (hwndFocus && NtUserIsChild( hwnd, hwndFocus ))
++         if (hwndFocus && IsChild( hwnd, hwndFocus ))
+              set_input_focus( data );
+      }
+ +
+@@ -52,5 +52,5 @@ index 147865e7af6..92504a248ca 100644
+  }
+  
+ -- 
+-2.34.1
++2.35.1
+ 
+diff --git a/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch b/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch
+index a9cabee1..3c0d9de6 100644
+--- a/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch
++++ b/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch
+@@ -1,4 +1,4 @@
+-From 028244e49e2918cdeb41be4c58f5a1bf2953829f Mon Sep 17 00:00:00 2001
++From d4cd72f2fb59d295be1b108d9c53b52d26cfde48 Mon Sep 17 00:00:00 2001
+ From: Dmitry Timoshkov <dmitry@baikal.ru>
+ Date: Wed, 10 Feb 2016 15:09:29 +0800
+ Subject: [PATCH] winex11.drv: Add support for _NET_ACTIVE_WINDOW. (v2)
+@@ -17,7 +17,7 @@ For bug #2155.
+  7 files changed, 65 insertions(+)
+ 
+ diff --git a/dlls/win32u/driver.c b/dlls/win32u/driver.c
+-index 6b6f1a64ce8..71831034ca7 100644
++index a073d05be27..2ccc80684ae 100644
+ --- a/dlls/win32u/driver.c
+ +++ b/dlls/win32u/driver.c
+ @@ -842,6 +842,10 @@ static BOOL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
+@@ -31,7 +31,7 @@ index 6b6f1a64ce8..71831034ca7 100644
+  static void nulldrv_SetCapture( HWND hwnd, UINT flags )
+  {
+  }
+-@@ -1198,6 +1202,7 @@ static const struct user_driver_funcs lazy_load_driver =
++@@ -1203,6 +1207,7 @@ static const struct user_driver_funcs lazy_load_driver =
+      nulldrv_MsgWaitForMultipleObjectsEx,
+      nulldrv_ReleaseDC,
+      nulldrv_ScrollDC,
+@@ -39,7 +39,7 @@ index 6b6f1a64ce8..71831034ca7 100644
+      nulldrv_SetCapture,
+      nulldrv_SetFocus,
+      loaderdrv_SetLayeredWindowAttributes,
+-@@ -1270,6 +1275,7 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
++@@ -1276,6 +1281,7 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
+      SET_USER_FUNC(MsgWaitForMultipleObjectsEx);
+      SET_USER_FUNC(ReleaseDC);
+      SET_USER_FUNC(ScrollDC);
+@@ -48,10 +48,10 @@ index 6b6f1a64ce8..71831034ca7 100644
+      SET_USER_FUNC(SetFocus);
+      SET_USER_FUNC(SetLayeredWindowAttributes);
+ diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+-index 147865e7af6..9a19eb9b446 100644
++index 12f98489c72..ace0c379902 100644
+ --- a/dlls/winex11.drv/event.c
+ +++ b/dlls/winex11.drv/event.c
+-@@ -596,6 +596,9 @@ static void set_focus( Display *display, HWND hwnd, Time time )
++@@ -609,6 +609,9 @@ static void set_focus( Display *display, HWND hwnd, Time time )
+      Window win;
+      GUITHREADINFO threadinfo;
+  
+@@ -59,9 +59,9 @@ index 147865e7af6..9a19eb9b446 100644
+ +    x11drv_thread_data()->active_window = hwnd;
+ +
+      TRACE( "setting foreground window to %p\n", hwnd );
+-     NtUserSetForegroundWindow( hwnd, FALSE );
++     SetForegroundWindow( hwnd );
+  
+-@@ -843,6 +846,8 @@ static void focus_out( Display *display , HWND hwnd )
++@@ -856,6 +859,8 @@ static void focus_out( Display *display , HWND hwnd )
+  
+      if (!focus_win)
+      {
+@@ -71,7 +71,7 @@ index 147865e7af6..9a19eb9b446 100644
+             Foreground window, because in most cases the messages sent
+             above must have already changed the foreground window, in which
+ diff --git a/dlls/winex11.drv/init.c b/dlls/winex11.drv/init.c
+-index 8f4bb9fd7e9..8f566f6f16e 100644
++index beea28bc491..05d5c39ba3b 100644
+ --- a/dlls/winex11.drv/init.c
+ +++ b/dlls/winex11.drv/init.c
+ @@ -397,6 +397,7 @@ static const struct user_driver_funcs x11drv_funcs =
+@@ -83,10 +83,10 @@ index 8f4bb9fd7e9..8f566f6f16e 100644
+      .pSetFocus = X11DRV_SetFocus,
+      .pSetLayeredWindowAttributes = X11DRV_SetLayeredWindowAttributes,
+ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+-index dd5c298c7a6..43865dd0600 100644
++index 547a49a32b2..d9248d5af6b 100644
+ --- a/dlls/winex11.drv/window.c
+ +++ b/dlls/winex11.drv/window.c
+-@@ -2251,6 +2251,54 @@ BOOL X11DRV_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
++@@ -2237,6 +2237,54 @@ BOOL X11DRV_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
+  }
+  
+  
+@@ -142,10 +142,10 @@ index dd5c298c7a6..43865dd0600 100644
+   *		SetCapture  (X11DRV.@)
+   */
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index 07c36899eb3..cf561936d42 100644
++index a59380a8e83..12bf3fef3ae 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -218,6 +218,7 @@ extern void X11DRV_GetDC( HDC hdc, HWND hwnd, HWND top, const RECT *win_rect,
++@@ -219,6 +219,7 @@ extern void X11DRV_GetDC( HDC hdc, HWND hwnd, HWND top, const RECT *win_rect,
+                            const RECT *top_rect, DWORD flags ) DECLSPEC_HIDDEN;
+  extern void X11DRV_ReleaseDC( HWND hwnd, HDC hdc ) DECLSPEC_HIDDEN;
+  extern BOOL X11DRV_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update ) DECLSPEC_HIDDEN;
+@@ -153,7 +153,7 @@ index 07c36899eb3..cf561936d42 100644
+  extern void X11DRV_SetCapture( HWND hwnd, UINT flags ) DECLSPEC_HIDDEN;
+  extern void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha,
+                                                 DWORD flags ) DECLSPEC_HIDDEN;
+-@@ -372,6 +373,7 @@ struct x11drv_thread_data
++@@ -385,6 +386,7 @@ struct x11drv_thread_data
+      Display *display;
+      XEvent  *current_event;        /* event currently being processed */
+      HWND     grab_hwnd;            /* window that currently grabs the mouse */
+@@ -161,7 +161,7 @@ index 07c36899eb3..cf561936d42 100644
+      HWND     last_focus;           /* last window that had focus */
+      XIM      xim;                  /* input method */
+      HWND     last_xic_hwnd;        /* last xic window */
+-@@ -483,6 +485,7 @@ enum x11drv_atoms
++@@ -494,6 +496,7 @@ enum x11drv_atoms
+      XATOM_DndSelection,
+      XATOM__ICC_PROFILE,
+      XATOM__MOTIF_WM_HINTS,
+@@ -170,7 +170,7 @@ index 07c36899eb3..cf561936d42 100644
+      XATOM__NET_STARTUP_INFO,
+      XATOM__NET_SUPPORTED,
+ diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+-index 539f49197a3..732cea08890 100644
++index a139e67f550..f3c03c48477 100644
+ --- a/dlls/winex11.drv/x11drv_main.c
+ +++ b/dlls/winex11.drv/x11drv_main.c
+ @@ -156,6 +156,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
+@@ -182,7 +182,7 @@ index 539f49197a3..732cea08890 100644
+      "_NET_STARTUP_INFO",
+      "_NET_SUPPORTED",
+ diff --git a/include/wine/gdi_driver.h b/include/wine/gdi_driver.h
+-index a63e2c3ceda..8f41759e41a 100644
++index 79e9f869b6e..5fc1f314096 100644
+ --- a/include/wine/gdi_driver.h
+ +++ b/include/wine/gdi_driver.h
+ @@ -302,6 +302,7 @@ struct user_driver_funcs
+@@ -194,5 +194,5 @@ index a63e2c3ceda..8f41759e41a 100644
+      void    (*pSetFocus)(HWND);
+      void    (*pSetLayeredWindowAttributes)(HWND,COLORREF,BYTE,DWORD);
+ -- 
+-2.34.1
++2.35.1
+ 
