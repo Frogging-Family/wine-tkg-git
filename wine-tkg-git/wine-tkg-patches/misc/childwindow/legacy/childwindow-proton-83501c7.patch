@@ -18,7 +18,7 @@ index d805b3c8be4..948e963b12b 100644
 --- a/dlls/winex11.drv/vulkan.c
 +++ b/dlls/winex11.drv/vulkan.c
 @@ -54,6 +54,7 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
- static pthread_mutex_t vulkan_mutex;
+ static CRITICAL_SECTION context_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
  static XContext vulkan_hwnd_context;
 +static XContext vulkan_swapchain_context;
@@ -30,9 +30,9 @@ index d805b3c8be4..948e963b12b 100644
 
      vulkan_hwnd_context = XUniqueContext();
 +    vulkan_swapchain_context = XUniqueContext();
-     return;
 
- fail:
+     return TRUE;
+
 @@ -303,6 +305,8 @@ static VkResult X11DRV_vkCreateSwapchainKHR(VkDevice device,
  {
      struct wine_vk_surface *x11_surface = surface_from_handle(create_info->surface);
@@ -50,9 +50,9 @@ index d805b3c8be4..948e963b12b 100644
 +    result = pvkCreateSwapchainKHR(device, &create_info_host, NULL /* allocator */, swapchain);
 +    if (result == VK_SUCCESS)
 +    {
-+        pthread_mutex_lock(&vulkan_mutex);
++        EnterCriticalSection(&context_section);
 +        XSaveContext(gdi_display, (XID)(*swapchain), vulkan_swapchain_context, (char *)wine_vk_surface_grab(x11_surface));
-+        pthread_mutex_unlock(&vulkan_mutex);
++        LeaveCriticalSection(&context_section);
 +    }
 +    return result;
  }
@@ -71,11 +71,11 @@ index d805b3c8be4..948e963b12b 100644
 
      pvkDestroySwapchainKHR(device, swapchain, NULL /* allocator */);
 +
-+    pthread_mutex_lock(&vulkan_mutex);
++    EnterCriticalSection(&context_section);
 +    if (!XFindContext(gdi_display, (XID)swapchain, vulkan_swapchain_context, (char **)&surface))
 +        wine_vk_surface_release(surface);
 +    XDeleteContext(gdi_display, (XID)swapchain, vulkan_swapchain_context);
-+    pthread_mutex_unlock(&vulkan_mutex);
++    LeaveCriticalSection(&context_section);
  }
 
  static VkResult X11DRV_vkEnumerateInstanceExtensionProperties(const char *layer_name,
@@ -432,7 +432,7 @@ index c844ad35bb3..d702105c64b 100644
      struct wine_vk_surface *surface;
 +    HDC hdc = 0;
 +
-     pthread_mutex_lock(&vulkan_mutex);
+     EnterCriticalSection(&context_section);
      if (!XFindContext(gdi_display, (XID)hwnd, vulkan_hwnd_context, (char **)&surface))
      {
 +        hdc = surface->hdc;
@@ -443,7 +443,7 @@ index c844ad35bb3..d702105c64b 100644
          wine_vk_surface_release(surface);
      }
      XDeleteContext(gdi_display, (XID)hwnd, vulkan_hwnd_context);
-     pthread_mutex_unlock(&vulkan_mutex);
+     LeaveCriticalSection(&context_section);
 +    if (hdc) ReleaseDC(hwnd, hdc);
 +}
 +
@@ -475,10 +475,10 @@ index c844ad35bb3..d702105c64b 100644
 +void sync_vk_surface(HWND hwnd, BOOL known_child)
 +{
 +    struct wine_vk_surface *surface;
-+    pthread_mutex_lock(&vulkan_mutex);
++    EnterCriticalSection(&context_section);
 +    if (!XFindContext(gdi_display, (XID)hwnd, vulkan_hwnd_context, (char **)&surface))
 +        wine_vk_surface_set_offscreen(surface, known_child);
-+    pthread_mutex_unlock(&vulkan_mutex);
++    LeaveCriticalSection(&context_section);
  }
 
  void vulkan_thread_detach(void)
@@ -492,13 +492,13 @@ index c844ad35bb3..d702105c64b 100644
 +    VkResult result;
 +    HDC hdc = 0;
 +
-+    pthread_mutex_lock(&vulkan_mutex);
++    EnterCriticalSection(&context_section);
 +    if (!XFindContext(gdi_display, (XID)swapchain, vulkan_swapchain_context, (char **)&surface))
 +    {
 +        wine_vk_surface_grab(surface);
 +        hdc = surface->hdc;
 +    }
-+    pthread_mutex_unlock(&vulkan_mutex);
++    LeaveCriticalSection(&context_section);
 +
 +    result = pvkAcquireNextImageKHR(device, swapchain, timeout, semaphore, fence, image_index);
 +    if (result == VK_SUCCESS && hdc && surface && surface->offscreen)
@@ -673,7 +673,7 @@ index d702105c64b..1a077d9323e 100644
 +    BOOL wait_fence = FALSE;
      HDC hdc = 0;
 
-     pthread_mutex_lock(&vulkan_mutex);
+     EnterCriticalSection(&context_section);
 @@ -354,15 +364,35 @@ static VkResult X11DRV_vkAcquireNextImageKHR(VkDevice device,
      }
      LeaveCriticalSection(&context_section);

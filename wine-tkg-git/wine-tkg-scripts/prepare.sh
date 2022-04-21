@@ -1872,8 +1872,10 @@ EOM
 
 	# Standalone child window support for vk - Fixes World of Final Fantasy and others - https://bugs.winehq.org/show_bug.cgi?id=45277 - legacy patchset for older trees applied at an earlier stage in the script
 	if ( [ "$_childwindow_fix" = "true" ] && [ "$_proton_fs_hack" != "true" ] ); then
-	  if git merge-base --is-ancestor 262831bc63dca2d63171aa98d19e8f2566907dbc HEAD; then
+	  if git merge-base --is-ancestor 83501c7eaabcff25373910b33b4e5c779b56f398 HEAD; then
 	    _patchname='childwindow-proton.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
+	  elif git merge-base --is-ancestor 262831bc63dca2d63171aa98d19e8f2566907dbc HEAD; then
+	    _patchname='childwindow-proton-83501c7.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
 	  elif git merge-base --is-ancestor 56b8a67f5af4aa68662a848715875fdb0b3d10d9 HEAD; then
 	    _patchname='childwindow-proton-262831b.patch' && _patchmsg="Applied child window for vk patch" && nonuser_patcher
 	  elif git merge-base --is-ancestor 3a11be1d48251ecbc0b99d7f4b3325bddbcd486b HEAD; then
