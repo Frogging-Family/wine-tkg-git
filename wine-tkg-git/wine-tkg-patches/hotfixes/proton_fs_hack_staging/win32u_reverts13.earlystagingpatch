@@ -1,0 +1,108 @@
+diff --git a/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch b/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
+index 42038167..67d9ea1a 100644
+--- a/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
++++ b/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
+@@ -1,4 +1,4 @@
+-From 7e2d5c560d7f0a6b9ee6c13f8d932a12e1d0fcc7 Mon Sep 17 00:00:00 2001
++From d3ea251f51035613f67f6ee730a12d8775cb4b6b Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Thu, 19 Dec 2019 22:34:44 +0100
+ Subject: [PATCH] winex11.drv: Keep track of pointer and device button
+@@ -16,10 +16,10 @@ Original patch by Andrew Eikum <aeikum@codeweavers.com>.
+  4 files changed, 106 insertions(+), 8 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/keyboard.c b/dlls/winex11.drv/keyboard.c
+-index 786b6f4e084..a8f1b8baa12 100644
++index a55eaf071fe..148e4a7f62b 100644
+ --- a/dlls/winex11.drv/keyboard.c
+ +++ b/dlls/winex11.drv/keyboard.c
+-@@ -1875,13 +1875,24 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
++@@ -1882,13 +1882,24 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
+  {
+      HWND hwnd;
+  
+@@ -51,7 +51,7 @@ index 786b6f4e084..a8f1b8baa12 100644
+  }
+  
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index ab8c2041f0b..b36c64bcfd6 100644
++index 174c8a3b022..6d0861ad145 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -26,6 +26,9 @@
+@@ -196,22 +196,22 @@ index ab8c2041f0b..b36c64bcfd6 100644
+  
+      xinput2_available = XQueryExtension( gdi_display, "XInputExtension", &xinput2_opcode, &event, &error );
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index ae9d4577afa..82176d9ab2d 100644
++index e49a772325a..b78eab78dd1 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -693,6 +693,7 @@ extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
++@@ -696,6 +696,7 @@ extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
+  extern BOOL clip_fullscreen_window( HWND hwnd, BOOL reset ) DECLSPEC_HIDDEN;
+  extern void move_resize_window( HWND hwnd, int dir ) DECLSPEC_HIDDEN;
+  extern void X11DRV_InitKeyboard( Display *display ) DECLSPEC_HIDDEN;
+ +extern void X11DRV_InitMouse( Display *display ) DECLSPEC_HIDDEN;
+  extern DWORD X11DRV_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles, DWORD timeout,
+                                                   DWORD mask, DWORD flags ) DECLSPEC_HIDDEN;
+- extern HWND *build_hwnd_list(void) DECLSPEC_HIDDEN;
++ 
+ diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+-index c4ba72cf2fc..ddd0c5338db 100644
++index d8d4f4c172c..fecd98daf8e 100644
+ --- a/dlls/winex11.drv/x11drv_main.c
+ +++ b/dlls/winex11.drv/x11drv_main.c
+-@@ -686,6 +686,7 @@ static BOOL process_attach(void)
++@@ -706,6 +706,7 @@ static BOOL process_attach(void)
+      if (use_xkb) use_xkb = XkbUseExtension( gdi_display, NULL, NULL );
+  #endif
+      X11DRV_InitKeyboard( gdi_display );
+@@ -220,5 +220,5 @@ index c4ba72cf2fc..ddd0c5338db 100644
+  
+      init_user_driver();
+ -- 
+-2.35.1
++2.34.1
+ 
+diff --git a/patches/winex11.drv-Query_server_position/0001-winex11.drv-window-Query-the-X-server-for-the-actual.patch b/patches/winex11.drv-Query_server_position/0001-winex11.drv-window-Query-the-X-server-for-the-actual.patch
+index 2a7cd285..b25db876 100644
+--- a/patches/winex11.drv-Query_server_position/0001-winex11.drv-window-Query-the-X-server-for-the-actual.patch
++++ b/patches/winex11.drv-Query_server_position/0001-winex11.drv-window-Query-the-X-server-for-the-actual.patch
+@@ -1,4 +1,4 @@
+-From 4fac3395e30a703108f7c814795abbad99cd8282 Mon Sep 17 00:00:00 2001
++From 38d9b194e83b02f56d734da88396ac06ddb7af1f Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
+ Date: Mon, 24 Dec 2018 14:26:57 +0200
+ Subject: [PATCH] winex11.drv/window: Query the X server for the actual rect of
+@@ -22,11 +22,11 @@ Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
+  1 file changed, 21 insertions(+), 1 deletion(-)
+ 
+ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+-index 4c4e47884ff..78da3bf6b32 100644
++index 97dee52..7f436ac 100644
+ --- a/dlls/winex11.drv/window.c
+ +++ b/dlls/winex11.drv/window.c
+-@@ -206,6 +206,25 @@ static BOOL has_owned_popups( HWND hwnd )
+-     return ret;
++@@ -196,6 +196,25 @@ static BOOL has_owned_popups( HWND hwnd )
++     return result.found;
+  }
+  
+ +static BOOL is_actual_window_rect_mapped(const struct x11drv_win_data *data)
+@@ -51,7 +51,7 @@ index 4c4e47884ff..78da3bf6b32 100644
+  
+  /***********************************************************************
+   *              alloc_win_data
+-@@ -2507,7 +2526,8 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
++@@ -2400,7 +2419,8 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
+      {
+          if (((swp_flags & SWP_HIDEWINDOW) && !(new_style & WS_VISIBLE)) ||
+              (!event_type && !(new_style & WS_MINIMIZE) &&
+@@ -62,5 +62,5 @@ index 4c4e47884ff..78da3bf6b32 100644
+              release_win_data( data );
+              unmap_window( hwnd );
+ -- 
+-2.35.1
++1.9.1
+ 
