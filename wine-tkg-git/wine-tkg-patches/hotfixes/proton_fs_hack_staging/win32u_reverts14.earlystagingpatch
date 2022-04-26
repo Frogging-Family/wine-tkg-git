@@ -1,0 +1,179 @@
+diff --git a/patches/Pipelight/0004-winex11.drv-Indicate-direct-rendering-through-OpenGL.patch b/patches/Pipelight/0004-winex11.drv-Indicate-direct-rendering-through-OpenGL.patch
+index 321f4a09..40459822 100644
+--- a/patches/Pipelight/0004-winex11.drv-Indicate-direct-rendering-through-OpenGL.patch
++++ b/patches/Pipelight/0004-winex11.drv-Indicate-direct-rendering-through-OpenGL.patch
+@@ -1,18 +1,17 @@
+-From a9cf27a493697c97249ce526483d25c871c053c4 Mon Sep 17 00:00:00 2001
++From 7d77edaea3c4ba8067e4b73034df5c58940daebc Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Michael=20M=C3=BCller?= <michael@fds-team.de>
+ Date: Sun, 1 Jun 2014 22:51:32 +0200
+-Subject: [PATCH] winex11.drv: Indicate direct rendering through OpenGL
+- extension
++Subject: winex11.drv: Indicate direct rendering through OpenGL extension
+ 
+ ---
+- dlls/winex11.drv/opengl.c | 7 +++++--
+- 1 file changed, 5 insertions(+), 2 deletions(-)
++ dlls/winex11.drv/opengl.c |    8 ++++++--
++ 1 file changed, 6 insertions(+), 2 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/opengl.c b/dlls/winex11.drv/opengl.c
+-index 92555841f71..71e7ecbcf7c 100644
++index 71af3db..966d32d 100644
+ --- a/dlls/winex11.drv/opengl.c
+ +++ b/dlls/winex11.drv/opengl.c
+-@@ -410,6 +410,7 @@ static int GLXErrorHandler(Display *dpy, XErrorEvent *event, void *arg)
++@@ -440,6 +440,7 @@ static int GLXErrorHandler(Display *dpy,
+  static BOOL X11DRV_WineGL_InitOpenglInfo(void)
+  {
+      static const char legacy_extensions[] = " WGL_EXT_extensions_string WGL_EXT_swap_control";
+@@ -20,14 +19,14 @@ index 92555841f71..71e7ecbcf7c 100644
+  
+      int screen = DefaultScreen(gdi_display);
+      Window win = 0, root = 0;
+-@@ -465,16 +466,18 @@ static BOOL X11DRV_WineGL_InitOpenglInfo(void)
++@@ -493,16 +494,18 @@ static BOOL X11DRV_WineGL_InitOpenglInfo
+      }
+      gl_renderer = (const char *)opengl_funcs.gl.p_glGetString(GL_RENDERER);
+      gl_version  = (const char *)opengl_funcs.gl.p_glGetString(GL_VERSION);
+ +    glx_direct = pglXIsDirect(gdi_display, ctx);
+      str = (const char *) opengl_funcs.gl.p_glGetString(GL_EXTENSIONS);
+--    glExtensions = malloc( strlen(str) + sizeof(legacy_extensions) );
+-+    glExtensions = malloc( strlen(str)+sizeof(legacy_extensions)+sizeof(direct_extension) );
++-    glExtensions = HeapAlloc(GetProcessHeap(), 0, strlen(str)+sizeof(legacy_extensions));
+++    glExtensions = HeapAlloc(GetProcessHeap(), 0, strlen(str)+sizeof(legacy_extensions)+sizeof(direct_extension));
+      strcpy(glExtensions, str);
+      strcat(glExtensions, legacy_extensions);
+ +    if (glx_direct)
+@@ -42,5 +41,4 @@ index 92555841f71..71e7ecbcf7c 100644
+      TRACE("GL version             : %s.\n", gl_version);
+      TRACE("GL renderer            : %s.\n", gl_renderer);
+ -- 
+-2.35.1
+-
++1.7.9.5
+
+diff --git a/patches/user32-Mouse_Message_Hwnd/0005-server-Add-support-for-a-layered-window-region.-v2.patch b/patches/user32-Mouse_Message_Hwnd/0005-server-Add-support-for-a-layered-window-region.-v2.patch
+index e1ee3c67..75290dc0 100644
+--- a/patches/user32-Mouse_Message_Hwnd/0005-server-Add-support-for-a-layered-window-region.-v2.patch
++++ b/patches/user32-Mouse_Message_Hwnd/0005-server-Add-support-for-a-layered-window-region.-v2.patch
+@@ -1,4 +1,4 @@
+-From 54065eb714959facb7f4d463d9c8a11e5c6b2b42 Mon Sep 17 00:00:00 2001
++From 484817725cd42363fb9c952a1661c4332ac5d633 Mon Sep 17 00:00:00 2001
+ From: Dmitry Timoshkov <dmitry@baikal.ru>
+ Date: Wed, 17 May 2017 23:55:55 +0800
+ Subject: [PATCH] server: Add support for a layered window region. (v3)
+@@ -11,7 +11,7 @@ Subject: [PATCH] server: Add support for a layered window region. (v3)
+  4 files changed, 84 insertions(+), 2 deletions(-)
+ 
+ diff --git a/dlls/user32/tests/input.c b/dlls/user32/tests/input.c
+-index e15de7e5ccd..568fd26bb69 100644
++index fe832f4e00c..9b764d2c985 100644
+ --- a/dlls/user32/tests/input.c
+ +++ b/dlls/user32/tests/input.c
+ @@ -3695,13 +3695,11 @@ static void test_Input_mouse(void)
+@@ -29,7 +29,7 @@ index e15de7e5ccd..568fd26bb69 100644
+              got_button_up = TRUE;
+              break;
+ diff --git a/dlls/winex11.drv/bitblt.c b/dlls/winex11.drv/bitblt.c
+-index 550c5f06f37..8204e3dba9e 100644
++index bae0784be78..158c716d052 100644
+ --- a/dlls/winex11.drv/bitblt.c
+ +++ b/dlls/winex11.drv/bitblt.c
+ @@ -46,6 +46,7 @@
+@@ -98,7 +98,7 @@ index 550c5f06f37..8204e3dba9e 100644
+      }
+  
+ @@ -1751,6 +1795,7 @@ static void update_surface_region( struct x11drv_window_surface *surface )
+-         free( data );
++         HeapFree( GetProcessHeap(), 0, data );
+      }
+  
+ +    set_layer_region( surface, rgn );
+@@ -106,10 +106,10 @@ index 550c5f06f37..8204e3dba9e 100644
+  #endif
+  }
+ diff --git a/server/protocol.def b/server/protocol.def
+-index 438bbce902b..a4f22aa85de 100644
++index d9bed6855e9..933e2185ba4 100644
+ --- a/server/protocol.def
+ +++ b/server/protocol.def
+-@@ -2503,6 +2503,13 @@ enum coords_relative
++@@ -2501,6 +2501,13 @@ enum coords_relative
+  @END
+  
+  
+@@ -124,7 +124,7 @@ index 438bbce902b..a4f22aa85de 100644
+  @REQ(get_update_region)
+      user_handle_t  window;        /* handle to the window */
+ diff --git a/server/window.c b/server/window.c
+-index ce1574260b6..34d1e7af979 100644
++index 7675cd1103d..21475ffdae0 100644
+ --- a/server/window.c
+ +++ b/server/window.c
+ @@ -71,6 +71,7 @@ struct window
+@@ -135,7 +135,7 @@ index ce1574260b6..34d1e7af979 100644
+      struct region   *update_region;   /* update region (relative to window rect) */
+      unsigned int     style;           /* window style */
+      unsigned int     ex_style;        /* window extended style */
+-@@ -561,6 +562,7 @@ static struct window *create_window( struct window *parent, struct window *owner
++@@ -560,6 +561,7 @@ static struct window *create_window( struct window *parent, struct window *owner
+      win->atom           = atom;
+      win->last_active    = win->handle;
+      win->win_region     = NULL;
+@@ -143,7 +143,7 @@ index ce1574260b6..34d1e7af979 100644
+      win->update_region  = NULL;
+      win->style          = 0;
+      win->ex_style       = 0;
+-@@ -804,6 +806,9 @@ static int is_point_in_window( struct window *win, int *x, int *y, unsigned int
++@@ -803,6 +805,9 @@ static int is_point_in_window( struct window *win, int *x, int *y, unsigned int
+      if (win->win_region &&
+          !point_in_region( win->win_region, *x - win->window_rect.left, *y - win->window_rect.top ))
+          return 0;  /* not in window region */
+@@ -153,7 +153,7 @@ index ce1574260b6..34d1e7af979 100644
+      return 1;
+  }
+  
+-@@ -1949,6 +1954,14 @@ static void set_window_region( struct window *win, struct region *region, int re
++@@ -1948,6 +1953,14 @@ static void set_window_region( struct window *win, struct region *region, int re
+  }
+  
+  
+@@ -168,7 +168,7 @@ index ce1574260b6..34d1e7af979 100644
+  /* destroy a window */
+  void free_window_handle( struct window *win )
+  {
+-@@ -2012,6 +2025,7 @@ void free_window_handle( struct window *win )
++@@ -2011,6 +2024,7 @@ void free_window_handle( struct window *win )
+      detach_window_thread( win );
+  
+      if (win->parent) set_parent_window( win, NULL );
+@@ -176,7 +176,7 @@ index ce1574260b6..34d1e7af979 100644
+      free_user_handle( win->handle );
+      win->handle = 0;
+      release_object( win );
+-@@ -2673,6 +2687,24 @@ DECL_HANDLER(set_window_region)
++@@ -2672,6 +2686,24 @@ DECL_HANDLER(set_window_region)
+  }
+  
+  
+@@ -202,5 +202,5 @@ index ce1574260b6..34d1e7af979 100644
+  DECL_HANDLER(get_update_region)
+  {
+ -- 
+-2.35.1
++2.34.1
+ 
+diff --git a/patches/user32-msgbox-Support-WM_COPY-mesg/0001-user32-msgbox-Support-WM_COPY-Message.patch b/patches/user32-msgbox-Support-WM_COPY-mesg/0001-user32-msgbox-Support-WM_COPY-Message.patch
+index f46a4d76..409d472e 100644
+--- a/patches/user32-msgbox-Support-WM_COPY-mesg/0001-user32-msgbox-Support-WM_COPY-Message.patch
++++ b/patches/user32-msgbox-Support-WM_COPY-mesg/0001-user32-msgbox-Support-WM_COPY-Message.patch
+@@ -106,7 +106,7 @@ index 3da1c0a3445..b29af2161b6 100644
+ +            GlobalUnlock(hMem);
+ +
+ +            OpenClipboard(hwnd);
+-+            NtUserEmptyClipboard();
+++            EmptyClipboard();
+ +            SetClipboardData(CF_UNICODETEXT, hMem);
+ +            NtUserCloseClipboard();
+ +        }
