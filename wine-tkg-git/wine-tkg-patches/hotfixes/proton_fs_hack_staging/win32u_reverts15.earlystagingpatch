@@ -1,0 +1,175 @@
+diff --git a/patches/loader-KeyboardLayouts/0002-user32-Improve-GetKeyboardLayoutList.patch b/patches/loader-KeyboardLayouts/0002-user32-Improve-GetKeyboardLayoutList.patch
+index 1ab757e0..ccce00bf 100644
+--- a/patches/loader-KeyboardLayouts/0002-user32-Improve-GetKeyboardLayoutList.patch
++++ b/patches/loader-KeyboardLayouts/0002-user32-Improve-GetKeyboardLayoutList.patch
+@@ -1,4 +1,4 @@
+-From cc964cf26e79a89fb3d7345847a23d93368e3eed Mon Sep 17 00:00:00 2001
++From dc71919fd156f8fabcb47594cb13ee3210ff571c Mon Sep 17 00:00:00 2001
+ From: Alistair Leslie-Hughes <leslie_alistair@hotmail.com>
+ Date: Tue, 9 Jul 2019 14:13:28 +1000
+ Subject: [PATCH] user32: Do not enumerate the registry in
+@@ -9,23 +9,23 @@ not the complete list from the registry.
+ ---
+  dlls/user32/input.c       |  1 -
+  dlls/user32/tests/input.c | 35 +++++++++++++++++++++++++++++++++++
+- dlls/win32u/input.c       | 33 +--------------------------------
+- 3 files changed, 36 insertions(+), 33 deletions(-)
++ dlls/win32u/input.c       | 35 ++---------------------------------
++ 3 files changed, 37 insertions(+), 34 deletions(-)
+ 
+ diff --git a/dlls/user32/input.c b/dlls/user32/input.c
+-index 06756b5551e..99abab38ccf 100644
++index 6cf60abeae2..3907430dd22 100644
+ --- a/dlls/user32/input.c
+ +++ b/dlls/user32/input.c
+-@@ -521,7 +521,6 @@ BOOL WINAPI UnloadKeyboardLayout( HKL layout )
+-     return FALSE;
++@@ -802,7 +802,6 @@ static void CALLBACK TrackMouseEventProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent,
++     }
+  }
+  
+ -
+  /***********************************************************************
+-  *		EnableMouseInPointer (USER32.@)
+-  */
++  * TrackMouseEvent [USER32]
++  *
+ diff --git a/dlls/user32/tests/input.c b/dlls/user32/tests/input.c
+-index 8b84a39d009..d7520459c6d 100644
++index 79f3dfc3dc0..b3c1bd560ae 100644
+ --- a/dlls/user32/tests/input.c
+ +++ b/dlls/user32/tests/input.c
+ @@ -4481,6 +4481,40 @@ static void test_SendInput(void)
+@@ -78,10 +78,10 @@ index 8b84a39d009..d7520459c6d 100644
+      if(pGetMouseMovePointsEx)
+          test_GetMouseMovePointsEx(argv[0]);
+ diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+-index 28fc5a918c8..24782e405a7 100644
++index 72af32fd471..a18f81fc331 100644
+ --- a/dlls/win32u/input.c
+ +++ b/dlls/win32u/input.c
+-@@ -933,11 +933,7 @@ HKL WINAPI NtUserActivateKeyboardLayout( HKL layout, UINT flags )
++@@ -821,11 +821,7 @@ HKL WINAPI NtUserActivateKeyboardLayout( HKL layout, UINT flags )
+   */
+  UINT WINAPI NtUserGetKeyboardLayoutList( INT size, HKL *layouts )
+  {
+@@ -94,7 +94,7 @@ index 28fc5a918c8..24782e405a7 100644
+      HKL layout;
+  
+      TRACE_(keyboard)( "size %d, layouts %p.\n", size, layouts );
+-@@ -951,33 +947,6 @@ UINT WINAPI NtUserGetKeyboardLayoutList( INT size, HKL *layouts )
++@@ -839,33 +835,6 @@ UINT WINAPI NtUserGetKeyboardLayoutList( INT size, HKL *layouts )
+      if (size && layouts)
+      {
+          layouts[count - 1] = layout;
+diff --git a/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch b/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
+index b4cc86c0..4da66e90 100644
+--- a/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
++++ b/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
+@@ -1,4 +1,4 @@
+-From c336f99371aaf087b85257de1087b475452f2f84 Mon Sep 17 00:00:00 2001
++From 308420aac52197c2add1e472f509b109a17db961 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
+ Date: Mon, 22 Jul 2019 15:29:25 +0300
+ Subject: [PATCH] user32/focus: Prevent a recursive loop with the activation
+@@ -15,13 +15,26 @@ actually depend on this behavior, so it is needed.
+ Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=46274
+ Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
+ ---
++ dlls/user32/focus.c          |  1 -
+  dlls/user32/tests/msg.c      |  2 +-
+- dlls/win32u/input.c          | 41 ++++++++++++++++++++++++------------
++ dlls/win32u/input.c          | 40 ++++++++++++++++++++++++------------
+  dlls/win32u/ntuser_private.h |  1 +
+- 3 files changed, 30 insertions(+), 14 deletions(-)
++ 4 files changed, 29 insertions(+), 15 deletions(-)
+ 
++diff --git a/dlls/user32/focus.c b/dlls/user32/focus.c
++index ff41cf716a1..a044133ab40 100644
++--- a/dlls/user32/focus.c
+++++ b/dlls/user32/focus.c
++@@ -31,7 +31,6 @@
++ #include "user_private.h"
++ #include "wine/server.h"
++ 
++-
++ /*******************************************************************
++  *		FOCUS_MouseActivate
++  *
+ diff --git a/dlls/user32/tests/msg.c b/dlls/user32/tests/msg.c
+-index c0a74d8edbe..585ff299142 100644
++index f939e91764c..af4fee6b3fc 100644
+ --- a/dlls/user32/tests/msg.c
+ +++ b/dlls/user32/tests/msg.c
+ @@ -5571,7 +5571,7 @@ static void test_messages(void)
+@@ -34,10 +47,10 @@ index c0a74d8edbe..585ff299142 100644
+  
+      if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_MINIMIZE)
+ diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+-index 28fc5a918c8..b8fd5622468 100644
++index 328f270fb1f..ade8c313423 100644
+ --- a/dlls/win32u/input.c
+ +++ b/dlls/win32u/input.c
+-@@ -1547,7 +1547,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1287,7 +1287,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+  {
+      HWND previous = get_active_window();
+      BOOL ret;
+@@ -46,7 +59,7 @@ index 28fc5a918c8..b8fd5622468 100644
+      CBTACTIVATESTRUCT cbt;
+  
+      if (previous == hwnd)
+-@@ -1556,16 +1556,24 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1296,16 +1296,24 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          return TRUE;
+      }
+  
+@@ -80,7 +93,7 @@ index 28fc5a918c8..b8fd5622468 100644
+      }
+  
+      SERVER_START_REQ( set_active_window )
+-@@ -1585,7 +1593,11 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1325,7 +1333,11 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          if (send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ))
+              send_message_timeout( HWND_BROADCAST, WM_PALETTEISCHANGING, (WPARAM)hwnd, 0,
+                                    SMTO_ABORTIFHUNG, 2000, NULL, FALSE );
+@@ -93,7 +106,7 @@ index 28fc5a918c8..b8fd5622468 100644
+      }
+  
+      old_thread = previous ? get_window_thread( previous, NULL ) : 0;
+-@@ -1617,7 +1629,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1357,7 +1369,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          }
+      }
+  
+@@ -102,13 +115,7 @@ index 28fc5a918c8..b8fd5622468 100644
+      {
+          send_message( hwnd, WM_NCACTIVATE, hwnd == NtUserGetForegroundWindow(), (LPARAM)previous );
+          send_message( hwnd, WM_ACTIVATE,
+-@@ -1637,12 +1649,15 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+-         /* Do not change focus if the window is no more active */
+-         if (hwnd == info.hwndActive)
+-         {
+-+            /* this line exists to keep this patch from applying in the wrong place */
+-             if (!info.hwndFocus || !hwnd || NtUserGetAncestor( info.hwndFocus, GA_ROOT ) != hwnd)
+-                 set_focus_window( hwnd );
++@@ -1382,7 +1394,9 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          }
+      }
+  
+@@ -120,7 +127,7 @@ index 28fc5a918c8..b8fd5622468 100644
+  
+  /**********************************************************************
+ diff --git a/dlls/win32u/ntuser_private.h b/dlls/win32u/ntuser_private.h
+-index fe9d7e18bc9..e852a0d5aa0 100644
++index 6afe3955787..9994b56bac2 100644
+ --- a/dlls/win32u/ntuser_private.h
+ +++ b/dlls/win32u/ntuser_private.h
+ @@ -121,6 +121,7 @@ typedef struct tagWND
+@@ -132,5 +139,5 @@ index fe9d7e18bc9..e852a0d5aa0 100644
+  #define WND_OTHER_PROCESS ((WND *)1)  /* returned by WIN_GetPtr on unknown window handles */
+  #define WND_DESKTOP       ((WND *)2)  /* returned by WIN_GetPtr on the desktop window */
+ -- 
+-2.34.1
++2.35.1
+ 
