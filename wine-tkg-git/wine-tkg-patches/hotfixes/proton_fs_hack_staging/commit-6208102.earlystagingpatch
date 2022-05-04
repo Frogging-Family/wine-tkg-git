@@ -1,0 +1,85 @@
+From 6208102fcafd4d33f8ff8492a610870a5aab828e Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Wed, 4 May 2022 21:25:52 +0200
+Subject: Revert "user32-rawinput-mouse: Directly use win32u for user
+ functions."
+
+This reverts commit 5147239513e46eade22c4fafbf4c0b5e388574c7.
+
+diff --git a/patches/user32-rawinput-mouse/0008-winex11.drv-Listen-to-RawMotion-and-RawButton-events.patch b/patches/user32-rawinput-mouse/0008-winex11.drv-Listen-to-RawMotion-and-RawButton-events.patch
+index 15c56fd6..8ed6d475 100644
+--- a/patches/user32-rawinput-mouse/0008-winex11.drv-Listen-to-RawMotion-and-RawButton-events.patch
++++ b/patches/user32-rawinput-mouse/0008-winex11.drv-Listen-to-RawMotion-and-RawButton-events.patch
+@@ -1,4 +1,4 @@
+-From f1a36450c2cbb7975e310a1301d0ed4e1d2670a2 Mon Sep 17 00:00:00 2001
++From d600e283addb830dace3df98f7eb9aaf9fd040ab Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Mon, 25 Oct 2021 11:45:47 +0200
+ Subject: [PATCH] winex11.drv: Listen to RawMotion and RawButton* events in the
+@@ -15,7 +15,7 @@ instance used in our dinput implementation.
+  4 files changed, 112 insertions(+), 9 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+-index e386a039e26..0b5d43e6fbd 100644
++index e75ae679106..ffad1ffa9eb 100644
+ --- a/dlls/winex11.drv/event.c
+ +++ b/dlls/winex11.drv/event.c
+ @@ -321,6 +321,10 @@ static enum event_merge_action merge_raw_motion_events( XIRawEvent *prev, XIRawE
+@@ -54,7 +54,7 @@ index e386a039e26..0b5d43e6fbd 100644
+  #endif
+          }
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index a02d8c552c2..b6b84174e0d 100644
++index a02d8c552c2..0069acde17e 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -412,7 +412,18 @@ void x11drv_xinput_enable( Display *display, Window window, long event_mask )
+@@ -63,7 +63,7 @@ index a02d8c552c2..b6b84174e0d 100644
+      XISetMask( mask_bits, XI_RawMotion );
+ -    XISetMask( mask_bits, XI_ButtonPress );
+ +
+-+    if (NtUserGetWindowThread( NtUserGetDesktopWindow(), NULL ) == GetCurrentThreadId())
+++    if (GetWindowThreadProcessId( GetDesktopWindow(), NULL ) == GetCurrentThreadId())
+ +    {
+ +        XISetMask( mask_bits, XI_RawButtonPress );
+ +        XISetMask( mask_bits, XI_RawButtonRelease );
+@@ -227,7 +227,7 @@ index a02d8c552c2..b6b84174e0d 100644
+      default:
+          TRACE( "Unhandled event %#x\n", event->evtype );
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index b78eab78dd1..5f0e00b2fb2 100644
++index b2e5cb41b73..186e3ff5404 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+ @@ -397,6 +397,7 @@ struct x11drv_thread_data
+@@ -239,14 +239,14 @@ index b78eab78dd1..5f0e00b2fb2 100644
+  };
+  
+ diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+-index fecd98daf8e..476743ba934 100644
++index fecd98daf8e..fd5c978e03f 100644
+ --- a/dlls/winex11.drv/x11drv_main.c
+ +++ b/dlls/winex11.drv/x11drv_main.c
+ @@ -725,6 +725,8 @@ void X11DRV_ThreadDetach(void)
+      if (data)
+      {
+          vulkan_thread_detach();
+-+        if (NtUserGetWindowThread( NtUserGetDesktopWindow(), NULL ) == GetCurrentThreadId())
+++        if (GetWindowThreadProcessId( GetDesktopWindow(), NULL ) == GetCurrentThreadId())
+ +            x11drv_xinput_disable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
+          if (data->xim) XCloseIM( data->xim );
+          if (data->font_set) XFreeFontSet( data->display, data->font_set );
+@@ -255,11 +255,11 @@ index fecd98daf8e..476743ba934 100644
+      if (use_xim) X11DRV_SetupXIM();
+  
+      x11drv_xinput_init();
+-+    if (NtUserGetWindowThread( NtUserGetDesktopWindow(), NULL ) == GetCurrentThreadId())
+++    if (GetWindowThreadProcessId( GetDesktopWindow(), NULL ) == GetCurrentThreadId())
+ +        x11drv_xinput_enable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
+  
+      return data;
+  }
+ -- 
+-2.34.1
++2.35.1
+ 

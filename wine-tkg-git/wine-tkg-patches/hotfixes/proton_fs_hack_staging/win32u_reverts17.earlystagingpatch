@@ -1,0 +1,661 @@
+diff --git a/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch b/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
+index 9d978416..98ec5071 100644
+--- a/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
++++ b/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
+@@ -1,4 +1,4 @@
+-From d7eb416f7f606bcc45e71bd48b1eb47b2c804f1b Mon Sep 17 00:00:00 2001
++From c8a0d9046bb6124f6d5097398c96e33949d590c1 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Thu, 23 Jan 2020 11:00:19 +0100
+ Subject: [PATCH] winex11.drv: Support XInput2 events for individual windows.
+@@ -14,10 +14,10 @@ which can bring additional information.
+  5 files changed, 65 insertions(+), 17 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/desktop.c b/dlls/winex11.drv/desktop.c
+-index f8c44549fc1..804f4ea85f0 100644
++index a89824772d0..6b19f8274a8 100644
+ --- a/dlls/winex11.drv/desktop.c
+ +++ b/dlls/winex11.drv/desktop.c
+-@@ -357,6 +357,7 @@ BOOL CDECL X11DRV_create_desktop( UINT width, UINT height )
++@@ -358,6 +358,7 @@ BOOL CDECL X11DRV_create_desktop( UINT width, UINT height )
+                           0, 0, width, height, 0, default_visual.depth, InputOutput, default_visual.visual,
+                           CWEventMask | CWCursor | CWColormap, &win_attr );
+      if (!win) return FALSE;
+@@ -26,10 +26,10 @@ index f8c44549fc1..804f4ea85f0 100644
+  
+      X11DRV_init_desktop( win, width, height );
+ diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+-index a6499400283..fe1547bbc23 100644
++index eb2f0c6626c..e75ae679106 100644
+ --- a/dlls/winex11.drv/event.c
+ +++ b/dlls/winex11.drv/event.c
+-@@ -239,6 +239,13 @@ static Bool filter_event( Display *display, XEvent *event, char *arg )
++@@ -238,6 +238,13 @@ static Bool filter_event( Display *display, XEvent *event, char *arg )
+          return (mask & QS_MOUSEBUTTON) != 0;
+  #ifdef GenericEvent
+      case GenericEvent:
+@@ -44,7 +44,7 @@ index a6499400283..fe1547bbc23 100644
+      case MotionNotify:
+      case EnterNotify:
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index fc959537574..04d12649495 100644
++index 202ddda4dd3..0764b641bd9 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -304,20 +304,32 @@ void x11drv_xinput_init(void)
+@@ -178,17 +178,17 @@ index fc959537574..04d12649495 100644
+ @@ -530,7 +557,7 @@ LRESULT clip_cursor_notify( HWND hwnd, HWND prev_clip_hwnd, HWND new_clip_hwnd )
+          TRACE( "clip hwnd reset from %p\n", hwnd );
+          data->clip_hwnd = 0;
+-         data->clip_reset = NtGetTickCount();
++         data->clip_reset = GetTickCount();
+ -        disable_xinput2();
+ +        x11drv_xinput_disable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
+          NtUserDestroyWindow( hwnd );
+      }
+      else if (prev_clip_hwnd)
+ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+-index de52023c467..797bdfc9f7f 100644
++index 8b191ca23ed..ca6cbc8129c 100644
+ --- a/dlls/winex11.drv/window.c
+ +++ b/dlls/winex11.drv/window.c
+-@@ -353,6 +353,7 @@ static void sync_window_style( struct x11drv_win_data *data )
++@@ -378,6 +378,7 @@ static void sync_window_style( struct x11drv_win_data *data )
+          int mask = get_window_attributes( data, &attr );
+  
+          XChangeWindowAttributes( data->display, data->whole_window, mask, &attr );
+@@ -196,7 +196,7 @@ index de52023c467..797bdfc9f7f 100644
+      }
+  }
+  
+-@@ -1588,6 +1589,7 @@ static void create_whole_window( struct x11drv_win_data *data )
++@@ -1605,6 +1606,7 @@ static void create_whole_window( struct x11drv_win_data *data )
+                                          data->vis.visual, mask, &attr );
+      if (!data->whole_window) goto done;
+  
+@@ -204,7 +204,7 @@ index de52023c467..797bdfc9f7f 100644
+      set_initial_wm_hints( data->display, data->whole_window );
+      set_wm_hints( data );
+  
+-@@ -1902,6 +1904,7 @@ BOOL X11DRV_CreateWindow( HWND hwnd )
++@@ -1919,6 +1921,7 @@ BOOL X11DRV_CreateWindow( HWND hwnd )
+          data->clip_window = XCreateWindow( data->display, root_window, 0, 0, 1, 1, 0, 0,
+                                             InputOnly, default_visual.visual,
+                                             CWOverrideRedirect | CWEventMask, &attr );
+@@ -213,10 +213,10 @@ index de52023c467..797bdfc9f7f 100644
+          NtUserSetProp( hwnd, clip_window_prop, (HANDLE)data->clip_window );
+          X11DRV_InitClipboard();
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index e4a59c82c07..103117e0ce3 100644
++index 2130a35336d..344625aff71 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -252,6 +252,8 @@ extern void X11DRV_ThreadDetach(void) DECLSPEC_HIDDEN;
++@@ -248,6 +248,8 @@ extern void X11DRV_ThreadDetach(void) DECLSPEC_HIDDEN;
+  extern void X11DRV_Xcursor_Init(void) DECLSPEC_HIDDEN;
+  extern void x11drv_xinput_load(void) DECLSPEC_HIDDEN;
+  extern void x11drv_xinput_init(void) DECLSPEC_HIDDEN;
+@@ -225,7 +225,7 @@ index e4a59c82c07..103117e0ce3 100644
+  
+  extern DWORD copy_image_bits( BITMAPINFO *info, BOOL is_r8g8b8, XImage *image,
+                                const struct gdi_image_bits *src_bits, struct gdi_image_bits *dst_bits,
+-@@ -373,6 +375,14 @@ struct x11drv_escape_flush_gl_drawable
++@@ -368,6 +370,14 @@ struct x11drv_escape_flush_gl_drawable
+   * X11 USER driver
+   */
+  
+@@ -240,7 +240,7 @@ index e4a59c82c07..103117e0ce3 100644
+  struct x11drv_thread_data
+  {
+      Display *display;
+-@@ -388,7 +398,7 @@ struct x11drv_thread_data
++@@ -383,7 +393,7 @@ struct x11drv_thread_data
+      HWND     clip_hwnd;            /* message window stored in desktop while clipping is active */
+      DWORD    clip_reset;           /* time when clipping was last reset */
+  #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+diff --git a/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch b/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
+index 065dd1fe..99b80ba1 100644
+--- a/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
++++ b/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
+@@ -1,4 +1,4 @@
+-From fc733a73005bccb09df5572755595e427f667d56 Mon Sep 17 00:00:00 2001
++From 23fb37985e30df7e888a08cfbb59751703118c8a Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Thu, 19 Dec 2019 22:34:44 +0100
+ Subject: [PATCH] winex11.drv: Keep track of pointer and device button
+@@ -16,7 +16,7 @@ Original patch by Andrew Eikum <aeikum@codeweavers.com>.
+  4 files changed, 106 insertions(+), 8 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/keyboard.c b/dlls/winex11.drv/keyboard.c
+-index 6b876c3bee9..2c7c2e6c5be 100644
++index 170231c0026..4fd0226c765 100644
+ --- a/dlls/winex11.drv/keyboard.c
+ +++ b/dlls/winex11.drv/keyboard.c
+ @@ -1876,13 +1876,24 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
+@@ -51,7 +51,7 @@ index 6b876c3bee9..2c7c2e6c5be 100644
+  }
+  
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index abd136bca02..8878a99d14e 100644
++index 0772ee7c46f..cfa64137411 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -26,6 +26,9 @@
+@@ -196,22 +196,22 @@ index abd136bca02..8878a99d14e 100644
+  
+      xinput2_available = XQueryExtension( gdi_display, "XInputExtension", &xinput2_opcode, &event, &error );
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index 4a1504567a1..f2ae3ecdfa3 100644
++index 7f10201cd79..d2866c73d45 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -698,6 +698,7 @@ extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
++@@ -693,6 +693,7 @@ extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
+  extern BOOL clip_fullscreen_window( HWND hwnd, BOOL reset ) DECLSPEC_HIDDEN;
+  extern void move_resize_window( HWND hwnd, int dir ) DECLSPEC_HIDDEN;
+  extern void X11DRV_InitKeyboard( Display *display ) DECLSPEC_HIDDEN;
+ +extern void X11DRV_InitMouse( Display *display ) DECLSPEC_HIDDEN;
+- extern NTSTATUS X11DRV_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
+-                                                     const LARGE_INTEGER *timeout,
+-                                                     DWORD mask, DWORD flags ) DECLSPEC_HIDDEN;
++ extern DWORD X11DRV_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles, DWORD timeout,
++                                                  DWORD mask, DWORD flags ) DECLSPEC_HIDDEN;
++ extern HWND *build_hwnd_list(void) DECLSPEC_HIDDEN;
+ diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+-index 7ed0a6e3a02..33814d1f6fb 100644
++index c4ba72cf2fc..ddd0c5338db 100644
+ --- a/dlls/winex11.drv/x11drv_main.c
+ +++ b/dlls/winex11.drv/x11drv_main.c
+-@@ -685,6 +685,7 @@ static BOOL process_attach(void)
++@@ -686,6 +686,7 @@ static BOOL process_attach(void)
+      if (use_xkb) use_xkb = XkbUseExtension( gdi_display, NULL, NULL );
+  #endif
+      X11DRV_InitKeyboard( gdi_display );
+@@ -220,5 +220,5 @@ index 7ed0a6e3a02..33814d1f6fb 100644
+  
+      init_user_driver();
+ -- 
+-2.35.1
++2.34.1
+ 
+diff --git a/patches/user32-rawinput-mouse/0006-user32-Set-SEND_HWMSG_RAWINPUT-flags-only-when-RAWIN.patch b/patches/user32-rawinput-mouse/0006-user32-Set-SEND_HWMSG_RAWINPUT-flags-only-when-RAWIN.patch
+index abc8a2f4..bd54649e 100644
+--- a/patches/user32-rawinput-mouse/0006-user32-Set-SEND_HWMSG_RAWINPUT-flags-only-when-RAWIN.patch
++++ b/patches/user32-rawinput-mouse/0006-user32-Set-SEND_HWMSG_RAWINPUT-flags-only-when-RAWIN.patch
+@@ -1,4 +1,4 @@
+-From 91fc3cbb52d157a44a59c5c2a12dc872c8559551 Mon Sep 17 00:00:00 2001
++From bd2bbff25f69fc1b93ef2d0ca3666393a5e6a1e0 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Wed, 24 Mar 2021 23:29:28 +0100
+ Subject: [PATCH] user32: Set SEND_HWMSG_RAWINPUT flags only when RAWINPUT is
+@@ -20,10 +20,10 @@ __wine_send_input with INPUT_HARDWARE input type and a rawinput.
+  9 files changed, 26 insertions(+), 15 deletions(-)
+ 
+ diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+-index 06393b0f392..9b217647071 100644
++index addff0e5fb3..f6a80763572 100644
+ --- a/dlls/win32u/input.c
+ +++ b/dlls/win32u/input.c
+-@@ -131,6 +131,7 @@ UINT WINAPI NtUserSendInput( UINT count, INPUT *inputs, int size )
++@@ -127,6 +127,7 @@ UINT WINAPI NtUserSendInput( UINT count, INPUT *inputs, int size )
+  {
+      UINT i;
+      NTSTATUS status = STATUS_SUCCESS;
+@@ -31,7 +31,7 @@ index 06393b0f392..9b217647071 100644
+  
+      if (size != sizeof(INPUT))
+      {
+-@@ -160,7 +161,7 @@ UINT WINAPI NtUserSendInput( UINT count, INPUT *inputs, int size )
++@@ -156,7 +157,7 @@ UINT WINAPI NtUserSendInput( UINT count, INPUT *inputs, int size )
+              update_mouse_coords( &input );
+              /* fallthrough */
+          case INPUT_KEYBOARD:
+@@ -41,10 +41,10 @@ index 06393b0f392..9b217647071 100644
+          case INPUT_HARDWARE:
+              SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+ diff --git a/dlls/win32u/message.c b/dlls/win32u/message.c
+-index 13645122161..025ff61d447 100644
++index bb7268c2b28..51a854e14e3 100644
+ --- a/dlls/win32u/message.c
+ +++ b/dlls/win32u/message.c
+-@@ -2404,7 +2404,7 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *r
++@@ -2375,7 +2375,7 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *r
+              req->input.mouse.flags = input->mi.dwFlags;
+              req->input.mouse.time  = input->mi.time;
+              req->input.mouse.info  = input->mi.dwExtraInfo;
+@@ -53,7 +53,7 @@ index 13645122161..025ff61d447 100644
+              break;
+          case INPUT_KEYBOARD:
+              req->input.kbd.vkey  = input->ki.wVk;
+-@@ -2412,7 +2412,7 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *r
++@@ -2383,7 +2383,7 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *r
+              req->input.kbd.flags = input->ki.dwFlags;
+              req->input.kbd.time  = input->ki.time;
+              req->input.kbd.info  = input->ki.dwExtraInfo;
+@@ -84,7 +84,7 @@ index 20c6879de87..3352931bad2 100644
+  
+  /***********************************************************************
+ diff --git a/dlls/wineandroid.drv/window.c b/dlls/wineandroid.drv/window.c
+-index 5143990836f..d91a5c4d3ff 100644
++index 81466259fc5..db26891989f 100644
+ --- a/dlls/wineandroid.drv/window.c
+ +++ b/dlls/wineandroid.drv/window.c
+ @@ -424,6 +424,7 @@ static int process_events( DWORD mask )
+@@ -189,10 +189,10 @@ index 34d6febdefa..18b93b1ab97 100644
+  
+  
+ diff --git a/dlls/winex11.drv/keyboard.c b/dlls/winex11.drv/keyboard.c
+-index 2c7c2e6c5be..8b2a89236f8 100644
++index a65e0ee6441..e8ed3b38e3c 100644
+ --- a/dlls/winex11.drv/keyboard.c
+ +++ b/dlls/winex11.drv/keyboard.c
+-@@ -1130,6 +1130,7 @@ static WORD EVENT_event_to_vkey( XIC xic, XKeyEvent *e)
++@@ -1137,6 +1137,7 @@ static WORD EVENT_event_to_vkey( XIC xic, XKeyEvent *e)
+   */
+  static void X11DRV_send_keyboard_input( HWND hwnd, WORD vkey, WORD scan, DWORD flags, DWORD time )
+  {
+@@ -200,7 +200,7 @@ index 2c7c2e6c5be..8b2a89236f8 100644
+      INPUT input;
+  
+      TRACE_(key)( "hwnd %p vkey=%04x scan=%04x flags=%04x\n", hwnd, vkey, scan, flags );
+-@@ -1141,7 +1142,7 @@ static void X11DRV_send_keyboard_input( HWND hwnd, WORD vkey, WORD scan, DWORD f
++@@ -1148,7 +1149,7 @@ static void X11DRV_send_keyboard_input( HWND hwnd, WORD vkey, WORD scan, DWORD f
+      input.u.ki.time        = time;
+      input.u.ki.dwExtraInfo = 0;
+  
+@@ -210,7 +210,7 @@ index 2c7c2e6c5be..8b2a89236f8 100644
+  
+  
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index 8878a99d14e..49048c83fed 100644
++index 6d0861ad145..a02d8c552c2 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -745,6 +745,7 @@ static void map_event_coords( HWND hwnd, Window window, Window event_root, int x
+@@ -249,7 +249,7 @@ index 8878a99d14e..49048c83fed 100644
+          if (!XQueryPointer( display, root_window, &root, &child, &rootX, &rootY, &x, &y, &xstate )) break;
+ @@ -1774,7 +1776,7 @@ void move_resize_window( HWND hwnd, int dir )
+              input.u.mi.dwFlags     = button_up_flags[button - 1] | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+-             input.u.mi.time        = NtGetTickCount();
++             input.u.mi.time        = GetTickCount();
+              input.u.mi.dwExtraInfo = 0;
+ -            __wine_send_input( hwnd, &input, NULL );
+ +            __wine_send_input( hwnd, &input, &rawinput );
+diff --git a/patches/user32-rawinput-mouse/0008-winex11.drv-Listen-to-RawMotion-and-RawButton-events.patch b/patches/user32-rawinput-mouse/0008-winex11.drv-Listen-to-RawMotion-and-RawButton-events.patch
+index 7499c08e..15c56fd6 100644
+--- a/patches/user32-rawinput-mouse/0008-winex11.drv-Listen-to-RawMotion-and-RawButton-events.patch
++++ b/patches/user32-rawinput-mouse/0008-winex11.drv-Listen-to-RawMotion-and-RawButton-events.patch
+@@ -1,4 +1,4 @@
+-From 5aa73b7dea3865a8a168a165ce99d54d094071ea Mon Sep 17 00:00:00 2001
++From f1a36450c2cbb7975e310a1301d0ed4e1d2670a2 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Mon, 25 Oct 2021 11:45:47 +0200
+ Subject: [PATCH] winex11.drv: Listen to RawMotion and RawButton* events in the
+@@ -15,10 +15,10 @@ instance used in our dinput implementation.
+  4 files changed, 112 insertions(+), 9 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+-index fe1547bbc23..8fc2a6a4b6c 100644
++index e386a039e26..0b5d43e6fbd 100644
+ --- a/dlls/winex11.drv/event.c
+ +++ b/dlls/winex11.drv/event.c
+-@@ -322,6 +322,10 @@ static enum event_merge_action merge_raw_motion_events( XIRawEvent *prev, XIRawE
++@@ -321,6 +321,10 @@ static enum event_merge_action merge_raw_motion_events( XIRawEvent *prev, XIRawE
+   */
+  static enum event_merge_action merge_events( XEvent *prev, XEvent *next )
+  {
+@@ -29,7 +29,7 @@ index fe1547bbc23..8fc2a6a4b6c 100644
+      switch (prev->type)
+      {
+      case ConfigureNotify:
+-@@ -353,19 +357,21 @@ static enum event_merge_action merge_events( XEvent *prev, XEvent *next )
++@@ -352,19 +356,21 @@ static enum event_merge_action merge_events( XEvent *prev, XEvent *next )
+          case GenericEvent:
+              if (next->xcookie.extension != xinput2_opcode) break;
+              if (next->xcookie.evtype != XI_RawMotion) break;
+@@ -54,7 +54,7 @@ index fe1547bbc23..8fc2a6a4b6c 100644
+  #endif
+          }
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index 49048c83fed..f020f4fe6a5 100644
++index a02d8c552c2..b6b84174e0d 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -412,7 +412,18 @@ void x11drv_xinput_enable( Display *display, Window window, long event_mask )
+@@ -113,7 +113,7 @@ index 49048c83fed..f020f4fe6a5 100644
+          if (!XQueryPointer( display, root_window, &root, &child, &rootX, &rootY, &x, &y, &xstate )) break;
+ @@ -1776,7 +1785,7 @@ void move_resize_window( HWND hwnd, int dir )
+              input.u.mi.dwFlags     = button_up_flags[button - 1] | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+-             input.u.mi.time        = NtGetTickCount();
++             input.u.mi.time        = GetTickCount();
+              input.u.mi.dwExtraInfo = 0;
+ -            __wine_send_input( hwnd, &input, &rawinput );
+ +            __wine_send_input( hwnd, &input, NULL );
+@@ -227,10 +227,10 @@ index 49048c83fed..f020f4fe6a5 100644
+      default:
+          TRACE( "Unhandled event %#x\n", event->evtype );
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index f2ae3ecdfa3..c78306581ce 100644
++index b78eab78dd1..5f0e00b2fb2 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -402,6 +402,7 @@ struct x11drv_thread_data
++@@ -397,6 +397,7 @@ struct x11drv_thread_data
+      XIValuatorClassInfo x_valuator;
+      XIValuatorClassInfo y_valuator;
+      int      xi2_core_pointer;     /* XInput2 core pointer id */
+@@ -239,10 +239,10 @@ index f2ae3ecdfa3..c78306581ce 100644
+  };
+  
+ diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+-index 33814d1f6fb..a8ef68f489d 100644
++index fecd98daf8e..476743ba934 100644
+ --- a/dlls/winex11.drv/x11drv_main.c
+ +++ b/dlls/winex11.drv/x11drv_main.c
+-@@ -704,6 +704,8 @@ void X11DRV_ThreadDetach(void)
++@@ -725,6 +725,8 @@ void X11DRV_ThreadDetach(void)
+      if (data)
+      {
+          vulkan_thread_detach();
+@@ -251,7 +251,7 @@ index 33814d1f6fb..a8ef68f489d 100644
+          if (data->xim) XCloseIM( data->xim );
+          if (data->font_set) XFreeFontSet( data->display, data->font_set );
+          XCloseDisplay( data->display );
+-@@ -775,6 +777,8 @@ struct x11drv_thread_data *x11drv_init_thread_data(void)
++@@ -796,6 +798,8 @@ struct x11drv_thread_data *x11drv_init_thread_data(void)
+      if (use_xim) X11DRV_SetupXIM();
+  
+      x11drv_xinput_init();
+@@ -261,5 +261,5 @@ index 33814d1f6fb..a8ef68f489d 100644
+      return data;
+  }
+ -- 
+-2.35.1
++2.34.1
+ 
+diff --git a/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch b/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch
+index 2840410c..73958efe 100644
+--- a/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch
++++ b/patches/winex11-_NET_ACTIVE_WINDOW/0001-winex11.drv-Add-support-for-_NET_ACTIVE_WINDOW.patch
+@@ -1,4 +1,4 @@
+-From 9236962ab40f697a183cd017d58747902f4634da Mon Sep 17 00:00:00 2001
++From 8a422ed9bc83c91db731f36cdddf6b30b9926f76 Mon Sep 17 00:00:00 2001
+ From: Dmitry Timoshkov <dmitry@baikal.ru>
+ Date: Wed, 10 Feb 2016 15:09:29 +0800
+ Subject: [PATCH] winex11.drv: Add support for _NET_ACTIVE_WINDOW. (v2)
+@@ -17,10 +17,10 @@ For bug #2155.
+  7 files changed, 65 insertions(+)
+ 
+ diff --git a/dlls/win32u/driver.c b/dlls/win32u/driver.c
+-index abe4c7f1489..d18a8121f1f 100644
++index 175fde1fa40..9ed2cb57249 100644
+ --- a/dlls/win32u/driver.c
+ +++ b/dlls/win32u/driver.c
+-@@ -807,6 +807,10 @@ static BOOL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
++@@ -843,6 +843,10 @@ static BOOL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
+                          hdc, rect.left - dx, rect.top - dy, SRCCOPY, 0, 0 );
+  }
+  
+@@ -31,7 +31,7 @@ index abe4c7f1489..d18a8121f1f 100644
+  static void nulldrv_SetCapture( HWND hwnd, UINT flags )
+  {
+  }
+-@@ -1168,6 +1172,7 @@ static const struct user_driver_funcs lazy_load_driver =
++@@ -1199,6 +1203,7 @@ static const struct user_driver_funcs lazy_load_driver =
+      nulldrv_MsgWaitForMultipleObjectsEx,
+      nulldrv_ReleaseDC,
+      nulldrv_ScrollDC,
+@@ -39,7 +39,7 @@ index abe4c7f1489..d18a8121f1f 100644
+      nulldrv_SetCapture,
+      nulldrv_SetFocus,
+      loaderdrv_SetLayeredWindowAttributes,
+-@@ -1241,6 +1246,7 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
++@@ -1271,6 +1276,7 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
+      SET_USER_FUNC(MsgWaitForMultipleObjectsEx);
+      SET_USER_FUNC(ReleaseDC);
+      SET_USER_FUNC(ScrollDC);
+@@ -48,10 +48,10 @@ index abe4c7f1489..d18a8121f1f 100644
+      SET_USER_FUNC(SetFocus);
+      SET_USER_FUNC(SetLayeredWindowAttributes);
+ diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+-index 8fc2a6a4b6c..04510c819b4 100644
++index e1bcd70d35a..74c8391b618 100644
+ --- a/dlls/winex11.drv/event.c
+ +++ b/dlls/winex11.drv/event.c
+-@@ -610,6 +610,9 @@ static void set_focus( Display *display, HWND hwnd, Time time )
++@@ -596,6 +596,9 @@ static void set_focus( Display *display, HWND hwnd, Time time )
+      Window win;
+      GUITHREADINFO threadinfo;
+  
+@@ -61,7 +61,7 @@ index 8fc2a6a4b6c..04510c819b4 100644
+      TRACE( "setting foreground window to %p\n", hwnd );
+      NtUserSetForegroundWindow( hwnd, FALSE );
+  
+-@@ -857,6 +860,8 @@ static void focus_out( Display *display , HWND hwnd )
++@@ -843,6 +846,8 @@ static void focus_out( Display *display , HWND hwnd )
+  
+      if (!focus_win)
+      {
+@@ -71,10 +71,10 @@ index 8fc2a6a4b6c..04510c819b4 100644
+             Foreground window, because in most cases the messages sent
+             above must have already changed the foreground window, in which
+ diff --git a/dlls/winex11.drv/init.c b/dlls/winex11.drv/init.c
+-index 65865fcf4fa..ff71e67448e 100644
++index 88d09145f8e..a495d8040f6 100644
+ --- a/dlls/winex11.drv/init.c
+ +++ b/dlls/winex11.drv/init.c
+-@@ -410,6 +410,7 @@ static const struct user_driver_funcs x11drv_funcs =
++@@ -407,6 +407,7 @@ static const struct user_driver_funcs x11drv_funcs =
+      .pMsgWaitForMultipleObjectsEx = X11DRV_MsgWaitForMultipleObjectsEx,
+      .pReleaseDC = X11DRV_ReleaseDC,
+      .pScrollDC = X11DRV_ScrollDC,
+@@ -83,10 +83,10 @@ index 65865fcf4fa..ff71e67448e 100644
+      .pSetFocus = X11DRV_SetFocus,
+      .pSetLayeredWindowAttributes = X11DRV_SetLayeredWindowAttributes,
+ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+-index 5603c52ae6c..61afe03c215 100644
++index 48500284b68..beabae8c428 100644
+ --- a/dlls/winex11.drv/window.c
+ +++ b/dlls/winex11.drv/window.c
+-@@ -2231,6 +2231,54 @@ BOOL X11DRV_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
++@@ -2226,6 +2226,54 @@ BOOL X11DRV_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
+  }
+  
+  
+@@ -142,10 +142,10 @@ index 5603c52ae6c..61afe03c215 100644
+   *		SetCapture  (X11DRV.@)
+   */
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index 70da5c26228..205dba5fdca 100644
++index da037297745..e97d10bc395 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -222,6 +222,7 @@ extern void X11DRV_GetDC( HDC hdc, HWND hwnd, HWND top, const RECT *win_rect,
++@@ -220,6 +220,7 @@ extern void X11DRV_GetDC( HDC hdc, HWND hwnd, HWND top, const RECT *win_rect,
+                            const RECT *top_rect, DWORD flags ) DECLSPEC_HIDDEN;
+  extern void X11DRV_ReleaseDC( HWND hwnd, HDC hdc ) DECLSPEC_HIDDEN;
+  extern BOOL X11DRV_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update ) DECLSPEC_HIDDEN;
+@@ -153,7 +153,7 @@ index 70da5c26228..205dba5fdca 100644
+  extern void X11DRV_SetCapture( HWND hwnd, UINT flags ) DECLSPEC_HIDDEN;
+  extern void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha,
+                                                 DWORD flags ) DECLSPEC_HIDDEN;
+-@@ -389,6 +390,7 @@ struct x11drv_thread_data
++@@ -374,6 +375,7 @@ struct x11drv_thread_data
+      Display *display;
+      XEvent  *current_event;        /* event currently being processed */
+      HWND     grab_hwnd;            /* window that currently grabs the mouse */
+@@ -161,7 +161,7 @@ index 70da5c26228..205dba5fdca 100644
+      HWND     last_focus;           /* last window that had focus */
+      XIM      xim;                  /* input method */
+      HWND     last_xic_hwnd;        /* last xic window */
+-@@ -494,6 +496,7 @@ enum x11drv_atoms
++@@ -481,6 +483,7 @@ enum x11drv_atoms
+      XATOM_DndSelection,
+      XATOM__ICC_PROFILE,
+      XATOM__MOTIF_WM_HINTS,
+@@ -170,10 +170,10 @@ index 70da5c26228..205dba5fdca 100644
+      XATOM__NET_STARTUP_INFO,
+      XATOM__NET_SUPPORTED,
+ diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+-index a8ef68f489d..aefd1286c53 100644
++index 14ee13dc676..841f9a90a68 100644
+ --- a/dlls/winex11.drv/x11drv_main.c
+ +++ b/dlls/winex11.drv/x11drv_main.c
+-@@ -139,6 +139,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
++@@ -140,6 +140,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
+      "DndSelection",
+      "_ICC_PROFILE",
+      "_MOTIF_WM_HINTS",
+@@ -182,11 +182,11 @@ index a8ef68f489d..aefd1286c53 100644
+      "_NET_STARTUP_INFO",
+      "_NET_SUPPORTED",
+ diff --git a/include/wine/gdi_driver.h b/include/wine/gdi_driver.h
+-index 12a4737d8f2..532e4bdcd9e 100644
++index a63e2c3ceda..8f41759e41a 100644
+ --- a/include/wine/gdi_driver.h
+ +++ b/include/wine/gdi_driver.h
+ @@ -302,6 +302,7 @@ struct user_driver_funcs
+-     NTSTATUS (*pMsgWaitForMultipleObjectsEx)(DWORD,const HANDLE*,const LARGE_INTEGER*,DWORD,DWORD);
++     DWORD   (*pMsgWaitForMultipleObjectsEx)(DWORD,const HANDLE*,DWORD,DWORD,DWORD);
+      void    (*pReleaseDC)(HWND,HDC);
+      BOOL    (*pScrollDC)(HDC,INT,INT,HRGN);
+ +    void    (*pSetActiveWindow)(HWND);
+@@ -194,5 +194,5 @@ index 12a4737d8f2..532e4bdcd9e 100644
+      void    (*pSetFocus)(HWND);
+      void    (*pSetLayeredWindowAttributes)(HWND,COLORREF,BYTE,DWORD);
+ -- 
+-2.35.1
++2.34.1
+ 
+diff --git a/patches/winex11-key_translation/0001-winex11-Match-keyboard-in-Unicode.patch b/patches/winex11-key_translation/0001-winex11-Match-keyboard-in-Unicode.patch
+index 964c40e7..fef48a73 100644
+--- a/patches/winex11-key_translation/0001-winex11-Match-keyboard-in-Unicode.patch
++++ b/patches/winex11-key_translation/0001-winex11-Match-keyboard-in-Unicode.patch
+@@ -1,4 +1,4 @@
+-From 6ab9c9e56ba70acd86faf8cb2e30021a2f1586b2 Mon Sep 17 00:00:00 2001
++From 3d65939dad82bdcac186866eaaa3123611090b05 Mon Sep 17 00:00:00 2001
+ From: Ken Thomases <ken@codeweavers.com>
+ Date: Tue, 11 Dec 2018 08:30:41 +1100
+ Subject: [PATCH] winex11: Match keyboard in Unicode
+@@ -8,7 +8,7 @@ Subject: [PATCH] winex11: Match keyboard in Unicode
+  1 file changed, 97 insertions(+), 64 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/keyboard.c b/dlls/winex11.drv/keyboard.c
+-index 8b2a89236f8..37992f6e663 100644
++index 786b6f4e084..c4d3b4ed8ce 100644
+ --- a/dlls/winex11.drv/keyboard.c
+ +++ b/dlls/winex11.drv/keyboard.c
+ @@ -37,6 +37,7 @@
+@@ -28,7 +28,7 @@ index 8b2a89236f8..37992f6e663 100644
+  
+  /* Keyboard translation tables */
+  #define MAIN_LEN 49
+-@@ -1410,6 +1411,36 @@ BOOL X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
++@@ -1409,6 +1410,36 @@ BOOL X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
+      return TRUE;
+  }
+  
+@@ -65,7 +65,7 @@ index 8b2a89236f8..37992f6e663 100644
+  /**********************************************************************
+   *		X11DRV_KEYBOARD_DetectLayout
+   *
+-@@ -1427,7 +1458,7 @@ X11DRV_KEYBOARD_DetectLayout( Display *display )
++@@ -1426,7 +1457,7 @@ X11DRV_KEYBOARD_DetectLayout( Display *display )
+    const char (*lkey)[MAIN_LEN][4];
+    unsigned max_seq = 0;
+    int max_score = INT_MIN, ismatch = 0;
+@@ -74,7 +74,7 @@ index 8b2a89236f8..37992f6e663 100644
+  
+    syms = keysyms_per_keycode;
+    if (syms > 4) {
+-@@ -1440,35 +1471,25 @@ X11DRV_KEYBOARD_DetectLayout( Display *display )
++@@ -1439,35 +1470,25 @@ X11DRV_KEYBOARD_DetectLayout( Display *display )
+        /* get data for keycode from X server */
+        for (i = 0; i < syms; i++) {
+          if (!(keysym = keycode_to_keysym (display, keyc, i))) continue;
+@@ -118,7 +118,7 @@ index 8b2a89236f8..37992f6e663 100644
+      for (keyc = min_keycode; keyc <= max_keycode; keyc++) {
+        if (ckey[keyc][0]) {
+  	/* search for a match in layout table */
+-@@ -1477,10 +1498,13 @@ X11DRV_KEYBOARD_DetectLayout( Display *display )
++@@ -1476,10 +1497,13 @@ X11DRV_KEYBOARD_DetectLayout( Display *display )
+  	/* the table, it's okay that the X server has "3#£", for example) */
+  	/* however, the score will be higher for longer matches */
+  	for (key = 0; key < MAIN_LEN; key++) {
+@@ -135,7 +135,7 @@ index 8b2a89236f8..37992f6e663 100644
+  	      ok = -1;
+  	  }
+  	  if (ok > 0) {
+-@@ -1495,11 +1519,7 @@ X11DRV_KEYBOARD_DetectLayout( Display *display )
++@@ -1494,11 +1518,7 @@ X11DRV_KEYBOARD_DetectLayout( Display *display )
+  	  if (key > pkey) seq++;
+  	  pkey = key;
+  	} else {
+@@ -148,7 +148,7 @@ index 8b2a89236f8..37992f6e663 100644
+            mismatch++;
+            score -= syms;
+  	}
+-@@ -1569,9 +1589,11 @@ void X11DRV_InitKeyboard( Display *display )
++@@ -1568,9 +1588,11 @@ void X11DRV_InitKeyboard( Display *display )
+      XKeyEvent e2;
+      WORD scan, vkey;
+      int keyc, i, keyn, syms;
+@@ -161,7 +161,7 @@ index 8b2a89236f8..37992f6e663 100644
+  
+      /* Ranges of OEM, function key, and character virtual key codes.
+       * Don't include those handled specially in X11DRV_ToUnicodeEx and
+-@@ -1627,7 +1649,11 @@ void X11DRV_InitKeyboard( Display *display )
++@@ -1625,7 +1647,11 @@ void X11DRV_InitKeyboard( Display *display )
+      /* Detect the keyboard layout */
+      X11DRV_KEYBOARD_DetectLayout( display );
+      lkey = main_key_tab[kbd_layout].key;
+@@ -173,7 +173,7 @@ index 8b2a89236f8..37992f6e663 100644
+  
+      /* Now build two conversion arrays :
+       * keycode -> vkey + scancode + extended
+-@@ -1668,26 +1694,14 @@ void X11DRV_InitKeyboard( Display *display )
++@@ -1666,26 +1692,14 @@ void X11DRV_InitKeyboard( Display *display )
+  	      int maxlen=0,maxval=-1,ok;
+  	      for (i=0; i<syms; i++) {
+  		keysym = keycode_to_keysym(display, keyc, i);
+@@ -205,7 +205,7 @@ index 8b2a89236f8..37992f6e663 100644
+  		if (!ok) i--; /* we overshot */
+  		if (ok||(i>maxlen)) {
+  		  maxlen=i; maxval=keyn;
+-@@ -2250,7 +2264,7 @@ INT X11DRV_GetKeyNameText( LONG lParam, LPWSTR lpBuffer, INT nSize )
++@@ -2237,7 +2251,7 @@ INT X11DRV_GetKeyNameText( LONG lParam, LPWSTR lpBuffer, INT nSize )
+  /***********************************************************************
+   *		X11DRV_KEYBOARD_MapDeadKeysym
+   */
+@@ -214,7 +214,7 @@ index 8b2a89236f8..37992f6e663 100644
+  {
+  	switch (keysym)
+  	    {
+-@@ -2260,65 +2274,84 @@ static char KEYBOARD_MapDeadKeysym(KeySym keysym)
++@@ -2247,65 +2261,84 @@ static char KEYBOARD_MapDeadKeysym(KeySym keysym)
+  #endif
+  	    case 0x1000FE7E : /* Xfree's XK_Dtilde */
+  		return '~';	/* '? */
+@@ -314,7 +314,7 @@ index 8b2a89236f8..37992f6e663 100644
+  */
+  	    }
+  	TRACE("no character for dead keysym 0x%08lx\n",keysym);
+-@@ -2503,7 +2536,7 @@ INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
++@@ -2490,7 +2523,7 @@ INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
+  
+      if (ret == 0)
+      {
+@@ -323,11 +323,11 @@ index 8b2a89236f8..37992f6e663 100644
+  
+  #ifdef XK_EuroSign
+          /* An ugly hack for EuroSign: X can't translate it to a character
+-@@ -2527,7 +2560,7 @@ INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
++@@ -2514,7 +2547,7 @@ INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
+  	dead_char = KEYBOARD_MapDeadKeysym(keysym);
+  	if (dead_char)
+          {
+--	    ntdll_umbstowcs( &dead_char, 1, bufW, bufW_size );
++-	    MultiByteToWideChar(CP_UNIXCP, 0, &dead_char, 1, bufW, bufW_size);
+ +	    bufW[0] = dead_char;
+  	    ret = -1;
+              goto found;

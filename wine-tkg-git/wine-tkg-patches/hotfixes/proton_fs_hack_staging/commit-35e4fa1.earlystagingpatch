@@ -1,0 +1,92 @@
+From 35e4fa14aa9ccbf0570fab03abe583f914364661 Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Wed, 4 May 2022 21:18:58 +0200
+Subject: Revert "user32-rawinput-mouse: Use malloc() instead of HeapAlloc() in
+ winex11."
+
+This reverts commit 91cb025138745b32fdd399a6931bc5967b1e5ad5.
+
+diff --git a/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch b/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
+index 99b80ba1..42038167 100644
+--- a/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
++++ b/patches/user32-rawinput-mouse/0004-winex11.drv-Keep-track-of-pointer-and-device-button-.patch
+@@ -1,4 +1,4 @@
+-From 23fb37985e30df7e888a08cfbb59751703118c8a Mon Sep 17 00:00:00 2001
++From 7e2d5c560d7f0a6b9ee6c13f8d932a12e1d0fcc7 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Thu, 19 Dec 2019 22:34:44 +0100
+ Subject: [PATCH] winex11.drv: Keep track of pointer and device button
+@@ -16,10 +16,10 @@ Original patch by Andrew Eikum <aeikum@codeweavers.com>.
+  4 files changed, 106 insertions(+), 8 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/keyboard.c b/dlls/winex11.drv/keyboard.c
+-index 170231c0026..4fd0226c765 100644
++index 786b6f4e084..a8f1b8baa12 100644
+ --- a/dlls/winex11.drv/keyboard.c
+ +++ b/dlls/winex11.drv/keyboard.c
+-@@ -1876,13 +1876,24 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
++@@ -1875,13 +1875,24 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
+  {
+      HWND hwnd;
+  
+@@ -51,7 +51,7 @@ index 170231c0026..4fd0226c765 100644
+  }
+  
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index 0772ee7c46f..cfa64137411 100644
++index ab8c2041f0b..b36c64bcfd6 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -26,6 +26,9 @@
+@@ -97,7 +97,7 @@ index 0772ee7c46f..cfa64137411 100644
+ +{
+ +    struct mouse_button_mapping *tmp;
+ +
+-+    if (!(tmp = malloc( sizeof(*tmp) )))
+++    if (!(tmp = HeapAlloc( GetProcessHeap(), 0, sizeof(*tmp) )))
+ +    {
+ +        WARN("Unable to allocate device mapping.\n");
+ +        return;
+@@ -108,7 +108,7 @@ index 0772ee7c46f..cfa64137411 100644
+ +
+ +    tmp = InterlockedExchangePointer( (void**)&pointer_mapping, tmp );
+ +
+-+    free( tmp );
+++    HeapFree( GetProcessHeap(), 0, tmp );
+ +}
+ +
+ +static void update_device_mapping( Display *display, int deviceid )
+@@ -123,7 +123,7 @@ index 0772ee7c46f..cfa64137411 100644
+ +        return;
+ +    }
+ +
+-+    if (!(tmp = malloc( sizeof(*tmp) )))
+++    if (!(tmp = HeapAlloc( GetProcessHeap(), 0, sizeof(*tmp) )))
+ +    {
+ +        WARN( "Unable to allocate device mapping.\n" );
+ +        pXCloseDevice( display, device );
+@@ -136,7 +136,7 @@ index 0772ee7c46f..cfa64137411 100644
+ +
+ +    tmp = InterlockedExchangePointer( (void**)&device_mapping, tmp );
+ +
+-+    free( tmp );
+++    HeapFree( GetProcessHeap(), 0, tmp );
+ +
+ +    pXCloseDevice( display, device );
+ +#endif
+@@ -196,7 +196,7 @@ index 0772ee7c46f..cfa64137411 100644
+  
+      xinput2_available = XQueryExtension( gdi_display, "XInputExtension", &xinput2_opcode, &event, &error );
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index 7f10201cd79..d2866c73d45 100644
++index ae9d4577afa..82176d9ab2d 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+ @@ -693,6 +693,7 @@ extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
+@@ -220,5 +220,5 @@ index c4ba72cf2fc..ddd0c5338db 100644
+  
+      init_user_driver();
+ -- 
+-2.34.1
++2.35.1
+ 
