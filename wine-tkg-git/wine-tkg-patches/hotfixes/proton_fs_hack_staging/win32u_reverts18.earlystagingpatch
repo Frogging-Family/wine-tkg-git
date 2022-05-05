@@ -1,0 +1,85 @@
+diff --git a/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch b/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
+index e43bcf5f..9d978416 100644
+--- a/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
++++ b/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
+@@ -1,4 +1,4 @@
+-From 34322692c54f01a228cdab8419283e5e15fd55b1 Mon Sep 17 00:00:00 2001
++From d7eb416f7f606bcc45e71bd48b1eb47b2c804f1b Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Thu, 23 Jan 2020 11:00:19 +0100
+ Subject: [PATCH] winex11.drv: Support XInput2 events for individual windows.
+@@ -14,19 +14,19 @@ which can bring additional information.
+  5 files changed, 65 insertions(+), 17 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/desktop.c b/dlls/winex11.drv/desktop.c
+-index 61fe5578e8b..c601d935df1 100644
++index f8c44549fc1..804f4ea85f0 100644
+ --- a/dlls/winex11.drv/desktop.c
+ +++ b/dlls/winex11.drv/desktop.c
+-@@ -358,6 +358,7 @@ NTSTATUS x11drv_create_desktop( void *arg )
+-                          0, 0, params->width, params->height, 0, default_visual.depth, InputOutput,
+-                          default_visual.visual, CWEventMask | CWCursor | CWColormap, &win_attr );
++@@ -357,6 +357,7 @@ BOOL CDECL X11DRV_create_desktop( UINT width, UINT height )
++                          0, 0, width, height, 0, default_visual.depth, InputOutput, default_visual.visual,
++                          CWEventMask | CWCursor | CWColormap, &win_attr );
+      if (!win) return FALSE;
+ +    x11drv_xinput_enable( display, win, win_attr.event_mask );
+      if (!create_desktop_win_data( win )) return FALSE;
+  
+-     X11DRV_init_desktop( win, params->width, params->height );
++     X11DRV_init_desktop( win, width, height );
+ diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+-index c0232eef256..8f98676d9cf 100644
++index a6499400283..fe1547bbc23 100644
+ --- a/dlls/winex11.drv/event.c
+ +++ b/dlls/winex11.drv/event.c
+ @@ -239,6 +239,13 @@ static Bool filter_event( Display *display, XEvent *event, char *arg )
+@@ -44,7 +44,7 @@ index c0232eef256..8f98676d9cf 100644
+      case MotionNotify:
+      case EnterNotify:
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index 826b8d20f69..2c8919e8c3d 100644
++index fc959537574..04d12649495 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+ @@ -304,20 +304,32 @@ void x11drv_xinput_init(void)
+@@ -185,7 +185,7 @@ index 826b8d20f69..2c8919e8c3d 100644
+      }
+      else if (prev_clip_hwnd)
+ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+-index 338796e99e1..6f4c2cabd7d 100644
++index de52023c467..797bdfc9f7f 100644
+ --- a/dlls/winex11.drv/window.c
+ +++ b/dlls/winex11.drv/window.c
+ @@ -353,6 +353,7 @@ static void sync_window_style( struct x11drv_win_data *data )
+@@ -213,10 +213,10 @@ index 338796e99e1..6f4c2cabd7d 100644
+          NtUserSetProp( hwnd, clip_window_prop, (HANDLE)data->clip_window );
+          X11DRV_InitClipboard();
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index 5fb2e672938..502b302993a 100644
++index e4a59c82c07..103117e0ce3 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -253,6 +253,8 @@ extern void X11DRV_ThreadDetach(void) DECLSPEC_HIDDEN;
++@@ -252,6 +252,8 @@ extern void X11DRV_ThreadDetach(void) DECLSPEC_HIDDEN;
+  extern void X11DRV_Xcursor_Init(void) DECLSPEC_HIDDEN;
+  extern void x11drv_xinput_load(void) DECLSPEC_HIDDEN;
+  extern void x11drv_xinput_init(void) DECLSPEC_HIDDEN;
+@@ -225,7 +225,7 @@ index 5fb2e672938..502b302993a 100644
+  
+  extern DWORD copy_image_bits( BITMAPINFO *info, BOOL is_r8g8b8, XImage *image,
+                                const struct gdi_image_bits *src_bits, struct gdi_image_bits *dst_bits,
+-@@ -374,6 +376,14 @@ struct x11drv_escape_flush_gl_drawable
++@@ -373,6 +375,14 @@ struct x11drv_escape_flush_gl_drawable
+   * X11 USER driver
+   */
+  
+@@ -240,7 +240,7 @@ index 5fb2e672938..502b302993a 100644
+  struct x11drv_thread_data
+  {
+      Display *display;
+-@@ -390,7 +400,7 @@ struct x11drv_thread_data
++@@ -388,7 +398,7 @@ struct x11drv_thread_data
+      HWND     clip_hwnd;            /* message window stored in desktop while clipping is active */
+      DWORD    clip_reset;           /* time when clipping was last reset */
+  #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
