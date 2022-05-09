@@ -1,0 +1,206 @@
+diff --git a/patches/patchinstall.sh b/patches/patchinstall.sh
+index 447c70e5..6c4d9482 100755
+--- a/patches/patchinstall.sh
++++ b/patches/patchinstall.sh
+@@ -254,6 +254,7 @@ patch_enable_all ()
+ 	enable_winex11_XEMBED="$1"
+ 	enable_winex11__NET_ACTIVE_WINDOW="$1"
+ 	enable_winex11_ime_check_thread_data="$1"
++	enable_winex11_key_translation="$1"
+ 	enable_winex11_wglShareLists="$1"
+ 	enable_winex11_drv_Query_server_position="$1"
+ 	enable_wininet_Cleanup="$1"
+@@ -788,6 +789,9 @@ patch_enable ()
+ 		winex11-ime-check-thread-data)
+ 			enable_winex11_ime_check_thread_data="$2"
+ 			;;
++		winex11-key_translation)
++			enable_winex11_key_translation="$2"
++			;;
+ 		winex11-wglShareLists)
+ 			enable_winex11_wglShareLists="$2"
+ 			;;
+@@ -3798,6 +3802,21 @@ if test "$enable_winex11_ime_check_thread_data" -eq 1; then
+ 	patch_apply winex11-ime-check-thread-data/0001-winex11.drv-handle-missing-thread-data-in-X11DRV_get_ic.patch
+ fi
+ 
++# Patchset winex11-key_translation
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#30984] Improve key translation.
++# |   *	[#45605] Letter keys doesn't work in DirectX aplications
++# |
++# | Modified files:
++# |   *	dlls/winex11.drv/keyboard.c
++# |
++if test "$enable_winex11_key_translation" -eq 1; then
++	patch_apply winex11-key_translation/0001-winex11-Match-keyboard-in-Unicode.patch
++	patch_apply winex11-key_translation/0002-winex11-Fix-more-key-translation.patch
++	patch_apply winex11-key_translation/0003-winex11.drv-Fix-main-Russian-keyboard-layout.patch
++fi
++
+ # Patchset winex11-wglShareLists
+ # |
+ # | This patchset fixes the following Wine bugs:
+diff --git a/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch b/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
+index 6a8844b4..790149df 100644
+--- a/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
++++ b/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
+@@ -1,4 +1,4 @@
+-From f57059086630af68cf9469074c1630d32e607e15 Mon Sep 17 00:00:00 2001
++From 05c560e6de31f40125ff4955aabad2262ed4d342 Mon Sep 17 00:00:00 2001
+ From: Felix Yan <felixonmars@gmail.com>
+ Date: Tue, 23 Sep 2014 23:22:17 +0800
+ Subject: [PATCH] winex11.drv: Update a candidate window's position with
+@@ -26,10 +26,10 @@ received a lot of help from Sebastian Lackner.
+  6 files changed, 84 insertions(+), 1 deletion(-)
+ 
+ diff --git a/dlls/win32u/driver.c b/dlls/win32u/driver.c
+-index 526bb5db19c..d18a8121f1f 100644
++index 175fde1fa40..0c3240c9106 100644
+ --- a/dlls/win32u/driver.c
+ +++ b/dlls/win32u/driver.c
+-@@ -893,6 +893,11 @@ static struct opengl_funcs *nulldrv_wine_get_wgl_driver( UINT version )
++@@ -925,6 +925,11 @@ static struct opengl_funcs *nulldrv_wine_get_wgl_driver( UINT version )
+      return (void *)-1;
+  }
+  
+@@ -41,7 +41,7 @@ index 526bb5db19c..d18a8121f1f 100644
+  static void nulldrv_ThreadDetach( void )
+  {
+  }
+-@@ -1188,6 +1193,7 @@ static const struct user_driver_funcs lazy_load_driver =
++@@ -1219,6 +1224,7 @@ static const struct user_driver_funcs lazy_load_driver =
+      loaderdrv_wine_get_vulkan_driver,
+      /* opengl support */
+      nulldrv_wine_get_wgl_driver,
+@@ -49,7 +49,7 @@ index 526bb5db19c..d18a8121f1f 100644
+      /* thread management */
+      nulldrv_ThreadDetach,
+  };
+-@@ -1258,6 +1264,7 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
++@@ -1288,6 +1294,7 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
+      SET_USER_FUNC(SystemParametersInfo);
+      SET_USER_FUNC(wine_get_vulkan_driver);
+      SET_USER_FUNC(wine_get_wgl_driver);
+@@ -58,10 +58,10 @@ index 526bb5db19c..d18a8121f1f 100644
+  #undef SET_USER_FUNC
+  
+ diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+-index 658258f73ee..8ecacb763c7 100644
++index 28fc5a918c8..b31511804be 100644
+ --- a/dlls/win32u/input.c
+ +++ b/dlls/win32u/input.c
+-@@ -2035,6 +2035,7 @@ BOOL set_caret_pos( int x, int y )
++@@ -2042,6 +2042,7 @@ BOOL set_caret_pos( int x, int y )
+          r.left = x;
+          r.top = y;
+          display_caret( hwnd, &r );
+@@ -69,7 +69,7 @@ index 658258f73ee..8ecacb763c7 100644
+          NtUserSetSystemTimer( hwnd, SYSTEM_TIMER_CARET, caret.timeout );
+      }
+      return ret;
+-@@ -2072,6 +2073,7 @@ BOOL WINAPI NtUserShowCaret( HWND hwnd )
++@@ -2079,6 +2080,7 @@ BOOL WINAPI NtUserShowCaret( HWND hwnd )
+      if (ret && hidden == 1)  /* hidden was 1 so it's now 0 */
+      {
+          display_caret( hwnd, &r );
+@@ -78,10 +78,10 @@ index 658258f73ee..8ecacb763c7 100644
+      }
+      return ret;
+ diff --git a/dlls/winex11.drv/init.c b/dlls/winex11.drv/init.c
+-index 60232e4ca7b..846ead80a4a 100644
++index 9c5c394581b..b52a38690e4 100644
+ --- a/dlls/winex11.drv/init.c
+ +++ b/dlls/winex11.drv/init.c
+-@@ -433,6 +433,7 @@ static const struct user_driver_funcs x11drv_funcs =
++@@ -425,6 +425,7 @@ static const struct user_driver_funcs x11drv_funcs =
+      .pSystemParametersInfo = X11DRV_SystemParametersInfo,
+      .pwine_get_vulkan_driver = X11DRV_wine_get_vulkan_driver,
+      .pwine_get_wgl_driver = X11DRV_wine_get_wgl_driver,
+@@ -90,10 +90,10 @@ index 60232e4ca7b..846ead80a4a 100644
+  };
+  
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index ac540df004c..ba56b1e127c 100644
++index a8d2f78aa6b..12e55bbf1d2 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -245,6 +245,7 @@ extern void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flag
++@@ -243,6 +243,7 @@ extern void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flag
+                                       struct window_surface *surface ) DECLSPEC_HIDDEN;
+  extern BOOL X11DRV_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param,
+                                           UINT flags ) DECLSPEC_HIDDEN;
+@@ -102,18 +102,18 @@ index ac540df004c..ba56b1e127c 100644
+  
+  /* X11 driver internal functions */
+ diff --git a/dlls/winex11.drv/xim.c b/dlls/winex11.drv/xim.c
+-index 00c15bb3bcf..280bfe5bf3c 100644
++index 6adf2475de7..5b57c572e5f 100644
+ --- a/dlls/winex11.drv/xim.c
+ +++ b/dlls/winex11.drv/xim.c
+-@@ -34,6 +34,7 @@
++@@ -30,6 +30,7 @@
+  #include "x11drv.h"
+  #include "imm.h"
+  #include "wine/debug.h"
+ +#include "wine/server.h"
++ #include "wine/unicode.h"
+  
+  WINE_DEFAULT_DEBUG_CHANNEL(xim);
+- 
+-@@ -449,6 +450,48 @@ static BOOL X11DRV_DestroyIC(XIC xic, XPointer p, XPointer data)
++@@ -461,6 +462,48 @@ static BOOL X11DRV_DestroyIC(XIC xic, XPointer p, XPointer data)
+      return TRUE;
+  }
+  
+@@ -162,7 +162,7 @@ index 00c15bb3bcf..280bfe5bf3c 100644
+  
+  XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data)
+  {
+-@@ -483,7 +526,7 @@ XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data)
++@@ -488,7 +531,7 @@ XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data)
+                          XNDestroyCallback, &destroy,
+                          NULL);
+          data->xic = xic;
+@@ -171,7 +171,7 @@ index 00c15bb3bcf..280bfe5bf3c 100644
+      }
+  
+      /* create callbacks */
+-@@ -581,5 +624,32 @@ XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data)
++@@ -586,5 +629,32 @@ XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data)
+      if (status != NULL)
+          XFree(status);
+  
+@@ -205,10 +205,10 @@ index 00c15bb3bcf..280bfe5bf3c 100644
+      return xic;
+  }
+ diff --git a/include/wine/gdi_driver.h b/include/wine/gdi_driver.h
+-index d9c52777dd8..532e4bdcd9e 100644
++index a63e2c3ceda..79e9f869b6e 100644
+ --- a/include/wine/gdi_driver.h
+ +++ b/include/wine/gdi_driver.h
+-@@ -325,6 +325,8 @@ struct user_driver_funcs
++@@ -324,6 +324,8 @@ struct user_driver_funcs
+      const struct vulkan_funcs * (*pwine_get_vulkan_driver)(UINT);
+      /* opengl support */
+      struct opengl_funcs * (*pwine_get_wgl_driver)(UINT);
+@@ -218,5 +218,5 @@ index d9c52777dd8..532e4bdcd9e 100644
+      void    (*pThreadDetach)(void);
+  };
+ -- 
+-2.35.1
++2.34.1
+ 
+diff --git a/patches/winex11-key_translation/definition b/patches/winex11-key_translation/definition
+index 597bb5cd..f812d940 100644
+--- a/patches/winex11-key_translation/definition
++++ b/patches/winex11-key_translation/definition
+@@ -1,7 +1,2 @@
+ Fixes: [30984] Improve key translation.
+ Fixes: [45605] Letter keys doesn't work in DirectX aplications
+-Disabled: True
+-
+-# Broken due to winex11 being converted to PE.
+-# MultiByteToWideChar is undefined and may not be the best way handle
+-# this anymore.
