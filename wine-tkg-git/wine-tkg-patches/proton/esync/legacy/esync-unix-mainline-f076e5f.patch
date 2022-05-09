@@ -4195,9 +4195,9 @@ index 42b0f4e6bfd..a78748b96ca 100644
  #define WM_NCMOUSEFIRST WM_NCMOUSEMOVE
  #define WM_NCMOUSELAST  (WM_NCMOUSEFIRST+(WM_MOUSELAST-WM_MOUSEFIRST))
 @@ -144,6 +145,8 @@ struct msg_queue
+     struct thread_input   *input;           /* thread input descriptor */
      struct hook_table     *hooks;           /* hook table */
      timeout_t              last_get_msg;    /* time of last get message call */
-     int                    keystate_lock;   /* owns an input keystate lock */
 +    int                    esync_fd;        /* esync file descriptor (signalled on message) */
 +    int                    esync_in_msgwait; /* our thread is currently waiting on us */
  };
@@ -4228,9 +4228,9 @@ index 42b0f4e6bfd..a78748b96ca 100644
      no_signal,                    /* signal */
      no_get_fd,                    /* get_fd */
 @@ -313,11 +319,16 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+         queue->input           = (struct thread_input *)grab_object( input );
          queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
-         queue->keystate_lock   = 0;
 +        queue->esync_fd        = -1;
 +        queue->esync_in_msgwait = 0;
          list_init( &queue->send_result );
@@ -4245,9 +4245,9 @@ index 42b0f4e6bfd..a78748b96ca 100644
          thread->queue = queue;
      }
 @@ -497,6 +508,9 @@ static inline void clear_queue_bits( struct msg_queue *queue, unsigned int bits
-         if (queue->keystate_lock) unlock_input_keystate( queue->input );
-         queue->keystate_lock = 0;
-     }
+ {
+     queue->wake_bits &= ~bits;
+     queue->changed_bits &= ~bits;
 +
 +    if (do_esync() && !is_signaled( queue ))
 +        esync_clear( queue->esync_fd );
