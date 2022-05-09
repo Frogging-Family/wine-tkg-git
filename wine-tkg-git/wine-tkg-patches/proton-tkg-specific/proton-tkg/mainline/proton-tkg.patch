@@ -942,34 +942,6 @@ index e976fda77f2..212c88c5a02 100644
      case DWMWA_CLOAKED:
          if (size < sizeof(DWORD)) return E_INVALIDARG;
 
-From 2f720e9aa8ded781ff457bdfab96f3651017299c Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
-Date: Tue, 21 Jan 2020 21:05:05 +0100
-Subject: [PATCH] winex11.drv: Ignore ClipCursor if desktop window is
- foreground.
-
----
- dlls/winex11.drv/mouse.c | 7 +++++++
- 1 file changed, 7 insertions(+)
-
-diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
-index a5235b69a8d..4b2c9bd41ae 100644
---- a/dlls/winex11.drv/mouse.c
-+++ b/dlls/winex11.drv/mouse.c
-@@ -1625,6 +1625,13 @@ BOOL CDECL X11DRV_ClipCursor( LPCRECT clip )
-         HWND foreground = GetForegroundWindow();
-         DWORD tid, pid;
- 
-+        if (foreground == GetDesktopWindow())
-+        {
-+            WARN( "desktop is foreground, ignoring ClipCursor\n" );
-+            ungrab_clipping_window();
-+            return TRUE;
-+        }
-+
-         /* forward request to the foreground window if it's in a different thread */
-         tid = GetWindowThreadProcessId( foreground, &pid );
-         if (tid && tid != GetCurrentThreadId() && pid == GetCurrentProcessId())
 From b739d48093cce805b7b4f48fdbd9d0bb62bc8013 Mon Sep 17 00:00:00 2001
 From: Brendan Shanks <bshanks@codeweavers.com>
 Date: Mon, 13 Apr 2020 16:25:47 -0700
@@ -1809,77 +1781,6 @@ index fbc6716e94e..1ca8c3ed0fd 100644
      if (IS_OPTION_TRUE(*buf))
  	CheckDlgButton(dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED);
      else
-From f649de43236f67943a44ae89dfbbd3d4c7d9eeb4 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
-Date: Thu, 17 Dec 2020 18:47:44 +0100
-Subject: [PATCH] HACK: steam: winex11.drv: Check Steam overlay presence and
- drop events when enabled.
-
----
- dlls/winex11.drv/event.c       | 7 ++++++-
- dlls/winex11.drv/x11drv.h      | 1 +
- dlls/winex11.drv/x11drv_main.c | 5 +++++
- 3 files changed, 12 insertions(+), 1 deletion(-)
-
-diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
-index 89a9974529b..baec41d0296 100644
---- a/dlls/winex11.drv/event.c
-+++ b/dlls/winex11.drv/event.c
-@@ -433,13 +433,18 @@ static BOOL process_events( Display *display, Bool (*filter)(Display*, XEvent*,X
- {
-     XEvent event, prev_event;
-     int count = 0;
--    BOOL queued = FALSE;
-+    BOOL queued = FALSE, overlay_enabled = FALSE;
-     enum event_merge_action action = MERGE_DISCARD;
-+    ULONG_PTR overlay_filter = QS_KEY | QS_MOUSEBUTTON | QS_MOUSEMOVE;
-+
-+    if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0)
-+        overlay_enabled = TRUE;
- 
-     prev_event.type = 0;
-     while (XCheckIfEvent( display, &event, filter, (char *)arg ))
-     {
-         count++;
-+        if (overlay_enabled && filter_event( display, &event, (char *)overlay_filter )) continue;
-         if (XFilterEvent( &event, None ))
-         {
-             /*
-diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
-index 147087e3220..e4164eba5d2 100644
---- a/dlls/winex11.drv/x11drv.h
-+++ b/dlls/winex11.drv/x11drv.h
-@@ -412,6 +412,7 @@ extern int xrender_error_base DECLSPEC_HIDDEN;
- extern HMODULE x11drv_module DECLSPEC_HIDDEN;
- extern char *process_name DECLSPEC_HIDDEN;
- extern Display *clipboard_display DECLSPEC_HIDDEN;
-+extern HANDLE steam_overlay_event DECLSPEC_HIDDEN;
- 
- /* atoms */
- 
-diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
-index f23ce260a7f..17d80458c54 100644
---- a/dlls/winex11.drv/x11drv_main.c
-+++ b/dlls/winex11.drv/x11drv_main.c
-@@ -90,6 +90,7 @@ DWORD thread_data_tls_index = TLS_OUT_OF_INDEXES;
- int xrender_error_base = 0;
- HMODULE x11drv_module = 0;
- char *process_name = NULL;
-+HANDLE steam_overlay_event;
- 
- static x11drv_error_callback err_callback;   /* current callback for error */
- static Display *err_callback_display;        /* display callback is set for */
-@@ -738,6 +739,10 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
-         DisableThreadLibraryCalls( hinst );
-         x11drv_module = hinst;
-         ret = process_attach();
-+        steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
-+        break;
-+    case DLL_PROCESS_DETACH:
-+        CloseHandle(steam_overlay_event);
-         break;
-     }
-     return ret;
 From 2452b57e7fed9ac5036df9bcace5c28366a8eb41 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Fri, 8 Jan 2021 13:47:39 -0600
