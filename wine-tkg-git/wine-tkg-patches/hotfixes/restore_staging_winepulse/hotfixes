@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# Disable _prefer_external_faudio on 227a127+
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 227a1275b14a2ffd71a4d0c621cb655e3576ad02 HEAD ); then
+  _prefer_external_faudio="false"
+fi
+
+# Staging's winepulse pulseaudio support patchset was disabled with 0df3e89, leading to audio skips, crackling and friends in some games such as Cyberpunk 2077 and Forza Horizon 4. Let's bring it back for now to get better sound.
+if [ "$_use_staging" = "true" ] && [ "$_staging_pulse_disable" = "false" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 0df3e892fb1f3c72c865e65ca2f1adc947ce83e0 HEAD && ! git merge-base --is-ancestor 93e94fcbc077db4243eec763ed91d6e8312add29 HEAD ); then
+  if ( [ "$_hotfixes_no_confirm" != "true" ] && [ "$_hotfixes_no_confirm" != "ignore" ] ); then
+    warning "Hotfix: Staging's winepulse pulseaudio support patchset is currently disabled, leading to audio skips and crackling in various games."
+    read -rp "  Restore it?"$'\n> N/y : ' _hotfixansw_staging_pulse;
+  fi
+  if [[ "$_hotfixansw_staging_pulse" =~ [yY] ]] || [ "$_hotfixes_no_confirm" = "true" ] && [ "$_hotfixansw_staging_pulse" != "false" ]; then
+    warning "Hotfix: Restore staging's winepulse pulsaudio support patchset - Fixes audio skips and crackling in various games"
+    if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 847db3c1d3f5444808814cbea8f2920b16a96fcb HEAD ); then
+      _hotfix_mainlinereverts+=(e309bad98c736d3409b5ceaffa77486a73c1f80b 7d60d0d7bbc0138133d1968dc3802e2e79ab5b32 4303e753137d0b44cff4f9261d10ef86d57016f2 2e64d91428757eaa88475b49bf50922cda603b59 f77af3dd6324fadaf153062d77b51f755f71faea ce151dd681fe5ee80daba96dce12e37d6846e152 77813eb7586779df0fb3b700000a17e339fd5ce3 d8e9621cfad50596378283704dfb1e6926d77ed8 a4149d53f734bf898087e22170eab5bed9a423d1 b4c7823bbb6a792098131f5572506784c8ed0f35 70f59eb179d6a1c1b4dbc9e0a45b5731cd260793 e19d97ff4e2f5a7800d6df77b8acce95130b84c3 4432b66e372caf0096df56f45502d7dea1f1800c 6a6296562f536ed10d221f0df43ef30bbd674cb2 aba40bd50a065b3ac913dbc1263c38535fb5d9e7 bf74f36350c92daae84623dc0bd0530c212bb908 1518e73b23211af738ae448a80466c0199f24419 44e4132489c28b429737be022f6d4044c5beab3e a6131544e87c554f70c21a04fb4697d8e1f508d5 80b996c53c767fef4614f097f14c310285d9c081 459e911b653c7519a335661a6c0b0894e86d2f1a 42d826bc8c1d625ed2985ff06c2cd047209a1916 30c17619e5401618122ca330cf0909f49b170a59 af84907ccad3e28f364ecfaa75ccb5fedf7f5a42 a5997bece730beb8ab72d66b824ed2a1cb92c254 24a7c33fc1ad6dbab489284cfb6dba4130297ddb 8cb88173d87efedce8c345beea05641f5617d857 505d4b8b14913f3abd362bf27272e6b239cb6ce4 638455136b4d30b853b02b77a2f33dc61c60b267 13cac6287c454146eff73aabc4b92b5c8f76d4df d7b957654d4739b8dd07c91f051b7940f416ef42 8ea23d0d44ced0ce7dadc9b2546cbc56f6bce364 0b0ae164f4ccebf4b5bc1bb1529a90786d2d5941 131b7fd5e16a3da17aed28e86933074c5d663d9f 8060e56b26add8eafffb211119798569ea3188ff bca0706f3a93fa0a57f4dbdc6ae541e8f25afb34 b1ddfca16e4696a52adf2bdd8333eeffb3c6170c a5d4079c8285c10ab2019c9fd9d19a6b22babb76 ebd344f2922f4044117904e024a0a87576a3eff1 0eeefec6c56084a0677403aee46493e2c03a1dca 5477f2b0156d16952a286dd0df148c2f60b71fe6 fa097243e06b3855a240c866a028add722025ead 8df72bade54d1ef7a6d9e79f20ee0a2697019c13 e264ec9c718eb66038221f8b533fc099927ed966 d3673fcb034348b708a5d8b8c65a746faaeec19d)
+      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e309bad98c736d3409b5ceaffa77486a73c1f80b HEAD ); then
+        _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/wine-pulseaudio-fixup)
+      fi
+    else
+      _hotfix_mainlinereverts+=(6fa197c3ec60066256bd8b847cc79ff8f743c6b5 033cd6013ea9852244b8d58360554c964a7bb540 262c52110ccc50cdca001eebc8c2f5481b902506 6995b77a6d0111bba045ed1dafa348cc465bc5c8)
+      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a7ecf080406b76b64176505d1d2fc8abba837022 HEAD ); then
+        _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/pulse_reverts-6)
+      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 5e0479c49704d161cde88fa8cf89c43179ebcb4b HEAD ); then
+        _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/pulse_reverts-5)
+      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor ab5664a5e627731084f877626b251196a8aa726c HEAD ); then
+        _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/pulse_reverts-4)
+      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 088a787a2cd45ea70e4439251a279260401e9287 HEAD ); then
+        _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/pulse_reverts-3)
+      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 18b98df060071aad16f6fab591ce6beb127b7f14 HEAD ); then
+        _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/pulse_reverts-2)
+      else
+        _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/pulse_reverts-1)
+      fi
+    fi
+
+    _hotfix_stagingreverts+=(183fd3e089b170d5b7405a80a23e81dc7c4dd682)
+    _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/staging-reenable-pulse)
+    _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/staging-pulseaudio-reverts)
+  fi
+elif [ "$_prefer_external_faudio" = "true" ]; then
+  _hotfix_mainlinereverts+=(a80c5491600c00a54dfc8251a75706ce86d2a08f 22c26a2dde318b5b370fc269cab871e5a8bc4231)
+  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor d8be85863fedf6982944d06ebd1ce5904cb3d4e1 HEAD ); then
+    if [ "$_use_staging" = "true" ] && cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 2239795e437a25561b626877feab278584d590c2 HEAD; then
+      _staging_args+=(-W xactengine3_7-callbacks)
+    fi
+    warning "Hotfix: Prefer external FAudio for WMA playback"
+    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 111c87f444b167f56633462f778d9f5aa6ef53ea HEAD ); then
+      _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/f0cd33c-2)
+    elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor f0cd33c69e879177559caaf248e86a4d69f9a09e HEAD ); then
+      _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/f0cd33c-1)
+    fi
+    _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/restore_staging_winepulse/d8be858)
+  fi
+fi

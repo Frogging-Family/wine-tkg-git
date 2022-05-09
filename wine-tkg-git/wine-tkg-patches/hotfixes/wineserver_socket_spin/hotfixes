@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# 737fe1f introduced a regression for some, resulting in high CPU usage due to network handling. Workaround by openglfreak for a757701+ - https://github.com/Frogging-Family/wine-tkg-git/issues/407
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 737fe1f99337ab999cf67fb1acdf96f70020b3d4 HEAD && ! git merge-base --is-ancestor 361435f6095f8c759979600b06ed28785e7b3aec HEAD ); then
+  if ( [ "$_hotfixes_no_confirm" != "true" ] && [ "$_hotfixes_no_confirm" != "ignore" ] ) || [ "$_EXTERNAL_INSTALL" = "proton" ]; then
+    msg2 ""
+    warning "Hotfix: 737fe1f can lead to high CPU usage for some due to network handling regression. Reverting it fixes the issue but breaks some CEF apps/launchers."
+    msg2 "  1 - Keep using upstream code"
+    msg2 "  2 - Revert it (breaks some CEF apps/launchers)"
+    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a7577014faeda217be282222e355c493064e139b HEAD ); then
+      warning "Alternatively, a workaround by openglfreak is offered on your current tree revision, which works in most cases (but not all) and doesn't break CEF apps/launchers."
+      msg2 "  3 - Apply Openglfreak's patch (recommended)"
+      read -rp '  > [1-3] : ' _hotfixansw_737f;
+    else
+      read -rp '  > [1-2] : ' _hotfixansw_737f;
+    fi
+  fi
+  if [ "$_hotfixansw_737f" != "1" ] && [ "$_hotfixansw_737f" != "2" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a7577014faeda217be282222e355c493064e139b HEAD ); then
+    warning "Hotfix: Fix for high CPU usage due to network handling regression - Patch by openglfreak"
+    _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/wineserver_socket_spin/wineserver-socket-spin-workaround)
+  elif [ "$_hotfixansw_737f" = "2" ]; then
+    warning "Hotfix: Fix for high CPU usage due to network handling regression - Breaks some CEF apps/launchers"
+    _hotfix_mainlinereverts+=(737fe1f99337ab999cf67fb1acdf96f70020b3d4)
+  fi
+fi

@@ -1,0 +1,149 @@
+#!/bin/bash
+
+# On Proton, revert uiautomationcore changes conflicting with our tabtip patches
+if [ "$_EXTERNAL_INSTALL" = "proton" ]; then
+  _hotfix_mainlinereverts+=(583cbd2383e91af7ed2a35021fa291d2bbaa8b87 1ebccd0f442d19efeeffa7dfacbcd71c296ffc80)
+fi
+
+# Workaround broken staging commit 5117eec.
+if ( cd "${srcdir}"/"${_stgsrcdir}" && [ "$(git rev-parse HEAD)" = "5117eec7bfbda434fbe72d19ba75ec23ddccf846" ] ); then
+  warning "Temporarily restore deleted ntoskrnl-Stubs patchset to fix staging commit 5117eec trying to apply it"
+  _hotfix_stagingreverts+=(5117eec7bfbda434fbe72d19ba75ec23ddccf846)
+fi
+
+# 7b233f3032e4850b0f387faef4aae5ed6d5175de breaks at least Among Us - Revert - https://github.com/Frogging-Family/wine-tkg-git/issues/709
+# Fixed along the way, possibly with 1b9d48a (not bisected)
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 7b233f3032e4850b0f387faef4aae5ed6d5175de HEAD && ! git merge-base --is-ancestor 1b9d48a7b01e2b715af46bc1f8d5fe6f1529782c HEAD ); then
+  warning "Hotfix: Revert 7b233f3, allowing Among Us to run again"
+  _hotfix_mainlinereverts+=(65f36a9695ae2050d7c3d7b01d066d5eb26e557b 7b233f3032e4850b0f387faef4aae5ed6d5175de)
+fi
+
+# Revert a041075 which is breaking IDA Pro - https://bugs.winehq.org/show_bug.cgi?id=52252
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a041075cd2c26874757e0b6e1449c23c1326241c HEAD && ! git merge-base --is-ancestor e16ccaf05d845ea490d845d896cb284b5b00aa87 HEAD ); then
+  warning "Hotfix: Revert a041075 which is breaking IDA Pro"
+  _hotfix_mainlinereverts+=(a041075cd2c26874757e0b6e1449c23c1326241c)
+fi
+
+# Revert a9b5bb3 which is breaking graphics drivers
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a9b5bb326a1514e2c4185633ab34b22c9bbc9863 HEAD && ! git merge-base --is-ancestor 414e1c8ad5f5c39ef7caa71f5ff8f7735cf91d1a HEAD ); then
+  warning "Hotfix: Revert a9b5bb3 which is breaking graphics drivers"
+  _hotfix_mainlinereverts+=(a9b5bb326a1514e2c4185633ab34b22c9bbc9863)
+fi
+
+# Revert e5d3783 (winspool.drv: Implement Wow64 entry points in the Unix library. ) as it seems to prevent prefix creation on some machines
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor e5d37832ee66d011ba572a9b571e9fb44a7b2b4d HEAD && ! git merge-base --is-ancestor ff0f5e40249037c2456e43bf901633097d7ae430 HEAD ); then
+  warning "Hotfix: Revert e5d3783, breaking prefix creation for some"
+  _hotfix_mainlinereverts+=(e5d37832ee66d011ba572a9b571e9fb44a7b2b4d)
+fi
+
+# Disable vr support patchset for 5.20-6.12
+if [ "$_EXTERNAL_INSTALL" = "proton" ]; then
+  if [ "$_LOCAL_PRESET" != "valve" ] && [ "$_LOCAL_PRESET" != "valve-exp" ] && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 12d33d21d33788fd46898ea42e9592d33b6e7c8e HEAD ); then
+    _steamvr_support="false"
+    _proton_branch_exp="DENIED"
+  else
+    _steamvr_support="true"
+    _proton_branch_exp="true"
+  fi
+fi
+
+# LOL
+if [ "$_use_staging" = "true" ] && [ "$_lol920_fix" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 7554bd4b41a1429517eb86fd20dbe813cdd0550a HEAD && cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 766e1ee8f8876f21b64b3bbd5c9322a476abc5bd HEAD ); then
+  warning "The _lol920_fix option breaks on 6.19+ and has been disabled. Please use 7.1 or newer (staging 7.0.r2 minimum)."
+  _lol920_fix="false"
+fi
+
+# https://github.com/ValveSoftware/Proton/issues/1295#issuecomment-859185208
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 2ad44002da683634de768dbe49a0ba09c5f26f08 HEAD ); then
+  if [ "$_use_staging" = "false" ] || ( [ "$_use_staging" = "true" ] && cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor bcfed21ea1925e06c1f0db0e86cb2380300b8aa9 HEAD ); then
+    warning "Hotfix: Revert Quartz changes breaking Tokyo Xanadu Xe+"
+    _hotfix_mainlinereverts+=(3c2e6efb5a6b077ccd6eac2190e16829882ee333 2ad44002da683634de768dbe49a0ba09c5f26f08 dfa4c07941322dbcad54507cd0acf271a6c719ab)
+  fi
+fi
+
+# Broken ranges on mainline
+if [ "$_use_staging" = "false" ]; then
+  # 5.20-5.21
+  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && ! git merge-base --is-ancestor bedfb9cae224a369efa4588332a5518dbee57035 HEAD ); then
+    _use_esync="false"
+  # 6.0
+  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 477fe4ba2fceaffe96ea3910595befeb22b717a5 HEAD && ! git merge-base --is-ancestor 47ac628b4a4e476c1b044765c95d5be2a7101d14 HEAD ); then
+    _use_fsync="false"
+  fi
+fi
+
+# Revert 1c1ff37 and fbd39cd, breaking a proton patch needed for RE8 - Needs rebase/re-implementation
+# Disable on d94d1a8+ for now, along with the RE8 patch
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor fbd39cd8b5de10c53fbb6c5e298c8863beec13fd HEAD && ! git merge-base --is-ancestor d94d1a8b263a020575bf8dd76509d9e603434095 HEAD ); then
+  warning "Hotfix: Revert some gdi changes to allow for RE8 proton patch"
+  _hotfix_mainlinereverts+=(072a100f66215763a67edc4629fe5d3b73f6734c 951d8ace18c5677d7bc577a08c69a1c1af8bf2d1 c33b7b583b4067639ce8e4bbea2965cb2bf091de 05a3384ca8186404280085da1d1744da474a60d7 5794b2da18328ea22464b70cd243d279a236df7d 75d21c999e39cf5c1b3feb6e2c50cdc30a077325 ef7b2a1b8bf3cfdd29051da248fa3c2060800271 800cde3cf4bffa3a2909e5ae00326db6eb1b42b1 711ce415c01a5e36bde6bb147b5aa3cedc8b35ed 02d2bc944db2e5132e11a9ffdcad5f3f497b03fc b096da8a50210cb437376a2d65374e310d53eeff 8217ce0fef83a0aea3c658489c885d9bb69a3056 f95687c510e177d3c2b368e0181e9209aa2ac381 66fd792c4d16bb5815b5d796f119e7bf8d946fc1 34508690cb98f9d849cc04817db77400c62513c4 00359ebfa0d4a86aac024f4067a82bb5725c94b4 7da78fd269309cfa8ed27aededb2c67e24507439 8a68a9ee3193149c3f8825c31af7d5a6480f4ee4 865be24a2516518250badb5325220eacff2a126f 931ea8b00e82912a96446575371e105cf1399496 f6e584e626523d2500f094f1e98f113018770c5f b2522bfb90e23ed84d1ec2dc03069a28d937b32f 011032164040ac36370249655addb300baec1b78 55849cd42808e54e1a63ef0de4db05640065a968 9c03e8ae8c0f81e70528bc7719fba5196ea7949e e4bb7972525ae855865c54a7f87955cb74b123c5 91621cece6154356bfbe8934759c355abea9a074 86f11f71a04fa27f3e52366a131810d945749c0e 1c1ff37390c94101f474ce8ee57a3bd830ca965f fbd39cd8b5de10c53fbb6c5e298c8863beec13fd)
+fi
+
+# Disable proton sdl joy patchset until we rebase it
+# Edit - Rebased as of proton_7.0, targetting 656edbb508d51cbe3155d856ee3f2c27a6cd4cba
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 199f689ff1e0f7c7fe318c2273aa378710a94e78 HEAD && ! git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ); then
+  _sdl_joy_support="false"
+fi
+
+# Rockstar Game Services are broken with the 8e13903-4c10543 patch series - Revert for now
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8e13903665fdf81fcd6054fb3de981d5a3f617f1 HEAD && ! git merge-base --is-ancestor beb844448731a2413e3700877c237dc9f5968870 HEAD ); then
+  warning "Hotfix: Fix Rockstar Game Services broken by 8e13903-4c10543"
+  _hotfix_mainlinereverts+=(4c10543b6a54cdcc57b5ce7efd839b17d60471e6 67c8a82f3d0a43709a3be622dbe15a5ff8165475 2f3ab0b242321a044ca68794f811165a8f748a74 4c7c7d07d4dd30b0751c7ad0bbc1db5577807b72 0978421102910d7a7443f9f57ea0bfe3c882270e 8e13903665fdf81fcd6054fb3de981d5a3f617f1)
+fi
+
+# EGS and RGS login is broken with 5edf656 - Revert for now
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 5edf65616a8dcbf5988bbabe0493827d9e125fc3 HEAD && ! git merge-base --is-ancestor 0342de8e4d8a646d2b858cccdbf95bf68c6b32b0 HEAD ); then
+  warning "Hotfix: 5edf656 breaks EGS and RGS - Reverting to fix"
+  _hotfix_mainlinereverts+=(5edf65616a8dcbf5988bbabe0493827d9e125fc3)
+fi
+
+# Sea of thieves got broken by b8aaf86 - https://bugs.winehq.org/show_bug.cgi?id=51440
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor b8aaf86b2dbb8ecb3f7094cc40a0df89bb2add27 HEAD && ! git merge-base --is-ancestor 8ed81720e81b20a134d9cd5c6bb50183752d9e82 HEAD ); then
+  warning "Hotfix: b8aaf86 breaks Sea of Thieves - Reverting to fix"
+  _hotfix_mainlinereverts+=(b8aaf86b2dbb8ecb3f7094cc40a0df89bb2add27)
+fi
+
+# Some games seem to spam checking for devices such as Samurai Shodown Reboot 2019 - Reverting c2c78a2 fixes it
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor c2c78a2fe0ac13e4fca7ab4c17977b65e358485c HEAD && ! git merge-base --is-ancestor  bedd92ca068434eea7cb6b445a3fcf21b51acbaf HEAD ); then
+  warning "Hotfix: Revert c2c78a2 to prevent perf degradation on games polling devices constantly"
+  _hotfix_mainlinereverts+=(c2c78a2fe0ac13e4fca7ab4c17977b65e358485c)
+fi
+
+# Wayland driver
+if [ "$_wayland_driver" = "true" ]; then
+  _configure_args64+=(--with-wayland --with-vulkan)
+  _configure_args32+=(--with-wayland --with-vulkan)
+fi
+
+# https://bugs.winehq.org/show_bug.cgi?id=51277 - 97afac469fbe012e22acc1f1045c88b1004a241f seems to break - at least some - controllers on Unity games
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 97afac469fbe012e22acc1f1045c88b1004a241f HEAD && ! git merge-base --is-ancestor  bedd92ca068434eea7cb6b445a3fcf21b51acbaf HEAD ); then
+  warning "Hotfix: Fix for gamepad not working in Unity games"
+  _hotfix_mainlinereverts+=(97afac469fbe012e22acc1f1045c88b1004a241f)
+fi
+
+# There's apparently a regression caused by a891713f48fbcdae05f27f7e73b1cec78cf42644 and a70c5172c6bb0e61ad24c202a9bf4e88b8c868b0 regarding networking
+#if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor a70c5172c6bb0e61ad24c202a9bf4e88b8c868b0 HEAD ); then
+#  warning "Hotfix: Fix for networking regression on a70c517+"
+#  _hotfixes+=("$_where"/wine-tkg-patches/hotfixes/a70c517/networking_fix)
+#fi
+
+# 4f787812999b3b26f04b322fa0d78724596878c0 breaks building steam_helper with winegcc due to local stdlib.h
+if [ "$_EXTERNAL_INSTALL" = "proton" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 4f787812999b3b26f04b322fa0d78724596878c0 HEAD && ! git merge-base --is-ancestor 5a1d836def24043b4e7afcdc8cf1342223957edf HEAD ) ; then
+  warning "Hotfix: Fix Proton steam_helper headers lookup with winegcc"
+  _hotfix_mainlinereverts+=(4f787812999b3b26f04b322fa0d78724596878c0)
+fi
+
+# We prefer built-in vulkan-1 since native can break some games shipping it, so revert 290c9a4d6372cee046768eccd8fa49050a294f68 so the proton patchset hack can be used
+# This breaks RDR2 so we skip doing that on 2cb4bdb+, which corresponds to the current proton-tkg meta patchsets at the time of writing this, allowing this change on earlier trees
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 290c9a4d6372cee046768eccd8fa49050a294f68 HEAD && ! git merge-base --is-ancestor 2cb4bdb10abcfd751d4d1b2ca7780c778166608a HEAD ); then
+  warning "Hotfix: Restore prefer builtin vulkan-1"
+  _hotfix_mainlinereverts+=(e5cade0ff189c7bc871cf3686d16c55939d06068 290c9a4d6372cee046768eccd8fa49050a294f68)
+fi
+
+# Fixes a regression breaking mostly some game launchers such as Riot client or Minecraft dungeon launcher - https://bugs.winehq.org/show_bug.cgi?id=49990
+# It seems to break riot client on 6.15 while star citizen launcher works fine with and without it, so let's disable on 6.15+
+if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor bd27af974a21085cd0dc78b37b715bbcc3cfab69 HEAD && ! git merge-base --is-ancestor 548bc54bf396d74b5b928bf9be835272ddda1886 HEAD ); then
+  warning "Hotfix: Revert bd27af97 to fix many game launchers displaying empty windows (StarCitizen, EGS, Riot Client, Minecraft Dungeons etc.)"
+  _hotfix_mainlinereverts+=(b54199101fd307199c481709d4b1358ba4bcce58 dedda40e5d7b5a3bcf67eea95145810da283d7d9 bd27af974a21085cd0dc78b37b715bbcc3cfab69)
+  #_hotfixes+=("$_where"/wine-tkg-patches/hotfixes/bd27af9/bd27af9)
+fi
