@@ -2443,9 +2443,9 @@ index e013f4fb32c..3e70cd92259 100644
 --- a/server/queue.c
 +++ b/server/queue.c
 @@ -138,6 +138,7 @@ struct msg_queue
+     struct thread_input   *input;           /* thread input descriptor */
      struct hook_table     *hooks;           /* hook table */
      timeout_t              last_get_msg;    /* time of last get message call */
-     int                    keystate_lock;   /* owns an input keystate lock */
 +    struct fast_sync      *fast_sync;       /* fast synchronization object */
  };
  
@@ -2468,9 +2468,9 @@ index e013f4fb32c..3e70cd92259 100644
      msg_queue_destroy          /* destroy */
  };
 @@ -305,6 +307,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+         queue->input           = (struct thread_input *)grab_object( input );
          queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
-         queue->keystate_lock   = 0;
 +        queue->fast_sync       = NULL;
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
@@ -2489,9 +2489,9 @@ index e013f4fb32c..3e70cd92259 100644
  
  /* clear some queue bits */
 @@ -488,6 +495,8 @@ static inline void clear_queue_bits( struct msg_queue *queue, unsigned int bits
-         if (queue->keystate_lock) unlock_input_keystate( queue->input );
-         queue->keystate_lock = 0;
-     }
+ {
+     queue->wake_bits &= ~bits;
+     queue->changed_bits &= ~bits;
 +    if (!is_signaled( queue ))
 +        fast_reset_event( queue->fast_sync );
  }
@@ -3150,16 +3150,16 @@ index 3e70cd92259..e1fb696259f 100644
 --- a/server/queue.c
 +++ b/server/queue.c
 @@ -139,6 +139,7 @@ struct msg_queue
+     struct hook_table     *hooks;           /* hook table */
      timeout_t              last_get_msg;    /* time of last get message call */
-     int                    keystate_lock;   /* owns an input keystate lock */
      struct fast_sync      *fast_sync;       /* fast synchronization object */
 +    int                    in_fast_wait;    /* are we in a client-side wait? */
  };
  
  struct hotkey
 @@ -308,6 +309,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+         queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
-         queue->keystate_lock   = 0;
          queue->fast_sync       = NULL;
 +        queue->in_fast_wait    = 0;
          list_init( &queue->send_result );
