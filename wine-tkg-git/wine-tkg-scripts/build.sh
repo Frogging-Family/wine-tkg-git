@@ -7,13 +7,13 @@ _prebuild_common() {
 
 	# Use custom compiler paths if defined
 	if [ -n "${CUSTOM_MINGW_PATH}" ] && [ -z "${CUSTOM_GCC_PATH}" ]; then
-	  PATH=${PATH}:$( find "$CUSTOM_MINGW_PATH/" -maxdepth 1 -type d -printf "%p:" || ( warning "Custom compiler path seems wrong.." && exit 1 ) )
+	  PATH=${PATH}:$( find "$CUSTOM_MINGW_PATH/" -maxdepth 1 -printf "%p:" || ( warning "Custom compiler path seems wrong.." && exit 1 ) )
 	  echo -e "CUSTOM_MINGW_PATH = ${CUSTOM_MINGW_PATH##*/}" >> "$_where"/last_build_config.log #" Coloring confusion
 	elif [ -n "${CUSTOM_GCC_PATH}" ] && [ -z "${CUSTOM_MINGW_PATH}" ]; then
-	  PATH=$( find "$CUSTOM_GCC_PATH/" -maxdepth 1 -type d -printf "%p:" || ( warning "Custom compiler path seems wrong.." && exit 1 ) )${PATH}
+	  PATH=$( find "$CUSTOM_GCC_PATH/" -maxdepth 1 -printf "%p:" || ( warning "Custom compiler path seems wrong.." && exit 1 ) )${PATH}
 	  echo -e "CUSTOM_GCC_PATH = ${CUSTOM_GCC_PATH##*/}" >> "$_where"/last_build_config.log #" Coloring confusion
 	elif [ -n "${CUSTOM_MINGW_PATH}" ] && [ -n "${CUSTOM_GCC_PATH}" ]; then
-	  PATH=$( find "$CUSTOM_GCC_PATH/" -maxdepth 1 -type d -printf "%p:" || ( warning "Custom compiler path seems wrong.." && exit 1 ) )$( find "$CUSTOM_MINGW_PATH/" -maxdepth 1 -type d -printf "%p:" || ( warning "Custom compiler path seems wrong.." && exit 1 ) )${PATH}
+	  PATH=$( find "$CUSTOM_GCC_PATH/" -maxdepth 1 -printf "%p:" || ( warning "Custom compiler path seems wrong.." && exit 1 ) )$( find "$CUSTOM_MINGW_PATH/" -maxdepth 1 -printf "%p:" || ( warning "Custom compiler path seems wrong.." && exit 1 ) )${PATH}
 	  echo -e "CUSTOM_MINGW_PATH = ${CUSTOM_MINGW_PATH##*/}" >> "$_where"/last_build_config.log #" Coloring confusion
 	  echo -e "CUSTOM_GCC_PATH = ${CUSTOM_GCC_PATH##*/}" >> "$_where"/last_build_config.log #"
 	fi
