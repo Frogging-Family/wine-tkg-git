@@ -2759,8 +2759,10 @@ EOM
 	    fi
 	  else
 	    if [ "$_use_esync" = "false" ] && [ "$_use_fsync" = "false" ]; then
-	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 36b45c6d1c124dd16b3475ba743fcbbc99d6862d HEAD); then
+	      if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor f076e5f85490a44fd34057df9af1c3ae3e7d5d3b HEAD); then
 	        _patchname='fastsync-mainline.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
+	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 36b45c6d1c124dd16b3475ba743fcbbc99d6862d HEAD ); then
+	        _patchname='fastsync-mainline-f076e5f.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
 	      fi
 	    else
 	      warning "! _use_fastsync is enabled, but _use_esync/_use_fsync disables it. Please disable them in your .cfg to use fastsync !"
