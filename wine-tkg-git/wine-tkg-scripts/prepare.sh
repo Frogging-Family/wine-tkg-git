@@ -2752,12 +2752,16 @@ EOM
 	  if [ "$_use_staging" = "true" ]; then
 	    if [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
 	      if [ "$_protonify" = "true" ]; then
-	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 36b45c6d1c124dd16b3475ba743fcbbc99d6862d HEAD ); then
+	        if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor e534d6546a5be9f1cd53a0ea3ac79db7d977bed7 HEAD ); then
 	          _patchname='fastsync-staging-protonify.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 36b45c6d1c124dd16b3475ba743fcbbc99d6862d HEAD ); then
+	          _patchname='fastsync-staging-protonify-e534d65.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
 	        fi
 	      else
-	        if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 36b45c6d1c124dd16b3475ba743fcbbc99d6862d HEAD ); then
+	        if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor e534d6546a5be9f1cd53a0ea3ac79db7d977bed7 HEAD ); then
 	          _patchname='fastsync-staging.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
+	        elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 36b45c6d1c124dd16b3475ba743fcbbc99d6862d HEAD ); then
+	          _patchname='fastsync-staging-e534d65.patch' && _patchmsg="Using fastsync (Esync/Fsync compatible) patchset" && nonuser_patcher
 	        fi
 	      fi
 	    else
