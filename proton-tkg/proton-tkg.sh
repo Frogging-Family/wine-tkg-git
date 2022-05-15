@@ -1120,6 +1120,13 @@ else
       sed -i "s|.*PROTON_BYPASS_SHADERCACHE_PATH.*|     \"PROTON_BYPASS_SHADERCACHE_PATH\": \"${_proton_shadercache_path}\",|g" "proton_tkg_$_protontkg_version/user_settings.py"
     fi
 
+    # Disable esync/fsync by default when fastsync is enabled
+    if [ "$_use_fastsync" = "true" ]; then
+      sed -i 's/.*PROTON_NO_ESYNC.*/     "PROTON_NO_ESYNC": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      sed -i 's/.*PROTON_NO_FSYNC.*/     "PROTON_NO_FSYNC": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      sed -i 's/.*PROTON_NO_FUTEX2.*/     "PROTON_NO_FUTEX2": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+    fi
+
     # Use the corresponding DXVK/D9VK combo options
     if [ "$_use_dxvk" != "false" ]; then
       sed -i 's/.*PROTON_USE_WINED3D11.*/#     "PROTON_USE_WINED3D11": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
