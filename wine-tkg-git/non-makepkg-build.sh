@@ -133,9 +133,9 @@ _nomakepkgsrcinit() {
     git fetch --all -p
     rm -rf "${srcdir}/${_stgsrcdir}" && git clone "$_where"/"${_stgsrcdir}" "${srcdir}/${_stgsrcdir}"
     cd "${srcdir}"/"${_stgsrcdir}"
-    git checkout --force --no-track -B makepkg origin/HEAD
+    git -c advice.detachedHead=false checkout --force --no-track -B makepkg origin/HEAD
     if [ -n "$_staging_version" ] && [ "$_use_staging" = "true" ]; then
-      git checkout "${_staging_version}"
+      git -c advice.detachedHead=false checkout "${_staging_version}"
     fi
 
     # Wine update and checkout
@@ -147,14 +147,14 @@ _nomakepkgsrcinit() {
     git fetch --all -p
     rm -rf "${srcdir}/${_winesrcdir}" && git clone "$_where"/"${_winesrcdir}" "${srcdir}/${_winesrcdir}"
     cd "${srcdir}"/"${_winesrcdir}"
-    git checkout --force --no-track -B makepkg origin/HEAD
+    git -c advice.detachedHead=false checkout --force --no-track -B makepkg origin/HEAD
     if [ -n "$_plain_version" ] && [ "$_use_staging" != "true" ]; then
-      git checkout "${_plain_version}"
+      git -c advice.detachedHead=false checkout "${_plain_version}"
       if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
         if [ -z "$_bleeding_tag" ]; then
           _bleeding_tag=$(git tag -l --sort=-creatordate | grep "bleeding" | head -n 1)
         fi
-        git checkout "${_bleeding_tag}"
+        git -c advice.detachedHead=false checkout "${_bleeding_tag}"
       fi
     fi
 
