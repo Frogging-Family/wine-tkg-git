@@ -82,7 +82,7 @@ _build() {
 	if [ "$_NOLIB64" != "true" ]; then
 	  # build wine 64-bit
 	  # (according to the wine wiki, this 64-bit/32-bit building order is mandatory)
-	  if [[ ! ${_makepkg_options[*]} =~ "ccache" ]] && [ -e /usr/bin/ccache ]; then
+	  if [ -e /usr/bin/ccache ]; then
 	    export CC="ccache gcc" && echo "CC = ${CC}" >> "$_where"/last_build_config.log
 	    export CXX="ccache g++" && echo "CXX = ${CXX}" >> "$_where"/last_build_config.log
 	  fi
@@ -131,7 +131,7 @@ _build() {
 	    _debuntu_32
 	  fi
 	  # /nomakepkg
-	  if [[ ! ${_makepkg_options[*]} =~ "ccache" ]] && [ -e /usr/bin/ccache ]; then
+	  if [ -e /usr/bin/ccache ]; then
 	    export CC="ccache gcc"
 	    export CXX="ccache g++"
 	  fi
