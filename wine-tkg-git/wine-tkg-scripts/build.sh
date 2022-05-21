@@ -73,6 +73,12 @@ _prebuild_common() {
 	  if [ "$_NOMINGW" = "true" ]; then
 	    _configure_args+=(--without-mingw)
 	  fi
+
+	  # Wayland driver
+	  if [ "$_wayland_driver" = "true" ]; then
+	    _configure_args64+=(--with-wayland --with-vulkan)
+	    _configure_args32+=(--with-wayland --with-vulkan)
+	  fi
 	fi
 
 	echo -e "\nconfigure arguments: ${_configure_args[@]}\n" >> "$_where"/last_build_config.log
