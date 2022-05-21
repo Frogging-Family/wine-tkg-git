@@ -257,7 +257,7 @@ _package_nomakepkg() {
 	cp -v "$_where"/wine-tkg-scripts/wine-tkg-interactive "$_prefix"/bin/wine-tkg-interactive
 
 	# strip
-	if [ "$_pkg_strip" = "true" ]; then
+	if [ "$_pkg_strip" = "true" ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
 	  for _f in $( find "$_prefix" -type f '(' -iname '*.dll' -or -iname '*.so' -or -iname '*.sys' -or -iname '*.drv' -or -iname '*.exe' ')' ); do
 	    strip --strip-unneeded "$_f" && msg2 "$_f stripped"
 	  done
@@ -386,7 +386,7 @@ _package_makepkg() {
 	cp "$_where"/wine-tkg-scripts/wine-tkg-interactive "${pkgdir}$_prefix"/bin/wine-tkg-interactive
 
 	# strip
-	if [ "$_pkg_strip" = "true" ]; then
+	if [ "$_pkg_strip" = "true" ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
 	  for _f in $( find "${pkgdir}$_prefix" -type f '(' -iname '*.dll' -or -iname '*.so' -or -iname '*.sys' -or -iname '*.drv' -or -iname '*.exe' ')' ); do
 	    strip --strip-unneeded "$_f" && msg2 "$_f stripped"
 	  done
