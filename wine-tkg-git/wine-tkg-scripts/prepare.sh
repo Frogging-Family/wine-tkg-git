@@ -7,6 +7,9 @@ _exit_cleanup() {
 
   # Proton-tkg specifics to send to token
   if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ -n "$_proton_tkg_path" ]; then
+    if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
+      pkgver=$( echo ${pkgver} | cut -d'.' -f1-8 ) # On experimental bleeding edge, we want to keep only the first 8 out of 14 bits
+    fi
     if [ -n "$_PROTON_NAME_ADDON" ]; then
       if [ "$_ispkgbuild" = "true" ]; then
         echo "_protontkg_version='makepkg.${_PROTON_NAME_ADDON}'" >> "$_proton_tkg_path"/proton_tkg_token
