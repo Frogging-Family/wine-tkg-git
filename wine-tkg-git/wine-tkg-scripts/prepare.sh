@@ -2875,6 +2875,15 @@ EOM
 	  fi
 	fi
 
+	# Disable _steamvr_support on <=12d33d2
+	if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 12d33d21d33788fd46898ea42e9592d33b6e7c8e HEAD ); then
+	  _steamvr_support="false"
+	  _proton_branch_exp="DENIED"
+	else
+	  _steamvr_support="true"
+	  _proton_branch_exp="true"
+	fi
+
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] || [ "$_steamvr_support" = "true" ]; then
 	  #if git merge-base --is-ancestor 0ffb1535517301d28c7c004eac639a9a0cc26c00 HEAD; then
 	  #  _patchname='proton-restore-unicode.patch' && _patchmsg="Restore installing wine/unicode.h to please Proton" && nonuser_patcher
