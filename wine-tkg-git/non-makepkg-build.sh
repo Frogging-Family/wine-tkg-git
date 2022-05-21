@@ -20,12 +20,20 @@
 
 pkgname=wine-tkg-git
 
+_build_in_tmpfs="true"
+
 _stgsrcdir='wine-staging-git'
 _esyncsrcdir='esync'
 _where="$PWD" # track basedir as different Arch based distros are moving srcdir around
 
 # set srcdir, Arch style
-mkdir -p "$_where"/src
+if [ "$_build_in_tmpfs" = "true" ]; then
+  rm -rf "$_where"/src
+  mkdir -p /tmp/wine-tkg/src
+  ln -s /tmp/wine-tkg/src "$_where"
+else
+  mkdir -p "$_where"/src
+fi
 srcdir="$_where"/src
 
 # use msg2, error and pkgver funcs for compat
