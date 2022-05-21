@@ -258,10 +258,8 @@ _package_nomakepkg() {
 
 	# strip
 	if [ "$_pkg_strip" = "true" ]; then
-	  for _f in "$_prefix"/{bin,lib,lib32,lib64}/{wine/*,*}; do
-	    if [[ "$_f" = *.so ]] || [[ "$_f" = *.dll ]]; then
-	      strip --strip-unneeded "$_f"
-	    fi
+	  for _f in $( find "$_prefix" -type f '(' -iname '*.dll' -or -iname '*.so' -or -iname '*.sys' -or -iname '*.drv' -or -iname '*.exe' ')' ); do
+	    strip --strip-unneeded "$_f" && msg2 "$_f stripped"
 	  done
 	fi
 
@@ -386,6 +384,13 @@ _package_makepkg() {
 	cp "$_where"/wine-tkg-scripts/wine-tkg "${pkgdir}$_prefix"/bin/wine-tkg
 	cp "$_where"/wine-tkg-scripts/wine64-tkg "${pkgdir}$_prefix"/bin/wine64-tkg
 	cp "$_where"/wine-tkg-scripts/wine-tkg-interactive "${pkgdir}$_prefix"/bin/wine-tkg-interactive
+
+	# strip
+	if [ "$_pkg_strip" = "true" ]; then
+	  for _f in $( find "${pkgdir}$_prefix" -type f '(' -iname '*.dll' -or -iname '*.so' -or -iname '*.sys' -or -iname '*.drv' -or -iname '*.exe' ')' ); do
+	    strip --strip-unneeded "$_f" && msg2 "$_f stripped"
+	  done
+	fi
 
 	cp "$_where"/last_build_config.log "${pkgdir}$_prefix"/share/wine/wine-tkg-config.txt
 
