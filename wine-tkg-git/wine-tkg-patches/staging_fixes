@@ -1,0 +1,133 @@
+#!/bin/bash
+
+	if ( [ "$_update_winevulkan" = "true" ] || [ "$_proton_fs_hack" = "true" ] ); then
+	  if [ -d "${srcdir}"/"${_stgsrcdir}"/patches/winevulkan-vkGetPhysicalDeviceSurfaceCapabilitiesKHR ]; then # ghetto check for winevulkan-vkGetPhysicalDeviceSurfaceCapabilitiesKHR staging patchset presence
+	    _staging_args+=(-W winevulkan-vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
+	  fi
+	fi
+
+	# Disable winex11-WM_WINDOWPOSCHANGING and winex11-_NET_ACTIVE_WINDOW patchsets on proton-tkg staging
+	#if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	  if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_use_staging" = "true" ] || [ "$_proton_fs_hack" = "true" ]; then
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 9c37968a298935a8c33aecdc0acdcb42170c7c6a HEAD ); then
+	      _staging_args+=(-W user32-alttab-focus)
+	    fi
+	    _staging_args+=(-W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW)
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 76f8eb15f17ff9ae52f6c2b61824978762d421ef HEAD ) && [ -e "${srcdir}/${_stgsrcdir}/patches/imm32-com-initialization/definition" ] && ! grep -Fxq 'Disabled: true' "${srcdir}/${_stgsrcdir}/patches/imm32-com-initialization/definition"; then
+	      _staging_args+=(-W imm32-com-initialization)
+	    fi
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 656edbb508d51cbe3155d856ee3f2c27a6cd4cba HEAD ) && [ -e "${srcdir}/${_stgsrcdir}/patches/winex11-MWM_Decorations/definition" ] && ! grep -Fxq 'Disabled: true' "${srcdir}/${_stgsrcdir}/patches/winex11-MWM_Decorations/definition"; then
+	      _staging_args+=(-W winex11-MWM_Decorations -W winex11-key_translation)
+	    fi
+	  fi
+	#fi
+
+	# Disable winex11.drv-mouse-coorrds and winex11-MWM_Decorations patchsets on staging for proton FS hack
+	if [ "$_proton_fs_hack" = "true" ] && [ "$_use_staging" = "true" ] && ! git merge-base --is-ancestor 0f972e2247932f255f131792724e4796b4b2b87a HEAD; then
+	  if [ "$_broken_staging_44d1a45_localreverts" != "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD && ! git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 437038604a09c7952a52b28c373cfbe706d8e78b HEAD ); then
+	      sed -i 's/-@@ -3383,3 +3393,14 @@ DECL_HANDLER(get_rawinput_devices)/-@@ -3432,3 +3442,14 @@ DECL_HANDLER(get_rawinput_devices)/g' "$_where"/staging-44d1a45-localreverts.patch
+	    fi
+	    cd "${srcdir}"/"${_stgsrcdir}" && _patchname='staging-44d1a45-localreverts.patch' _patchmsg="Applied local reverts for staging 44d1a45 fshack" nonuser_patcher && cd "${srcdir}"/"${_winesrcdir}"
+	  fi
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7cc69d770780b8fb60fb249e007f1a777a03e51a HEAD ); then
+	    _staging_args+=(-W winex11.drv-mouse-coorrds -W winex11-MWM_Decorations)
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 938dddf7df920396ac3b30a44768c1582d0c144f HEAD && ! git merge-base --is-ancestor fd3bb06a4c1102cf424bc78ead25ee440db1b0fa HEAD ); then
+	      _staging_args+=(-W user32-rawinput)
+	    fi
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD && ! git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
+	      _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-nolegacy -W user32-rawinput-mouse-experimental -W user32-rawinput-hid -W winex11-key_translation)
+	      if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor d8496cacd170347bbde755ead066be8394fbb82b HEAD ); then
+	        _staging_args+=(-W user32-rawinput-keyboard)
+	      fi
+	    elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor f904ca32a3f678bf829a325dc66699a21e510857 HEAD ); then
+	      _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-mouse-experimental -W user32-rawinput-hid)
+	    fi
+	  fi
+	fi
+
+	# Specifically for proton-tkg, our meta patchset breaks with stock staging rawinput patchset, so disable for now, and apply a corresponding fixed winex11-key_translation patchset at a later stage
+	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_fs_hack" != "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 8218a789558bf074bd26a9adf3bbf05bdb9cb88e HEAD ) && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
+	    _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-nolegacy -W user32-rawinput-mouse-experimental -W user32-rawinput-hid -W winex11-key_translation)
+	  elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor f904ca32a3f678bf829a325dc66699a21e510857 HEAD ); then
+	    _staging_args+=(-W user32-rawinput-mouse -W user32-rawinput-mouse-experimental -W user32-rawinput-hid)
+	  fi
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor d8496cacd170347bbde755ead066be8394fbb82b HEAD ); then
+	    _staging_args+=(-W user32-rawinput-keyboard)
+	  fi
+	  if [ "$_proton_fs_hack" = "false" ] && [ "$_broken_staging_44d1a45_localreverts" != "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 44d1a45e983ed8c04390068ded61294e2004d2f6 HEAD && ! git merge-base --is-ancestor 82cff8bbdbc133cc14cdb9befc36c61c3e49c242 HEAD ); then
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 437038604a09c7952a52b28c373cfbe706d8e78b HEAD ); then
+	      sed -i 's/-@@ -3383,3 +3393,14 @@ DECL_HANDLER(get_rawinput_devices)/-@@ -3432,3 +3442,14 @@ DECL_HANDLER(get_rawinput_devices)/g' "$_where"/staging-44d1a45-localreverts.patch
+	    fi
+	    cd "${srcdir}"/"${_stgsrcdir}" && _patchname='staging-44d1a45-localreverts.patch' _patchmsg="Applied local reverts for staging 44d1a45 proton-nofshack" nonuser_patcher && cd "${srcdir}"/"${_winesrcdir}"
+	  fi
+	fi
+
+	# Disable some staging patchsets to prevent bad interactions with proton gamepad additions
+	if ( ! git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_gamepad_additions" = "true" ] && [ "$_EXTERNAL_INSTALL" = "proton" ] ) || ( git merge-base --is-ancestor 6373792eec0f122295723cae77b0115e6c96c3e4 HEAD && [ "$_sdl_joy_support" = "true" ] && ( git merge-base --is-ancestor a17367291104e46c573b7213ee94a0f537563ace HEAD || [ "$_EXTERNAL_INSTALL" = "proton" ] ) ) && [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 2bd3c9703d3385820c1829a78ef71e7701d3a77a HEAD ); then
+	  _staging_args+=(-W dinput-SetActionMap-genre -W dinput-axis-recalc -W dinput-joy-mappings -W dinput-reconnect-joystick -W dinput-remap-joystick)
+	fi
+
+	# Fixes for staging based Proton + steamhelper
+	if [ "$_steamclient_noswap" = "true" ]; then
+	  _proton_use_steamhelper="false"
+	fi
+	if ( [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_use_staging" = "true" ] && [ "$_proton_use_steamhelper" = "true" ] ); then
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 0c249e6125fc9dc6ee86b4ef6ae0d9fa2fc6291b HEAD ); then
+	    if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 7fc716aa5f8595e5bca9206f86859f1ac70894ad HEAD ); then
+	      _staging_args+=(-W ws2_32-TransmitFile) # Might not be actually required with server-Desktop_Refcount gone - needs testing
+	    elif ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 4e7071e4f14f6ce85b0eb4b88accfb0267d6545b HEAD ); then
+	      _staging_args+=(-W server-Desktop_Refcount -W ws2_32-TransmitFile)
+	    fi
+	  fi
+	fi
+
+	# Disable broken rawinput patchset that was enabled between e09468e and 5b066d6
+	if [ "$_use_staging" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor e09468ec178930ac7b1ee33482cd03f0cc136685 HEAD && ! git merge-base --is-ancestor 5b066d6aed7fd90c0be0a2a156b0e5c6cbb44bba HEAD ); then
+	  _staging_args+=(-W user32-rawinput)
+	fi
+
+	# Disable Staging's `xactengine-initial` patchset to fix BGM on KOF98 & 2002
+	if [ "$_kof98_2002_BGM_fix" = "true" ] && [ "$_use_staging" = "true" ]; then
+	  cd "${srcdir}"/"${_stgsrcdir}"
+	  if git merge-base --is-ancestor 2fc5c88068e3dea2612c182ff300511aa2954242 HEAD && ! git merge-base --is-ancestor e4a11b16639179734e1d9f12ab4605dcbfa21a27 HEAD; then
+	    _staging_args+=(-W xactengine-initial)
+	  fi
+	  cd "${srcdir}"/"${_winesrcdir}"
+	fi
+
+	# The Sims 2 fix - disable wined3d-WINED3D_RS_COLORWRITEENABLE and wined3d-Indexed_Vertex_Blending staging patchsets for 4.2+devel and lower - The actual patch is applied after staging
+	if [ "$_sims2_fix" = "true" ] && ! git merge-base --is-ancestor d88f12950761e9ff8d125a579de6e743979f4945 HEAD; then
+	  _staging_args+=(-W wined3d-WINED3D_RS_COLORWRITEENABLE -W wined3d-Indexed_Vertex_Blending)
+	fi
+
+	# Python fix for <=3.18 (backported from zzhiyi's patches) - fix for python and needed for "The Sims 4" to work - replaces staging partial implementation - https://bugs.winehq.org/show_bug.cgi?id=44999 - The actual patch is applied after staging
+	if [ "$_318python_fix" = "true" ] && ! git merge-base --is-ancestor 3ebd2f0be30611e6cf00468c2980c5092f91b5b5 HEAD; then
+	  _staging_args+=(-W kernelbase-PathCchCombineEx)
+	fi
+
+	# Disable server-send_hardware_message staging patchset if found - Fixes FFXIV/Warframe/Crysis 3 (...) mouse jittering issues on 3.19 staging and lower.
+	if [ "$_server_send_hwmsg_disable" = "true" ] && [ "$_use_staging" = "true" ]; then
+	  if [ -d "${srcdir}"/"${_stgsrcdir}"/patches/server-send_hardware_message ]; then # ghetto check for server-send_hardware_message staging patchset presence
+	    _staging_args+=(-W server-send_hardware_message)
+	    echo "server-send_hardware_message staging patchset disabled (mouse jittering fix)" >> "$_where"/last_build_config.log
+	  fi
+	fi
+
+	# Disable winepulse pulseaudio patchset
+	if [ "$_use_staging" = "true" ] && ! grep -Fxq 'Disabled: True' "${srcdir}/${_stgsrcdir}/patches/winepulse-PulseAudio_Support/definition"; then
+	  if [ "$_staging_pulse_disable" = "true" ] && [[ ! ${_staging_args[*]} =~ "winepulse-PulseAudio_Support" ]]; then
+	    _staging_args+=(-W winepulse-PulseAudio_Support)
+	    echo "Disabled the staging winepulse patchset" >> "$_where"/last_build_config.log
+	  fi
+	fi
+
+	# Proton Bcrypt patches
+	if [ "$_use_staging" = "true" ]; then
+	  if [ "$_proton_bcrypt" = "true" ] && ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 37e000145f07c4ec6f48fdac5969bbbb05435d52 HEAD ) && ! grep -Fxq 'Disabled: true' "${srcdir}/${_stgsrcdir}/patches/bcrypt-ECDHSecretAgreement/definition"; then
+	    if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 74c0da2d71e95f3e6bd6c8b440652933771b27d7 HEAD );then
+	      _staging_args+=(-W bcrypt-ECDHSecretAgreement)
+	    fi
+	  fi
+	fi
