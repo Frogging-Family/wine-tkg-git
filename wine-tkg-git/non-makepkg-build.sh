@@ -118,7 +118,7 @@ _nomakepkgsrcinit() {
   fi
 
   if [ "$_NUKR" != "debug" ]; then
-    $( find "$_where"/wine-tkg-patches -type f -not -path "*hotfixes*" -exec cp -n {} "$_where" \; ) # copy patches inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
+    $( find "$_where"/wine-tkg-patches -type f '(' -iname '*patch' -or -iname '*.conf' ')' -not -path "*hotfixes*" -exec cp -n {} "$_where" \; ) # copy patches inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
     $( find "$_where"/wine-tkg-userpatches -type f -name "*.my*" -exec cp -n {} "$_where" \; ) # copy userpatches inside the PKGBUILD's dir
 
 
