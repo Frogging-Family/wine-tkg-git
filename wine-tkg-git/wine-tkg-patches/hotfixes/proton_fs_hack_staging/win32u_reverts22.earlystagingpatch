@@ -1,0 +1,183 @@
+diff --git a/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch b/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
+index a9583a12..c62610c3 100644
+--- a/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
++++ b/patches/user32-rawinput-mouse/0002-winex11.drv-Support-XInput2-events-for-individual-wi.patch
+@@ -1,4 +1,4 @@
+-From 3c53044557316db957a20471118c1481bb712a6c Mon Sep 17 00:00:00 2001
++From 4fb0e8d596496359484426d726a929ff8acf2e21 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+ Date: Thu, 23 Jan 2020 11:00:19 +0100
+ Subject: [PATCH] winex11.drv: Support XInput2 events for individual windows.
+@@ -14,10 +14,10 @@ which can bring additional information.
+  5 files changed, 65 insertions(+), 17 deletions(-)
+ 
+ diff --git a/dlls/winex11.drv/desktop.c b/dlls/winex11.drv/desktop.c
+-index bc2ba60397b..96f74478600 100644
++index c335bc5ba2b..3523e9c843c 100644
+ --- a/dlls/winex11.drv/desktop.c
+ +++ b/dlls/winex11.drv/desktop.c
+-@@ -363,6 +363,7 @@ NTSTATUS x11drv_create_desktop( void *arg )
++@@ -359,6 +359,7 @@ NTSTATUS x11drv_create_desktop( void *arg )
+                           0, 0, params->width, params->height, 0, default_visual.depth, InputOutput,
+                           default_visual.visual, CWEventMask | CWCursor | CWColormap, &win_attr );
+      if (!win) return FALSE;
+@@ -26,10 +26,10 @@ index bc2ba60397b..96f74478600 100644
+  
+      X11DRV_init_desktop( win, params->width, params->height );
+ diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+-index f81d2338faf..93032cedf70 100644
++index a321e324a24..dec32ec963a 100644
+ --- a/dlls/winex11.drv/event.c
+ +++ b/dlls/winex11.drv/event.c
+-@@ -237,6 +237,13 @@ static Bool filter_event( Display *display, XEvent *event, char *arg )
++@@ -239,6 +239,13 @@ static Bool filter_event( Display *display, XEvent *event, char *arg )
+          return (mask & QS_MOUSEBUTTON) != 0;
+  #ifdef GenericEvent
+      case GenericEvent:
+@@ -44,10 +44,10 @@ index f81d2338faf..93032cedf70 100644
+      case MotionNotify:
+      case EnterNotify:
+ diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+-index b0dce3b245f..0725da89f67 100644
++index eee737a1e40..bf67d6b727f 100644
+ --- a/dlls/winex11.drv/mouse.c
+ +++ b/dlls/winex11.drv/mouse.c
+-@@ -305,20 +305,32 @@ void x11drv_xinput_init(void)
++@@ -304,20 +304,32 @@ void x11drv_xinput_init(void)
+  
+  
+  /***********************************************************************
+@@ -85,7 +85,7 @@ index b0dce3b245f..0725da89f67 100644
+  
+      mask.mask     = mask_bits;
+      mask.mask_len = sizeof(mask_bits);
+-@@ -328,8 +340,9 @@ static void enable_xinput2(void)
++@@ -327,8 +339,9 @@ static void enable_xinput2(void)
+      XISetMask( mask_bits, XI_RawMotion );
+      XISetMask( mask_bits, XI_ButtonPress );
+  
+@@ -96,7 +96,7 @@ index b0dce3b245f..0725da89f67 100644
+      pointer_info = pXIQueryDevice( data->display, data->xi2_core_pointer, &count );
+      update_relative_valuators( pointer_info->classes, pointer_info->num_classes );
+      pXIFreeDeviceInfo( pointer_info );
+-@@ -338,7 +351,7 @@ static void enable_xinput2(void)
++@@ -337,7 +350,7 @@ static void enable_xinput2(void)
+       * no XI_DeviceChanged events happened. If any hierarchy change occurred that
+       * might be relevant here (eg. user switching mice after (un)plugging), a
+       * XI_DeviceChanged event will point us to the right slave. So this list is
+@@ -105,7 +105,7 @@ index b0dce3b245f..0725da89f67 100644
+       */
+      if (data->xi2_devices) pXIFreeDeviceInfo( data->xi2_devices );
+      data->xi2_devices = pXIQueryDevice( data->display, XIAllDevices, &data->xi2_device_count );
+-@@ -350,24 +363,37 @@ static void enable_xinput2(void)
++@@ -349,24 +362,37 @@ static void enable_xinput2(void)
+  #endif
+  
+  /***********************************************************************
+@@ -149,7 +149,7 @@ index b0dce3b245f..0725da89f67 100644
+      pXIFreeDeviceInfo( data->xi2_devices );
+      data->x_valuator.number = -1;
+      data->y_valuator.number = -1;
+-@@ -376,6 +402,7 @@ static void disable_xinput2(void)
++@@ -375,6 +401,7 @@ static void disable_xinput2(void)
+      data->xi2_devices = NULL;
+      data->xi2_core_pointer = 0;
+      data->xi2_current_slave = 0;
+@@ -157,7 +157,7 @@ index b0dce3b245f..0725da89f67 100644
+  #endif
+  }
+  
+-@@ -421,7 +448,7 @@ static BOOL grab_clipping_window( const RECT *clip )
++@@ -417,7 +444,7 @@ static BOOL grab_clipping_window( const RECT *clip )
+      }
+  
+      /* enable XInput2 unless we are already clipping */
+@@ -166,7 +166,7 @@ index b0dce3b245f..0725da89f67 100644
+  
+      if (data->xi2_state != xi_enabled)
+      {
+-@@ -451,7 +478,7 @@ static BOOL grab_clipping_window( const RECT *clip )
++@@ -447,7 +474,7 @@ static BOOL grab_clipping_window( const RECT *clip )
+  
+      if (!clipping_cursor)
+      {
+@@ -175,7 +175,7 @@ index b0dce3b245f..0725da89f67 100644
+          NtUserDestroyWindow( msg_hwnd );
+          return FALSE;
+      }
+-@@ -534,7 +561,7 @@ LRESULT clip_cursor_notify( HWND hwnd, HWND prev_clip_hwnd, HWND new_clip_hwnd )
++@@ -530,7 +557,7 @@ LRESULT clip_cursor_notify( HWND hwnd, HWND prev_clip_hwnd, HWND new_clip_hwnd )
+          TRACE( "clip hwnd reset from %p\n", hwnd );
+          data->clip_hwnd = 0;
+          data->clip_reset = NtGetTickCount();
+@@ -185,10 +185,10 @@ index b0dce3b245f..0725da89f67 100644
+      }
+      else if (prev_clip_hwnd)
+ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+-index 5d9a93688c3..bfad72482e6 100644
++index b9450911abc..4c7faeac969 100644
+ --- a/dlls/winex11.drv/window.c
+ +++ b/dlls/winex11.drv/window.c
+-@@ -361,6 +361,7 @@ static void sync_window_style( struct x11drv_win_data *data )
++@@ -358,6 +358,7 @@ static void sync_window_style( struct x11drv_win_data *data )
+          int mask = get_window_attributes( data, &attr );
+  
+          XChangeWindowAttributes( data->display, data->whole_window, mask, &attr );
+@@ -196,7 +196,7 @@ index 5d9a93688c3..bfad72482e6 100644
+      }
+  }
+  
+-@@ -1599,6 +1600,7 @@ static void create_whole_window( struct x11drv_win_data *data )
++@@ -1593,6 +1594,7 @@ static void create_whole_window( struct x11drv_win_data *data )
+                                          data->vis.visual, mask, &attr );
+      if (!data->whole_window) goto done;
+  
+@@ -204,19 +204,19 @@ index 5d9a93688c3..bfad72482e6 100644
+      set_initial_wm_hints( data->display, data->whole_window );
+      set_wm_hints( data );
+  
+-@@ -1911,6 +1913,7 @@ BOOL X11DRV_CreateWindow( HWND hwnd )
++@@ -1907,6 +1909,7 @@ BOOL X11DRV_CreateWindow( HWND hwnd )
+          data->clip_window = XCreateWindow( data->display, root_window, 0, 0, 1, 1, 0, 0,
+                                             InputOnly, default_visual.visual,
+                                             CWOverrideRedirect | CWEventMask, &attr );
+ +        x11drv_xinput_enable( data->display, data->clip_window, attr.event_mask );
+          XFlush( data->display );
+          NtUserSetProp( hwnd, clip_window_prop, (HANDLE)data->clip_window );
+-         X11DRV_DisplayDevices_RegisterEventHandlers();
++         x11drv_client_call( client_clipboard_init, 0 );
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index 9fd5fb481a7..c1c5f1ac34d 100644
++index d92a235f889..82540cab507 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -259,6 +259,8 @@ extern void X11DRV_ThreadDetach(void) DECLSPEC_HIDDEN;
++@@ -253,6 +253,8 @@ extern void X11DRV_ThreadDetach(void) DECLSPEC_HIDDEN;
+  extern void X11DRV_Xcursor_Init(void) DECLSPEC_HIDDEN;
+  extern void x11drv_xinput_load(void) DECLSPEC_HIDDEN;
+  extern void x11drv_xinput_init(void) DECLSPEC_HIDDEN;
+@@ -225,7 +225,7 @@ index 9fd5fb481a7..c1c5f1ac34d 100644
+  
+  extern DWORD copy_image_bits( BITMAPINFO *info, BOOL is_r8g8b8, XImage *image,
+                                const struct gdi_image_bits *src_bits, struct gdi_image_bits *dst_bits,
+-@@ -364,6 +366,14 @@ struct x11drv_escape_flush_gl_drawable
++@@ -359,6 +361,14 @@ struct x11drv_escape_flush_gl_drawable
+   * X11 USER driver
+   */
+  
+@@ -240,7 +240,7 @@ index 9fd5fb481a7..c1c5f1ac34d 100644
+  struct x11drv_thread_data
+  {
+      Display *display;
+-@@ -379,7 +389,7 @@ struct x11drv_thread_data
++@@ -375,7 +385,7 @@ struct x11drv_thread_data
+      HWND     clip_hwnd;            /* message window stored in desktop while clipping is active */
+      DWORD    clip_reset;           /* time when clipping was last reset */
+  #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+@@ -250,5 +250,5 @@ index 9fd5fb481a7..c1c5f1ac34d 100644
+      int      xi2_device_count;
+      XIValuatorClassInfo x_valuator;
+ -- 
+-2.36.1
++2.35.1
+ 
