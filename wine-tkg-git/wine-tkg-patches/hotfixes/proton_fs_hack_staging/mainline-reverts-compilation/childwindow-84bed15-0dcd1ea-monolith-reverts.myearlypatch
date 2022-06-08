@@ -1,0 +1,3397 @@
+From 872c0ff0f80de02d9d7449f40fdcaa95adb414a5 Mon Sep 17 00:00:00 2001
+From: Etienne JUVIGNY <ti3nou@gmail.com>
+Date: Wed, 8 Jun 2022 16:26:28 +0200
+Subject: [PATCH 1/1] 01-reverts
+
+---
+ dlls/ntdll/unix/thread.c       |   6 -
+ dlls/user32/defwnd.c           | 120 ++++++++++-
+ dlls/user32/desktop.c          |  27 ++-
+ dlls/user32/sysparams.c        |  20 ++
+ dlls/user32/user32.spec        |   6 +-
+ dlls/user32/win.h              |   4 +
+ dlls/user32/winpos.c           | 357 ++++++++++++++++++++++++++++++++-
+ dlls/win32u/defwnd.c           | 193 +-----------------
+ dlls/win32u/driver.c           |   7 -
+ dlls/win32u/gdiobj.c           |   3 -
+ dlls/win32u/input.c            |   9 +
+ dlls/win32u/message.c          |   2 -
+ dlls/win32u/sysparams.c        |  24 +--
+ dlls/win32u/win32u.spec        |   6 +-
+ dlls/win32u/win32u_private.h   | 105 +++++++++-
+ dlls/win32u/window.c           | 158 +--------------
+ dlls/win32u/wrappers.c         |  18 --
+ dlls/winemac.drv/keyboard.c    |  80 +-------
+ dlls/winex11.drv/Makefile.in   |   5 +-
+ dlls/winex11.drv/bitblt.c      |   4 -
+ dlls/winex11.drv/brush.c       |   4 -
+ dlls/winex11.drv/clipboard.c   |   7 +-
+ dlls/winex11.drv/desktop.c     |   8 +-
+ dlls/winex11.drv/display.c     |   4 -
+ dlls/winex11.drv/dllmain.c     |  27 +--
+ dlls/winex11.drv/event.c       |  12 +-
+ dlls/winex11.drv/graphics.c    |   9 +-
+ dlls/winex11.drv/ime.c         |  11 +-
+ dlls/winex11.drv/init.c        |   5 -
+ dlls/winex11.drv/keyboard.c    |  11 +-
+ dlls/winex11.drv/mouse.c       |  27 +--
+ dlls/winex11.drv/opengl.c      |   4 -
+ dlls/winex11.drv/palette.c     |   4 -
+ dlls/winex11.drv/pen.c         |   4 -
+ dlls/winex11.drv/settings.c    |  17 +-
+ dlls/winex11.drv/systray.c     |  18 +-
+ dlls/winex11.drv/unixlib.h     |  12 +-
+ dlls/winex11.drv/vulkan.c      |   4 -
+ dlls/winex11.drv/window.c      |  43 ++--
+ dlls/winex11.drv/wintab.c      |  27 ++-
+ dlls/winex11.drv/x11drv.h      |  37 +++-
+ dlls/winex11.drv/x11drv_dll.h  |  51 -----
+ dlls/winex11.drv/x11drv_main.c |  42 +---
+ dlls/winex11.drv/xdnd.c        |  20 +-
+ dlls/winex11.drv/xim.c         |  11 +-
+ dlls/winex11.drv/xinerama.c    |   4 -
+ dlls/winex11.drv/xrandr.c      |  30 +--
+ dlls/winex11.drv/xrender.c     |  11 +-
+ dlls/winex11.drv/xvidmode.c    |   6 +-
+ dlls/wow64/process.c           |   1 -
+ include/ntuser.h               |  11 +-
+ include/processthreadsapi.h    |   7 -
+ include/wine/gdi_driver.h      |   3 +-
+ include/wine/unixlib.h         | 101 ----------
+ tools/winewrapper              |   4 +-
+ 55 files changed, 819 insertions(+), 932 deletions(-)
+ delete mode 100644 dlls/winex11.drv/x11drv_dll.h
+
+diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
+index 15bb3be34b2..6d937675bcb 100644
+--- a/dlls/ntdll/unix/thread.c
++++ b/dlls/ntdll/unix/thread.c
+@@ -2255,12 +2255,6 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
+         FIXME( "ThreadEnableAlignmentFaultFixup stub!\n" );
+         return STATUS_SUCCESS;
+ 
+-    case ThreadPowerThrottlingState:
+-        if (length != sizeof(THREAD_POWER_THROTTLING_STATE)) return STATUS_INFO_LENGTH_MISMATCH;
+-        if (!data) return STATUS_ACCESS_VIOLATION;
+-        FIXME( "ThreadPowerThrottling stub!\n" );
+-        return STATUS_SUCCESS;
+-
+     case ThreadBasicInformation:
+     case ThreadTimes:
+     case ThreadPriority:
+diff --git a/dlls/user32/defwnd.c b/dlls/user32/defwnd.c
+index c4263edac93..047822d00d6 100644
+--- a/dlls/user32/defwnd.c
++++ b/dlls/user32/defwnd.c
+@@ -180,6 +180,9 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
+         NC_HandleNCCalcSize( hwnd, wParam, (RECT *)lParam );
+         break;
+ 
++    case WM_WINDOWPOSCHANGING:
++        return WINPOS_HandleWindowPosChanging( hwnd, (WINDOWPOS *)lParam );
++
+     case WM_WINDOWPOSCHANGED:
+         DEFWND_HandleWindowPosChanged( hwnd, (const WINDOWPOS *)lParam );
+         break;
+@@ -259,10 +262,100 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
+     case WM_NCACTIVATE:
+         return NC_HandleNCActivate( hwnd, wParam, lParam );
+ 
++    case WM_NCDESTROY:
++        return NtUserMessageCall( hwnd, msg, wParam, lParam, 0, NtUserDefWindowProc, FALSE );
++
+     case WM_PRINT:
+         DEFWND_Print(hwnd, (HDC)wParam, lParam);
+         return 0;
+ 
++    case WM_PAINTICON:
++    case WM_PAINT:
++        {
++            PAINTSTRUCT ps;
++            HDC hdc = NtUserBeginPaint( hwnd, &ps );
++            if( hdc )
++            {
++              HICON hIcon;
++              if (IsIconic(hwnd) && ((hIcon = (HICON)GetClassLongPtrW( hwnd, GCLP_HICON))) )
++              {
++                  RECT rc;
++                  int x, y;
++
++                  GetClientRect( hwnd, &rc );
++                  x = (rc.right - rc.left - GetSystemMetrics(SM_CXICON))/2;
++                  y = (rc.bottom - rc.top - GetSystemMetrics(SM_CYICON))/2;
++                  TRACE("Painting class icon: vis rect=(%s)\n",
++                        wine_dbgstr_rect(&ps.rcPaint));
++                  DrawIcon( hdc, x, y, hIcon );
++              }
++              NtUserEndPaint( hwnd, &ps );
++            }
++            return 0;
++        }
++
++    case WM_SYNCPAINT:
++        NtUserRedrawWindow ( hwnd, NULL, 0, RDW_ERASENOW | RDW_ERASE | RDW_ALLCHILDREN );
++        return 0;
++
++    case WM_SETREDRAW:
++        if (wParam) WIN_SetStyle( hwnd, WS_VISIBLE, 0 );
++        else
++        {
++            NtUserRedrawWindow( hwnd, NULL, 0, RDW_ALLCHILDREN | RDW_VALIDATE );
++            WIN_SetStyle( hwnd, 0, WS_VISIBLE );
++        }
++        return 0;
++
++    case WM_CLOSE:
++        NtUserDestroyWindow( hwnd );
++        return 0;
++
++    case WM_MOUSEACTIVATE:
++        if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_CHILD)
++        {
++            LONG ret = SendMessageW( GetParent(hwnd), WM_MOUSEACTIVATE, wParam, lParam );
++            if (ret) return ret;
++        }
++
++        /* Caption clicks are handled by NC_HandleNCLButtonDown() */
++        return ( HIWORD(lParam) == WM_LBUTTONDOWN && LOWORD(lParam) == HTCAPTION ? MA_NOACTIVATE : MA_ACTIVATE );
++
++    case WM_ACTIVATE:
++        /* The default action in Windows is to set the keyboard focus to
++         * the window, if it's being activated and not minimized */
++        if (LOWORD(wParam) != WA_INACTIVE) {
++            if (!IsIconic(hwnd)) NtUserSetFocus( hwnd );
++        }
++        break;
++
++    case WM_MOUSEWHEEL:
++        if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_CHILD)
++            return SendMessageW( GetParent(hwnd), WM_MOUSEWHEEL, wParam, lParam );
++        break;
++
++    case WM_ERASEBKGND:
++    case WM_ICONERASEBKGND:
++        {
++            RECT rect;
++            HDC hdc = (HDC)wParam;
++            HBRUSH hbr = (HBRUSH)GetClassLongPtrW( hwnd, GCLP_HBRBACKGROUND );
++            if (!hbr) return 0;
++
++            if (GetClassLongW( hwnd, GCL_STYLE ) & CS_PARENTDC)
++            {
++                /* can't use GetClipBox with a parent DC or we fill the whole parent */
++                GetClientRect( hwnd, &rect );
++                DPtoLP( hdc, (LPPOINT)&rect, 2 );
++            }
++            else GetClipBox( hdc, &rect );
++            FillRect( hdc, &rect, hbr );
++            return 1;
++        }
++
++    case WM_GETDLGCODE:
++        return 0;
++
+     case WM_CTLCOLORMSGBOX:
+     case WM_CTLCOLOREDIT:
+     case WM_CTLCOLORLISTBOX:
+@@ -431,6 +524,30 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
+             return res;
+         }
+ 
++    case WM_GETICON:
++        {
++            HICON ret;
++            WND *wndPtr = WIN_GetPtr( hwnd );
++
++            switch(wParam)
++            {
++            case ICON_SMALL:
++                ret = wndPtr->hIconSmall;
++                break;
++            case ICON_BIG:
++                ret = wndPtr->hIcon;
++                break;
++            case ICON_SMALL2:
++                ret = wndPtr->hIconSmall ? wndPtr->hIconSmall : wndPtr->hIconSmall2;
++                break;
++            default:
++                ret = 0;
++                break;
++            }
++            WIN_ReleasePtr( wndPtr );
++            return (LRESULT)ret;
++        }
++
+     case WM_HELP:
+         SendMessageW( GetParent(hwnd), msg, wParam, lParam );
+         break;
+@@ -497,9 +614,6 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
+             break;
+         }
+ 
+-    default:
+-        return NtUserMessageCall( hwnd, msg, wParam, lParam, 0, NtUserDefWindowProc, FALSE );
+-
+     }
+ 
+     return 0;
+diff --git a/dlls/user32/desktop.c b/dlls/user32/desktop.c
+index f2905b0efac..9d1484fdcbb 100644
+--- a/dlls/user32/desktop.c
++++ b/dlls/user32/desktop.c
+@@ -95,14 +95,30 @@ LRESULT WINAPI DesktopWndProc( HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
+     switch (message)
+     {
+     case WM_NCCREATE:
+-    case WM_NCCALCSIZE:
+-    case WM_PARENTNOTIFY:
+-        return NtUserMessageCall( hwnd, message, wParam, lParam, 0, NtUserDesktopWindowProc, FALSE );
++    {
++        CREATESTRUCTW *cs = (CREATESTRUCTW *)lParam;
++        const GUID *guid = cs->lpCreateParams;
++
++        if (guid)
++        {
++            ATOM atom;
++            WCHAR buffer[37];
+ 
++            if (NtUserGetAncestor( hwnd, GA_PARENT )) return FALSE;  /* refuse to create non-desktop window */
++
++            swprintf( buffer, ARRAY_SIZE(buffer), L"%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
++                      guid->Data1, guid->Data2, guid->Data3,
++                      guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
++                      guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7] );
++            atom = GlobalAddAtomW( buffer );
++            SetPropW( hwnd, L"__wine_display_device_guid", ULongToHandle( atom ) );
++        }
++        return TRUE;
++    }
++    case WM_NCCALCSIZE:
++        return 0;
+     default:
+-        if (message < WM_USER)
+-            return DefWindowProcW( hwnd, message, wParam, lParam );
+-        return NtUserMessageCall( hwnd, message, wParam, lParam, 0, NtUserDesktopWindowProc, FALSE );
++        return DefWindowProcW( hwnd, message, wParam, lParam );
+     }
+ }
+ 
+diff --git a/dlls/user32/sysparams.c b/dlls/user32/sysparams.c
+index ec83a1822a5..c42b6c77b0c 100644
+--- a/dlls/user32/sysparams.c
++++ b/dlls/user32/sysparams.c
+@@ -739,6 +739,16 @@ POINT point_win_to_thread_dpi( HWND hwnd, POINT pt )
+     return map_dpi_point( pt, GetDpiForWindow( hwnd ), dpi );
+ }
+ 
++/**********************************************************************
++ *              point_thread_to_win_dpi
++ */
++POINT point_thread_to_win_dpi( HWND hwnd, POINT pt )
++{
++    UINT dpi = get_thread_dpi();
++    if (!dpi) dpi = get_win_monitor_dpi( hwnd );
++    return map_dpi_point( pt, dpi, GetDpiForWindow( hwnd ));
++}
++
+ /**********************************************************************
+  *              map_dpi_rect
+  */
+@@ -764,6 +774,16 @@ RECT rect_win_to_thread_dpi( HWND hwnd, RECT rect )
+     return map_dpi_rect( rect, GetDpiForWindow( hwnd ), dpi );
+ }
+ 
++/**********************************************************************
++ *              rect_thread_to_win_dpi
++ */
++RECT rect_thread_to_win_dpi( HWND hwnd, RECT rect )
++{
++    UINT dpi = get_thread_dpi();
++    if (!dpi) dpi = get_win_monitor_dpi( hwnd );
++    return map_dpi_rect( rect, dpi, GetDpiForWindow( hwnd ) );
++}
++
+ /**********************************************************************
+  *              SetProcessDpiAwarenessContext   (USER32.@)
+  */
+diff --git a/dlls/user32/user32.spec b/dlls/user32/user32.spec
+index c153b6dbfe3..555023de110 100644
+--- a/dlls/user32/user32.spec
++++ b/dlls/user32/user32.spec
+@@ -412,7 +412,7 @@
+ @ stdcall GetWindowModuleFileName(long ptr long) GetWindowModuleFileNameA
+ @ stdcall GetWindowModuleFileNameA(long ptr long)
+ @ stdcall GetWindowModuleFileNameW(long ptr long)
+-@ stdcall GetWindowPlacement(long ptr) NtUserGetWindowPlacement
++@ stdcall GetWindowPlacement(long ptr)
+ @ stdcall GetWindowRect(long ptr)
+ @ stdcall GetWindowRgn(long long)
+ @ stdcall GetWindowRgnBox(long ptr)
+@@ -673,7 +673,7 @@
+ @ stdcall SetFocus(long) NtUserSetFocus
+ @ stdcall SetForegroundWindow(long)
+ @ stdcall SetGestureConfig(ptr long long ptr long)
+-@ stdcall SetInternalWindowPos(long long ptr ptr) NtUserSetInternalWindowPos
++@ stdcall SetInternalWindowPos(long long ptr ptr)
+ @ stdcall SetKeyboardState(ptr) NtUserSetKeyboardState
+ @ stdcall SetLastErrorEx(long long)
+ @ stdcall SetLayeredWindowAttributes(ptr long long long) NtUserSetLayeredWindowAttributes
+@@ -725,7 +725,7 @@
+ @ stdcall -arch=win64 SetWindowLongPtrA(long long long)
+ @ stdcall -arch=win64 SetWindowLongPtrW(long long long)
+ @ stdcall SetWindowLongW(long long long)
+-@ stdcall SetWindowPlacement(long ptr) NtUserSetWindowPlacement
++@ stdcall SetWindowPlacement(long ptr)
+ @ stdcall SetWindowPos(long long long long long long long) NtUserSetWindowPos
+ @ stdcall SetWindowRgn(long long long) NtUserSetWindowRgn
+ @ stdcall SetWindowStationUser(long long)
+diff --git a/dlls/user32/win.h b/dlls/user32/win.h
+index dfa5fdf3283..0c5bb2be5a8 100644
+--- a/dlls/user32/win.h
++++ b/dlls/user32/win.h
+@@ -60,6 +60,8 @@ static inline void WIN_ReleasePtr( WND *ptr )
+ 
+ extern LRESULT HOOK_CallHooks( INT id, INT code, WPARAM wparam, LPARAM lparam, BOOL unicode ) DECLSPEC_HIDDEN;
+ 
++extern LONG WINPOS_HandleWindowPosChanging(HWND hwnd, WINDOWPOS *winpos) DECLSPEC_HIDDEN;
++extern HWND WINPOS_WindowFromPoint( HWND hwndScope, POINT pt, INT *hittest ) DECLSPEC_HIDDEN;
+ extern void WINPOS_ActivateOtherWindow( HWND hwnd ) DECLSPEC_HIDDEN;
+ extern void WINPOS_SysCommandSizeMove( HWND hwnd, WPARAM wParam ) DECLSPEC_HIDDEN;
+ 
+@@ -70,8 +72,10 @@ extern POINT map_dpi_point( POINT pt, UINT dpi_from, UINT dpi_to ) DECLSPEC_HIDD
+ extern POINT point_win_to_phys_dpi( HWND hwnd, POINT pt ) DECLSPEC_HIDDEN;
+ extern POINT point_phys_to_win_dpi( HWND hwnd, POINT pt ) DECLSPEC_HIDDEN;
+ extern POINT point_win_to_thread_dpi( HWND hwnd, POINT pt ) DECLSPEC_HIDDEN;
++extern POINT point_thread_to_win_dpi( HWND hwnd, POINT pt ) DECLSPEC_HIDDEN;
+ extern RECT map_dpi_rect( RECT rect, UINT dpi_from, UINT dpi_to ) DECLSPEC_HIDDEN;
+ extern RECT rect_win_to_thread_dpi( HWND hwnd, RECT rect ) DECLSPEC_HIDDEN;
++extern RECT rect_thread_to_win_dpi( HWND hwnd, RECT rect ) DECLSPEC_HIDDEN;
+ 
+ static inline void mirror_rect( const RECT *window_rect, RECT *rect )
+ {
+diff --git a/dlls/user32/winpos.c b/dlls/user32/winpos.c
+index d38a3df18da..ae1f2e2e305 100644
+--- a/dlls/user32/winpos.c
++++ b/dlls/user32/winpos.c
+@@ -44,6 +44,10 @@ WINE_DEFAULT_DEBUG_CHANNEL(win);
+ #define ON_BOTTOM_BORDER(hit) \
+  (((hit) == HTBOTTOM) || ((hit) == HTBOTTOMLEFT) || ((hit) == HTBOTTOMRIGHT))
+ 
++#define PLACE_MIN		0x0001
++#define PLACE_MAX		0x0002
++#define PLACE_RECT		0x0004
++
+ 
+ /***********************************************************************
+  *		SwitchToThisWindow (USER32.@)
+@@ -105,6 +109,101 @@ BOOL WINAPI GetClientRect( HWND hwnd, LPRECT rect )
+ }
+ 
+ 
++/***********************************************************************
++ *           list_children_from_point
++ *
++ * Get the list of children that can contain point from the server.
++ * Point is in screen coordinates.
++ * Returned list must be freed by caller.
++ */
++static HWND *list_children_from_point( HWND hwnd, POINT pt )
++{
++    HWND *list;
++    int i, size = 128;
++
++    for (;;)
++    {
++        int count = 0;
++
++        if (!(list = HeapAlloc( GetProcessHeap(), 0, size * sizeof(HWND) ))) break;
++
++        SERVER_START_REQ( get_window_children_from_point )
++        {
++            req->parent = wine_server_user_handle( hwnd );
++            req->x = pt.x;
++            req->y = pt.y;
++            req->dpi = get_thread_dpi();
++            wine_server_set_reply( req, list, (size-1) * sizeof(user_handle_t) );
++            if (!wine_server_call( req )) count = reply->count;
++        }
++        SERVER_END_REQ;
++        if (count && count < size)
++        {
++            /* start from the end since HWND is potentially larger than user_handle_t */
++            for (i = count - 1; i >= 0; i--)
++                list[i] = wine_server_ptr_handle( ((user_handle_t *)list)[i] );
++            list[count] = 0;
++            return list;
++        }
++        HeapFree( GetProcessHeap(), 0, list );
++        if (!count) break;
++        size = count + 1;  /* restart with a large enough buffer */
++    }
++    return NULL;
++}
++
++
++/***********************************************************************
++ *           WINPOS_WindowFromPoint
++ *
++ * Find the window and hittest for a given point.
++ */
++HWND WINPOS_WindowFromPoint( HWND hwndScope, POINT pt, INT *hittest )
++{
++    int i, res;
++    HWND ret, *list;
++    POINT win_pt;
++
++    if (!hwndScope) hwndScope = GetDesktopWindow();
++
++    *hittest = HTNOWHERE;
++
++    if (!(list = list_children_from_point( hwndScope, pt ))) return 0;
++
++    /* now determine the hittest */
++
++    for (i = 0; list[i]; i++)
++    {
++        LONG style = GetWindowLongW( list[i], GWL_STYLE );
++
++        /* If window is minimized or disabled, return at once */
++        if (style & WS_DISABLED)
++        {
++            *hittest = HTERROR;
++            break;
++        }
++        /* Send WM_NCCHITTEST (if same thread) */
++        if (!WIN_IsCurrentThread( list[i] ))
++        {
++            *hittest = HTCLIENT;
++            break;
++        }
++        win_pt = point_thread_to_win_dpi( list[i], pt );
++        res = SendMessageW( list[i], WM_NCHITTEST, 0, MAKELPARAM( win_pt.x, win_pt.y ));
++        if (res != HTTRANSPARENT)
++        {
++            *hittest = res;  /* Found the window */
++            break;
++        }
++        /* continue search with next window in z-order */
++    }
++    ret = list[i];
++    HeapFree( GetProcessHeap(), 0, list );
++    TRACE( "scope %p (%d,%d) returning %p\n", hwndScope, pt.x, pt.y, ret );
++    return ret;
++}
++
++
+ /*******************************************************************
+  *		WindowFromPoint (USER32.@)
+  */
+@@ -216,6 +315,33 @@ BOOL WINAPI BringWindowToTop( HWND hwnd )
+ }
+ 
+ 
++/*******************************************************************
++ *           get_work_rect
++ *
++ * Get the work area that a maximized window can cover, depending on style.
++ */
++static BOOL get_work_rect( HWND hwnd, RECT *rect )
++{
++    HMONITOR monitor = MonitorFromWindow( hwnd, MONITOR_DEFAULTTOPRIMARY );
++    MONITORINFO mon_info;
++    DWORD style;
++
++    if (!monitor) return FALSE;
++
++    mon_info.cbSize = sizeof(mon_info);
++    GetMonitorInfoW( monitor, &mon_info );
++    *rect = mon_info.rcMonitor;
++
++    style = GetWindowLongW( hwnd, GWL_STYLE );
++    if (style & WS_MAXIMIZEBOX)
++    {
++        if ((style & WS_CAPTION) == WS_CAPTION || !(style & (WS_CHILD | WS_POPUP)))
++            *rect = mon_info.rcWork;
++    }
++    return TRUE;
++}
++
++
+ /***********************************************************************
+  *		GetInternalWindowPos (USER32.@)
+  */
+@@ -225,7 +351,7 @@ UINT WINAPI GetInternalWindowPos( HWND hwnd, LPRECT rectWnd,
+     WINDOWPLACEMENT wndpl;
+ 
+     wndpl.length = sizeof(wndpl);
+-    if (NtUserGetWindowPlacement( hwnd, &wndpl ))
++    if (GetWindowPlacement( hwnd, &wndpl ))
+     {
+ 	if (rectWnd) *rectWnd = wndpl.rcNormalPosition;
+ 	if (ptIcon)  *ptIcon = wndpl.ptMinPosition;
+@@ -235,6 +361,183 @@ UINT WINAPI GetInternalWindowPos( HWND hwnd, LPRECT rectWnd,
+ }
+ 
+ 
++static RECT get_maximized_work_rect( HWND hwnd )
++{
++    RECT work_rect = { 0 };
++
++    if ((GetWindowLongW( hwnd, GWL_STYLE ) & (WS_MINIMIZE | WS_MAXIMIZE)) == WS_MAXIMIZE)
++    {
++        if (!get_work_rect( hwnd, &work_rect ))
++            work_rect = get_primary_monitor_rect();
++    }
++    return work_rect;
++}
++
++
++/*******************************************************************
++ *           update_maximized_pos
++ *
++ * For top level windows covering the work area, we might have to
++ * "forget" the maximized position. Windows presumably does this
++ * to avoid situations where the border style changes, which would
++ * lead the window to be outside the screen, or the window gets
++ * reloaded on a different screen, and the "saved" position no
++ * longer applies to it (despite being maximized).
++ *
++ * Some applications (e.g. Imperiums: Greek Wars) depend on this.
++ */
++static void update_maximized_pos( WND *wnd, RECT *work_rect )
++{
++    if (wnd->parent && wnd->parent != GetDesktopWindow())
++        return;
++
++    if (wnd->dwStyle & WS_MAXIMIZE)
++    {
++        if (wnd->window_rect.left  <= work_rect->left  && wnd->window_rect.top    <= work_rect->top &&
++            wnd->window_rect.right >= work_rect->right && wnd->window_rect.bottom >= work_rect->bottom)
++            wnd->max_pos.x = wnd->max_pos.y = -1;
++    }
++    else
++        wnd->max_pos.x = wnd->max_pos.y = -1;
++}
++
++
++/***********************************************************************
++ *		GetWindowPlacement (USER32.@)
++ *
++ * Win95:
++ * Fails if wndpl->length of Win95 (!) apps is invalid.
++ */
++BOOL WINAPI GetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *wndpl )
++{
++    return NtUserGetWindowPlacement( hwnd, wndpl );
++}
++
++/* make sure the specified rect is visible on screen */
++static void make_rect_onscreen( RECT *rect )
++{
++    MONITORINFO info;
++    HMONITOR monitor = MonitorFromRect( rect, MONITOR_DEFAULTTONEAREST );
++
++    info.cbSize = sizeof(info);
++    if (!monitor || !GetMonitorInfoW( monitor, &info )) return;
++    /* FIXME: map coordinates from rcWork to rcMonitor */
++    if (rect->right <= info.rcWork.left)
++    {
++        rect->right += info.rcWork.left - rect->left;
++        rect->left = info.rcWork.left;
++    }
++    else if (rect->left >= info.rcWork.right)
++    {
++        rect->left += info.rcWork.right - rect->right;
++        rect->right = info.rcWork.right;
++    }
++    if (rect->bottom <= info.rcWork.top)
++    {
++        rect->bottom += info.rcWork.top - rect->top;
++        rect->top = info.rcWork.top;
++    }
++    else if (rect->top >= info.rcWork.bottom)
++    {
++        rect->top += info.rcWork.bottom - rect->bottom;
++        rect->bottom = info.rcWork.bottom;
++    }
++}
++
++/* make sure the specified point is visible on screen */
++static void make_point_onscreen( POINT *pt )
++{
++    RECT rect;
++
++    SetRect( &rect, pt->x, pt->y, pt->x + 1, pt->y + 1 );
++    make_rect_onscreen( &rect );
++    pt->x = rect.left;
++    pt->y = rect.top;
++}
++
++
++/***********************************************************************
++ *           WINPOS_SetPlacement
++ */
++static BOOL WINPOS_SetPlacement( HWND hwnd, const WINDOWPLACEMENT *wndpl, UINT flags )
++{
++    DWORD style;
++    RECT work_rect = get_maximized_work_rect( hwnd );
++    WND *pWnd = WIN_GetPtr( hwnd );
++    WINDOWPLACEMENT wp = *wndpl;
++
++    if (flags & PLACE_MIN) make_point_onscreen( &wp.ptMinPosition );
++    if (flags & PLACE_MAX) make_point_onscreen( &wp.ptMaxPosition );
++    if (flags & PLACE_RECT) make_rect_onscreen( &wp.rcNormalPosition );
++
++    TRACE( "%p: setting min %d,%d max %d,%d normal %s flags %x adjusted to min %d,%d max %d,%d normal %s\n",
++           hwnd, wndpl->ptMinPosition.x, wndpl->ptMinPosition.y,
++           wndpl->ptMaxPosition.x, wndpl->ptMaxPosition.y,
++           wine_dbgstr_rect(&wndpl->rcNormalPosition), flags,
++           wp.ptMinPosition.x, wp.ptMinPosition.y, wp.ptMaxPosition.x, wp.ptMaxPosition.y,
++           wine_dbgstr_rect(&wp.rcNormalPosition) );
++
++    if (!pWnd || pWnd == WND_OTHER_PROCESS || pWnd == WND_DESKTOP) return FALSE;
++
++    if (flags & PLACE_MIN) pWnd->min_pos = point_thread_to_win_dpi( hwnd, wp.ptMinPosition );
++    if (flags & PLACE_MAX)
++    {
++        pWnd->max_pos = point_thread_to_win_dpi( hwnd, wp.ptMaxPosition );
++        update_maximized_pos( pWnd, &work_rect );
++    }
++    if (flags & PLACE_RECT) pWnd->normal_rect = rect_thread_to_win_dpi( hwnd, wp.rcNormalPosition );
++
++    style = pWnd->dwStyle;
++
++    WIN_ReleasePtr( pWnd );
++
++    if( style & WS_MINIMIZE )
++    {
++        if (flags & PLACE_MIN)
++        {
++            NtUserSetWindowPos( hwnd, 0, wp.ptMinPosition.x, wp.ptMinPosition.y, 0, 0,
++                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE );
++        }
++    }
++    else if( style & WS_MAXIMIZE )
++    {
++        if (flags & PLACE_MAX)
++            NtUserSetWindowPos( hwnd, 0, wp.ptMaxPosition.x, wp.ptMaxPosition.y, 0, 0,
++                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE );
++    }
++    else if( flags & PLACE_RECT )
++        NtUserSetWindowPos( hwnd, 0, wp.rcNormalPosition.left, wp.rcNormalPosition.top,
++                            wp.rcNormalPosition.right - wp.rcNormalPosition.left,
++                            wp.rcNormalPosition.bottom - wp.rcNormalPosition.top,
++                            SWP_NOZORDER | SWP_NOACTIVATE );
++
++    NtUserShowWindow( hwnd, wndpl->showCmd );
++
++    if (IsIconic( hwnd ))
++    {
++        /* SDK: ...valid only the next time... */
++        if( wndpl->flags & WPF_RESTORETOMAXIMIZED )
++            win_set_flags( hwnd, WIN_RESTORE_MAX, 0 );
++    }
++    return TRUE;
++}
++
++
++/***********************************************************************
++ *		SetWindowPlacement (USER32.@)
++ *
++ * Win95:
++ * Fails if wndpl->length of Win95 (!) apps is invalid.
++ */
++BOOL WINAPI SetWindowPlacement( HWND hwnd, const WINDOWPLACEMENT *wpl )
++{
++    UINT flags = PLACE_MAX | PLACE_RECT;
++    if (!wpl) return FALSE;
++    if (wpl->flags & WPF_SETMINPOSITION) flags |= PLACE_MIN;
++    return WINPOS_SetPlacement( hwnd, wpl, flags );
++}
++
++
+ /***********************************************************************
+  *		AnimateWindow (USER32.@)
+  *		Shows/Hides a window with an animation
+@@ -260,6 +563,33 @@ BOOL WINAPI AnimateWindow(HWND hwnd, DWORD dwTime, DWORD dwFlags)
+ 	return TRUE;
+ }
+ 
++/***********************************************************************
++ *		SetInternalWindowPos (USER32.@)
++ */
++void WINAPI SetInternalWindowPos( HWND hwnd, UINT showCmd,
++                                    LPRECT rect, LPPOINT pt )
++{
++    WINDOWPLACEMENT wndpl;
++    UINT flags;
++
++    wndpl.length  = sizeof(wndpl);
++    wndpl.showCmd = showCmd;
++    wndpl.flags = flags = 0;
++
++    if( pt )
++    {
++        flags |= PLACE_MIN;
++        wndpl.flags |= WPF_SETMINPOSITION;
++        wndpl.ptMinPosition = *pt;
++    }
++    if( rect )
++    {
++        flags |= PLACE_RECT;
++        wndpl.rcNormalPosition = *rect;
++    }
++    WINPOS_SetPlacement( hwnd, &wndpl, flags );
++}
++
+ 
+ /*******************************************************************
+  *         can_activate_window
+@@ -323,6 +653,31 @@ void WINPOS_ActivateOtherWindow(HWND hwnd)
+ }
+ 
+ 
++/***********************************************************************
++ *           WINPOS_HandleWindowPosChanging
++ *
++ * Default handling for a WM_WINDOWPOSCHANGING. Called from DefWindowProc().
++ */
++LONG WINPOS_HandleWindowPosChanging( HWND hwnd, WINDOWPOS *winpos )
++{
++    LONG style = GetWindowLongW( hwnd, GWL_STYLE );
++
++    if (winpos->flags & SWP_NOSIZE) return 0;
++    if ((style & WS_THICKFRAME) || ((style & (WS_POPUP | WS_CHILD)) == 0))
++    {
++	MINMAXINFO info = NtUserGetMinMaxInfo( hwnd );
++        winpos->cx = min( winpos->cx, info.ptMaxTrackSize.x );
++        winpos->cy = min( winpos->cy, info.ptMaxTrackSize.y );
++	if (!(style & WS_MINIMIZE))
++	{
++            winpos->cx = max( winpos->cx, info.ptMinTrackSize.x );
++            winpos->cy = max( winpos->cy, info.ptMinTrackSize.y );
++	}
++    }
++    return 0;
++}
++
++
+ /***********************************************************************
+  *		BeginDeferWindowPos (USER32.@)
+  */
+diff --git a/dlls/win32u/defwnd.c b/dlls/win32u/defwnd.c
+index 9b4edc90eaa..1fa80928c65 100644
+--- a/dlls/win32u/defwnd.c
++++ b/dlls/win32u/defwnd.c
+@@ -31,17 +31,6 @@
+ WINE_DEFAULT_DEBUG_CHANNEL(win);
+ 
+ 
+-void fill_rect( HDC dc, const RECT *rect, HBRUSH hbrush )
+-{
+-    HBRUSH prev_brush;
+-
+-    if (hbrush <= (HBRUSH)(COLOR_MENUBAR + 1)) hbrush = get_sys_color_brush( HandleToULong(hbrush) - 1 );
+-
+-    prev_brush = NtGdiSelectBrush( dc, hbrush );
+-    NtGdiPatBlt( dc, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, PATCOPY );
+-    if (prev_brush) NtGdiSelectBrush( dc, prev_brush );
+-}
+-
+ /***********************************************************************
+  *           AdjustWindowRectEx (win32u.so)
+  */
+@@ -123,33 +112,6 @@ static BOOL set_window_text( HWND hwnd, const void *text, BOOL ansi )
+     return TRUE;
+ }
+ 
+-static HICON get_window_icon( HWND hwnd, WPARAM type )
+-{
+-    HICON ret;
+-    WND *win;
+-
+-    if (!(win = get_win_ptr( hwnd ))) return 0;
+-
+-    switch(type)
+-    {
+-    case ICON_SMALL:
+-        ret = win->hIconSmall;
+-        break;
+-    case ICON_BIG:
+-        ret = win->hIcon;
+-        break;
+-    case ICON_SMALL2:
+-        ret = win->hIconSmall ? win->hIconSmall : win->hIconSmall2;
+-        break;
+-    default:
+-        ret = 0;
+-        break;
+-    }
+-
+-    release_win_ptr( win );
+-    return ret;
+-}
+-
+ static HICON set_window_icon( HWND hwnd, WPARAM type, HICON icon )
+ {
+     HICON ret = 0;
+@@ -197,25 +159,6 @@ static HICON set_window_icon( HWND hwnd, WPARAM type, HICON icon )
+     return ret;
+ }
+ 
+-static LONG handle_window_pos_changing( HWND hwnd, WINDOWPOS *winpos )
+-{
+-    LONG style = get_window_long( hwnd, GWL_STYLE );
+-
+-    if (winpos->flags & SWP_NOSIZE) return 0;
+-    if ((style & WS_THICKFRAME) || ((style & (WS_POPUP | WS_CHILD)) == 0))
+-    {
+-        MINMAXINFO info = get_min_max_info( hwnd );
+-        winpos->cx = min( winpos->cx, info.ptMaxTrackSize.x );
+-        winpos->cy = min( winpos->cy, info.ptMaxTrackSize.y );
+-        if (!(style & WS_MINIMIZE))
+-        {
+-            winpos->cx = max( winpos->cx, info.ptMinTrackSize.x );
+-            winpos->cy = max( winpos->cy, info.ptMinTrackSize.y );
+-        }
+-    }
+-    return 0;
+-}
+-
+ static LRESULT handle_sys_command( HWND hwnd, WPARAM wparam, LPARAM lparam )
+ {
+     if (!is_window_enabled( hwnd )) return 0;
+@@ -273,98 +216,9 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+             if (user_callbacks) user_callbacks->free_win_ptr( win );
+             win->pScroll = NULL;
+             release_win_ptr( win );
+-            break;
+-        }
+-
+-    case WM_WINDOWPOSCHANGING:
+-        return handle_window_pos_changing( hwnd, (WINDOWPOS *)lparam );
+-
+-    case WM_PAINTICON:
+-    case WM_PAINT:
+-        {
+-            PAINTSTRUCT ps;
+-            HDC hdc = NtUserBeginPaint( hwnd, &ps );
+-            if (hdc)
+-            {
+-                HICON icon;
+-                if (is_iconic(hwnd) && ((icon = UlongToHandle( get_class_long( hwnd, GCLP_HICON, FALSE )))))
+-                {
+-                    RECT rc;
+-                    int x, y;
+-
+-                    get_client_rect( hwnd, &rc );
+-                    x = (rc.right - rc.left - get_system_metrics( SM_CXICON )) / 2;
+-                    y = (rc.bottom - rc.top - get_system_metrics( SM_CYICON )) / 2;
+-                    TRACE( "Painting class icon: vis rect=(%s)\n", wine_dbgstr_rect(&ps.rcPaint) );
+-                    NtUserDrawIconEx( hdc, x, y, icon, 0, 0, 0, 0, DI_NORMAL | DI_COMPAT | DI_DEFAULTSIZE );
+-                }
+-                NtUserEndPaint( hwnd, &ps );
+-            }
+-            break;
++            return 0;
+         }
+ 
+-    case WM_SYNCPAINT:
+-        NtUserRedrawWindow ( hwnd, NULL, 0, RDW_ERASENOW | RDW_ERASE | RDW_ALLCHILDREN );
+-        return 0;
+-
+-    case WM_SETREDRAW:
+-        if (wparam) set_window_style( hwnd, WS_VISIBLE, 0 );
+-        else
+-        {
+-            NtUserRedrawWindow( hwnd, NULL, 0, RDW_ALLCHILDREN | RDW_VALIDATE );
+-            set_window_style( hwnd, 0, WS_VISIBLE );
+-        }
+-        return 0;
+-
+-    case WM_CLOSE:
+-        NtUserDestroyWindow( hwnd );
+-        return 0;
+-
+-    case WM_MOUSEACTIVATE:
+-        if (get_window_long( hwnd, GWL_STYLE ) & WS_CHILD)
+-        {
+-            result = send_message( get_parent(hwnd), WM_MOUSEACTIVATE, wparam, lparam );
+-            if (result) break;
+-        }
+-
+-        /* Caption clicks are handled by NC_HandleNCLButtonDown() */
+-        result = HIWORD(lparam) == WM_LBUTTONDOWN && LOWORD(lparam) == HTCAPTION ?
+-            MA_NOACTIVATE : MA_ACTIVATE;
+-        break;
+-
+-    case WM_ACTIVATE:
+-        /* The default action in Windows is to set the keyboard focus to
+-         * the window, if it's being activated and not minimized */
+-        if (LOWORD(wparam) != WA_INACTIVE && !is_iconic( hwnd )) NtUserSetFocus( hwnd );
+-        break;
+-
+-    case WM_MOUSEWHEEL:
+-        if (get_window_long( hwnd, GWL_STYLE ) & WS_CHILD)
+-            result = send_message( get_parent( hwnd ), WM_MOUSEWHEEL, wparam, lparam );
+-        break;
+-
+-    case WM_ERASEBKGND:
+-    case WM_ICONERASEBKGND:
+-        {
+-            RECT rect;
+-            HDC hdc = (HDC)wparam;
+-            HBRUSH hbr = UlongToHandle( get_class_long( hwnd, GCLP_HBRBACKGROUND, FALSE ));
+-            if (!hbr) break;
+-
+-            if (get_class_long( hwnd, GCL_STYLE, FALSE ) & CS_PARENTDC)
+-            {
+-                /* can't use GetClipBox with a parent DC or we fill the whole parent */
+-                get_client_rect( hwnd, &rect );
+-                NtGdiTransformPoints( hdc, (POINT *)&rect, (POINT *)&rect, 1, NtGdiDPtoLP );
+-            }
+-            else NtGdiGetAppClipBox( hdc, &rect );
+-            fill_rect( hdc, &rect, hbr );
+-            return 1;
+-        }
+-
+-    case WM_GETDLGCODE:
+-        break;
+-
+     case WM_SETTEXT:
+         result = set_window_text( hwnd, (void *)lparam, ansi );
+         break;
+@@ -373,10 +227,6 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+         result = (LRESULT)set_window_icon( hwnd, wparam, (HICON)lparam );
+         break;
+ 
+-    case WM_GETICON:
+-        result = (LRESULT)get_window_icon( hwnd, wparam );
+-        break;
+-
+     case WM_SYSCOMMAND:
+         result = handle_sys_command( hwnd, wparam, lparam );
+         break;
+@@ -384,44 +234,3 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+ 
+     return result;
+ }
+-
+-LRESULT desktop_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+-{
+-    static const WCHAR wine_display_device_guidW[] =
+-        {'_','_','w','i','n','e','_','d','i','s','p','l','a','y','_','d','e','v','i','c','e',
+-         '_','g','u','i','d',0};
+-
+-    switch (msg)
+-    {
+-    case WM_NCCREATE:
+-    {
+-        CREATESTRUCTW *cs = (CREATESTRUCTW *)lparam;
+-        const GUID *guid = cs->lpCreateParams;
+-
+-        if (guid)
+-        {
+-            ATOM atom = 0;
+-            char buffer[37];
+-            WCHAR bufferW[37];
+-
+-            if (NtUserGetAncestor( hwnd, GA_PARENT )) return FALSE;  /* refuse to create non-desktop window */
+-
+-            sprintf( buffer, "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+-                     (unsigned int)guid->Data1, guid->Data2, guid->Data3,
+-                     guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
+-                     guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7] );
+-            NtAddAtom( bufferW, asciiz_to_unicode( bufferW, buffer ) - sizeof(WCHAR), &atom );
+-            NtUserSetProp( hwnd, wine_display_device_guidW, ULongToHandle( atom ) );
+-        }
+-        return TRUE;
+-    }
+-    case WM_NCCALCSIZE:
+-        return 0;
+-
+-    default:
+-        if (msg >= WM_USER && hwnd == get_desktop_window())
+-            return user_driver->pDesktopWindowProc( hwnd, msg, wparam, lparam );
+-    }
+-
+-    return default_window_proc( hwnd, msg, wparam, lparam, FALSE );
+-}
+diff --git a/dlls/win32u/driver.c b/dlls/win32u/driver.c
+index 1f538d100ed..3552e2dd15c 100644
+--- a/dlls/win32u/driver.c
++++ b/dlls/win32u/driver.c
+@@ -721,11 +721,6 @@ static SHORT nulldrv_VkKeyScanEx( WCHAR ch, HKL layout )
+     return -256; /* use default implementation */
+ }
+ 
+-static LRESULT nulldrv_DesktopWindowProc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+-{
+-    return default_window_proc( hwnd, msg, wparam, lparam, FALSE );
+-}
+-
+ static void nulldrv_DestroyCursorIcon( HCURSOR cursor )
+ {
+ }
+@@ -1189,7 +1184,6 @@ static const struct user_driver_funcs lazy_load_driver =
+     /* windowing functions */
+     loaderdrv_CreateDesktopWindow,
+     loaderdrv_CreateWindow,
+-    nulldrv_DesktopWindowProc,
+     nulldrv_DestroyWindow,
+     loaderdrv_FlashWindowEx,
+     loaderdrv_GetDC,
+@@ -1263,7 +1257,6 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
+     SET_USER_FUNC(UpdateDisplayDevices);
+     SET_USER_FUNC(CreateDesktopWindow);
+     SET_USER_FUNC(CreateWindow);
+-    SET_USER_FUNC(DesktopWindowProc);
+     SET_USER_FUNC(DestroyWindow);
+     SET_USER_FUNC(FlashWindowEx);
+     SET_USER_FUNC(GetDC);
+diff --git a/dlls/win32u/gdiobj.c b/dlls/win32u/gdiobj.c
+index edb21456d8d..96d52e4d38e 100644
+--- a/dlls/win32u/gdiobj.c
++++ b/dlls/win32u/gdiobj.c
+@@ -1184,7 +1184,6 @@ static struct unix_funcs unix_funcs =
+     NtUserGetUpdateRect,
+     NtUserGetUpdateRgn,
+     NtUserGetUpdatedClipboardFormats,
+-    NtUserGetWindowPlacement,
+     NtUserHideCaret,
+     NtUserIsClipboardFormatAvailable,
+     NtUserMapVirtualKeyEx,
+@@ -1213,7 +1212,6 @@ static struct unix_funcs unix_funcs =
+     NtUserSetCursorIconData,
+     NtUserSetCursorPos,
+     NtUserSetFocus,
+-    NtUserSetInternalWindowPos,
+     NtUserSetLayeredWindowAttributes,
+     NtUserSetMenu,
+     NtUserSetParent,
+@@ -1221,7 +1219,6 @@ static struct unix_funcs unix_funcs =
+     NtUserSetSystemMenu,
+     NtUserSetWindowLong,
+     NtUserSetWindowLongPtr,
+-    NtUserSetWindowPlacement,
+     NtUserSetWindowPos,
+     NtUserSetWindowRgn,
+     NtUserSetWindowWord,
+diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+index 2b196fb5b1d..877e3f1a064 100644
+--- a/dlls/win32u/input.c
++++ b/dlls/win32u/input.c
+@@ -1799,6 +1799,15 @@ static void display_caret( HWND hwnd, const RECT *r )
+     NtUserReleaseDC( hwnd, dc );
+ }
+ 
++static void fill_rect( HDC dc, const RECT *rect, HBRUSH hbrush )
++{
++    HBRUSH prev_brush;
++
++    prev_brush = NtGdiSelectBrush( dc, hbrush );
++    NtGdiPatBlt( dc, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, PATCOPY );
++    if (prev_brush) NtGdiSelectBrush( dc, prev_brush );
++}
++
+ static unsigned int get_caret_registry_timeout(void)
+ {
+     char value_buffer[FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data[11 * sizeof(WCHAR)])];
+diff --git a/dlls/win32u/message.c b/dlls/win32u/message.c
+index bc6db20d164..75561309bd7 100644
+--- a/dlls/win32u/message.c
++++ b/dlls/win32u/message.c
+@@ -2890,8 +2890,6 @@ LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
+ {
+     switch (type)
+     {
+-    case NtUserDesktopWindowProc:
+-        return desktop_window_proc( hwnd, msg, wparam, lparam );
+     case NtUserDefWindowProc:
+         return default_window_proc( hwnd, msg, wparam, lparam, ansi );
+     case NtUserCallWindowProc:
+diff --git a/dlls/win32u/sysparams.c b/dlls/win32u/sysparams.c
+index b68bfa3a7ce..b878355f0fb 100644
+--- a/dlls/win32u/sysparams.c
++++ b/dlls/win32u/sysparams.c
+@@ -1516,26 +1516,6 @@ POINT point_phys_to_win_dpi( HWND hwnd, POINT pt )
+     return map_dpi_point( pt, get_win_monitor_dpi( hwnd ), get_dpi_for_window( hwnd ));
+ }
+ 
+-/**********************************************************************
+- *              point_thread_to_win_dpi
+- */
+-POINT point_thread_to_win_dpi( HWND hwnd, POINT pt )
+-{
+-    UINT dpi = get_thread_dpi();
+-    if (!dpi) dpi = get_win_monitor_dpi( hwnd );
+-    return map_dpi_point( pt, dpi, get_dpi_for_window( hwnd ));
+-}
+-
+-/**********************************************************************
+- *              rect_thread_to_win_dpi
+- */
+-RECT rect_thread_to_win_dpi( HWND hwnd, RECT rect )
+-{
+-    UINT dpi = get_thread_dpi();
+-    if (!dpi) dpi = get_win_monitor_dpi( hwnd );
+-    return map_dpi_rect( rect, dpi, get_dpi_for_window( hwnd ) );
+-}
+-
+ /* map value from system dpi to standard 96 dpi for storing in the registry */
+ static int map_from_system_dpi( int val )
+ {
+@@ -2164,7 +2144,7 @@ HMONITOR monitor_from_window( HWND hwnd, DWORD flags, UINT dpi )
+     TRACE( "(%p, 0x%08x)\n", hwnd, flags );
+ 
+     wp.length = sizeof(wp);
+-    if (is_iconic( hwnd ) && NtUserGetWindowPlacement( hwnd, &wp ))
++    if (is_iconic( hwnd ) && get_window_placement( hwnd, &wp ))
+         return monitor_from_rect( &wp.rcNormalPosition, flags, dpi );
+ 
+     if (get_window_rect( hwnd, &rect, dpi ))
+@@ -4526,7 +4506,7 @@ static HBRUSH get_55aa_brush(void)
+     return brush_55aa;
+ }
+ 
+-HBRUSH get_sys_color_brush( unsigned int index )
++static HBRUSH get_sys_color_brush( unsigned int index )
+ {
+     if (index == COLOR_55AA_BRUSH) return get_55aa_brush();
+     if (index >= ARRAY_SIZE( system_colors )) return 0;
+diff --git a/dlls/win32u/win32u.spec b/dlls/win32u/win32u.spec
+index 48c10fd45d3..1c3cbc59dc2 100644
+--- a/dlls/win32u/win32u.spec
++++ b/dlls/win32u/win32u.spec
+@@ -1014,7 +1014,7 @@
+ @ stub NtUserGetWindowFeedbackSetting
+ @ stub NtUserGetWindowGroupId
+ @ stub NtUserGetWindowMinimizeRect
+-@ stdcall NtUserGetWindowPlacement(long ptr)
++@ stub NtUserGetWindowPlacement
+ @ stub NtUserGetWindowProcessHandle
+ @ stdcall -syscall NtUserGetWindowRgnEx(long long long)
+ @ stub NtUserGhostWindowFromHungWindow
+@@ -1201,7 +1201,7 @@
+ @ stub NtUserSetInputServiceState
+ @ stub NtUserSetInteractiveControlFocus
+ @ stub NtUserSetInteractiveCtrlRotationAngle
+-@ stdcall NtUserSetInternalWindowPos(long long ptr ptr)
++@ stub NtUserSetInternalWindowPos
+ @ stdcall -syscall NtUserSetKeyboardState(ptr)
+ @ stdcall NtUserSetLayeredWindowAttributes(ptr long long long)
+ @ stub NtUserSetMagnificationDesktopMagnifierOffsetsDWMUpdated
+@@ -1248,7 +1248,7 @@
+ @ stub NtUserSetWindowGroup
+ @ stdcall NtUserSetWindowLong(long long long long)
+ @ stdcall NtUserSetWindowLongPtr(long long long long)
+-@ stdcall NtUserSetWindowPlacement(long ptr)
++@ stub NtUserSetWindowPlacement
+ @ stdcall NtUserSetWindowPos(long long long long long long long)
+ @ stdcall NtUserSetWindowRgn(long long long)
+ @ stub NtUserSetWindowRgnEx
+diff --git a/dlls/win32u/win32u_private.h b/dlls/win32u/win32u_private.h
+index 053fb25fe36..3ea3ab08034 100644
+--- a/dlls/win32u/win32u_private.h
++++ b/dlls/win32u/win32u_private.h
+@@ -246,7 +246,6 @@ struct unix_funcs
+     BOOL     (WINAPI *pNtUserGetUpdateRect)( HWND hwnd, RECT *rect, BOOL erase );
+     INT      (WINAPI *pNtUserGetUpdateRgn)( HWND hwnd, HRGN hrgn, BOOL erase );
+     BOOL     (WINAPI *pNtUserGetUpdatedClipboardFormats)( UINT *formats, UINT size, UINT *out_size );
+-    BOOL     (WINAPI *pNtUserGetWindowPlacement)( HWND hwnd, WINDOWPLACEMENT *placement );
+     BOOL     (WINAPI *pNtUserHideCaret)( HWND hwnd );
+     BOOL     (WINAPI *pNtUserIsClipboardFormatAvailable)( UINT format );
+     UINT     (WINAPI *pNtUserMapVirtualKeyEx)( UINT code, UINT type, HKL layout );
+@@ -283,7 +282,6 @@ struct unix_funcs
+                                                  UNICODE_STRING *res_name, struct cursoricon_desc *desc );
+     BOOL     (WINAPI *pNtUserSetCursorPos)( INT x, INT y );
+     HWND     (WINAPI *pNtUserSetFocus)( HWND hwnd );
+-    void     (WINAPI *pNtUserSetInternalWindowPos)( HWND hwnd, UINT cmd, RECT *rect, POINT *pt );
+     BOOL     (WINAPI *pNtUserSetLayeredWindowAttributes)( HWND hwnd, COLORREF key, BYTE alpha, DWORD flags );
+     BOOL     (WINAPI *pNtUserSetMenu)( HWND hwnd, HMENU menu );
+     HWND     (WINAPI *pNtUserSetParent)( HWND hwnd, HWND parent );
+@@ -291,7 +289,6 @@ struct unix_funcs
+     BOOL     (WINAPI *pNtUserSetSystemMenu)( HWND hwnd, HMENU menu );
+     LONG     (WINAPI *pNtUserSetWindowLong)( HWND hwnd, INT offset, LONG newval, BOOL ansi );
+     LONG_PTR (WINAPI *pNtUserSetWindowLongPtr)( HWND hwnd, INT offset, LONG_PTR newval, BOOL ansi );
+-    BOOL     (WINAPI *pNtUserSetWindowPlacement)( HWND hwnd, const WINDOWPLACEMENT *wpl );
+     BOOL     (WINAPI *pNtUserSetWindowPos)( HWND hwnd, HWND after, INT x, INT y, INT cx, INT cy, UINT flags );
+     int      (WINAPI *pNtUserSetWindowRgn)( HWND hwnd, HRGN hrgn, BOOL redraw );
+     WORD     (WINAPI *pNtUserSetWindowWord)( HWND hwnd, INT offset, WORD newval );
+@@ -360,8 +357,6 @@ extern void register_window_surface( struct window_surface *old,
+ /* defwnd.c */
+ extern LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                     BOOL ansi ) DECLSPEC_HIDDEN;
+-extern LRESULT desktop_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
+-extern void fill_rect( HDC dc, const RECT *rect, HBRUSH hbrush ) DECLSPEC_HIDDEN;
+ 
+ /* hook.c */
+ extern LRESULT call_current_hook( HHOOK hhook, INT code, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
+@@ -412,7 +407,6 @@ extern UINT get_monitor_dpi( HMONITOR monitor ) DECLSPEC_HIDDEN;
+ extern BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info ) DECLSPEC_HIDDEN;
+ extern UINT get_win_monitor_dpi( HWND hwnd ) DECLSPEC_HIDDEN;
+ extern RECT get_primary_monitor_rect( UINT dpi ) DECLSPEC_HIDDEN;
+-extern HBRUSH get_sys_color_brush( unsigned int index ) DECLSPEC_HIDDEN;
+ extern UINT get_system_dpi(void) DECLSPEC_HIDDEN;
+ extern int get_system_metrics( int index ) DECLSPEC_HIDDEN;
+ extern UINT get_thread_dpi(void) DECLSPEC_HIDDEN;
+@@ -422,8 +416,6 @@ extern BOOL is_exiting_thread( DWORD tid ) DECLSPEC_HIDDEN;
+ extern POINT map_dpi_point( POINT pt, UINT dpi_from, UINT dpi_to ) DECLSPEC_HIDDEN;
+ extern RECT map_dpi_rect( RECT rect, UINT dpi_from, UINT dpi_to ) DECLSPEC_HIDDEN;
+ extern POINT point_phys_to_win_dpi( HWND hwnd, POINT pt ) DECLSPEC_HIDDEN;
+-extern POINT point_thread_to_win_dpi( HWND hwnd, POINT pt ) DECLSPEC_HIDDEN;
+-extern RECT rect_thread_to_win_dpi( HWND hwnd, RECT rect ) DECLSPEC_HIDDEN;
+ extern HMONITOR monitor_from_point( POINT pt, DWORD flags, UINT dpi ) DECLSPEC_HIDDEN;
+ extern HMONITOR monitor_from_rect( const RECT *rect, DWORD flags, UINT dpi ) DECLSPEC_HIDDEN;
+ extern HMONITOR monitor_from_window( HWND hwnd, DWORD flags, UINT dpi ) DECLSPEC_HIDDEN;
+@@ -444,7 +436,7 @@ extern HWND get_full_window_handle( HWND hwnd ) DECLSPEC_HIDDEN;
+ extern HWND get_parent( HWND hwnd ) DECLSPEC_HIDDEN;
+ extern HWND get_hwnd_message_parent(void) DECLSPEC_HIDDEN;
+ extern DPI_AWARENESS_CONTEXT get_window_dpi_awareness_context( HWND hwnd ) DECLSPEC_HIDDEN;
+-extern MINMAXINFO get_min_max_info( HWND hwnd ) DECLSPEC_HIDDEN;
++extern BOOL get_window_placement( HWND hwnd, WINDOWPLACEMENT *placement ) DECLSPEC_HIDDEN;
+ extern HWND get_window_relative( HWND hwnd, UINT rel ) DECLSPEC_HIDDEN;
+ extern DWORD get_window_thread( HWND hwnd, DWORD *process ) DECLSPEC_HIDDEN;
+ extern HWND is_current_process_window( HWND hwnd ) DECLSPEC_HIDDEN;
+@@ -525,6 +517,99 @@ static inline WCHAR win32u_towupper( WCHAR ch )
+     return RtlUpcaseUnicodeChar( ch );
+ }
+ 
++static inline LONG win32u_wcstol( LPCWSTR s, LPWSTR *end, INT base )
++{
++    BOOL negative = FALSE, empty = TRUE;
++    LONG ret = 0;
++
++    if (base < 0 || base == 1 || base > 36) return 0;
++    if (end) *end = (WCHAR *)s;
++    while (*s == ' ' || *s == '\t') s++;
++
++    if (*s == '-')
++    {
++        negative = TRUE;
++        s++;
++    }
++    else if (*s == '+') s++;
++
++    if ((base == 0 || base == 16) && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
++    {
++        base = 16;
++        s += 2;
++    }
++    if (base == 0) base = s[0] != '0' ? 10 : 8;
++
++    while (*s)
++    {
++        int v;
++
++        if ('0' <= *s && *s <= '9') v = *s - '0';
++        else if ('A' <= *s && *s <= 'Z') v = *s - 'A' + 10;
++        else if ('a' <= *s && *s <= 'z') v = *s - 'a' + 10;
++        else break;
++        if (v >= base) break;
++        if (negative) v = -v;
++        s++;
++        empty = FALSE;
++
++        if (!negative && (ret > MAXLONG / base || ret * base > MAXLONG - v))
++            ret = MAXLONG;
++        else if (negative && (ret < (LONG)MINLONG / base || ret * base < (LONG)(MINLONG - v)))
++            ret = MINLONG;
++        else
++            ret = ret * base + v;
++    }
++
++    if (end && !empty) *end = (WCHAR *)s;
++    return ret;
++}
++
++static inline ULONG win32u_wcstoul( const WCHAR *s, WCHAR **end, int base )
++{
++    BOOL negative = FALSE, empty = TRUE;
++    ULONG ret = 0;
++
++    if (base < 0 || base == 1 || base > 36) return 0;
++    if (end) *end = (WCHAR *)s;
++    while (*s == ' ' || *s == '\t') s++;
++
++    if (*s == '-')
++    {
++        negative = TRUE;
++        s++;
++    }
++    else if (*s == '+') s++;
++
++    if ((base == 0 || base == 16) && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
++    {
++        base = 16;
++        s += 2;
++    }
++    if (base == 0) base = s[0] != '0' ? 10 : 8;
++
++    while (*s)
++    {
++        int v;
++
++        if ('0' <= *s && *s <= '9') v = *s - '0';
++        else if ('A' <= *s && *s <= 'Z') v = *s - 'A' + 10;
++        else if ('a' <= *s && *s <= 'z') v = *s - 'a' + 10;
++        else break;
++        if (v >= base) break;
++        s++;
++        empty = FALSE;
++
++        if (ret > MAXDWORD / base || ret * base > MAXDWORD - v)
++            ret = MAXDWORD;
++        else
++            ret = ret * base + v;
++    }
++
++    if (end && !empty) *end = (WCHAR *)s;
++    return negative ? -ret : ret;
++}
++
+ extern CPTABLEINFO ansi_cp DECLSPEC_HIDDEN;
+ 
+ DWORD win32u_mbtowc( CPTABLEINFO *info, WCHAR *dst, DWORD dstlen, const char *src,
+@@ -550,6 +635,8 @@ static inline WCHAR *towstr( const char *str )
+ 
+ #define towupper(c)     win32u_towupper(c)
+ #define wcsdup(s)       win32u_wcsdup(s)
++#define wcstol(s,e,b)   win32u_wcstol(s,e,b)
++#define wcstoul(s,e,b)  win32u_wcstoul(s,e,b)
+ 
+ static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
+ {
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+index 338063f5fb5..94cdd7f7280 100644
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -48,10 +48,6 @@ static void *user_handles[NB_USER_HANDLES];
+ #define SWP_AGG_NOCLIENTCHANGE \
+         (SWP_NOCLIENTSIZE | SWP_NOCLIENTMOVE)
+ 
+-#define PLACE_MIN		0x0001
+-#define PLACE_MAX		0x0002
+-#define PLACE_RECT		0x0004
+-
+ /***********************************************************************
+  *           alloc_user_handle
+  */
+@@ -2400,10 +2396,8 @@ static BOOL empty_point( POINT pt )
+     return pt.x == -1 && pt.y == -1;
+ }
+ 
+-/***********************************************************************
+- *           NtUserGetWindowPlacement (win32u.@)
+- */
+-BOOL WINAPI NtUserGetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *placement )
++/* see GetWindowPlacement */
++BOOL get_window_placement( HWND hwnd, WINDOWPLACEMENT *placement )
+ {
+     RECT work_rect = get_maximized_work_rect( hwnd );
+     WND *win = get_win_ptr( hwnd );
+@@ -2490,121 +2484,6 @@ BOOL WINAPI NtUserGetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *placement )
+     return TRUE;
+ }
+ 
+-/* make sure the specified rect is visible on screen */
+-static void make_rect_onscreen( RECT *rect )
+-{
+-    MONITORINFO info;
+-    HMONITOR monitor = monitor_from_rect( rect, MONITOR_DEFAULTTONEAREST, get_thread_dpi() );
+-
+-    info.cbSize = sizeof(info);
+-    if (!monitor || !get_monitor_info( monitor, &info )) return;
+-    /* FIXME: map coordinates from rcWork to rcMonitor */
+-    if (rect->right <= info.rcWork.left)
+-    {
+-        rect->right += info.rcWork.left - rect->left;
+-        rect->left = info.rcWork.left;
+-    }
+-    else if (rect->left >= info.rcWork.right)
+-    {
+-        rect->left += info.rcWork.right - rect->right;
+-        rect->right = info.rcWork.right;
+-    }
+-    if (rect->bottom <= info.rcWork.top)
+-    {
+-        rect->bottom += info.rcWork.top - rect->top;
+-        rect->top = info.rcWork.top;
+-    }
+-    else if (rect->top >= info.rcWork.bottom)
+-    {
+-        rect->top += info.rcWork.bottom - rect->bottom;
+-        rect->bottom = info.rcWork.bottom;
+-    }
+-}
+-
+-/* make sure the specified point is visible on screen */
+-static void make_point_onscreen( POINT *pt )
+-{
+-    RECT rect;
+-
+-    SetRect( &rect, pt->x, pt->y, pt->x + 1, pt->y + 1 );
+-    make_rect_onscreen( &rect );
+-    pt->x = rect.left;
+-    pt->y = rect.top;
+-}
+-
+-static BOOL set_window_placement( HWND hwnd, const WINDOWPLACEMENT *wndpl, UINT flags )
+-{
+-    RECT work_rect = get_maximized_work_rect( hwnd );
+-    WND *win = get_win_ptr( hwnd );
+-    WINDOWPLACEMENT wp = *wndpl;
+-    DWORD style;
+-
+-    if (flags & PLACE_MIN) make_point_onscreen( &wp.ptMinPosition );
+-    if (flags & PLACE_MAX) make_point_onscreen( &wp.ptMaxPosition );
+-    if (flags & PLACE_RECT) make_rect_onscreen( &wp.rcNormalPosition );
+-
+-    TRACE( "%p: setting min %d,%d max %d,%d normal %s flags %x adjusted to min %d,%d max %d,%d normal %s\n",
+-           hwnd, wndpl->ptMinPosition.x, wndpl->ptMinPosition.y,
+-           wndpl->ptMaxPosition.x, wndpl->ptMaxPosition.y,
+-           wine_dbgstr_rect(&wndpl->rcNormalPosition), flags,
+-           wp.ptMinPosition.x, wp.ptMinPosition.y, wp.ptMaxPosition.x, wp.ptMaxPosition.y,
+-           wine_dbgstr_rect(&wp.rcNormalPosition) );
+-
+-    if (!win || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
+-
+-    if (flags & PLACE_MIN) win->min_pos = point_thread_to_win_dpi( hwnd, wp.ptMinPosition );
+-    if (flags & PLACE_MAX)
+-    {
+-        win->max_pos = point_thread_to_win_dpi( hwnd, wp.ptMaxPosition );
+-        update_maximized_pos( win, &work_rect );
+-    }
+-    if (flags & PLACE_RECT) win->normal_rect = rect_thread_to_win_dpi( hwnd, wp.rcNormalPosition );
+-
+-    style = win->dwStyle;
+-
+-    release_win_ptr( win );
+-
+-    if (style & WS_MINIMIZE)
+-    {
+-        if (flags & PLACE_MIN)
+-        {
+-            NtUserSetWindowPos( hwnd, 0, wp.ptMinPosition.x, wp.ptMinPosition.y, 0, 0,
+-                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE );
+-        }
+-    }
+-    else if (style & WS_MAXIMIZE)
+-    {
+-        if (flags & PLACE_MAX)
+-            NtUserSetWindowPos( hwnd, 0, wp.ptMaxPosition.x, wp.ptMaxPosition.y, 0, 0,
+-                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE );
+-    }
+-    else if (flags & PLACE_RECT)
+-        NtUserSetWindowPos( hwnd, 0, wp.rcNormalPosition.left, wp.rcNormalPosition.top,
+-                            wp.rcNormalPosition.right - wp.rcNormalPosition.left,
+-                            wp.rcNormalPosition.bottom - wp.rcNormalPosition.top,
+-                            SWP_NOZORDER | SWP_NOACTIVATE );
+-
+-    NtUserShowWindow( hwnd, wndpl->showCmd );
+-
+-    if (is_iconic( hwnd ))
+-    {
+-        if (wndpl->flags & WPF_RESTORETOMAXIMIZED)
+-            win_set_flags( hwnd, WIN_RESTORE_MAX, 0 );
+-    }
+-    return TRUE;
+-}
+-
+-/***********************************************************************
+- *           NtUserSetWindowPlacement (win32u.@)
+- */
+-BOOL WINAPI NtUserSetWindowPlacement( HWND hwnd, const WINDOWPLACEMENT *wpl )
+-{
+-    UINT flags = PLACE_MAX | PLACE_RECT;
+-    if (!wpl) return FALSE;
+-    if (wpl->flags & WPF_SETMINPOSITION) flags |= PLACE_MIN;
+-    return set_window_placement( hwnd, wpl, flags );
+-}
+-
+ /*****************************************************************************
+  *           NtUserBuildHwndList (win32u.@)
+  */
+@@ -3680,32 +3559,6 @@ BOOL WINAPI NtUserEndDeferWindowPosEx( HDWP hdwp, BOOL async )
+     return TRUE;
+ }
+ 
+-/***********************************************************************
+- *           NtUserSetInternalWindowPos (win32u.@)
+- */
+-void WINAPI NtUserSetInternalWindowPos( HWND hwnd, UINT cmd, RECT *rect, POINT *pt )
+-{
+-    WINDOWPLACEMENT wndpl;
+-    UINT flags;
+-
+-    wndpl.length  = sizeof(wndpl);
+-    wndpl.showCmd = cmd;
+-    wndpl.flags = flags = 0;
+-
+-    if (pt)
+-    {
+-        flags |= PLACE_MIN;
+-        wndpl.flags |= WPF_SETMINPOSITION;
+-        wndpl.ptMinPosition = *pt;
+-    }
+-    if( rect )
+-    {
+-        flags |= PLACE_RECT;
+-        wndpl.rcNormalPosition = *rect;
+-    }
+-    set_window_placement( hwnd, &wndpl, flags );
+-}
+-
+ /***********************************************************************
+  *           win_set_flags
+  *
+@@ -3804,7 +3657,7 @@ static void send_parent_notify( HWND hwnd, UINT msg )
+  *
+  * Get the minimized and maximized information for a window.
+  */
+-MINMAXINFO get_min_max_info( HWND hwnd )
++static MINMAXINFO get_min_max_info( HWND hwnd )
+ {
+     LONG style = get_window_long( hwnd, GWL_STYLE );
+     LONG exstyle = get_window_long( hwnd, GWL_EXSTYLE );
+@@ -4038,7 +3891,7 @@ static UINT window_min_maximize( HWND hwnd, UINT cmd, RECT *rect )
+     TRACE( "%p %u\n", hwnd, cmd );
+ 
+     wpl.length = sizeof(wpl);
+-    NtUserGetWindowPlacement( hwnd, &wpl );
++    get_window_placement( hwnd, &wpl );
+ 
+     if (call_hooks( WH_CBT, HCBT_MINMAX, (WPARAM)hwnd, cmd, TRUE ))
+         return SWP_NOSIZE | SWP_NOMOVE;
+@@ -5395,6 +5248,9 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
+     case NtUserCallHwndParam_GetWindowLongPtrW:
+         return get_window_long_ptr( hwnd, param, FALSE );
+ 
++    case NtUserCallHwndParam_GetWindowPlacement:
++        return get_window_placement( hwnd, (WINDOWPLACEMENT *)param );
++
+     case NtUserCallHwndParam_GetWindowRect:
+         return get_window_rect( hwnd, (RECT *)param, get_thread_dpi() );
+ 
+diff --git a/dlls/win32u/wrappers.c b/dlls/win32u/wrappers.c
+index 13b4b7164ab..4e750e5aea2 100644
+--- a/dlls/win32u/wrappers.c
++++ b/dlls/win32u/wrappers.c
+@@ -1023,12 +1023,6 @@ BOOL WINAPI NtUserGetUpdatedClipboardFormats( UINT *formats, UINT size, UINT *ou
+     return unix_funcs->pNtUserGetUpdatedClipboardFormats( formats, size, out_size );
+ }
+ 
+-BOOL WINAPI NtUserGetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *placement )
+-{
+-    if (!unix_funcs) return FALSE;
+-    return unix_funcs->pNtUserGetWindowPlacement( hwnd, placement );
+-}
+-
+ BOOL WINAPI NtUserIsClipboardFormatAvailable( UINT format )
+ {
+     if (!unix_funcs) return FALSE;
+@@ -1191,12 +1185,6 @@ HWND WINAPI NtUserSetFocus( HWND hwnd )
+     return unix_funcs->pNtUserSetFocus( hwnd );
+ }
+ 
+-void WINAPI NtUserSetInternalWindowPos( HWND hwnd, UINT cmd, RECT *rect, POINT *pt )
+-{
+-    if (!unix_funcs) return;
+-    return unix_funcs->pNtUserSetInternalWindowPos( hwnd, cmd, rect, pt );
+-}
+-
+ BOOL WINAPI NtUserSetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWORD flags )
+ {
+     if (!unix_funcs) return FALSE;
+@@ -1239,12 +1227,6 @@ LONG_PTR WINAPI NtUserSetWindowLongPtr( HWND hwnd, INT offset, LONG_PTR newval,
+     return unix_funcs->pNtUserSetWindowLongPtr( hwnd, offset, newval, ansi );
+ }
+ 
+-BOOL WINAPI NtUserSetWindowPlacement( HWND hwnd, const WINDOWPLACEMENT *wpl )
+-{
+-    if (!unix_funcs) return 0;
+-    return unix_funcs->pNtUserSetWindowPlacement( hwnd, wpl );
+-}
+-
+ BOOL WINAPI NtUserSetWindowPos( HWND hwnd, HWND after, INT x, INT y, INT cx, INT cy, UINT flags )
+ {
+     if (!unix_funcs) return 0;
+diff --git a/dlls/winemac.drv/keyboard.c b/dlls/winemac.drv/keyboard.c
+index 824addad78b..2d486e37702 100644
+--- a/dlls/winemac.drv/keyboard.c
++++ b/dlls/winemac.drv/keyboard.c
+@@ -444,94 +444,16 @@ static pthread_mutex_t layout_list_mutex = PTHREAD_MUTEX_INITIALIZER;
+ 
+ int macdrv_layout_list_needs_update = TRUE;
+ 
+-static const NLS_LOCALE_HEADER *locale_table;
+-
+-static int compare_locale_names(const WCHAR *n1, const WCHAR *n2)
+-{
+-    for (;;)
+-    {
+-        WCHAR ch1 = *n1++;
+-        WCHAR ch2 = *n2++;
+-        if (ch1 >= 'a' && ch1 <= 'z') ch1 -= 'a' - 'A';
+-        else if (ch1 == '_') ch1 = '-';
+-        if (ch2 >= 'a' && ch2 <= 'z') ch2 -= 'a' - 'A';
+-        else if (ch2 == '_') ch2 = '-';
+-        if (!ch1 || ch1 != ch2) return ch1 - ch2;
+-    }
+-}
+-
+-
+-static const NLS_LOCALE_LCNAME_INDEX *find_lcname_entry(const WCHAR *name)
+-{
+-    const NLS_LOCALE_LCNAME_INDEX *lcnames_index;
+-    const WCHAR *locale_strings;
+-    int min = 0, max = locale_table->nb_lcnames - 1;
+-
+-    locale_strings = (const WCHAR *)((char *)locale_table + locale_table->strings_offset);
+-    lcnames_index = (const NLS_LOCALE_LCNAME_INDEX *)((char *)locale_table + locale_table->lcnames_offset);
+-
+-    while (min <= max)
+-    {
+-        int res, pos = (min + max) / 2;
+-        const WCHAR *str = locale_strings + lcnames_index[pos].name;
+-        res = compare_locale_names(name, str + 1);
+-        if (res < 0) max = pos - 1;
+-        else if (res > 0) min = pos + 1;
+-        else return &lcnames_index[pos];
+-    }
+-    return NULL;
+-}
+-
+-
+ static DWORD get_lcid(CFStringRef lang)
+ {
+-    const NLS_LOCALE_LCNAME_INDEX *entry;
+-    const NLS_LOCALE_DATA *locale;
+     CFRange range;
+     WCHAR str[10];
+-    ULONG offset;
+-
+-    if (!locale_table)
+-    {
+-        struct
+-        {
+-            UINT ctypes;
+-            UINT unknown1;
+-            UINT unknown2;
+-            UINT unknown3;
+-            UINT locales;
+-            UINT charmaps;
+-            UINT geoids;
+-            UINT scripts;
+-        } *header;
+-        LCID system_lcid;
+-        LARGE_INTEGER size;
+-
+-        if (NtInitializeNlsFiles((void **)&header, &system_lcid, &size))
+-        {
+-            ERR("NtInitializeNlsFiles failed\n");
+-            return 0;
+-        }
+-
+-        if (InterlockedCompareExchangePointer((void **)&locale_table,
+-                                              (char *)header + header->locales, NULL))
+-            NtUnmapViewOfSection(GetCurrentProcess(), header);
+-    }
+ 
+     range.location = 0;
+     range.length = min(CFStringGetLength(lang), ARRAY_SIZE(str) - 1);
+     CFStringGetCharacters(lang, range, str);
+     str[range.length] = 0;
+-
+-    if (!(entry = find_lcname_entry(str)))
+-    {
+-        ERR("%s not found\n", debugstr_w(str));
+-        return 0;
+-    }
+-
+-    offset = locale_table->locales_offset + entry->idx * locale_table->locale_size;
+-    locale = (const NLS_LOCALE_DATA *)((const char *)locale_table + offset);
+-    return locale->inotneutral ? entry->id : locale->idefaultlanguage;
++    return LocaleNameToLCID(str, 0);
+ }
+ 
+ static HKL get_hkl(CFStringRef lang, CFStringRef type)
+diff --git a/dlls/winex11.drv/Makefile.in b/dlls/winex11.drv/Makefile.in
+index 3c653902ef2..2a0e3467905 100644
+--- a/dlls/winex11.drv/Makefile.in
++++ b/dlls/winex11.drv/Makefile.in
+@@ -1,10 +1,11 @@
+ EXTRADEFS = -DWINE_NO_LONG_TYPES
+ MODULE    = winex11.drv
+-UNIXLIB   = winex11.so
+ IMPORTS   = uuid user32 gdi32 win32u
+ DELAYIMPORTS = comctl32 ole32 shell32 imm32
+ EXTRAINCL = $(X_CFLAGS)
+-EXTRALIBS = -lwin32u $(X_LIBS) $(X_EXTRA_LIBS) $(PTHREAD_LIBS) -lm
++EXTRALIBS = $(X_LIBS) $(X_EXTRA_LIBS) $(PTHREAD_LIBS)
++
++EXTRADLLFLAGS = -mcygwin
+ 
+ C_SRCS = \
+ 	bitblt.c \
+diff --git a/dlls/winex11.drv/bitblt.c b/dlls/winex11.drv/bitblt.c
+index 10388a1cc8f..2403a5568bc 100644
+--- a/dlls/winex11.drv/bitblt.c
++++ b/dlls/winex11.drv/bitblt.c
+@@ -19,10 +19,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <assert.h>
+diff --git a/dlls/winex11.drv/brush.c b/dlls/winex11.drv/brush.c
+index 2a2e8ef4e98..1ade09bd4be 100644
+--- a/dlls/winex11.drv/brush.c
++++ b/dlls/winex11.drv/brush.c
+@@ -18,10 +18,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <stdlib.h>
+diff --git a/dlls/winex11.drv/clipboard.c b/dlls/winex11.drv/clipboard.c
+index da451fad57c..4528c59a645 100644
+--- a/dlls/winex11.drv/clipboard.c
++++ b/dlls/winex11.drv/clipboard.c
+@@ -63,10 +63,6 @@
+  * FIXME: global format list needs a critical section
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <string.h>
+@@ -93,6 +89,7 @@
+ #include "shlwapi.h"
+ #include "wine/list.h"
+ #include "wine/debug.h"
++#include "wine/unicode.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(clipboard);
+ 
+@@ -1134,7 +1131,7 @@ void *uri_list_to_drop_files( const void *data, size_t size, size_t *ret_size )
+ 
+         if (path)
+         {
+-            int pathSize = wcslen( path ) + 1;
++            int pathSize = strlenW(path) + 1;
+             if (pathSize > capacity - total)
+             {
+                 WCHAR *new_out;
+diff --git a/dlls/winex11.drv/desktop.c b/dlls/winex11.drv/desktop.c
+index bc2ba60397b..c335bc5ba2b 100644
+--- a/dlls/winex11.drv/desktop.c
++++ b/dlls/winex11.drv/desktop.c
+@@ -19,10 +19,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ #include <X11/cursorfont.h>
+ #include <X11/Xlib.h>
+@@ -94,7 +90,7 @@ static BOOL X11DRV_desktop_get_id( const WCHAR *device_name, ULONG_PTR *id )
+ {
+     WCHAR primary_adapter[CCHDEVICENAME];
+ 
+-    if (!get_primary_adapter( primary_adapter ) || wcsicmp( primary_adapter, device_name ))
++    if (!get_primary_adapter( primary_adapter ) || lstrcmpiW( primary_adapter, device_name ))
+         return FALSE;
+ 
+     *id = 0;
+@@ -346,7 +342,7 @@ NTSTATUS x11drv_create_desktop( void *arg )
+     TRACE( "%s %ux%u\n", debugstr_w(name), params->width, params->height );
+ 
+     /* magic: desktop "root" means use the root window */
+-    if (!wcsicmp( name, rootW )) return FALSE;
++    if (!lstrcmpiW( name, rootW )) return FALSE;
+ 
+     /* Create window */
+     win_attr.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | EnterWindowMask |
+diff --git a/dlls/winex11.drv/display.c b/dlls/winex11.drv/display.c
+index 510cb9dcee6..aef4ed0b5b0 100644
+--- a/dlls/winex11.drv/display.c
++++ b/dlls/winex11.drv/display.c
+@@ -18,10 +18,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ #include "x11drv.h"
+ #include "wine/debug.h"
+diff --git a/dlls/winex11.drv/dllmain.c b/dlls/winex11.drv/dllmain.c
+index e2cbd51351d..926fdcd6b1a 100644
+--- a/dlls/winex11.drv/dllmain.c
++++ b/dlls/winex11.drv/dllmain.c
+@@ -18,19 +18,12 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#include "x11drv_dll.h"
++#include "config.h"
++#include "x11drv.h"
+ #include "wine/debug.h"
+ 
+ 
+ HMODULE x11drv_module = 0;
+-static unixlib_handle_t x11drv_handle;
+-NTSTATUS (CDECL *x11drv_unix_call)( enum x11drv_funcs code, void *params );
+-
+-
+-static NTSTATUS x11drv_load_icon( UINT id )
+-{
+-    return HandleToUlong( LoadIconW( NULL, UlongToPtr( id )));
+-}
+ 
+ 
+ typedef NTSTATUS (*callback_func)( UINT arg );
+@@ -43,7 +36,6 @@ static const callback_func callback_funcs[] =
+     x11drv_ime_set_cursor_pos,
+     x11drv_ime_set_open_status,
+     x11drv_ime_update_association,
+-    x11drv_load_icon,
+ };
+ 
+ C_ASSERT( ARRAYSIZE(callback_funcs) == client_funcs_count );
+@@ -68,31 +60,18 @@ static const kernel_callback kernel_callbacks[] =
+ 
+ C_ASSERT( NtUserDriverCallbackFirst + ARRAYSIZE(kernel_callbacks) == client_func_last );
+ 
+-
+ BOOL WINAPI DllMain( HINSTANCE instance, DWORD reason, void *reserved )
+ {
+     void **callback_table;
+-    struct init_params params =
+-    {
+-        NtWaitForMultipleObjects,
+-        foreign_window_proc,
+-    };
+ 
+     if (reason != DLL_PROCESS_ATTACH) return TRUE;
+ 
+     DisableThreadLibraryCalls( instance );
+     x11drv_module = instance;
+-    if (NtQueryVirtualMemory( GetCurrentProcess(), instance, MemoryWineUnixFuncs,
+-                              &x11drv_handle, sizeof(x11drv_handle), NULL ))
+-        return FALSE;
+-
+-    if (__wine_unix_call( x11drv_handle, unix_init, &params )) return FALSE;
++    if (X11DRV_CALL( init, NULL )) return FALSE;
+ 
+     callback_table = NtCurrentTeb()->Peb->KernelCallbackTable;
+     memcpy( callback_table + NtUserDriverCallbackFirst, kernel_callbacks, sizeof(kernel_callbacks) );
+-
+-    show_systray = params.show_systray;
+-    x11drv_unix_call = params.unix_call;
+     return TRUE;
+ }
+ 
+diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+index f81d2338faf..b21d3458685 100644
+--- a/dlls/winex11.drv/event.c
++++ b/dlls/winex11.drv/event.c
+@@ -19,10 +19,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <poll.h>
+@@ -483,8 +479,8 @@ NTSTATUS X11DRV_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
+     if (!data)
+     {
+         if (!count && timeout && !timeout->QuadPart) return WAIT_TIMEOUT;
+-        return pNtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
+-                                          !!(flags & MWMO_ALERTABLE), timeout );
++        return NtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
++                                         !!(flags & MWMO_ALERTABLE), timeout );
+     }
+ 
+     if (data->current_event) mask = 0;  /* don't process nested events */
+@@ -492,8 +488,8 @@ NTSTATUS X11DRV_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
+     if (process_events( data->display, filter_event, mask )) ret = count - 1;
+     else if (count || !timeout || timeout->QuadPart)
+     {
+-        ret = pNtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
+-                                         !!(flags & MWMO_ALERTABLE), timeout );
++        ret = NtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
++                                        !!(flags & MWMO_ALERTABLE), timeout );
+         if (ret == count - 1) process_events( data->display, filter_event, mask );
+     }
+     else ret = WAIT_TIMEOUT;
+diff --git a/dlls/winex11.drv/graphics.c b/dlls/winex11.drv/graphics.c
+index b833fe0c629..7ab358c43c1 100644
+--- a/dlls/winex11.drv/graphics.c
++++ b/dlls/winex11.drv/graphics.c
+@@ -24,10 +24,6 @@
+  * graphics mode
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <stdarg.h>
+@@ -48,6 +44,7 @@
+ 
+ #include "x11drv.h"
+ #include "wine/debug.h"
++#include "wine/unicode.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(graphics);
+ 
+@@ -1732,7 +1729,7 @@ BOOL CDECL X11DRV_GetICMProfile( PHYSDEV dev, BOOL allow_default, LPDWORD size,
+     else lstrcpyW( p, srgb );
+ 
+     NtClose( hkey );
+-    required = wcslen( fullname ) + 1 - 4 /* skip NT prefix */;
++    required = strlenW( fullname ) + 1 - 4 /* skip NT prefix */;
+     if (*size < required)
+     {
+         *size = required;
+@@ -1742,7 +1739,7 @@ BOOL CDECL X11DRV_GetICMProfile( PHYSDEV dev, BOOL allow_default, LPDWORD size,
+     if (filename)
+     {
+         FILE_BASIC_INFORMATION info;
+-        wcscpy( filename, fullname + 4 );
++        strcpyW( filename, fullname + 4 );
+         RtlInitUnicodeString( &name, fullname );
+         InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, NULL, NULL );
+         if (NtQueryAttributesFile( &attr, &info ))
+diff --git a/dlls/winex11.drv/ime.c b/dlls/winex11.drv/ime.c
+index 5f8bdd8c68b..b2b61a17604 100644
+--- a/dlls/winex11.drv/ime.c
++++ b/dlls/winex11.drv/ime.c
+@@ -40,10 +40,19 @@
+  *  generate the messages that we want the IMM layer to send to the application.
+  */
+ 
+-#include "x11drv_dll.h"
++#include "config.h"
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "wingdi.h"
++#include "winuser.h"
++#include "winerror.h"
+ #include "wine/debug.h"
+ #include "imm.h"
+ #include "ddk/imm.h"
++#include "winnls.h"
++#include "x11drv.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(imm);
+ 
+diff --git a/dlls/winex11.drv/init.c b/dlls/winex11.drv/init.c
+index 7c5a1acd7b6..6f5999e7c59 100644
+--- a/dlls/winex11.drv/init.c
++++ b/dlls/winex11.drv/init.c
+@@ -18,10 +18,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <stdarg.h>
+@@ -408,7 +404,6 @@ static const struct user_driver_funcs x11drv_funcs =
+     .pUpdateDisplayDevices = X11DRV_UpdateDisplayDevices,
+     .pCreateDesktopWindow = X11DRV_CreateDesktopWindow,
+     .pCreateWindow = X11DRV_CreateWindow,
+-    .pDesktopWindowProc = X11DRV_DesktopWindowProc,
+     .pDestroyWindow = X11DRV_DestroyWindow,
+     .pFlashWindowEx = X11DRV_FlashWindowEx,
+     .pGetDC = X11DRV_GetDC,
+diff --git a/dlls/winex11.drv/keyboard.c b/dlls/winex11.drv/keyboard.c
+index 7b4ad9acd8d..e0f3619a195 100644
+--- a/dlls/winex11.drv/keyboard.c
++++ b/dlls/winex11.drv/keyboard.c
+@@ -23,10 +23,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <X11/Xatom.h>
+@@ -52,6 +48,7 @@
+ #include "winnls.h"
+ #include "ime.h"
+ #include "wine/server.h"
++#include "wine/unicode.h"
+ #include "wine/debug.h"
+ 
+ /* log format (add 0-padding as appropriate):
+@@ -2104,7 +2101,7 @@ UINT X11DRV_MapVirtualKeyEx( UINT wCode, UINT wMapType, HKL hkl )
+             if (len)
+             {
+                 WCHAR wch;
+-                if (ntdll_umbstowcs( s, len, &wch, 1 )) ret = RtlUpcaseUnicodeChar( wch );
++                if (ntdll_umbstowcs( s, len, &wch, 1 )) ret = toupperW(wch);
+             }
+             break;
+         }
+@@ -2171,7 +2168,7 @@ INT X11DRV_GetKeyNameText( LONG lParam, LPWSTR lpBuffer, INT nSize )
+       {
+         if (nSize >= 2)
+ 	{
+-          *lpBuffer = RtlUpcaseUnicodeChar( ansi );
++          *lpBuffer = toupperW((WCHAR)ansi);
+           *(lpBuffer+1) = 0;
+           return 1;
+         }
+@@ -2207,7 +2204,7 @@ INT X11DRV_GetKeyNameText( LONG lParam, LPWSTR lpBuffer, INT nSize )
+       if (name && (vkey == VK_SHIFT || vkey == VK_CONTROL || vkey == VK_MENU))
+       {
+           char* idx = strrchr(name, '_');
+-          if (idx && (idx[1] == 'r' || idx[1] == 'R' || idx[1] == 'l' || idx[1] == 'L') && !idx[2])
++          if (idx && (_strnicmp(idx, "_r", -1) == 0 || _strnicmp(idx, "_l", -1) == 0))
+           {
+               pthread_mutex_unlock( &kbd_mutex );
+               TRACE("found scan=%04x keyc=%u keysym=%lx modified_string=%s\n",
+diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+index 9e005881170..fdc314de529 100644
+--- a/dlls/winex11.drv/mouse.c
++++ b/dlls/winex11.drv/mouse.c
+@@ -19,10 +19,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <math.h>
+@@ -54,6 +50,7 @@ MAKE_FUNCPTR(XcursorLibraryLoadCursor);
+ #include "x11drv.h"
+ #include "winreg.h"
+ #include "wine/server.h"
++#include "wine/unicode.h"
+ #include "wine/debug.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(cursor);
+@@ -374,7 +371,6 @@ static BOOL grab_clipping_window( const RECT *clip )
+ #if HAVE_X11_EXTENSIONS_XINPUT2_H
+     static const WCHAR messageW[] = {'M','e','s','s','a','g','e',0};
+     struct x11drv_thread_data *data = x11drv_thread_data();
+-    UNICODE_STRING class_name;
+     Window clip_window;
+     HWND msg_hwnd = 0;
+     POINT pos;
+@@ -385,10 +381,8 @@ static BOOL grab_clipping_window( const RECT *clip )
+     if (!data) return FALSE;
+     if (!(clip_window = init_clip_window())) return TRUE;
+ 
+-    RtlInitUnicodeString( &class_name, messageW );
+-    if (!(msg_hwnd = NtUserCreateWindowEx( 0, &class_name, &class_name, NULL, 0, 0, 0, 0, 0,
+-                                           HWND_MESSAGE, 0, NtCurrentTeb()->Peb->ImageBaseAddress,
+-                                           NULL, 0, NULL, 0, FALSE )))
++    if (!(msg_hwnd = CreateWindowW( messageW, NULL, 0, 0, 0, 0, 0, HWND_MESSAGE, 0,
++                                    GetModuleHandleW(0), NULL )))
+         return TRUE;
+ 
+     if (keyboard_grabbed)
+@@ -1058,9 +1052,9 @@ static int find_fallback_shape( const char *name )
+ static Cursor create_xcursor_system_cursor( const ICONINFOEXW *info )
+ {
+     const struct system_cursors *cursors;
+-    const WCHAR *module;
+     unsigned int i;
+     Cursor cursor = 0;
++    HMODULE module;
+     HKEY key;
+     const char * const *names = NULL;
+     WCHAR *p, name[MAX_PATH * 2];
+@@ -1068,11 +1062,11 @@ static Cursor create_xcursor_system_cursor( const ICONINFOEXW *info )
+ 
+     if (!info->szModName[0]) return 0;
+ 
+-    p = wcsrchr( info->szModName, '\\' );
+-    wcscpy( name, p ? p + 1 : info->szModName );
+-    p = name + lstrlenW( name );
++    p = strrchrW( info->szModName, '\\' );
++    strcpyW( name, p ? p + 1 : info->szModName );
++    p = name + strlenW( name );
+     *p++ = ',';
+-    if (info->szResName[0]) wcscpy( p, info->szResName );
++    if (info->szResName[0]) strcpyW( p, info->szResName );
+     else
+     {
+         char buf[16];
+@@ -1099,11 +1093,10 @@ static Cursor create_xcursor_system_cursor( const ICONINFOEXW *info )
+     }
+ 
+     if (info->szResName[0]) goto done;  /* only integer resources are supported here */
++    if (!(module = GetModuleHandleW( info->szModName ))) goto done;
+ 
+-    if ((module = wcsrchr( info->szModName, '\\' ))) module++;
+-    else module = info->szModName;
+     for (i = 0; i < ARRAY_SIZE( module_cursors ); i++)
+-        if (!wcsicmp( module, module_cursors[i].name )) break;
++        if (GetModuleHandleW( module_cursors[i].name ) == module) break;
+     if (i == ARRAY_SIZE( module_cursors )) goto done;
+ 
+     cursors = module_cursors[i].cursors;
+diff --git a/dlls/winex11.drv/opengl.c b/dlls/winex11.drv/opengl.c
+index 91aef7f67be..92555841f71 100644
+--- a/dlls/winex11.drv/opengl.c
++++ b/dlls/winex11.drv/opengl.c
+@@ -23,10 +23,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <assert.h>
+diff --git a/dlls/winex11.drv/palette.c b/dlls/winex11.drv/palette.c
+index 7845985dbb0..475466999b1 100644
+--- a/dlls/winex11.drv/palette.c
++++ b/dlls/winex11.drv/palette.c
+@@ -18,10 +18,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <stdarg.h>
+diff --git a/dlls/winex11.drv/pen.c b/dlls/winex11.drv/pen.c
+index a32bf4752e1..ffa628ce6f7 100644
+--- a/dlls/winex11.drv/pen.c
++++ b/dlls/winex11.drv/pen.c
+@@ -18,10 +18,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include "x11drv.h"
+diff --git a/dlls/winex11.drv/settings.c b/dlls/winex11.drv/settings.c
+index e7e353b33ad..1e8868acc6c 100644
+--- a/dlls/winex11.drv/settings.c
++++ b/dlls/winex11.drv/settings.c
+@@ -19,10 +19,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ #include <stdlib.h>
+ 
+@@ -35,6 +31,7 @@
+ #include "winreg.h"
+ #include "wingdi.h"
+ #include "wine/debug.h"
++#include "wine/unicode.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(x11settings);
+ 
+@@ -94,7 +91,7 @@ static BOOL nores_get_id(const WCHAR *device_name, ULONG_PTR *id)
+     if (!get_primary_adapter( primary_adapter ))
+         return FALSE;
+ 
+-    *id = !wcsicmp( device_name, primary_adapter ) ? 1 : 0;
++    *id = !lstrcmpiW( device_name, primary_adapter ) ? 1 : 0;
+     return TRUE;
+ }
+ 
+@@ -240,11 +237,11 @@ static HKEY get_display_device_reg_key( const WCHAR *device_name )
+     HKEY hkey;
+ 
+     /* Device name has to be \\.\DISPLAY%d */
+-    if (wcsnicmp( device_name, display, ARRAY_SIZE(display) ))
++    if (strncmpiW(device_name, display, ARRAY_SIZE(display)))
+         return FALSE;
+ 
+     /* Parse \\.\DISPLAY* */
+-    adapter_index = wcstol( device_name + ARRAY_SIZE(display), &end_ptr, 10 ) - 1;
++    adapter_index = strtolW(device_name + ARRAY_SIZE(display), &end_ptr, 10) - 1;
+     if (*end_ptr)
+         return FALSE;
+ 
+@@ -503,7 +500,7 @@ BOOL X11DRV_EnumDisplaySettingsEx( LPCWSTR name, DWORD n, LPDEVMODEW devmode, DW
+     }
+ 
+     pthread_mutex_lock( &settings_mutex );
+-    if (n == 0 || wcsicmp(cached_device_name, name) || cached_flags != flags)
++    if (n == 0 || lstrcmpiW(cached_device_name, name) || cached_flags != flags)
+     {
+         if (!handler.get_id(name, &id) || !handler.get_modes(id, flags, &modes, &mode_count))
+         {
+@@ -657,7 +654,7 @@ static LONG get_display_settings(struct x11drv_display_setting **new_displays,
+ 
+             displays[display_idx].desired_mode = registry_mode;
+         }
+-        else if (!wcsicmp(dev_name, display_device.DeviceName))
++        else if (!lstrcmpiW(dev_name, display_device.DeviceName))
+         {
+             displays[display_idx].desired_mode = *dev_mode;
+             if (!(dev_mode->dmFields & DM_POSITION))
+@@ -953,7 +950,7 @@ LONG X11DRV_ChangeDisplaySettingsEx( LPCWSTR devname, LPDEVMODEW devmode,
+     {
+         for (display_idx = 0; display_idx < display_count; ++display_idx)
+         {
+-            if (!wcsicmp(displays[display_idx].desired_mode.dmDeviceName, devname))
++            if (!lstrcmpiW(displays[display_idx].desired_mode.dmDeviceName, devname))
+             {
+                 full_mode = get_full_mode(displays[display_idx].id, &displays[display_idx].desired_mode);
+                 if (!full_mode)
+diff --git a/dlls/winex11.drv/systray.c b/dlls/winex11.drv/systray.c
+index 599240e3672..1c6616e0d9c 100644
+--- a/dlls/winex11.drv/systray.c
++++ b/dlls/winex11.drv/systray.c
+@@ -20,18 +20,30 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
++#include "config.h"
++
++#include <assert.h>
++#include <stdarg.h>
++#include <stdlib.h>
++#include <stdio.h>
++#include <unistd.h>
++
++#include <X11/Xlib.h>
++
+ #define NONAMELESSUNION
+-#include "x11drv_dll.h"
++#include "windef.h"
++#include "winbase.h"
++#include "wingdi.h"
++#include "winuser.h"
+ #include "commctrl.h"
+ #include "shellapi.h"
+ 
++#include "x11drv.h"
+ #include "wine/list.h"
+ #include "wine/debug.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(systray);
+ 
+-BOOL show_systray = TRUE;
+-
+ /* an individual systray icon */
+ struct tray_icon
+ {
+diff --git a/dlls/winex11.drv/unixlib.h b/dlls/winex11.drv/unixlib.h
+index 451c308f0cd..93e40e6bf6b 100644
+--- a/dlls/winex11.drv/unixlib.h
++++ b/dlls/winex11.drv/unixlib.h
+@@ -37,7 +37,7 @@ enum x11drv_funcs
+ };
+ 
+ /* FIXME: Use __wine_unix_call when the rest of the stack is ready */
+-extern NTSTATUS (CDECL *x11drv_unix_call)( enum x11drv_funcs code, void *params ) DECLSPEC_HIDDEN;
++extern NTSTATUS x11drv_unix_call( enum x11drv_funcs code, void *params ) DECLSPEC_HIDDEN;
+ #define X11DRV_CALL(func, params) x11drv_unix_call( unix_ ## func, params )
+ 
+ /* x11drv_create_desktop params */
+@@ -47,15 +47,6 @@ struct create_desktop_params
+     UINT height;
+ };
+ 
+-/* x11drv_init params */
+-struct init_params
+-{
+-    NTSTATUS (WINAPI *pNtWaitForMultipleObjects)(ULONG,const HANDLE*,BOOLEAN,BOOLEAN,const LARGE_INTEGER*);
+-    WNDPROC foreign_window_proc;
+-    BOOL show_systray;
+-    NTSTATUS (CDECL *unix_call)( enum x11drv_funcs code, void *params );
+-};
+-
+ struct systray_dock_params
+ {
+     UINT64 event_handle;
+@@ -105,7 +96,6 @@ enum client_callback
+     client_ime_set_cursor_pos,
+     client_ime_set_open_status,
+     client_ime_update_association,
+-    client_load_icon,
+     client_funcs_count
+ };
+ 
+diff --git a/dlls/winex11.drv/vulkan.c b/dlls/winex11.drv/vulkan.c
+index 101504a7887..0f96b6860fd 100644
+--- a/dlls/winex11.drv/vulkan.c
++++ b/dlls/winex11.drv/vulkan.c
+@@ -20,10 +20,6 @@
+ /* NOTE: If making changes here, consider whether they should be reflected in
+  * the other drivers. */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <stdarg.h>
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index 5d9a93688c3..002ab9f46a4 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -20,10 +20,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <stdarg.h>
+@@ -50,6 +46,7 @@
+ #include "x11drv.h"
+ #include "wingdi.h"
+ #include "winuser.h"
++#include "wine/unicode.h"
+ 
+ #include "wine/debug.h"
+ #include "wine/server.h"
+@@ -630,10 +627,7 @@ static void fetch_icon_data( HWND hwnd, HICON icon_big, HICON icon_small )
+         if (!icon_big)
+             icon_big = get_icon_info( (HICON)NtUserGetClassLongPtrW( hwnd, GCLP_HICON ), &ii );
+         if (!icon_big)
+-        {
+-            UINT winlogo = x11drv_client_call( client_load_icon, IDI_WINLOGO );
+-            icon_big = get_icon_info( UlongToHandle( winlogo ), &ii );
+-        }
++            icon_big = get_icon_info( LoadIconW( 0, (LPWSTR)IDI_WINLOGO ), &ii);
+     }
+     if (!icon_small)
+     {
+@@ -1860,14 +1854,13 @@ BOOL X11DRV_CreateDesktopWindow( HWND hwnd )
+ }
+ 
+ 
++static WNDPROC desktop_orig_wndproc;
++
+ #define WM_WINE_NOTIFY_ACTIVITY WM_USER
+ #define WM_WINE_DELETE_TAB      (WM_USER + 1)
+ #define WM_WINE_ADD_TAB         (WM_USER + 2)
+ 
+-/**********************************************************************
+- *           DesktopWindowProc   (X11DRV.@)
+- */
+-LRESULT X11DRV_DesktopWindowProc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
++static LRESULT CALLBACK desktop_wndproc_wrapper( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+ {
+     switch (msg)
+     {
+@@ -1892,7 +1885,7 @@ LRESULT X11DRV_DesktopWindowProc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+         send_notify_message( (HWND)wp, WM_X11DRV_ADD_TAB, 0, 0 );
+         break;
+     }
+-    return NtUserMessageCall( hwnd, msg, wp, lp, 0, NtUserDefWindowProc, FALSE );
++    return desktop_orig_wndproc( hwnd, msg, wp, lp );
+ }
+ 
+ /**********************************************************************
+@@ -1905,6 +1898,9 @@ BOOL X11DRV_CreateWindow( HWND hwnd )
+         struct x11drv_thread_data *data = x11drv_init_thread_data();
+         XSetWindowAttributes attr;
+ 
++        desktop_orig_wndproc = (WNDPROC)NtUserSetWindowLongPtr( hwnd, GWLP_WNDPROC,
++                                                                (LONG_PTR)desktop_wndproc_wrapper, FALSE );
++
+         /* create the cursor clipping window */
+         attr.override_redirect = TRUE;
+         attr.event_mask = StructureNotifyMask | FocusChangeMask;
+@@ -2007,16 +2003,15 @@ HWND create_foreign_window( Display *display, Window xwin )
+     unsigned int nchildren;
+     XWindowAttributes attr;
+     DWORD style = WS_CLIPCHILDREN;
+-    UNICODE_STRING class_name;
+ 
+     if (!class_registered)
+     {
+-        UNICODE_STRING version = { 0 };
++        UNICODE_STRING class_name, version = { 0 };
+         WNDCLASSEXW class;
+ 
+         memset( &class, 0, sizeof(class) );
+         class.cbSize        = sizeof(class);
+-        class.lpfnWndProc   = client_foreign_window_proc;
++        class.lpfnWndProc   = foreign_window_proc;
+         class.lpszClassName = classW;
+         RtlInitUnicodeString( &class_name, classW );
+         if (!NtUserRegisterClassExWOW( &class, &class_name, &version, NULL, 0, 0, NULL ) &&
+@@ -2054,10 +2049,8 @@ HWND create_foreign_window( Display *display, Window xwin )
+         pos.y = attr.y;
+     }
+ 
+-    RtlInitUnicodeString( &class_name, classW );
+-    hwnd = NtUserCreateWindowEx( 0, &class_name, &class_name, NULL, style, pos.x, pos.y,
+-                                 attr.width, attr.height, parent, 0, NULL, NULL, 0, NULL,
+-                                 0, FALSE );
++    hwnd = CreateWindowW( classW, NULL, style, pos.x, pos.y, attr.width, attr.height,
++                          parent, 0, 0, NULL );
+ 
+     if (!(data = alloc_win_data( display, hwnd )))
+     {
+@@ -2173,7 +2166,6 @@ NTSTATUS x11drv_systray_dock( void *arg )
+     XSetWindowAttributes attr;
+     XVisualInfo visual;
+     struct x11drv_win_data *data;
+-    UNICODE_STRING class_name;
+     BOOL layered;
+     HWND hwnd;
+ 
+@@ -2196,11 +2188,10 @@ NTSTATUS x11drv_systray_dock( void *arg )
+ 
+     *params->layered = layered = (visual.depth == 32);
+ 
+-    RtlInitUnicodeString( &class_name, icon_classname );
+-    hwnd = NtUserCreateWindowEx( layered ? WS_EX_LAYERED : 0, &class_name, &class_name, NULL,
+-                                 WS_CLIPSIBLINGS | WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT,
+-                                 params->cx, params->cy, NULL, 0, NULL, params->icon, 0,
+-                                 NULL, 0, FALSE );
++    hwnd = CreateWindowExW( layered ? WS_EX_LAYERED : 0,
++                            icon_classname, NULL, WS_CLIPSIBLINGS | WS_POPUP,
++                            CW_USEDEFAULT, CW_USEDEFAULT, params->cx, params->cy,
++                            NULL, NULL, NULL, params->icon );
+ 
+     if (!(data = get_win_data( hwnd ))) return STATUS_UNSUCCESSFUL;
+     if (layered) set_window_visual( data, &visual, TRUE );
+diff --git a/dlls/winex11.drv/wintab.c b/dlls/winex11.drv/wintab.c
+index b906a589e08..a6b80daedbe 100644
+--- a/dlls/winex11.drv/wintab.c
++++ b/dlls/winex11.drv/wintab.c
+@@ -18,10 +18,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <stdlib.h>
+@@ -32,6 +28,7 @@
+ #include "windef.h"
+ #include "winbase.h"
+ #include "x11drv.h"
++#include "wine/unicode.h"
+ #include "wine/debug.h"
+ #include "wintab.h"
+ 
+@@ -515,8 +512,8 @@ NTSTATUS x11drv_tablet_load_info( void *hwnd )
+     hwndTabletDefault = hwnd;
+ 
+     /* Do base initialization */
+-    wcscpy(gSysContext.lcName, SZ_CONTEXT_NAME);
+-    wcscpy(gSysDevice.NAME, SZ_DEVICE_NAME);
++    strcpyW(gSysContext.lcName, SZ_CONTEXT_NAME);
++    strcpyW(gSysDevice.NAME, SZ_DEVICE_NAME);
+ 
+     gSysContext.lcOptions = CXO_SYSTEM;
+     gSysContext.lcLocks = CXL_INSIZE | CXL_INASPECT | CXL_MARGIN |
+@@ -552,7 +549,7 @@ NTSTATUS x11drv_tablet_load_info( void *hwnd )
+     gSysDevice.PKTDATA =
+         PK_CONTEXT | PK_STATUS | PK_SERIAL_NUMBER| PK_TIME | PK_CURSOR |
+         PK_BUTTONS |  PK_X | PK_Y | PK_NORMAL_PRESSURE | PK_ORIENTATION;
+-    wcscpy(gSysDevice.PNPID, SZ_NON_PLUG_N_PLAY);
++    strcpyW(gSysDevice.PNPID, SZ_NON_PLUG_N_PLAY);
+ 
+     devices = pXListInputDevices(data->display, &num_devices);
+     if (!devices)
+@@ -743,14 +740,14 @@ NTSTATUS x11drv_tablet_load_info( void *hwnd )
+                         for (i = 0; i < cursor.BUTTONS; i++)
+                         {
+                             /* FIXME - these names are probably incorrect */
+-                            int cch = wcslen(cursor.NAME) + 1;
++                            int cch = strlenW(cursor.NAME) + 1;
+                             while (cch > cchBuf - cchPos - 1) /* we want one extra byte for the last NUL */
+                             {
+                                 cchBuf *= 2;
+                                 cursor.BTNNAMES = realloc( cursor.BTNNAMES, sizeof(WCHAR) * cchBuf );
+                             }
+ 
+-                            wcscpy(cursor.BTNNAMES + cchPos, cursor.NAME);
++                            strcpyW(cursor.BTNNAMES + cchPos, cursor.NAME);
+                             cchPos += cch;
+                         }
+                         cursor.BTNNAMES[cchPos++] = 0;
+@@ -1033,7 +1030,7 @@ NTSTATUS x11drv_tablet_attach_queue( void *owner )
+         if (!gSysCursor[cur_loop].ACTIVE) continue;
+ 
+         /* the cursor name fits in the buffer because too long names are skipped */
+-        ntdll_wcstoumbs(gSysCursor[cur_loop].NAME, wcslen(gSysCursor[cur_loop].NAME) + 1,
++        ntdll_wcstoumbs(gSysCursor[cur_loop].NAME, lstrlenW(gSysCursor[cur_loop].NAME) + 1,
+                         cursorNameA, WT_MAX_NAME_LEN, FALSE);
+         for (loop=0; loop < num_devices; loop ++)
+             if (strcmp(devices[loop].name, cursorNameA) == 0)
+@@ -1159,7 +1156,7 @@ NTSTATUS x11drv_tablet_info( void *arg )
+                 case IFC_WINTABID:
+                 {
+                     static const WCHAR driver[] = {'W','i','n','e',' ','W','i','n','t','a','b',' ','1','.','1',0};
+-                    rc = CopyTabletData(lpOutput, driver, (wcslen(driver) + 1) * sizeof(WCHAR));
++                    rc = CopyTabletData(lpOutput, driver, (strlenW(driver) + 1) * sizeof(WCHAR));
+                     break;
+                 }
+                 case IFC_SPECVERSION:
+@@ -1198,7 +1195,7 @@ NTSTATUS x11drv_tablet_info( void *arg )
+                     break;
+                 case CTX_NAME:
+                     rc = CopyTabletData(lpOutput, gSysContext.lcName,
+-                         (wcslen(gSysContext.lcName)+1) * sizeof(WCHAR));
++                         (strlenW(gSysContext.lcName)+1) * sizeof(WCHAR));
+                     break;
+                 case CTX_OPTIONS:
+                     rc = CopyTabletData(lpOutput, &gSysContext.lcOptions,
+@@ -1362,7 +1359,7 @@ NTSTATUS x11drv_tablet_info( void *arg )
+                 {
+                     case CSR_NAME:
+                         rc = CopyTabletData(lpOutput, tgtcursor->NAME,
+-                                            (wcslen(tgtcursor->NAME)+1) * sizeof(WCHAR));
++                                            (strlenW(tgtcursor->NAME)+1) * sizeof(WCHAR));
+                         break;
+                     case CSR_ACTIVE:
+                         rc = CopyTabletData(lpOutput,&tgtcursor->ACTIVE,
+@@ -1454,7 +1451,7 @@ NTSTATUS x11drv_tablet_info( void *arg )
+             {
+                 case DVC_NAME:
+                     rc = CopyTabletData(lpOutput,gSysDevice.NAME,
+-                                        (wcslen(gSysDevice.NAME)+1) * sizeof(WCHAR));
++                                        (strlenW(gSysDevice.NAME)+1) * sizeof(WCHAR));
+                     break;
+                 case DVC_HARDWARE:
+                     rc = CopyTabletData(lpOutput,&gSysDevice.HARDWARE,
+@@ -1538,7 +1535,7 @@ NTSTATUS x11drv_tablet_info( void *arg )
+                     break;
+                 case DVC_PNPID:
+                     rc = CopyTabletData(lpOutput,gSysDevice.PNPID,
+-                                        (wcslen(gSysDevice.PNPID)+1)*sizeof(WCHAR));
++                                        (strlenW(gSysDevice.PNPID)+1)*sizeof(WCHAR));
+                     break;
+                 default:
+                     FIXME("WTI_DEVICES unhandled index %i\n",nIndex);
+diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+index 003604cd97d..b3286707318 100644
+--- a/dlls/winex11.drv/x11drv.h
++++ b/dlls/winex11.drv/x11drv.h
+@@ -65,6 +65,7 @@ typedef int Status;
+ #include "ntgdi.h"
+ #include "wine/gdi_driver.h"
+ #include "unixlib.h"
++#include "winnls.h"
+ #include "wine/list.h"
+ 
+ #define MAX_DASHLEN 16
+@@ -221,7 +222,6 @@ extern void X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device
+                                          BOOL force, void *param ) DECLSPEC_HIDDEN;
+ extern BOOL X11DRV_CreateDesktopWindow( HWND hwnd ) DECLSPEC_HIDDEN;
+ extern BOOL X11DRV_CreateWindow( HWND hwnd ) DECLSPEC_HIDDEN;
+-extern LRESULT X11DRV_DesktopWindowProc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) DECLSPEC_HIDDEN;
+ extern void X11DRV_DestroyWindow( HWND hwnd ) DECLSPEC_HIDDEN;
+ extern void X11DRV_FlashWindowEx( PFLASHWINFO pfinfo ) DECLSPEC_HIDDEN;
+ extern void X11DRV_GetDC( HDC hdc, HWND hwnd, HWND top, const RECT *win_rect,
+@@ -442,12 +442,9 @@ extern int primary_monitor DECLSPEC_HIDDEN;
+ extern int copy_default_colors DECLSPEC_HIDDEN;
+ extern int alloc_system_colors DECLSPEC_HIDDEN;
+ extern int xrender_error_base DECLSPEC_HIDDEN;
++extern HMODULE x11drv_module DECLSPEC_HIDDEN;
+ extern char *process_name DECLSPEC_HIDDEN;
+ extern Display *clipboard_display DECLSPEC_HIDDEN;
+-extern WNDPROC client_foreign_window_proc;
+-
+-extern NTSTATUS (WINAPI *pNtWaitForMultipleObjects)(ULONG,const HANDLE*,BOOLEAN,
+-                                                    BOOLEAN,const LARGE_INTEGER*) DECLSPEC_HIDDEN;
+ 
+ /* atoms */
+ 
+@@ -846,6 +843,24 @@ extern NTSTATUS x11drv_tablet_info( void *arg ) DECLSPEC_HIDDEN;
+ extern NTSTATUS x11drv_xim_preedit_state( void *arg ) DECLSPEC_HIDDEN;
+ extern NTSTATUS x11drv_xim_reset( void *arg ) DECLSPEC_HIDDEN;
+ 
++extern NTSTATUS WINAPI x11drv_dnd_enter_event( void *params, ULONG size ) DECLSPEC_HIDDEN;
++extern NTSTATUS WINAPI x11drv_dnd_position_event( void *params, ULONG size ) DECLSPEC_HIDDEN;
++extern NTSTATUS WINAPI x11drv_dnd_post_drop( void *data, ULONG size ) DECLSPEC_HIDDEN;
++extern NTSTATUS WINAPI x11drv_ime_set_composition_string( void *params, ULONG size ) DECLSPEC_HIDDEN;
++extern NTSTATUS WINAPI x11drv_ime_set_result( void *params, ULONG size ) DECLSPEC_HIDDEN;
++extern NTSTATUS WINAPI x11drv_systray_change_owner( void *params, ULONG size ) DECLSPEC_HIDDEN;
++
++extern NTSTATUS x11drv_dnd_drop_event( UINT arg ) DECLSPEC_HIDDEN;
++extern NTSTATUS x11drv_dnd_leave_event( UINT arg ) DECLSPEC_HIDDEN;
++extern NTSTATUS x11drv_ime_get_cursor_pos( UINT arg ) DECLSPEC_HIDDEN;
++extern NTSTATUS x11drv_ime_set_composition_status( UINT arg ) DECLSPEC_HIDDEN;
++extern NTSTATUS x11drv_ime_set_cursor_pos( UINT pos ) DECLSPEC_HIDDEN;
++extern NTSTATUS x11drv_ime_set_open_status( UINT open ) DECLSPEC_HIDDEN;
++extern NTSTATUS x11drv_ime_update_association( UINT arg ) DECLSPEC_HIDDEN;
++
++extern LRESULT WINAPI foreign_window_proc( HWND hwnd, UINT msg, WPARAM wparam,
++                                           LPARAM lparam ) DECLSPEC_HIDDEN;
++
+ extern NTSTATUS x11drv_client_func( enum x11drv_client_funcs func, const void *params,
+                                     ULONG size ) DECLSPEC_HIDDEN;
+ extern NTSTATUS x11drv_client_call( enum client_callback func, UINT arg ) DECLSPEC_HIDDEN;
+@@ -928,4 +943,16 @@ static inline UINT asciiz_to_unicode( WCHAR *dst, const char *src )
+     return (p - dst) * sizeof(WCHAR);
+ }
+ 
++/* FIXME: remove once we may use ntdll.so version */
++
++static inline DWORD ntdll_umbstowcs( const char *src, DWORD srclen, WCHAR *dst, DWORD dstlen )
++{
++    return MultiByteToWideChar( CP_UNIXCP, 0, src, srclen, dst, dstlen );
++}
++
++static inline int ntdll_wcstoumbs( const WCHAR *src, DWORD srclen, char *dst, DWORD dstlen, BOOL strict )
++{
++    return WideCharToMultiByte( CP_UNIXCP, 0, src, srclen, dst, dstlen, NULL, NULL );
++}
++
+ #endif  /* __WINE_X11DRV_H */
+diff --git a/dlls/winex11.drv/x11drv_dll.h b/dlls/winex11.drv/x11drv_dll.h
+deleted file mode 100644
+index 047bb430d39..00000000000
+--- a/dlls/winex11.drv/x11drv_dll.h
++++ /dev/null
+@@ -1,51 +0,0 @@
+-/*
+- * X11 driver definitions
+- *
+- * Copyright 2022 Jacek Caban for CodeWeavers
+- *
+- * This library is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU Lesser General Public
+- * License as published by the Free Software Foundation; either
+- * version 2.1 of the License, or (at your option) any later version.
+- *
+- * This library is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- * Lesser General Public License for more details.
+- *
+- * You should have received a copy of the GNU Lesser General Public
+- * License along with this library; if not, write to the Free Software
+- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+- */
+-
+-#ifndef __WINE_X11DRV_DLL_H
+-#define __WINE_X11DRV_DLL_H
+-
+-#include <stdarg.h>
+-#include "windef.h"
+-#include "winbase.h"
+-#include "ntgdi.h"
+-#include "unixlib.h"
+-
+-extern NTSTATUS WINAPI x11drv_dnd_enter_event( void *params, ULONG size ) DECLSPEC_HIDDEN;
+-extern NTSTATUS WINAPI x11drv_dnd_position_event( void *params, ULONG size ) DECLSPEC_HIDDEN;
+-extern NTSTATUS WINAPI x11drv_dnd_post_drop( void *data, ULONG size ) DECLSPEC_HIDDEN;
+-extern NTSTATUS WINAPI x11drv_ime_set_composition_string( void *params, ULONG size ) DECLSPEC_HIDDEN;
+-extern NTSTATUS WINAPI x11drv_ime_set_result( void *params, ULONG size ) DECLSPEC_HIDDEN;
+-extern NTSTATUS WINAPI x11drv_systray_change_owner( void *params, ULONG size ) DECLSPEC_HIDDEN;
+-
+-extern NTSTATUS x11drv_dnd_drop_event( UINT arg ) DECLSPEC_HIDDEN;
+-extern NTSTATUS x11drv_dnd_leave_event( UINT arg ) DECLSPEC_HIDDEN;
+-extern NTSTATUS x11drv_ime_get_cursor_pos( UINT arg ) DECLSPEC_HIDDEN;
+-extern NTSTATUS x11drv_ime_set_composition_status( UINT arg ) DECLSPEC_HIDDEN;
+-extern NTSTATUS x11drv_ime_set_cursor_pos( UINT pos ) DECLSPEC_HIDDEN;
+-extern NTSTATUS x11drv_ime_set_open_status( UINT open ) DECLSPEC_HIDDEN;
+-extern NTSTATUS x11drv_ime_update_association( UINT arg ) DECLSPEC_HIDDEN;
+-
+-extern LRESULT WINAPI foreign_window_proc( HWND hwnd, UINT msg, WPARAM wparam,
+-                                           LPARAM lparam ) DECLSPEC_HIDDEN;
+-
+-extern BOOL show_systray DECLSPEC_HIDDEN;
+-extern HMODULE x11drv_module DECLSPEC_HIDDEN;
+-
+-#endif /* __WINE_X11DRV_DLL_H */
+diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+index dc987ae70a2..fa1e3ff3880 100644
+--- a/dlls/winex11.drv/x11drv_main.c
++++ b/dlls/winex11.drv/x11drv_main.c
+@@ -19,10 +19,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <fcntl.h>
+@@ -53,6 +49,7 @@
+ #include "winreg.h"
+ #include "xcomposite.h"
+ #include "wine/server.h"
++#include "wine/unicode.h"
+ #include "wine/debug.h"
+ #include "wine/list.h"
+ #include "wine/vulkan.h"
+@@ -90,7 +87,6 @@ int copy_default_colors = 128;
+ int alloc_system_colors = 256;
+ int xrender_error_base = 0;
+ char *process_name = NULL;
+-WNDPROC client_foreign_window_proc = NULL;
+ 
+ static x11drv_error_callback err_callback;   /* current callback for error */
+ static Display *err_callback_display;        /* display callback is set for */
+@@ -220,16 +216,6 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
+     "text/uri-list"
+ };
+ 
+-/* We use use pointer to call NtWaitForMultipleObjects to make it go through
+- * syscall dispatcher. We need that because win32u bypasses syscall thunks and
+- * if we called NtWaitForMultipleObjects directly, it wouldn't be able to handle
+- * user APCs. This will be removed as soon as we may use syscall interface
+- * for NtUserMsgWaitForMultipleObjectsEx. */
+-NTSTATUS (WINAPI *pNtWaitForMultipleObjects)( ULONG, const HANDLE *, BOOLEAN,
+-                                              BOOLEAN, const LARGE_INTEGER* );
+-
+-static NTSTATUS CDECL unix_call( enum x11drv_funcs code, void *params );
+-
+ /***********************************************************************
+  *		ignore_error
+  *
+@@ -460,8 +446,8 @@ static void setup_options(void)
+     /* open the app-specific key */
+ 
+     appname = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
+-    if ((p = wcsrchr( appname, '/' ))) appname = p + 1;
+-    if ((p = wcsrchr( appname, '\\' ))) appname = p + 1;
++    if ((p = strrchrW( appname, '/' ))) appname = p + 1;
++    if ((p = strrchrW( appname, '\\' ))) appname = p + 1;
+     len = lstrlenW( appname );
+ 
+     if (len && len < MAX_PATH)
+@@ -513,7 +499,7 @@ static void setup_options(void)
+         grab_fullscreen = IS_OPTION_TRUE( buffer[0] );
+ 
+     if (!get_config_key( hkey, appkey, "ScreenDepth", buffer, sizeof(buffer) ))
+-        default_visual.depth = wcstol( buffer, NULL, 0 );
++        default_visual.depth = strtolW( buffer, NULL, 0 );
+ 
+     if (!get_config_key( hkey, appkey, "ClientSideGraphics", buffer, sizeof(buffer) ))
+         client_side_graphics = IS_OPTION_TRUE( buffer[0] );
+@@ -531,13 +517,13 @@ static void setup_options(void)
+         private_color_map = IS_OPTION_TRUE( buffer[0] );
+ 
+     if (!get_config_key( hkey, appkey, "PrimaryMonitor", buffer, sizeof(buffer) ))
+-        primary_monitor = wcstol( buffer, NULL, 0 );
++        primary_monitor = strtolW( buffer, NULL, 0 );
+ 
+     if (!get_config_key( hkey, appkey, "CopyDefaultColors", buffer, sizeof(buffer) ))
+-        copy_default_colors = wcstol( buffer, NULL, 0 );
++        copy_default_colors = strtolW( buffer, NULL, 0 );
+ 
+     if (!get_config_key( hkey, appkey, "AllocSystemColors", buffer, sizeof(buffer) ))
+-        alloc_system_colors = wcstol( buffer, NULL, 0 );
++        alloc_system_colors = strtolW( buffer, NULL, 0 );
+ 
+     get_config_key( hkey, appkey, "InputStyle", input_style, sizeof(input_style) );
+ 
+@@ -662,7 +648,6 @@ static void init_visuals( Display *display, int screen )
+  */
+ static NTSTATUS x11drv_init( void *arg )
+ {
+-    struct init_params *params = arg;
+     Display *display;
+     void *libx11 = dlopen( SONAME_LIBX11, RTLD_NOW|RTLD_GLOBAL );
+ 
+@@ -684,9 +669,6 @@ static NTSTATUS x11drv_init( void *arg )
+     if (!XInitThreads()) ERR( "XInitThreads failed, trouble ahead\n" );
+     if (!(display = XOpenDisplay( NULL ))) return STATUS_UNSUCCESSFUL;
+ 
+-    pNtWaitForMultipleObjects = params->pNtWaitForMultipleObjects;
+-    client_foreign_window_proc = params->foreign_window_proc;
+-
+     fcntl( ConnectionNumber(display), F_SETFD, 1 ); /* set close on exec flag */
+     root_window = DefaultRootWindow( display );
+     gdi_display = display;
+@@ -723,8 +705,6 @@ static NTSTATUS x11drv_init( void *arg )
+ 
+     init_user_driver();
+     X11DRV_DisplayDevices_Init(FALSE);
+-    params->show_systray = show_systray;
+-    params->unix_call = unix_call;
+     return STATUS_SUCCESS;
+ }
+ 
+@@ -1287,9 +1267,9 @@ done:
+ 
+ NTSTATUS x11drv_client_func( enum x11drv_client_funcs id, const void *params, ULONG size )
+ {
+-    void *ret_ptr;
+-    ULONG ret_len;
+-    return KeUserModeCallback( id, params, size, &ret_ptr, &ret_len );
++    /* FIXME: use KeUserModeCallback instead */
++    NTSTATUS (WINAPI *func)( const void *, ULONG ) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
++    return func( params, size );
+ }
+ 
+ 
+@@ -1321,7 +1301,7 @@ C_ASSERT( ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count );
+ 
+ 
+ /* FIXME: Use __wine_unix_call instead */
+-static NTSTATUS CDECL unix_call( enum x11drv_funcs code, void *params )
++NTSTATUS x11drv_unix_call( enum x11drv_funcs code, void *params )
+ {
+     return __wine_unix_call_funcs[code]( params );
+ }
+diff --git a/dlls/winex11.drv/xdnd.c b/dlls/winex11.drv/xdnd.c
+index 9137f46b5dc..975fe7a114b 100644
+--- a/dlls/winex11.drv/xdnd.c
++++ b/dlls/winex11.drv/xdnd.c
+@@ -19,12 +19,26 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#define COBJMACROS
++#include "config.h"
++
++#include <string.h>
++#include <unistd.h>
++#include <stdarg.h>
++#include <stdio.h>
++
+ #define NONAMELESSUNION
+ 
+-#include "x11drv_dll.h"
++#include "windef.h"
++#include "winbase.h"
++#include "wingdi.h"
++#include "winuser.h"
++
++#define COBJMACROS
++#include "x11drv.h"
+ #include "shellapi.h"
+-#include "shlobj.h"
++#include "shlobj.h"  /* DROPFILES */
++#include "oleidl.h"
++#include "objidl.h"
+ 
+ #include "wine/debug.h"
+ #include "wine/list.h"
+diff --git a/dlls/winex11.drv/xim.c b/dlls/winex11.drv/xim.c
+index 00c15bb3bcf..595fb31fe0b 100644
+--- a/dlls/winex11.drv/xim.c
++++ b/dlls/winex11.drv/xim.c
+@@ -18,10 +18,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -34,6 +30,7 @@
+ #include "x11drv.h"
+ #include "imm.h"
+ #include "wine/debug.h"
++#include "wine/unicode.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(xim);
+ 
+@@ -285,11 +282,11 @@ BOOL X11DRV_InitXIM( const WCHAR *input_style )
+     static const WCHAR overthespotW[] = {'o','v','e','r','t','h','e','s','p','o','t',0};
+     static const WCHAR rootW[] = {'r','o','o','t',0};
+ 
+-    if (!wcsicmp( input_style, offthespotW ))
++    if (!strcmpiW(input_style, offthespotW))
+         ximStyleRequest = STYLE_OFFTHESPOT;
+-    else if (!wcsicmp( input_style, overthespotW ))
++    else if (!strcmpiW(input_style, overthespotW))
+         ximStyleRequest = STYLE_OVERTHESPOT;
+-    else if (!wcsicmp( input_style, rootW ))
++    else if (!strcmpiW(input_style, rootW))
+         ximStyleRequest = STYLE_ROOT;
+ 
+     if (!XSupportsLocale())
+diff --git a/dlls/winex11.drv/xinerama.c b/dlls/winex11.drv/xinerama.c
+index 847b8fb6efb..a97590e705f 100644
+--- a/dlls/winex11.drv/xinerama.c
++++ b/dlls/winex11.drv/xinerama.c
+@@ -18,10 +18,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <stdarg.h>
+diff --git a/dlls/winex11.drv/xrandr.c b/dlls/winex11.drv/xrandr.c
+index d3b96e3170b..6ede776d76b 100644
+--- a/dlls/winex11.drv/xrandr.c
++++ b/dlls/winex11.drv/xrandr.c
+@@ -20,10 +20,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #define NONAMELESSSTRUCT
+@@ -47,6 +43,7 @@ WINE_DECLARE_DEBUG_CHANNEL(winediag);
+ #define VK_NO_PROTOTYPES
+ #define WINE_VK_HOST
+ 
++#include "wine/unicode.h"
+ #include "wine/vulkan.h"
+ #include "wine/vulkan_driver.h"
+ 
+@@ -154,7 +151,7 @@ static BOOL xrandr10_get_id( const WCHAR *device_name, ULONG_PTR *id )
+     /* RandR 1.0 only supports changing the primary adapter settings.
+      * For non-primary adapters, an id is still provided but getting
+      * and changing non-primary adapters' settings will be ignored. */
+-    *id = !wcsicmp( device_name, primary_adapter ) ? 1 : 0;
++    *id = !lstrcmpiW( device_name, primary_adapter ) ? 1 : 0;
+     return TRUE;
+ }
+ 
+@@ -633,8 +630,7 @@ static BOOL is_crtc_primary( RECT primary, const XRRCrtcInfo *crtc )
+ 
+ VK_DEFINE_NON_DISPATCHABLE_HANDLE(VkDisplayKHR)
+ 
+-static BOOL get_gpu_properties_from_vulkan( struct gdi_gpu *gpu, const XRRProviderInfo *provider_info,
+-                                            struct gdi_gpu *prev_gpus, int prev_gpu_count )
++static BOOL get_gpu_properties_from_vulkan( struct gdi_gpu *gpu, const XRRProviderInfo *provider_info )
+ {
+     static const char *extensions[] =
+     {
+@@ -649,7 +645,7 @@ static BOOL get_gpu_properties_from_vulkan( struct gdi_gpu *gpu, const XRRProvid
+     VkResult (*pvkGetRandROutputDisplayEXT)( VkPhysicalDevice, Display *, RROutput, VkDisplayKHR * );
+     PFN_vkGetPhysicalDeviceProperties2KHR pvkGetPhysicalDeviceProperties2KHR;
+     PFN_vkEnumeratePhysicalDevices pvkEnumeratePhysicalDevices;
+-    uint32_t device_count, device_idx, output_idx, i;
++    uint32_t device_count, device_idx, output_idx;
+     VkPhysicalDevice *vk_physical_devices = NULL;
+     VkPhysicalDeviceProperties2 properties2;
+     VkInstanceCreateInfo create_info;
+@@ -704,8 +700,6 @@ static BOOL get_gpu_properties_from_vulkan( struct gdi_gpu *gpu, const XRRProvid
+         goto done;
+     }
+ 
+-    TRACE("provider name %s.\n", debugstr_a(provider_info->name));
+-
+     for (device_idx = 0; device_idx < device_count; ++device_idx)
+     {
+         for (output_idx = 0; output_idx < provider_info->noutputs; ++output_idx)
+@@ -723,19 +717,7 @@ static BOOL get_gpu_properties_from_vulkan( struct gdi_gpu *gpu, const XRRProvid
+             properties2.pNext = &id;
+ 
+             pvkGetPhysicalDeviceProperties2KHR( vk_physical_devices[device_idx], &properties2 );
+-            for (i = 0; i < prev_gpu_count; ++i)
+-            {
+-                if (!memcmp( &prev_gpus[i].vulkan_uuid, &id.deviceUUID, sizeof(id.deviceUUID) ))
+-                {
+-                    WARN( "device UUID %#x:%#x already assigned to GPU %u.\n", *((uint32_t *)id.deviceUUID + 1),
+-                          *(uint32_t *)id.deviceUUID, i );
+-                    break;
+-                }
+-            }
+-            if (i < prev_gpu_count) continue;
+-
+             memcpy( &gpu->vulkan_uuid, id.deviceUUID, sizeof(id.deviceUUID) );
+-
+             /* Ignore Khronos vendor IDs */
+             if (properties2.properties.vendorID < 0x10000)
+             {
+@@ -823,7 +805,7 @@ static BOOL xrandr14_get_gpus2( struct gdi_gpu **new_gpus, int *count, BOOL get_
+         gpus[i].id = provider_resources->providers[i];
+         if (get_properties)
+         {
+-            if (!get_gpu_properties_from_vulkan( &gpus[i], provider_info, gpus, i ))
++            if (!get_gpu_properties_from_vulkan( &gpus[i], provider_info ))
+                 RtlUTF8ToUnicodeN( gpus[i].name, sizeof(gpus[i].name), &len, provider_info->name,
+                                    strlen( provider_info->name ) + 1 );
+             /* FIXME: Add an alternate method of getting PCI IDs, for systems that don't support Vulkan */
+@@ -1237,7 +1219,7 @@ static BOOL xrandr14_get_id( const WCHAR *device_name, ULONG_PTR *id )
+     WCHAR *end;
+ 
+     /* Parse \\.\DISPLAY%d */
+-    display_idx = wcstol( device_name + 11, &end, 10 ) - 1;
++    display_idx = strtolW( device_name + 11, &end, 10 ) - 1;
+     if (*end)
+         return FALSE;
+ 
+diff --git a/dlls/winex11.drv/xrender.c b/dlls/winex11.drv/xrender.c
+index 585299cba9e..5fe6a402459 100644
+--- a/dlls/winex11.drv/xrender.c
++++ b/dlls/winex11.drv/xrender.c
+@@ -23,10 +23,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <assert.h>
+@@ -39,6 +35,7 @@
+ #include "winbase.h"
+ #include "x11drv.h"
+ #include "winternl.h"
++#include "wine/unicode.h"
+ #include "wine/debug.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(xrender);
+@@ -586,7 +583,7 @@ static BOOL fontcmp(LFANDSIZE *p1, LFANDSIZE *p2)
+   if(memcmp(&p1->devsize, &p2->devsize, sizeof(p1->devsize))) return TRUE;
+   if(memcmp(&p1->xform, &p2->xform, sizeof(p1->xform))) return TRUE;
+   if(memcmp(&p1->lf, &p2->lf, offsetof(LOGFONTW, lfFaceName))) return TRUE;
+-  return wcsicmp( p1->lf.lfFaceName, p2->lf.lfFaceName );
++  return strcmpiW(p1->lf.lfFaceName, p2->lf.lfFaceName);
+ }
+ 
+ static int LookupEntry(LFANDSIZE *plfsz)
+@@ -743,9 +740,9 @@ static void lfsz_calc_hash(LFANDSIZE *plfsz)
+     two_chars = *ptr;
+     pwc = (WCHAR *)&two_chars;
+     if(!*pwc) break;
+-    *pwc = RtlUpcaseUnicodeChar( *pwc );
++    *pwc = toupperW(*pwc);
+     pwc++;
+-    *pwc = RtlUpcaseUnicodeChar( *pwc );
++    *pwc = toupperW(*pwc);
+     hash ^= two_chars;
+     if(!*pwc) break;
+   }
+diff --git a/dlls/winex11.drv/xvidmode.c b/dlls/winex11.drv/xvidmode.c
+index 4ca7bc1ac59..126e2bf2a69 100644
+--- a/dlls/winex11.drv/xvidmode.c
++++ b/dlls/winex11.drv/xvidmode.c
+@@ -19,10 +19,6 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+ #include "config.h"
+ 
+ #include <assert.h>
+@@ -95,7 +91,7 @@ static BOOL xf86vm_get_id(const WCHAR *device_name, ULONG_PTR *id)
+     /* XVidMode only supports changing the primary adapter settings.
+      * For non-primary adapters, an id is still provided but getting
+      * and changing non-primary adapters' settings will be ignored. */
+-    *id = !wcsicmp( device_name, primary_adapter ) ? 1 : 0;
++    *id = !lstrcmpiW( device_name, primary_adapter ) ? 1 : 0;
+     return TRUE;
+ }
+ 
+diff --git a/dlls/wow64/process.c b/dlls/wow64/process.c
+index 0c6726b9c6e..82ca4181116 100644
+--- a/dlls/wow64/process.c
++++ b/dlls/wow64/process.c
+@@ -1158,7 +1158,6 @@ NTSTATUS WINAPI wow64_NtSetInformationThread( UINT *args )
+     case ThreadBasePriority:   /* ULONG */
+     case ThreadHideFromDebugger:   /* void */
+     case ThreadEnableAlignmentFaultFixup:   /* BOOLEAN */
+-    case ThreadPowerThrottlingState:  /* THREAD_POWER_THROTTLING_STATE */
+         return NtSetInformationThread( handle, class, ptr, len );
+ 
+     case ThreadImpersonationToken:   /* HANDLE */
+diff --git a/include/ntuser.h b/include/ntuser.h
+index 091d34c3a5f..a9c6bb3ed8f 100644
+--- a/include/ntuser.h
++++ b/include/ntuser.h
+@@ -181,7 +181,6 @@ struct render_synthesized_format_params
+ /* NtUserMessageCall codes */
+ enum
+ {
+-    NtUserDesktopWindowProc   = 0x029d,
+     NtUserDefWindowProc       = 0x029e,
+     NtUserCallWindowProc      = 0x02ab,
+     NtUserSendMessage         = 0x02b1,
+@@ -579,7 +578,6 @@ HDESK   WINAPI NtUserGetThreadDesktop( DWORD thread );
+ INT     WINAPI NtUserGetUpdateRgn( HWND hwnd, HRGN hrgn, BOOL erase );
+ BOOL    WINAPI NtUserGetUpdatedClipboardFormats( UINT *formats, UINT size, UINT *out_size );
+ BOOL    WINAPI NtUserGetUpdateRect( HWND hwnd, RECT *rect, BOOL erase );
+-BOOL    WINAPI NtUserGetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *placement );
+ int     WINAPI NtUserGetWindowRgnEx( HWND hwnd, HRGN hrgn, UINT unk );
+ BOOL    WINAPI NtUserHideCaret( HWND hwnd );
+ NTSTATUS WINAPI NtUserInitializeClientPfnArrays( const struct user_client_procs *client_procsA,
+@@ -628,7 +626,6 @@ BOOL    WINAPI NtUserSetCursorIconData( HCURSOR cursor, UNICODE_STRING *module,
+                                         struct cursoricon_desc *desc );
+ BOOL    WINAPI NtUserSetCursorPos( INT x, INT y );
+ HWND    WINAPI NtUserSetFocus( HWND hwnd );
+-void    WINAPI NtUserSetInternalWindowPos( HWND hwnd, UINT cmd, RECT *rect, POINT *pt );
+ BOOL    WINAPI NtUserSetKeyboardState( BYTE *state );
+ BOOL    WINAPI NtUserSetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWORD flags );
+ BOOL    WINAPI NtUserSetMenu( HWND hwnd, HMENU menu );
+@@ -645,7 +642,6 @@ BOOL    WINAPI NtUserSetThreadDesktop( HDESK handle );
+ UINT_PTR WINAPI NtUserSetTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIMERPROC proc, ULONG tolerance );
+ LONG    WINAPI NtUserSetWindowLong( HWND hwnd, INT offset, LONG newval, BOOL ansi );
+ LONG_PTR WINAPI NtUserSetWindowLongPtr( HWND hwnd, INT offset, LONG_PTR newval, BOOL ansi );
+-BOOL    WINAPI NtUserSetWindowPlacement( HWND hwnd, const WINDOWPLACEMENT *wpl );
+ BOOL    WINAPI NtUserSetWindowPos( HWND hwnd, HWND after, INT x, INT y, INT cx, INT cy, UINT flags );
+ int     WINAPI NtUserSetWindowRgn( HWND hwnd, HRGN hrgn, BOOL redraw );
+ WORD    WINAPI NtUserSetWindowWord( HWND hwnd, INT offset, WORD newval );
+@@ -1003,6 +999,7 @@ enum
+     NtUserCallHwndParam_GetWindowLongW,
+     NtUserCallHwndParam_GetWindowLongPtrA,
+     NtUserCallHwndParam_GetWindowLongPtrW,
++    NtUserCallHwndParam_GetWindowPlacement,
+     NtUserCallHwndParam_GetWindowRect,
+     NtUserCallHwndParam_GetWindowRelative,
+     NtUserCallHwndParam_GetWindowThread,
+@@ -1095,6 +1092,12 @@ static inline LONG NtUserGetWindowLongW( HWND hwnd, INT offset )
+     return NtUserCallHwndParam( hwnd, offset, NtUserCallHwndParam_GetWindowLongW );
+ }
+ 
++static inline BOOL NtUserGetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *wndpl )
++{
++    return NtUserCallHwndParam( hwnd, (UINT_PTR)wndpl,
++                                NtUserCallHwndParam_GetWindowPlacement );
++}
++
+ static inline BOOL NtUserGetWindowRect( HWND hwnd, RECT *rect )
+ {
+     return NtUserCallHwndParam( hwnd, (UINT_PTR)rect, NtUserCallHwndParam_GetWindowRect );
+diff --git a/include/processthreadsapi.h b/include/processthreadsapi.h
+index f2554950952..d266b7a727b 100644
+--- a/include/processthreadsapi.h
++++ b/include/processthreadsapi.h
+@@ -37,13 +37,6 @@ typedef struct _MEMORY_PRIORITY_INFORMATION
+     ULONG MemoryPriority;
+ } MEMORY_PRIORITY_INFORMATION, *PMEMORY_PRIORITY_INFORMATION;
+ 
+-typedef struct _THREAD_POWER_THROTTLING_STATE
+-{
+-    ULONG Version;
+-    ULONG ControlMask;
+-    ULONG StateMask;
+-} THREAD_POWER_THROTTLING_STATE;
+-
+ WINBASEAPI HRESULT WINAPI GetThreadDescription(HANDLE,PWSTR *);
+ WINBASEAPI HRESULT WINAPI SetThreadDescription(HANDLE,PCWSTR);
+ WINBASEAPI BOOL WINAPI SetThreadInformation(HANDLE,THREAD_INFORMATION_CLASS,LPVOID,DWORD);
+diff --git a/include/wine/gdi_driver.h b/include/wine/gdi_driver.h
+index 52fd6fe49d3..363640f5467 100644
+--- a/include/wine/gdi_driver.h
++++ b/include/wine/gdi_driver.h
+@@ -168,7 +168,7 @@ struct gdi_dc_funcs
+ };
+ 
+ /* increment this when you change the DC function table */
+-#define WINE_GDI_DRIVER_VERSION 79
++#define WINE_GDI_DRIVER_VERSION 78
+ 
+ #define GDI_PRIORITY_NULL_DRV        0  /* null driver */
+ #define GDI_PRIORITY_FONT_DRV      100  /* any font driver */
+@@ -300,7 +300,6 @@ struct user_driver_funcs
+     /* windowing functions */
+     BOOL    (*pCreateDesktopWindow)(HWND);
+     BOOL    (*pCreateWindow)(HWND);
+-    LRESULT (*pDesktopWindowProc)(HWND,UINT,WPARAM,LPARAM);
+     void    (*pDestroyWindow)(HWND);
+     void    (*pFlashWindowEx)(FLASHWINFO*);
+     void    (*pGetDC)(HDC,HWND,HWND,const RECT *,const RECT *,DWORD);
+diff --git a/include/wine/unixlib.h b/include/wine/unixlib.h
+index ef60b32184c..a7cfb8f6cab 100644
+--- a/include/wine/unixlib.h
++++ b/include/wine/unixlib.h
+@@ -84,11 +84,6 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void
+ 
+ /* wide char string functions */
+ 
+-static inline int ntdll_iswspace( WCHAR wc )
+-{
+-    return ('\t' <= wc && wc <= '\r') || wc == ' ' || wc == 0xa0;
+-}
+-
+ static inline size_t ntdll_wcslen( const WCHAR *str )
+ {
+     const WCHAR *s = str;
+@@ -155,100 +150,6 @@ static inline SIZE_T ntdll_wcscspn( const WCHAR *str, const WCHAR *reject )
+     return ptr - str;
+ }
+ 
+-static inline LONG ntdll_wcstol( const WCHAR *s, WCHAR **end, int base )
+-{
+-    BOOL negative = FALSE, empty = TRUE;
+-    LONG ret = 0;
+-
+-    if (base < 0 || base == 1 || base > 36) return 0;
+-    if (end) *end = (WCHAR *)s;
+-    while (ntdll_iswspace(*s)) s++;
+-
+-    if (*s == '-')
+-    {
+-        negative = TRUE;
+-        s++;
+-    }
+-    else if (*s == '+') s++;
+-
+-    if ((base == 0 || base == 16) && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+-    {
+-        base = 16;
+-        s += 2;
+-    }
+-    if (base == 0) base = s[0] != '0' ? 10 : 8;
+-
+-    while (*s)
+-    {
+-        int v;
+-
+-        if ('0' <= *s && *s <= '9') v = *s - '0';
+-        else if ('A' <= *s && *s <= 'Z') v = *s - 'A' + 10;
+-        else if ('a' <= *s && *s <= 'z') v = *s - 'a' + 10;
+-        else break;
+-        if (v >= base) break;
+-        if (negative) v = -v;
+-        s++;
+-        empty = FALSE;
+-
+-        if (!negative && (ret > MAXLONG / base || ret * base > MAXLONG - v))
+-            ret = MAXLONG;
+-        else if (negative && (ret < (LONG)MINLONG / base || ret * base < (LONG)(MINLONG - v)))
+-            ret = MINLONG;
+-        else
+-            ret = ret * base + v;
+-    }
+-
+-    if (end && !empty) *end = (WCHAR *)s;
+-    return ret;
+-}
+-
+-static inline ULONG ntdll_wcstoul( const WCHAR *s, WCHAR **end, int base )
+-{
+-    BOOL negative = FALSE, empty = TRUE;
+-    ULONG ret = 0;
+-
+-    if (base < 0 || base == 1 || base > 36) return 0;
+-    if (end) *end = (WCHAR *)s;
+-    while (ntdll_iswspace(*s)) s++;
+-
+-    if (*s == '-')
+-    {
+-        negative = TRUE;
+-        s++;
+-    }
+-    else if (*s == '+') s++;
+-
+-    if ((base == 0 || base == 16) && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+-    {
+-        base = 16;
+-        s += 2;
+-    }
+-    if (base == 0) base = s[0] != '0' ? 10 : 8;
+-
+-    while (*s)
+-    {
+-        int v;
+-
+-        if ('0' <= *s && *s <= '9') v = *s - '0';
+-        else if ('A' <= *s && *s <= 'Z') v = *s - 'A' + 10;
+-        else if ('a' <= *s && *s <= 'z') v = *s - 'a' + 10;
+-        else break;
+-        if (v >= base) break;
+-        s++;
+-        empty = FALSE;
+-
+-        if (ret > MAXDWORD / base || ret * base > MAXDWORD - v)
+-            ret = MAXDWORD;
+-        else
+-            ret = ret * base + v;
+-    }
+-
+-    if (end && !empty) *end = (WCHAR *)s;
+-    return negative ? -ret : ret;
+-}
+-
+-#define iswspace(ch)       ntdll_iswspace(ch)
+ #define wcslen(str)        ntdll_wcslen(str)
+ #define wcscpy(dst,src)    ntdll_wcscpy(dst,src)
+ #define wcscat(dst,src)    ntdll_wcscat(dst,src)
+@@ -261,8 +162,6 @@ static inline ULONG ntdll_wcstoul( const WCHAR *s, WCHAR **end, int base )
+ #define wcscspn(str,rej)   ntdll_wcscspn(str,rej)
+ #define wcsicmp(s1, s2)    ntdll_wcsicmp(s1,s2)
+ #define wcsnicmp(s1, s2,n) ntdll_wcsnicmp(s1,s2,n)
+-#define wcstol(str,e,b)    ntdll_wcstol(str,e,b)
+-#define wcstoul(str,e,b)   ntdll_wcstoul(str,e,b)
+ 
+ #endif /* WINE_UNIX_LIB */
+ 
+diff --git a/tools/winewrapper b/tools/winewrapper
+index 031a0c05f69..93d44bcd06c 100755
+--- a/tools/winewrapper
++++ b/tools/winewrapper
+@@ -69,9 +69,9 @@ if [ "`uname -s`" = "Darwin" ]
+ then
+   if [ -n "$DYLD_LIBRARY_PATH" ]
+   then
+-    DYLD_LIBRARY_PATH="$topdir/libs/wine:$topdir/dlls/ntdll:$topdir/dlls/win32u:$DYLD_LIBRARY_PATH"
++    DYLD_LIBRARY_PATH="$topdir/libs/wine:$topdir/dlls/ntdll:$DYLD_LIBRARY_PATH"
+   else
+-    DYLD_LIBRARY_PATH="$topdir/libs/wine:$topdir/dlls/ntdll:$topdir/dlls/win32u"
++    DYLD_LIBRARY_PATH="$topdir/libs/wine:$topdir/dlls/ntdll"
+   fi
+   export DYLD_LIBRARY_PATH
+ else
+-- 
+2.36.1
+
