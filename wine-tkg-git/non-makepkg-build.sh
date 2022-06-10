@@ -49,7 +49,7 @@ warning() {
 
 pkgver() {
   if [ -d "${srcdir}/${_winesrcdir}" ]; then
-	if [ "$_use_staging" = "true" ] && [ -d "${srcdir}/${_stgsrcdir}" ]; then
+	if [ "$_use_staging" = "true" ] && [ -d "${srcdir}/${_stgsrcdir}" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	  cd "${srcdir}/${_stgsrcdir}"
 	else
 	  cd "${srcdir}/${_winesrcdir}"
