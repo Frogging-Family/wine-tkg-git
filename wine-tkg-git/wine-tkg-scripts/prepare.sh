@@ -276,12 +276,13 @@ msg2 ''
   fi
 
   # Disable undesirable patchsets when using official proton wine source
-  if [[ "$_custom_wine_source" = *"ValveSoftware"* ]] || [[ "$_custom_wine_source" = *"GloriousEggroll"* ]]; then
+  if [[ "$_custom_wine_source" = *"ValveSoftware"* ]]; then
     _clock_monotonic="false"
     _FS_bypass_compositor="false"
     _use_esync="false"
     _use_fsync="false"
-    _use_staging="false"
+    _fsync_futex_waitv="false"
+#    _use_staging="false"
     _proton_fs_hack="false"
     _large_address_aware="false"
     _proton_mf_hacks="false"
@@ -297,6 +298,7 @@ msg2 ''
     _msvcrt_nativebuiltin="false"
     _use_josh_flat_theme="false"
     _tabtip="false"
+    _sdl_joy_support="false"
     _unfrog="true"
   fi
 }
@@ -449,7 +451,7 @@ _prepare() {
 	# grabs userdefined staging args if any
 	_staging_args+=($_staging_userargs)
 
-	if [ "$_use_staging" = "true" ] && [ "$_staging_upstreamignore" != "true" ]; then
+	if [ "$_use_staging" = "true" ] && [ "$_staging_upstreamignore" != "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	  cd "${srcdir}"/"${_winesrcdir}"
 	  # change back to the wine upstream commit that this version of wine-staging is based in
 	  msg2 'Changing wine HEAD to the wine-staging base commit...'
@@ -634,7 +636,7 @@ _prepare() {
 
 	# Reverts
 	nonuser_reverter() {
-	  if [ "$_NUKR" != "debug" ] && [ "$_unfrog" != "true" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
+	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
 	    if git merge-base --is-ancestor $_committorevert HEAD; then
 	      echo -e "\n$_committorevert reverted $_hotfixmsg" >> "$_where"/prepare.log
 	      git revert -n --no-edit $_committorevert >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."; msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"; msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")" && exit 1)
@@ -646,7 +648,7 @@ _prepare() {
 	}
 
 	# Hotfixer
-	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ "$_NUKR" != "debug" ] && [ "$_unfrog" != "true" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
+	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
 	  source "$_where"/wine-tkg-patches/hotfixes/hotfixer
 	  msg2 "Hotfixing..."
 	  for _commit in ${_hotfix_mainlinereverts[@]}; do
@@ -664,7 +666,9 @@ _prepare() {
 
 	echo "" >> "$_where"/last_build_config.log
 
-    source "$_where"/wine-tkg-patches/reverts
+	if [ "$_unfrog" != "true" ]; then
+	  source "$_where"/wine-tkg-patches/reverts
+	fi
 
 	_commitmsg="01-reverts" _committer
 
@@ -703,7 +707,9 @@ _prepare() {
 	  cd "${srcdir}"/"${_winesrcdir}"
 	fi
 
-    source "$_where"/wine-tkg-patches/staging_fixes
+	if [ "$_unfrog" != "true" ]; then
+	  source "$_where"/wine-tkg-patches/staging_fixes
+	fi
 
 	# Update winevulkan
 	if [ "$_update_winevulkan" = "true" ] && ! git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && git merge-base --is-ancestor eb39d3dbcac7a8d9c17211ab358cda4b7e07708a HEAD; then
@@ -748,6 +754,10 @@ _prepare() {
 	  # Remove staging version tag
 	  sed -i "s/  (Staging)//g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
 	  _commitmsg="03-staging" _committer
+	fi
+
+	if [[ "$_custom_wine_source" = *"ValveSoftware"* ]] && [ "$_use_staging" = "true" ]; then
+	  _proton_staging
 	fi
 
     source "$_where"/wine-tkg-patches/proton/use_clock_monotonic/use_clock_monotonic

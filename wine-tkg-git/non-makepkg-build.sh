@@ -156,12 +156,13 @@ _nomakepkgsrcinit() {
     rm -rf "${srcdir}/${_winesrcdir}" && git clone "$_where"/"${_winesrcdir}" "${srcdir}/${_winesrcdir}"
     cd "${srcdir}"/"${_winesrcdir}"
     git -c advice.detachedHead=false checkout --force --no-track -B makepkg origin/HEAD
-    if [ -n "$_plain_version" ] && [ "$_use_staging" != "true" ]; then
+    if [ -n "$_plain_version" ] && [ "$_use_staging" != "true" ] || [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
       git -c advice.detachedHead=false checkout "${_plain_version}"
       if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
         if [ -z "$_bleeding_tag" ]; then
           _bleeding_tag=$(git tag -l --sort=-creatordate | grep "bleeding" | head -n 1)
         fi
+        echo -e "Bleeding edge tag: ${_bleeding_tag}" >> "$_where"/prepare.log
         git -c advice.detachedHead=false checkout "${_bleeding_tag}"
       fi
     fi
