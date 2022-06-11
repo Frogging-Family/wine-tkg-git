@@ -758,6 +758,7 @@ _prepare() {
 	  _commitmsg="03-staging" _committer
 	fi
 
+	# Manual staging patches application on top of proton valve trees
 	if [[ "$_custom_wine_source" = *"ValveSoftware"* ]] && [ "$_use_staging" = "true" ]; then
 	  _proton_staging
 	fi
