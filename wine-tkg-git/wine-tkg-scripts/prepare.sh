@@ -7,9 +7,6 @@ _exit_cleanup() {
 
   # Proton-tkg specifics to send to token
   if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ -n "$_proton_tkg_path" ]; then
-    if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
-      pkgver=$( echo ${pkgver} | cut -d'.' -f1-8 ) # On experimental bleeding edge, we want to keep only the first 8 out of 14 bits
-    fi
     if [ -n "$_PROTON_NAME_ADDON" ]; then
       if [ "$_ispkgbuild" = "true" ]; then
         echo "_protontkg_version='makepkg.${_PROTON_NAME_ADDON}'" >> "$_proton_tkg_path"/proton_tkg_token
@@ -409,7 +406,12 @@ user_patcher() {
 }
 
 _describe_wine() {
-  git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//'
+  if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
+    # On experimental bleeding edge, we want to keep only the first 8 out of 14 bits
+    echo $( git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//' | cut -d'.' -f1-8 )
+  else
+    git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//'
+  fi
 }
 
 _describe_other() {
