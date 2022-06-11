@@ -372,12 +372,7 @@ function build_dxvk_nvapi {
   unset CXXFLAGS
   unset LDFLAGS
 
-  meson --cross-file build-win64.txt --buildtype release --prefix "$_nowhere"/Proton/build/lib64-dxvk-nvapi "$_nowhere"/Proton/build/lib64-dxvk-nvapi
-  cd "$_nowhere"/Proton/build/lib64-dxvk-nvapi && ninja install
-  cd "$_nowhere"/Proton/dxvk-nvapi
-
-  meson --cross-file build-win32.txt --buildtype release --prefix "$_nowhere"/Proton/build/lib32-dxvk-nvapi "$_nowhere"/Proton/build/lib32-dxvk-nvapi
-  cd "$_nowhere"/Proton/build/lib32-dxvk-nvapi && ninja install
+  cd "$_nowhere"/Proton/dxvk-nvapi && ./package-release.sh master "$_nowhere"/Proton/build
 
   cd "$_nowhere"
 }
@@ -963,8 +958,8 @@ else
       build_dxvk_nvapi
       mkdir -p "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
       mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
-      cp -v "$_nowhere"/Proton/build/lib64-dxvk-nvapi/bin/* "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
-      cp -v "$_nowhere"/Proton/build/lib32-dxvk-nvapi/bin/* "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
+      cp -v "$_nowhere"/Proton/build/dxvk-nvapi-master/x64/* "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
+      cp -v "$_nowhere"/Proton/build/dxvk-nvapi-master/x32/* "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
     fi
 
     echo ''
