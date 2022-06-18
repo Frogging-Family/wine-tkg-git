@@ -774,6 +774,9 @@ _prepare() {
 	# Manual staging patches application on top of proton valve trees
 	if [[ "$_custom_wine_source" = *"ValveSoftware"* ]] && [ "$_use_staging" = "true" ]; then
 	  _proton_staging
+	  if [ "$_use_GE_patches" = "true" ]; then
+	    _GE
+	  fi
 	fi
 
     source "$_where"/wine-tkg-patches/proton/use_clock_monotonic/use_clock_monotonic
