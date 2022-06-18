@@ -687,26 +687,6 @@ class CompatData:
                 os.remove(old)
                 os.symlink(src=link, dst=old)
 
-    def ffxiv_workaround(self):
-        if not "SteamGameId" in os.environ or \
-                os.environ["SteamGameId"] != "39210":
-            return
-
-        config_dir = self.prefix_dir + "drive_c/users/steamuser/My Documents/My Games/FINAL FANTASY XIV - A Realm Reborn/"
-        config_file = config_dir + "FFXIV_BOOT.cfg"
-
-        if file_exists(config_file, follow_symlinks=True):
-            with open(config_file, "r") as file:
-                config_content = file.read()
-            config_content = config_content.replace("Browser\t2", "Browser\t1")
-            with open(config_file, "w") as file:
-                file.write(config_content)
-        else:
-            config_content = "<FINAL FANTASY XIV Boot Config File>\n\n<Version>\nBrowser\t1\n"
-            makedirs(config_dir)
-            with open(config_file, "w") as file:
-                file.write(config_content)
-
     def setup_prefix(self):
         with self.prefix_lock:
             if file_exists(self.version_file, follow_symlinks=True):
@@ -976,8 +956,6 @@ class CompatData:
             #create font files symlinks
             self.create_fonts_symlinks()
 
-            self.ffxiv_workaround()
-
             with open(self.tracked_files_file, "a") as tracked_files:
                 #copy steam files into place
                 steam_dir = "drive_c/Program Files (x86)/Steam/"
@@ -1085,6 +1063,53 @@ def comma_escaped(s):
         escaped = not escaped
         idx = idx - 1
     return escaped
+
+#hopefully short-lived, app-specific workarounds for Proton bugs
+def default_compat_config():
+    ret = set()
+    if "SteamAppId" in os.environ:
+        appid = os.environ["SteamAppId"]
+        if appid in [
+                #affected by CW bug 19126
+                "252490", #Rust
+                "305620", #The Long Dark
+                "536280", #Disintegration
+                "585420", #Trailmakers
+                "684450", #Surviving the Aftermath
+                "700580", #Rust Staging
+                "707030", #POSTAL 4: No Regerts
+                "780290", #Gloomhaven
+                "794260", #Outward: Definitive Edition
+                "844260", #Rustler
+                "853050", #El Hijo - A Wild West Tale
+                "960170", #DJMAX RESPECT V
+                "983970", #Haven
+                "1075200", #TOHU
+                "1096530", #Solasta: Crown of the Magister
+                "1102190", #Monster Train
+                "1107790", #The Complex
+                "1110100", #Power Rangers: Battle for the Grid
+                "1135230", #Ember Knights
+                "1161580", #Hardspace: Shipbreaker
+                "1190000", #Car Mechanic Simulator 2021
+                "1328350", #Turbo Overkill
+                "1331440", #FUSER
+                "1341290", #We Were Here Forever
+                "1359980", #POSTAL: Brain Damaged
+                "1361320", #The Room 4: Old Sins
+                "1477590", #EZ2ON REBOOT : R
+                "1523720", #Cook-Out
+                "1569550", #Dread X Collection: The Hunt
+                "1604030", #V Rising
+                "1766430", #POSTAL Brain Damaged Demo
+                "1913910", #Nine Sols Demo
+                "2001540", #Slayers X Demo
+
+                #affected by CW bug 19741
+                "1017900", #Age of Empires: Definitive Edition
+                ]:
+            ret.add("nomfdxgiman")
+    return ret
 
 class Session:
     def __init__(self):
@@ -1213,12 +1238,14 @@ class Session:
             self.env.setdefault("WINEDEBUG", "+timestamp,+pid,+tid,+seh,+unwind,+debugstr,+loaddll,+mscoree")
             self.env.setdefault("DXVK_LOG_LEVEL", "info")
             self.env.setdefault("VKD3D_DEBUG", "warn")
+            self.env.setdefault("VKD3D_SHADER_DEBUG", "fixme")
             self.env.setdefault("WINE_MONO_TRACE", "E:System.NotImplementedException")
 
         #for performance, logging is disabled by default; override with user_settings.py
         self.env.setdefault("WINEDEBUG", "-all")
         self.env.setdefault("DXVK_LOG_LEVEL", "none")
         self.env.setdefault("VKD3D_DEBUG", "none")
+        self.env.setdefault("VKD3D_SHADER_DEBUG", "none")
 
         #default wine-mono override for FNA games
         self.env.setdefault("WINE_MONO_OVERRIDES", "Microsoft.Xna.Framework.*,Gac=n")
@@ -1317,6 +1344,9 @@ class Session:
 
         if "disablelibglesv2" in self.compat_config:
             self.dlloverrides["libglesv2"] = "d"
+
+        if "nomfdxgiman" in self.compat_config:
+            self.env["WINE_DO_NOT_CREATE_DXGI_DEVICE_MANAGER"] = "1"
 
         if "PROTON_CRASH_REPORT_DIR" in self.env:
             self.env["WINE_CRASH_REPORT_DIR"] = self.env["PROTON_CRASH_REPORT_DIR"]
