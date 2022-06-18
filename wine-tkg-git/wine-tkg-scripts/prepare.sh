@@ -230,7 +230,7 @@ msg2 ''
 
   # Check for proton-tkg token to prevent broken state as we need to enforce some defaults
   if [ -e "$_proton_tkg_path"/proton_tkg_token ] && [ -n "$_proton_tkg_path" ]; then
-    if [[ "$_LOCAL_PRESET" != valve* ]]; then
+    if [[ "$_LOCAL_PRESET" != valve* ]] && [ "$_LOCAL_PRESET" != "none" ]; then
       _LOCAL_PRESET=""
     fi
     if [ -z "$_LOCAL_PRESET" ]; then
