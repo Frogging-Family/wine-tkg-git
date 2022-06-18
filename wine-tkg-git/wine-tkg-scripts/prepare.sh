@@ -230,9 +230,22 @@ msg2 ''
 
   # Check for proton-tkg token to prevent broken state as we need to enforce some defaults
   if [ -e "$_proton_tkg_path"/proton_tkg_token ] && [ -n "$_proton_tkg_path" ]; then
-    if [ "$_LOCAL_PRESET" != "valve" ] && [[ "$_LOCAL_PRESET" != valve-exp* ]]; then
+    if [[ "$_LOCAL_PRESET" != valve* ]]; then
       _LOCAL_PRESET=""
-	fi
+    fi
+    if [ -z "$_LOCAL_PRESET" ]; then
+      msg2 "No _LOCAL_PRESET set in .cfg. Please select your desired base:"
+      read -p "    What kind of Proton base do you want?`echo $'\n    > 1.Valve Proton Experimental Bleeding Edge\n      2.Valve Proton Experimental\n      3.Valve Proton\n      4.Wine upstream Proton\n    choice[1-4?]: '`" CONDITION;
+      if [ "$CONDITION" = "2" ]; then
+        _LOCAL_PRESET="valve-exp"
+      elif [ "$CONDITION" = "3" ]; then
+        _LOCAL_PRESET="valve"
+      elif [ "$CONDITION" = "4" ]; then
+        _LOCAL_PRESET=""
+      else
+        _LOCAL_PRESET="valve-exp-bleeding"
+      fi
+    fi
     _EXTERNAL_INSTALL="proton"
     _EXTERNAL_NOVER="false"
     _nomakepkg_nover="true"
