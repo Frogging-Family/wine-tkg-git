@@ -275,7 +275,7 @@ msg2 ''
     _exit_cleanup
     exit
   else
-    if [ -z "$_LOCAL_PRESET" ]; then
+    if [ ! -e "$_where"/BIG_UGLY_FROGMINER ] && [ -z "$_LOCAL_PRESET" ]; then
       msg2 "No _LOCAL_PRESET set in .cfg. Please select your desired base (or hit enter for default) :"
 
       i=0
