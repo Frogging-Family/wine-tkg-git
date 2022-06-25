@@ -1,0 +1,184 @@
+From ed0734c36f1e5d9ee3be950098f27702f9fc4a9f Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Mon, 9 May 2022 19:58:48 +0200
+Subject: Revert "winex11-CandidateWindowPos: Rebase and re-enable."
+
+This reverts commit 9e823e7f3e003d295f0e7948bf99ff700a386333.
+
+diff --git a/patches/patchinstall.sh b/patches/patchinstall.sh
+index c5da3f79..db8d88ab 100755
+--- a/patches/patchinstall.sh
++++ b/patches/patchinstall.sh
+@@ -246,7 +246,6 @@ patch_enable_all ()
+ 	enable_wineps_drv_PostScript_Fixes="$1"
+ 	enable_winepulse_PulseAudio_Support="$1"
+ 	enable_winepulse_aux_channels="$1"
+-	enable_winex11_CandidateWindowPos="$1"
+ 	enable_winex11_MWM_Decorations="$1"
+ 	enable_winex11_UpdateLayeredWindow="$1"
+ 	enable_winex11_Vulkan_support="$1"
+@@ -766,9 +765,6 @@ patch_enable ()
+ 		winepulse-PulseAudio_Support)
+ 			enable_winepulse_PulseAudio_Support="$2"
+ 			;;
+-		winex11-CandidateWindowPos)
+-			enable_winex11_CandidateWindowPos="$2"
+-			;;
+ 		winex11-MWM_Decorations)
+ 			enable_winex11_MWM_Decorations="$2"
+ 			;;
+@@ -3706,19 +3702,6 @@ if test "$enable_winepulse_PulseAudio_Support" -eq 1; then
+ 	patch_apply winepulse-PulseAudio_Support/0001-winepulse.drv-Use-a-separate-mainloop-and-ctx-for-pu.patch
+ fi
+ 
+-# Patchset winex11-CandidateWindowPos
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#30938] Update a XIM candidate position when cursor location changes
+-# |
+-# | Modified files:
+-# |   *	dlls/win32u/driver.c, dlls/win32u/input.c, dlls/winex11.drv/init.c, dlls/winex11.drv/x11drv.h, dlls/winex11.drv/xim.c,
+-# | 	include/wine/gdi_driver.h
+-# |
+-if test "$enable_winex11_CandidateWindowPos" -eq 1; then
+-	patch_apply winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
+-fi
+-
+ # Patchset winex11-MWM_Decorations
+ # |
+ # | This patchset fixes the following Wine bugs:
+diff --git a/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch b/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
+index fb78fe18..104b9439 100644
+--- a/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
++++ b/patches/winex11-CandidateWindowPos/0001-winex11.drv-Update-a-candidate-window-s-position-wit.patch
+@@ -1,4 +1,4 @@
+-From 5ce1bdf660f28a3aecffdb442a071f574fdbea31 Mon Sep 17 00:00:00 2001
++From e7629ec320dcb35ad70e9dc31fbb0db5fb81cdc0 Mon Sep 17 00:00:00 2001
+ From: Felix Yan <felixonmars@gmail.com>
+ Date: Tue, 23 Sep 2014 23:22:17 +0800
+ Subject: [PATCH] winex11.drv: Update a candidate window's position with
+@@ -17,19 +17,47 @@ is set to "over the spot" in the registry key:
+ This patch was based on the original work by Muneyuki Noguchi, and
+ received a lot of help from Sebastian Lackner.
+ ---
++ dlls/user32/caret.c       |  3 ++
+  dlls/win32u/driver.c      |  7 ++++
+- dlls/win32u/input.c       |  2 ++
+  dlls/winex11.drv/init.c   |  1 +
+  dlls/winex11.drv/x11drv.h |  1 +
+  dlls/winex11.drv/xim.c    | 72 ++++++++++++++++++++++++++++++++++++++-
+  include/wine/gdi_driver.h |  2 ++
+- 6 files changed, 84 insertions(+), 1 deletion(-)
++ 6 files changed, 85 insertions(+), 1 deletion(-)
+ 
++diff --git a/dlls/user32/caret.c b/dlls/user32/caret.c
++index 8bf4962b708..33954123efe 100644
++--- a/dlls/user32/caret.c
+++++ b/dlls/user32/caret.c
++@@ -27,6 +27,7 @@
++ #include "winbase.h"
++ #include "wingdi.h"
++ #include "ntuser.h"
+++#include "user_private.h"
++ #include "wine/server.h"
++ #include "wine/debug.h"
++ 
++@@ -274,6 +275,7 @@ BOOL WINAPI SetCaretPos( INT x, INT y )
++         r.left = x;
++         r.top = y;
++         CARET_DisplayCaret( hwnd, &r );
+++        USER_Driver->pUpdateCandidatePos( hwnd, &r );
++         NtUserSetSystemTimer( hwnd, TIMERID, Caret.timeout, CARET_Callback );
++     }
++     return ret;
++@@ -352,6 +354,7 @@ BOOL WINAPI ShowCaret( HWND hwnd )
++     if (ret && (hidden == 1))  /* hidden was 1 so it's now 0 */
++     {
++         CARET_DisplayCaret( hwnd, &r );
+++        USER_Driver->pUpdateCandidatePos( hwnd, &r );
++         NtUserSetSystemTimer( hwnd, TIMERID, Caret.timeout, CARET_Callback );
++     }
++     return ret;
+ diff --git a/dlls/win32u/driver.c b/dlls/win32u/driver.c
+-index 175fde1fa40..0c3240c9106 100644
++index 6b6f1a64ce8..a073d05be27 100644
+ --- a/dlls/win32u/driver.c
+ +++ b/dlls/win32u/driver.c
+-@@ -925,6 +925,11 @@ static struct opengl_funcs *nulldrv_wine_get_wgl_driver( UINT version )
++@@ -924,6 +924,11 @@ static struct opengl_funcs *nulldrv_wine_get_wgl_driver( UINT version )
+      return (void *)-1;
+  }
+  
+@@ -41,7 +69,7 @@ index 175fde1fa40..0c3240c9106 100644
+  static void nulldrv_ThreadDetach( void )
+  {
+  }
+-@@ -1219,6 +1224,7 @@ static const struct user_driver_funcs lazy_load_driver =
++@@ -1218,6 +1223,7 @@ static const struct user_driver_funcs lazy_load_driver =
+      loaderdrv_wine_get_vulkan_driver,
+      /* opengl support */
+      nulldrv_wine_get_wgl_driver,
+@@ -49,7 +77,7 @@ index 175fde1fa40..0c3240c9106 100644
+      /* thread management */
+      nulldrv_ThreadDetach,
+  };
+-@@ -1288,6 +1294,7 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
++@@ -1287,6 +1293,7 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
+      SET_USER_FUNC(SystemParametersInfo);
+      SET_USER_FUNC(wine_get_vulkan_driver);
+      SET_USER_FUNC(wine_get_wgl_driver);
+@@ -57,31 +85,11 @@ index 175fde1fa40..0c3240c9106 100644
+      SET_USER_FUNC(ThreadDetach);
+  #undef SET_USER_FUNC
+  
+-diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+-index 28fc5a918c8..b31511804be 100644
+---- a/dlls/win32u/input.c
+-+++ b/dlls/win32u/input.c
+-@@ -2042,6 +2042,7 @@ BOOL set_caret_pos( int x, int y )
+-         r.left = x;
+-         r.top = y;
+-         display_caret( hwnd, &r );
+-+        user_driver->pUpdateCandidatePos( hwnd, &r );
+-         NtUserSetSystemTimer( hwnd, SYSTEM_TIMER_CARET, caret.timeout );
+-     }
+-     return ret;
+-@@ -2079,6 +2080,7 @@ BOOL WINAPI NtUserShowCaret( HWND hwnd )
+-     if (ret && hidden == 1)  /* hidden was 1 so it's now 0 */
+-     {
+-         display_caret( hwnd, &r );
+-+        user_driver->pUpdateCandidatePos( hwnd, &r );
+-         NtUserSetSystemTimer( hwnd, SYSTEM_TIMER_CARET, caret.timeout );
+-     }
+-     return ret;
+ diff --git a/dlls/winex11.drv/init.c b/dlls/winex11.drv/init.c
+-index 9c5c394581b..b52a38690e4 100644
++index 6f24e1bf370..5c4caed9b29 100644
+ --- a/dlls/winex11.drv/init.c
+ +++ b/dlls/winex11.drv/init.c
+-@@ -425,6 +425,7 @@ static const struct user_driver_funcs x11drv_funcs =
++@@ -415,6 +415,7 @@ static const struct user_driver_funcs x11drv_funcs =
+      .pSystemParametersInfo = X11DRV_SystemParametersInfo,
+      .pwine_get_vulkan_driver = X11DRV_wine_get_vulkan_driver,
+      .pwine_get_wgl_driver = X11DRV_wine_get_wgl_driver,
+@@ -90,10 +98,10 @@ index 9c5c394581b..b52a38690e4 100644
+  };
+  
+ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+-index a8d2f78aa6b..12e55bbf1d2 100644
++index 2112980aab5..95a1dfdfa78 100644
+ --- a/dlls/winex11.drv/x11drv.h
+ +++ b/dlls/winex11.drv/x11drv.h
+-@@ -243,6 +243,7 @@ extern void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flag
++@@ -241,6 +241,7 @@ extern void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flag
+                                       struct window_surface *surface ) DECLSPEC_HIDDEN;
+  extern BOOL X11DRV_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param,
+                                           UINT flags ) DECLSPEC_HIDDEN;
+diff --git a/patches/winex11-CandidateWindowPos/definition b/patches/winex11-CandidateWindowPos/definition
+index da9ba408..aadd4cba 100644
+--- a/patches/winex11-CandidateWindowPos/definition
++++ b/patches/winex11-CandidateWindowPos/definition
+@@ -1 +1,3 @@
+ Fixes: [30938] Update a XIM candidate position when cursor location changes
++# Wait for SetCaretPos and ShowCaret to be moved to win32u.
++Disabled: True
