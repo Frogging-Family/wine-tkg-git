@@ -95,6 +95,7 @@ _exit_cleanup() {
   rm -rf "$_where"/*.conf
   rm -rf "$_where"/*.orig
   rm -rf "$_where"/*.rej
+  rm -rf "$_where"/temp
 
   if [ -n "$_buildtime64" ]; then
     msg2 "Compilation time for 64-bit wine: \n$_buildtime64\n"
@@ -228,6 +229,11 @@ msg2 ''
     fi
   fi
 
+  # makepkg: grab temp profile data in flight - Else the makepkg loop clears and forgets
+  if [ -e "$_where"/temp ]; then
+    source "$_where"/temp
+  fi
+
   # Check for proton-tkg token to prevent broken state as we need to enforce some defaults
   if [ -e "$_proton_tkg_path"/proton_tkg_token ] && [ -n "$_proton_tkg_path" ]; then
     if [[ "$_LOCAL_PRESET" != valve* ]] && [ "$_LOCAL_PRESET" != "none" ]; then
@@ -295,6 +301,8 @@ msg2 ''
       if [ "$_LOCAL_PRESET" = "default" ]; then
         _LOCAL_PRESET="none"
       fi
+
+      echo "_LOCAL_PRESET='$_LOCAL_PRESET'" > "$_where"/temp
     fi
   fi
 
