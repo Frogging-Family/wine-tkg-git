@@ -274,15 +274,45 @@ msg2 ''
     error "This special option doesn't use pacman and requires you to run 'proton-tkg.sh' script from proton-tkg dir."
     _exit_cleanup
     exit
+  else
+    if [ -z "$_LOCAL_PRESET" ]; then
+      msg2 "No _LOCAL_PRESET set in .cfg. Please select your desired base (or hit enter for default) :"
+
+      i=0
+      for _profiles in "$_where/wine-tkg-profiles"/wine-tkg-*.cfg; do
+        _GOTCHA=( "${_profiles//*\/wine-tkg-/}" )
+        msg2 "  $i - ${_GOTCHA//.cfg/}" && ((i+=1))
+      done
+
+      _profiles=( `ls "$_where/wine-tkg-profiles"/wine-tkg-*.cfg` )
+      _strip_profiles=( "${_profiles[@]//*\/wine-tkg-/}" )
+
+      read -rp "  choice [0-$(($i-1))]: " _SELECT_PRESET;
+
+      _LOCAL_PRESET="${_strip_profiles[$_SELECT_PRESET]//.cfg/}"
+
+      # Clear the default preset
+      if [ "$_LOCAL_PRESET" = "default" ]; then
+        _LOCAL_PRESET="none"
+      fi
+    fi
   fi
 
   # Load preset configuration files if present and selected. All values will overwrite customization.cfg ones.
-  if [ -n "$_LOCAL_PRESET" ] && [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
+  if [ -n "$_LOCAL_PRESET" ] && ( [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ] || [ -e "$_where"/wine-tkg-profiles/legacy/wine-tkg-"$_LOCAL_PRESET".cfg ] ); then
     if [ "$_LOCAL_PRESET" = "valve" ] || [[ "$_LOCAL_PRESET" = valve-exp* ]]; then
       source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg && msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
     else
-      source "$_where"/wine-tkg-profiles/wine-tkg.cfg && source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg && msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
-	fi
+      source "$_where"/wine-tkg-profiles/wine-tkg.cfg
+      if [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
+        source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg
+      elif [ -e "$_where"/wine-tkg-profiles/legacy/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
+        source "$_where"/wine-tkg-profiles/legacy/wine-tkg-"$_LOCAL_PRESET".cfg
+      fi
+      msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
+    fi
+  elif [ -n "$_LOCAL_PRESET" ] && [ "$_LOCAL_PRESET" != "none" ]; then
+    error "Preset '$_LOCAL_PRESET' was not found anywhere! exiting..." && exit 1
   fi
 
   # Disable undesirable patchsets when using official proton wine source
