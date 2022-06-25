@@ -872,7 +872,7 @@ else
 
     # Grab share template and inject version
     _versionpre=`date '+%s'`
-    echo "$_versionpre" "proton-tkg-$_protontkg_true_version" > "$_nowhere/proton_dist_tmp/version" && cp -r "$_nowhere/proton_template/share"/* "$_nowhere/proton_dist_tmp/share"/
+    echo "$_versionpre" "TKG-proton-$_protontkg_true_version" > "$_nowhere/proton_dist_tmp/version" && cp -r "$_nowhere/proton_template/share"/* "$_nowhere/proton_dist_tmp/share"/
 
     # Create the dxvk dirs
     mkdir -p "$_nowhere/proton_dist_tmp/lib64/wine/dxvk"
@@ -1000,7 +1000,7 @@ else
     mv "$_nowhere"/proton_dist_tmp "$_nowhere"/"proton_tkg_$_protontkg_version"/files && cd "$_nowhere"
 
     # Grab conf template and inject version
-    echo "$_versionpre" "proton-tkg-$_protontkg_true_version" > "proton_tkg_$_protontkg_version/version" && cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/ && sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
+    echo "$_versionpre" "TKG-proton-$_protontkg_true_version" > "proton_tkg_$_protontkg_version/version" && cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/ && sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
 
     # steampipe fixups
     cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
