@@ -155,13 +155,6 @@ function new_lib_path_check {
   echo "_x86_64_windows_path=$_x86_64_windows_path" >>"$_logdir"/proton-tkg.log 2>&1
 }
 
-function clone_proton {
-  git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
-  cd Proton
-  git reset --hard origin/HEAD
-  git clean -xdf
-}
-
 function build_vrclient {
   cd "$_nowhere"
   source "$_nowhere/proton_tkg_token"
@@ -838,16 +831,25 @@ else
 
     if [ "$_NUKR" != "debug" ]; then
       if [ -d Proton ] && [ ! -f Proton/proton ]; then
-        rm -rf "$_resources_path"/Proton/*
+        ( cd Proton && find . -name . -o -prune -exec rm -rf -- {} + ) # We need to clean everything including dotfiles
       fi
       # Clone Proton tree as we need to build some tools from it
-      clone_proton
-      if ! git pull --ff-only; then
-        cd ..
-        rm -rf "$_resources_path"/Proton/*
+      git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
+      cd Proton
+      git reset --hard origin/HEAD
+      git clean -xdf
+      if ( ! git pull --ff-only ) || ( [ -n "$_bleeding_tag" ] ); then
         echo -e "######\nProton tree was force-pushed upstream.. Recloning clean to avoid issues..\n######"
-        clone_proton
+        find . -name . -o -prune -exec rm -rf -- {} + # We need to clean everything including dotfiles
+        cd ..
+        git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
+        cd Proton
+      else
         git pull origin
+      fi
+      if [ -n "$_bleeding_tag" ]; then
+        _bleeding_commit=$(git rev-list -n 1 "${_bleeding_tag}")
+        _proton_branch="$_bleeding_commit"
       fi
       git checkout "$_proton_branch"
 

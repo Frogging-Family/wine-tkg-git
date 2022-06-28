@@ -29,6 +29,9 @@ _exit_cleanup() {
     else
       echo "_proton_branch=${_proton_branch}" >> "$_proton_tkg_path"/proton_tkg_token
     fi
+    if [[ $pkgver = *bleeding.edge* ]]; then
+      echo "_bleeding_tag='${_bleeding_tag//-wine/}'" >> "$_proton_tkg_path"/proton_tkg_token
+    fi
     if [ -n "$_proton_dxvk_configfile" ]; then
       echo "_proton_dxvk_configfile=${_proton_dxvk_configfile}" >> "$_proton_tkg_path"/proton_tkg_token
     fi
@@ -496,20 +499,20 @@ _source_cleanup() {
 }
 
 _prepare() {
-	# holds extra arguments to staging's patcher script, if applicable
-	local _staging_args=()
+  # holds extra arguments to staging's patcher script, if applicable
+  local _staging_args=()
 
-	source "$_where"/wine-tkg-patches/hotfixes/earlyhotfixer
+  source "$_where"/wine-tkg-patches/hotfixes/earlyhotfixer
 
-	# grabs userdefined staging args if any
-	_staging_args+=($_staging_userargs)
+  # grabs userdefined staging args if any
+  _staging_args+=($_staging_userargs)
 
-	if [ "$_use_staging" = "true" ] && [ "$_staging_upstreamignore" != "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
-	  cd "${srcdir}"/"${_winesrcdir}"
-	  # change back to the wine upstream commit that this version of wine-staging is based in
-	  msg2 'Changing wine HEAD to the wine-staging base commit...'
-	  git -c advice.detachedHead=false checkout "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)"
-	fi
+  if [ "$_use_staging" = "true" ] && [ "$_staging_upstreamignore" != "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
+    cd "${srcdir}"/"${_winesrcdir}"
+    # change back to the wine upstream commit that this version of wine-staging is based in
+    msg2 'Changing wine HEAD to the wine-staging base commit...'
+    git -c advice.detachedHead=false checkout "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)"
+  fi
 
   # Community patches
   if [ -n "$_community_patches" ]
