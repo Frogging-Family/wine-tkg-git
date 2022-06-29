@@ -959,3 +959,91 @@ index 00000000000..3ab31201d3d
 +#endif /* defined(SONAME_LIBXFIXES) */
 +
 +#endif /* __WINE_XFIXES_H */
+From 5ebbeb4784aa9e67f92a295eda46ee1c74b9a1f2 Mon Sep 17 00:00:00 2001
+From: antonino <antomani103@gmail.com>
+Date: Tue, 28 Jun 2022 22:04:04 +0200
+Subject: [PATCH] winex11: Moved child window buffer copy to vkQueuePresentKHR
+
+---
+ dlls/winex11.drv/vulkan.c | 44 ++++++++++++++++++++++++++++++++-------
+ 1 file changed, 36 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/winex11.drv/vulkan.c b/dlls/winex11.drv/vulkan.c
+index e46cff364de..d3453ff6a32 100644
+--- a/dlls/winex11.drv/vulkan.c
++++ b/dlls/winex11.drv/vulkan.c
+@@ -317,8 +317,6 @@ static VkResult X11DRV_vkAcquireNextImageKHR(VkDevice device,
+         VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphore semaphore,
+         VkFence fence, uint32_t *image_index)
+ {
+-    static int once;
+-    struct x11drv_escape_present_drawable escape;
+     struct wine_vk_surface *surface = NULL;
+     VkResult result;
+     VkFence orig_fence;
+@@ -353,12 +351,6 @@ static VkResult X11DRV_vkAcquireNextImageKHR(VkDevice device,
+     if (result == VK_SUCCESS && hdc && surface && surface->offscreen)
+     {
+         if (wait_fence) pvkWaitForFences(device, 1, &fence, 0, timeout);
+-        escape.code = X11DRV_PRESENT_DRAWABLE;
+-        escape.drawable = surface->window;
+-        escape.flush = TRUE;
+-        NtGdiExtEscape( hdc, NULL, 0, X11DRV_ESCAPE, sizeof(escape), (char *)&escape, 0, NULL );
+-        if (surface->present_mode == VK_PRESENT_MODE_MAILBOX_KHR)
+-            if (once++) FIXME("Application requires child window rendering with mailbox present mode, expect possible tearing!\n");
+     }
+ 
+     if (fence != orig_fence) pvkDestroyFence(device, fence, NULL);
+@@ -790,6 +782,15 @@ static VkResult X11DRV_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *
+ {
+     VkResult res;
+ 
++    VkSwapchainKHR swapchain;
++
++    static int once;
++    struct x11drv_escape_present_drawable escape;
++    struct wine_vk_surface *surface = NULL;
++    VkFence orig_fence;
++    BOOL wait_fence = FALSE;
++    HDC hdc = 0;
++
+     TRACE("%p, %p\n", queue, present_info);
+ 
+     res = pvkQueuePresentKHR(queue, present_info);
+@@ -815,6 +816,33 @@ static VkResult X11DRV_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *
+         }
+     }
+ 
++    if(res == VK_SUCCESS) 
++    {
++        for(uint32_t i = 0; i < present_info->swapchainCount; i++) 
++        {
++            swapchain = present_info->pSwapchains[i];
++
++            pthread_mutex_lock(&vulkan_mutex);
++            if (!XFindContext(gdi_display, (XID)swapchain, vulkan_swapchain_context, (char **)&surface))
++            {
++                wine_vk_surface_grab(surface);
++                hdc = surface->hdc;
++            }
++            pthread_mutex_unlock(&vulkan_mutex);
++
++            if (hdc && surface && surface->offscreen)
++            {
++                escape.code = X11DRV_PRESENT_DRAWABLE;
++                escape.drawable = surface->window;
++                escape.flush = TRUE;
++
++                ExtEscape(hdc, X11DRV_ESCAPE, sizeof(escape), (char *)&escape, 0, NULL);
++                if (surface->present_mode == VK_PRESENT_MODE_MAILBOX_KHR)
++                    if (once++) FIXME("Application requires child window rendering with mailbox present mode, expect possible tearing!\n");
++            }
++        }
++    }
++
+     return res;
+ }
+ 
+-- 
+2.36.1
+
