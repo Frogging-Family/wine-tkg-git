@@ -1005,13 +1005,15 @@ else
     echo "$_versionpre" "TKG-proton-$_protontkg_true_version" > "proton_tkg_$_protontkg_version/version" && cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/ && sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
 
     # Inject toolmanifest
-    if [ -e "$_nowhere"/Proton/toolmanifest_runtime.vdf ] && [ "$_nosteamruntime" = "sniper" ]; then
-      rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_runtime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
-      sed -i -e "s/1391110/1628350/g" "proton_tkg_$_protontkg_version"/toolmanifest.vdf
-    elif [ -e "$_nowhere"/Proton/toolmanifest_runtime.vdf ] && [ "$_nosteamruntime" != "true" ]; then
-      rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_runtime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
-    elif [ -e "$_nowhere"/Proton/toolmanifest_noruntime.vdf ] && [ "$_nosteamruntime" = "true" ]; then
-      rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_noruntime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+    if [ "$_built_with_runtime" ]; then
+      if [ -e "$_nowhere"/Proton/toolmanifest_runtime.vdf ] && [ "$_nosteamruntime" = "sniper" ]; then
+        rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_runtime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+        sed -i -e "s/1391110/1628350/g" "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+      elif [ -e "$_nowhere"/Proton/toolmanifest_runtime.vdf ] && [ "$_nosteamruntime" != "true" ]; then
+        rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_runtime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+      elif [ -e "$_nowhere"/Proton/toolmanifest_noruntime.vdf ] && [ "$_nosteamruntime" = "true" ]; then
+        rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_noruntime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+      fi
     fi
 
     # steampipe fixups
