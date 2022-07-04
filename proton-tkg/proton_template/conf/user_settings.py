@@ -39,6 +39,10 @@ user_settings = {
     #Disable nvapi and nvapi64
     "PROTON_NVAPI_DISABLE": "1",
 
+    #Set a wine override to disable libglesv2. Fixes various launchers showing up with a black window (Star Citizen, Warframe, etc..). Alternative to running an app with `--use-gl=osmesa`.
+    #We used to have a revert for that, but it would only affect upstream builds. This is a more universal solution - https://bugs.winehq.org/show_bug.cgi?id=44985
+    "PROTON_GLES2_DISABLE": "1",
+
     #Disable winedbg
     "PROTON_WINEDBG_DISABLE": "1",
 
