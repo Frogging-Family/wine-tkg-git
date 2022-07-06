@@ -4,7 +4,7 @@
   #_nowhere="$PWD"
   source "$_nowhere/proton_tkg_token" || source "$_nowhere/src/proton_tkg_token"
 
-  cd "$_nowhere"/Proton
+  cd "$_nowhere"/external-resources
 
   git clone https://gitlab.freedesktop.org/gstreamer/gstreamer.git || true # It'll complain the path already exists on subsequent builds
   cd gstreamer
@@ -30,6 +30,9 @@
     rm -rf FAudio32 && cp -R FAudio FAudio32
     rm -rf "$_nowhere"/Proton/build/faudio*
   fi
+
+  rm -rf "$_nowhere"/external-resources/{gstreamer,FFmpeg,FAudio}
+  ln -s "$_nowhere"/external-resources/{gstreamer,FFmpeg,FAudio} "$_nowhere"/Proton/
 
   rm -rf "$_nowhere"/Proton/build/gst*
 
