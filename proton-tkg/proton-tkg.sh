@@ -1244,9 +1244,12 @@ else
           fi
         fi
       else
+        # Get rid of the token
+        rm -f proton_tkg_token
+        mkdir -p "$_nowhere"/built && mv "proton_tkg_$_protontkg_version" "$_nowhere/built/" && echo "" &&
         echo "####################################################################################################"
         echo ""
-        echo " Your Proton-tkg build is now available in $_nowhere/proton_tkg_$_protontkg_version"
+        echo " Your Proton-tkg build is now available in $_nowhere/built/proton_tkg_$_protontkg_version"
         echo ""
         echo "####################################################################################################"
       fi
