@@ -165,7 +165,7 @@ _nomakepkgsrcinit() {
         echo -e "Bleeding edge tag: ${_bleeding_tag}" >> "$_where"/prepare.log
         _bleeding_commit=$(git rev-list -n 1 "${_bleeding_tag}")
         echo -e "Bleeding edge commit: ${_bleeding_commit}" >> "$_where"/prepare.log
-        git -c advice.detachedHead=false checkout "${_bleeding_commit}"
+        git -c advice.detachedHead=false checkout "${_bleeding_tag}"
       fi
     fi
 
