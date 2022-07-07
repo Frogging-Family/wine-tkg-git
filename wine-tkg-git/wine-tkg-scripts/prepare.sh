@@ -462,7 +462,7 @@ user_patcher() {
 _describe_wine() {
   if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
     # On experimental bleeding edge, we want to keep only the first 8 out of 14 bits
-    echo $( git describe --tags --abbrev=0 --match *bleeding* | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//' | cut -d'.' -f1-8 )
+    echo $( git describe --tags --abbrev=0 --match *bleeding* | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//;s/\.wine//' | cut -d'.' -f1-8 )
   else
     git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//'
   fi
