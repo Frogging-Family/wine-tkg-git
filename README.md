@@ -1,7 +1,11 @@
 # Wine to rule them all !
 
-Nightly builds | [Arch Linux](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-arch.yml) | [Fedora](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-fedora.yml) | [Ubuntu](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-ubuntu.yml) |
+Wine Nightly builds | [Arch Linux](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-arch.yml) | [Fedora](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-fedora.yml) | [Ubuntu](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-ubuntu.yml) |
 -------------|--------|--------|-------|
+
+Proton Nightly builds | [Exp Bleeding Edge (glibc 2.35 minimum)](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/proton-arch-nopackage.yml) |
+-------------|--------|--------|-------|
+(drop in `/$HOME/.steam/root/compatibilitytools.d/` or, for Ubuntu/Debian based `/$HOME/.steam/compatibilitytools.d/` dir)
 
 ## PLEASE DO NOT REPORT BUGS ENCOUNTERED WITH THIS AT WINEHQ OR VALVESOFTWARE, REPORT HERE INSTEAD !
 
