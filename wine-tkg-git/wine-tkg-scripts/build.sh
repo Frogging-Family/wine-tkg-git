@@ -88,12 +88,14 @@ _build() {
 	if [ "$_NOLIB64" != "true" ]; then
 	  # build wine 64-bit
 	  # (according to the wine wiki, this 64-bit/32-bit building order is mandatory)
-	  if [ -e /usr/bin/ccache ]; then
-	    export CC="ccache gcc" && echo "CC = ${CC}" >> "$_where"/last_build_config.log
-	    export CXX="ccache g++" && echo "CXX = ${CXX}" >> "$_where"/last_build_config.log
-	  fi
-	  if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
-	    export CROSSCC="ccache x86_64-w64-mingw32-gcc" && echo "CROSSCC64 = ${CROSSCC}" >> "$_where"/last_build_config.log
+	  if [ "$_NOCCACHE" != "true" ]; then
+		if [ -e /usr/bin/ccache ]; then
+			export CC="ccache gcc" && echo "CC = ${CC}" >> "$_where"/last_build_config.log
+			export CXX="ccache g++" && echo "CXX = ${CXX}" >> "$_where"/last_build_config.log
+		fi
+		if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
+			export CROSSCC="ccache x86_64-w64-mingw32-gcc" && echo "CROSSCC64 = ${CROSSCC}" >> "$_where"/last_build_config.log
+		fi
 	  fi
 	  # If /usr/lib32 doesn't exist (such as on Fedora), make sure we're using /usr/lib64 for 64-bit pkgconfig path
 	  if [ ! -d '/usr/lib32' ]; then
@@ -137,12 +139,14 @@ _build() {
 	    _debuntu_32
 	  fi
 	  # /nomakepkg
-	  if [ -e /usr/bin/ccache ]; then
-	    export CC="ccache gcc"
-	    export CXX="ccache g++"
-	  fi
-	  if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
-	    export CROSSCC="ccache i686-w64-mingw32-gcc" && echo "CROSSCC32 = ${CROSSCC}" >> "$_where"/last_build_config.log
+	  if [ "$_NOCCACHE" != "true" ]; then
+		if [ -e /usr/bin/ccache ]; then
+			export CC="ccache gcc"
+			export CXX="ccache g++"
+		fi
+		if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
+			export CROSSCC="ccache i686-w64-mingw32-gcc" && echo "CROSSCC32 = ${CROSSCC}" >> "$_where"/last_build_config.log
+		fi
 	  fi
 	  # build wine 32-bit
 	  if [ -d '/usr/lib32/pkgconfig' ]; then # Typical Arch path
