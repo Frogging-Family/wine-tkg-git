@@ -31,7 +31,7 @@
     rm -rf "$_nowhere"/Proton/build/faudio*
   fi
 
-  rm -rf "$_nowhere"/external-resources/{gstreamer,FFmpeg,FAudio}
+  rm -rf "$_nowhere"/Proton/{gstreamer,FFmpeg,FAudio}
   ln -s "$_nowhere"/external-resources/{gstreamer,FFmpeg,FAudio} "$_nowhere"/Proton/
 
   rm -rf "$_nowhere"/Proton/build/gst*
