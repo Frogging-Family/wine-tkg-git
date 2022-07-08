@@ -3,8 +3,8 @@
 Wine Nightly builds | [Arch Linux](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-arch.yml) | [Fedora](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-fedora.yml) | [Ubuntu](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-ubuntu.yml) |
 -------------|--------|--------|-------|
 
-Proton Nightly builds | [Exp Bleeding Edge (glibc 2.35 minimum)](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/proton-arch-nopackage.yml) |
--------------|--------|
+Proton Nightly builds (glibc 2.35 minimum) | [Valve Exp Bleeding Edge](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/proton-valvexbe-arch-nopackage.yml) | [Wine Master](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/proton-arch-nopackage.yml) |
+-------------|--------|--------|
 
 (drop in `/$HOME/.steam/root/compatibilitytools.d/` or, for Ubuntu/Debian based `/$HOME/.steam/compatibilitytools.d/` dir)
 
