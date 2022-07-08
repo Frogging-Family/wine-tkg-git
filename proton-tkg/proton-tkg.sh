@@ -1253,7 +1253,7 @@ else
         echo ""
         echo "####################################################################################################"
         if [ "$_proton_tar_built" = "true" ];then
-          ( cd "$_nowhere"/built && tar -czvf "proton_tkg_$_protontkg_version".tar.gz "proton_tkg_$_protontkg_version" && rm -rf "proton_tkg_$_protontkg_version" )
+          ( cd "$_nowhere"/built && 7z a "proton_tkg_$_protontkg_version" "proton_tkg_$_protontkg_version" && rm -rf "proton_tkg_$_protontkg_version" )
         fi
       fi
     else
