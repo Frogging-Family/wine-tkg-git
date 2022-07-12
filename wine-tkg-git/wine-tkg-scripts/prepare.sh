@@ -254,6 +254,7 @@ msg2 ''
       else
         _LOCAL_PRESET="valve-exp-bleeding"
       fi
+      echo "_LOCAL_PRESET='$_LOCAL_PRESET'" > "$_where"/temp
     fi
     _EXTERNAL_INSTALL="proton"
     _EXTERNAL_NOVER="false"
@@ -460,8 +461,10 @@ user_patcher() {
 }
 
 _describe_wine() {
-  if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
+  if [ -e "$_where"/temp ]; then
     source "$_where"/temp
+  fi
+  if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
     # On experimental bleeding edge, we want to keep only the first 7 out of 13 bits
     echo "$_bleeding_tag" | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//;s/\.wine//' | cut -d'.' -f1-7
   else
