@@ -1266,7 +1266,7 @@ else
         echo " Your Proton-tkg build is now available in $_nowhere/built/proton_tkg_$_protontkg_version"
         echo ""
         echo "####################################################################################################"
-        if [ "$_proton_tar_built" = "true" ];then
+        if [ -e "$_nowhere"/tarplz ];then
           ( cd "$_nowhere"/built && tar -cvf "proton_tkg_$_protontkg_version".tar "proton_tkg_$_protontkg_version" && rm -rf "proton_tkg_$_protontkg_version" )
         fi
       fi
