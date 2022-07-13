@@ -773,6 +773,15 @@ else
   # Wine-tkg-git has injected versioning and settings in the token for us, so get the values back
   source "$_nowhere/proton_tkg_token"
 
+  # Prompt to re-use existing gst
+  if [ -d "${_resources_path}"/gst ] && [ -z $_reuse_built_gst ]; then
+    echo "    Existing proton gstreamer dir found. Do you want to use it instead of rebuilding?"
+    read -rp $'\n> Y/n : ' _reuse_gst;
+    if ( [ "$_reuse_gst" != "n" ] && [ "$_reuse_gst" != "N" ] ); then
+      _reuse_built_gst="true"
+    fi
+  fi
+
   # We might not want experimental branches since they are a moving target and not useful to us, so fallback to regular by default unless _proton_branch_exp="true" is passed
   if [[ "$_proton_branch" = experimental* ]] && [ "$_proton_branch_exp" != "true" ]; then
     echo -e "#### Replacing experimental branch by regular ####"
@@ -869,7 +878,12 @@ else
 
     # Build GST/mediaconverter
     if [ "$_build_mediaconv" = "true" ] || [ "$_build_gstreamer" = "true" ]; then
-      build_mediaconverter
+      if [ "$_reuse_built_gst" = "true" ] && [ -d "${_resources_path}"/gst ]; then
+        cp -r "${_resources_path}"/gst "$_nowhere"/gst
+      else
+        build_mediaconverter
+        rm -rf "${_resources_path}"/gst && cp -r "$_nowhere"/gst "${_resources_path}"/gst
+      fi
     fi
 
     # Grab share template and inject version
