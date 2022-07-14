@@ -1,0 +1,227 @@
+From ce0c255a1fd40bfa9a1de6f6765b83a4dcf9d0dd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 21 May 2021 14:57:46 +0200
+Subject: [PATCH] user32: Implement rudimentary EnableMouseInPointer support.
+
+CW-Bug-Id: 18943
+---
+ dlls/user32/input.c        |  9 +++++----
+ dlls/user32/message.c      | 32 ++++++++++++++++++++++++++++++++
+ dlls/user32/user_private.h |  1 +
+ include/winuser.h          | 26 ++++++++++++++++++++++++++
+ 4 files changed, 64 insertions(+), 4 deletions(-)
+
+diff --git a/dlls/user32/input.c b/dlls/user32/input.c
+index 455f857d9d0..dbfc9f36819 100644
+--- a/dlls/user32/input.c
++++ b/dlls/user32/input.c
+@@ -1324,17 +1324,6 @@ int WINAPI GetMouseMovePointsEx( UINT size, LPMOUSEMOVEPOINT ptin, LPMOUSEMOVEPO
+     return copied;
+ }
+
+-/***********************************************************************
+- *		EnableMouseInPointer (USER32.@)
+- */
+-BOOL WINAPI EnableMouseInPointer(BOOL enable)
+-{
+-    FIXME("(%#x) stub\n", enable);
+-
+-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+-    return FALSE;
+-}
+-
+ static DWORD CALLBACK devnotify_window_callback(HANDLE handle, DWORD flags, DEV_BROADCAST_HDR *header)
+ {
+     rawinput_update_device_list();
+diff --git a/dlls/user32/user32.spec b/dlls/user32/user32.spec
+index ea984ef8e10..2edd8c682dd 100644
+--- a/dlls/user32/user32.spec
++++ b/dlls/user32/user32.spec
+@@ -204,7 +204,7 @@
+ @ stdcall EditWndProc(long long long long) EditWndProcA
+ @ stdcall EmptyClipboard()
+ @ stdcall EnableMenuItem(long long long) NtUserEnableMenuItem
+-@ stdcall EnableMouseInPointer(long)
++@ stdcall EnableMouseInPointer(long) NtUserEnableMouseInPointer
+ @ stdcall EnableNonClientDpiScaling(long)
+ @ stdcall EnableScrollBar(long long long)
+ @ stdcall EnableWindow(long long)
+diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+index b611195bd8e..23dc478d068 100644
+--- a/dlls/win32u/input.c
++++ b/dlls/win32u/input.c
+@@ -1153,6 +1153,18 @@ int WINAPI NtUserGetMouseMovePointsEx( UINT size, MOUSEMOVEPOINT *ptin, MOUSEMOV
+     return copied;
+ }
+
++BOOL enable_mouse_in_pointer = FALSE;
++
++/***********************************************************************
++ *		NtUserEnableMouseInPointer (win32u.@)
++ */
++BOOL WINAPI NtUserEnableMouseInPointer( BOOL enable )
++{
++    FIXME("(%#x) semi-stub\n", enable);
++    enable_mouse_in_pointer = TRUE;
++    return TRUE;
++}
++
+ /**********************************************************************
+  *		set_capture_window
+  */
+diff --git a/dlls/win32u/message.c b/dlls/win32u/message.c
+index a54ecccc7cd..57baea203e5 100644
+--- a/dlls/win32u/message.c
++++ b/dlls/win32u/message.c
+@@ -2590,6 +2590,38 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
+        in the WM_SETCURSOR message even if it's non-client mouse message */
+     send_message( msg->hwnd, WM_SETCURSOR, (WPARAM)msg->hwnd, MAKELONG( hittest, msg->message ));
+
++    if (enable_mouse_in_pointer) switch (msg->message)
++    {
++    case WM_MOUSEMOVE:
++    case WM_LBUTTONDOWN:
++    case WM_LBUTTONUP:
++    case WM_RBUTTONDOWN:
++    case WM_RBUTTONUP:
++    case WM_MBUTTONDOWN:
++    case WM_MBUTTONUP:
++    case WM_XBUTTONDOWN:
++    case WM_XBUTTONUP:
++    {
++        WORD flags = POINTER_MESSAGE_FLAG_INRANGE|POINTER_MESSAGE_FLAG_INCONTACT|POINTER_MESSAGE_FLAG_PRIMARY;
++        if (msg->message == WM_LBUTTONDOWN) flags |= POINTER_MESSAGE_FLAG_FIRSTBUTTON;
++        if (msg->message == WM_RBUTTONDOWN) flags |= POINTER_MESSAGE_FLAG_SECONDBUTTON;
++        if (msg->message == WM_MBUTTONDOWN) flags |= POINTER_MESSAGE_FLAG_THIRDBUTTON;
++        if (msg->message == WM_XBUTTONDOWN && LOWORD( msg->wParam ) == MK_LBUTTON) flags |= POINTER_MESSAGE_FLAG_FIRSTBUTTON;
++        if (msg->message == WM_XBUTTONDOWN && LOWORD( msg->wParam ) == MK_RBUTTON) flags |= POINTER_MESSAGE_FLAG_SECONDBUTTON;
++        if (msg->message == WM_XBUTTONDOWN && LOWORD( msg->wParam ) == MK_MBUTTON) flags |= POINTER_MESSAGE_FLAG_THIRDBUTTON;
++        if (msg->message == WM_XBUTTONDOWN && LOWORD( msg->wParam ) == MK_XBUTTON1) flags |= POINTER_MESSAGE_FLAG_FOURTHBUTTON;
++        if (msg->message == WM_XBUTTONDOWN && LOWORD( msg->wParam ) == MK_XBUTTON2) flags |= POINTER_MESSAGE_FLAG_FIFTHBUTTON;
++        send_message( msg->hwnd, WM_POINTERUPDATE, MAKELONG( 1, flags ), MAKELONG( msg->pt.x, msg->pt.y ) );
++        break;
++    }
++    case WM_MOUSEWHEEL:
++        send_message( msg->hwnd, WM_POINTERWHEEL, MAKELONG( 1, HIWORD( msg->wParam ) ), MAKELONG( msg->pt.x, msg->pt.y ) );
++        break;
++    case WM_MOUSEHWHEEL:
++        send_message( msg->hwnd, WM_POINTERHWHEEL, MAKELONG( 1, HIWORD( msg->wParam ) ), MAKELONG( msg->pt.x, msg->pt.y ) );
++        break;
++    }
++
+     msg->message = message;
+     return !eat_msg;
+ }
+diff --git a/dlls/win32u/syscall.c b/dlls/win32u/syscall.c
+index 2be2cfce3bf..a8c3090a814 100644
+--- a/dlls/win32u/syscall.c
++++ b/dlls/win32u/syscall.c
+@@ -111,6 +111,7 @@ static void * const syscalls[] =
+     NtUserDeleteMenu,
+     NtUserDestroyAcceleratorTable,
+     NtUserDestroyInputContext,
++    NtUserEnableMouseInPointer,
+     NtUserEndMenu,
+     NtUserFindExistingCursorIcon,
+     NtUserFindWindowEx,
+diff --git a/dlls/win32u/win32u.spec b/dlls/win32u/win32u.spec
+index d1104df7371..2b840e587d1 100644
+--- a/dlls/win32u/win32u.spec
++++ b/dlls/win32u/win32u.spec
+@@ -861,7 +861,7 @@
+ @ stub NtUserEnableChildWindowDpiMessage
+ @ stub NtUserEnableIAMAccess
+ @ stdcall NtUserEnableMenuItem(long long long)
+-@ stub NtUserEnableMouseInPointer
++@ stdcall -syscall NtUserEnableMouseInPointer(long)
+ @ stub NtUserEnableMouseInPointerForWindow
+ @ stub NtUserEnableMouseInputForCursorSuppression
+ @ stub NtUserEnableNonClientDpiScaling
+diff --git a/dlls/win32u/win32u_private.h b/dlls/win32u/win32u_private.h
+index b91cf7d9002..697f7806595 100644
+--- a/dlls/win32u/win32u_private.h
++++ b/dlls/win32u/win32u_private.h
+@@ -343,6 +343,7 @@ extern LRESULT call_hooks( INT id, INT code, WPARAM wparam, LPARAM lparam, BOOL
+ extern BOOL unhook_windows_hook( INT id, HOOKPROC proc ) DECLSPEC_HIDDEN;
+
+ /* input.c */
++extern BOOL enable_mouse_in_pointer DECLSPEC_HIDDEN;
+ extern BOOL destroy_caret(void) DECLSPEC_HIDDEN;
+ extern LONG global_key_state_counter DECLSPEC_HIDDEN;
+ extern HWND get_active_window(void) DECLSPEC_HIDDEN;
+diff --git a/dlls/wow64win/syscall.h b/dlls/wow64win/syscall.h
+index a90c4c20d40..0434cae6459 100644
+--- a/dlls/wow64win/syscall.h
++++ b/dlls/wow64win/syscall.h
+@@ -98,6 +98,7 @@
+     SYSCALL_ENTRY( NtUserDeleteMenu ) \
+     SYSCALL_ENTRY( NtUserDestroyAcceleratorTable ) \
+     SYSCALL_ENTRY( NtUserEndMenu ) \
++    SYSCALL_ENTRY( NtUserEnableMouseInPointer ) \
+     SYSCALL_ENTRY( NtUserFindExistingCursorIcon ) \
+     SYSCALL_ENTRY( NtUserGetAncestor ) \
+     SYSCALL_ENTRY( NtUserGetAtomName ) \
+diff --git a/dlls/wow64win/user.c b/dlls/wow64win/user.c
+index 9d957673ceb..dccfef4527d 100644
+--- a/dlls/wow64win/user.c
++++ b/dlls/wow64win/user.c
+@@ -606,3 +606,10 @@ NTSTATUS WINAPI wow64_NtUserDestroyAcceleratorTable( UINT *args )
+
+     return NtUserDestroyAcceleratorTable( handle );
+ }
++
++NTSTATUS WINAPI wow64_NtUserEnableMouseInPointer( UINT *args )
++{
++    BOOL enable = get_ulong( &args );
++
++    return NtUserEnableMouseInPointer( enable );
++}
+diff --git a/include/ntuser.h b/include/ntuser.h
+index e0cdc930faf..89e611a5e52 100644
+--- a/include/ntuser.h
++++ b/include/ntuser.h
+@@ -573,6 +573,7 @@ HWINSTA WINAPI NtUserCreateWindowStation( OBJECT_ATTRIBUTES *attr, ACCESS_MASK m
+ HDWP    WINAPI NtUserDeferWindowPosAndBand( HDWP hdwp, HWND hwnd, HWND after, INT x, INT y,
+                                             INT cx, INT cy, UINT flags, UINT unk1, UINT unk2 );
+ BOOL    WINAPI NtUserDestroyAcceleratorTable( HACCEL handle );
++BOOL    WINAPI NtUserEnableMouseInPointer( BOOL enable );
+ BOOL    WINAPI NtUserDestroyCursor( HCURSOR cursor, ULONG arg );
+ BOOL    WINAPI NtUserDestroyMenu( HMENU menu );
+ BOOL    WINAPI NtUserDestroyWindow( HWND hwnd );
+diff --git a/include/winuser.h b/include/winuser.h
+index b91cf7d9002..697f7806595 100644
+--- a/include/winuser.h
++++ b/include/winuser.h
+@@ -3474,6 +3474,32 @@ typedef struct tagMENUGETOBJECTINFO
+     void  *pvObj;
+ } MENUGETOBJECTINFO, *PMENUGETOBJECTINFO;
+
++#define POINTER_MESSAGE_FLAG_NEW                      0x00000001
++#define POINTER_MESSAGE_FLAG_INRANGE                  0x00000002
++#define POINTER_MESSAGE_FLAG_INCONTACT                0x00000004
++#define POINTER_MESSAGE_FLAG_FIRSTBUTTON              0x00000010
++#define POINTER_MESSAGE_FLAG_SECONDBUTTON             0x00000020
++#define POINTER_MESSAGE_FLAG_THIRDBUTTON              0x00000040
++#define POINTER_MESSAGE_FLAG_FOURTHBUTTON             0x00000080
++#define POINTER_MESSAGE_FLAG_FIFTHBUTTON              0x00000100
++#define POINTER_MESSAGE_FLAG_PRIMARY                  0x00002000
++#define POINTER_MESSAGE_FLAG_CONFIDENCE               0x00004000
++#define POINTER_MESSAGE_FLAG_CANCELED                 0x00008000
++
++#define GET_POINTERID_WPARAM(wparam)                  (LOWORD(wparam))
++#define IS_POINTER_FLAG_SET_WPARAM(wparam, flags)     ((HIWORD(wparam) & (flags)) == (flags))
++#define IS_POINTER_NEW_WPARAM(wparam)                 IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_NEW)
++#define IS_POINTER_INRANGE_WPARAM(wparam)             IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_INRANGE)
++#define IS_POINTER_INCONTACT_WPARAM(wparam)           IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_INCONTACT)
++#define IS_POINTER_FIRSTBUTTON_WPARAM(wparam)         IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_FIRSTBUTTON)
++#define IS_POINTER_SECONDBUTTON_WPARAM(wparam)        IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_SECONDBUTTON)
++#define IS_POINTER_THIRDBUTTON_WPARAM(wparam)         IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_THIRDBUTTON)
++#define IS_POINTER_FOURTHBUTTON_WPARAM(wparam)        IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_FOURTHBUTTON)
++#define IS_POINTER_FIFTHBUTTON_WPARAM(wparam)         IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_FIFTHBUTTON)
++#define IS_POINTER_PRIMARY_WPARAM(wparam)             IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_PRIMARY)
++#define HAS_POINTER_CONFIDENCE_WPARAM(wparam)         IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_CONFIDENCE)
++#define IS_POINTER_CANCELED_WPARAM(wparam)            IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_CANCELED)
++
+ #if defined(_WINGDI_) && !defined(NOGDI)
+ WINUSERAPI LONG        WINAPI ChangeDisplaySettingsA(LPDEVMODEA,DWORD);
+ WINUSERAPI LONG        WINAPI ChangeDisplaySettingsW(LPDEVMODEW,DWORD);
