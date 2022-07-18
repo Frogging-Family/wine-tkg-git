@@ -182,7 +182,7 @@ msg2 ''
 
   # Load external configuration file if present. Available variable values will overwrite customization.cfg ones.
   if [ -e "$_where/wine-tkg-userpatches/user.cfg" ]; then
-    source "$_where/wine-tkg-userpatches/user.cfg"
+    source "$_where/wine-tkg-userpatches/user.cfg" && msg2 "User.cfg config loaded"
   elif [ -e "$_EXT_CONFIG_PATH" ]; then
     source "$_EXT_CONFIG_PATH" && msg2 "External configuration file $_EXT_CONFIG_PATH will be used to override customization.cfg values." && msg2 ""
   fi
@@ -222,7 +222,7 @@ msg2 ''
       read -rp "When you are ready, press enter to continue."
 
       if [ -e "$_where/wine-tkg-userpatches/user.cfg" ]; then
-        source "$_where/wine-tkg-userpatches/user.cfg"
+        source "$_where/wine-tkg-userpatches/user.cfg" && msg2 "User.cfg config loaded"
       elif [ -e "$_EXT_CONFIG_PATH" ]; then
         source "$_EXT_CONFIG_PATH" && msg2 "External config loaded" # load external configuration from file again, in case of changes.
       else
