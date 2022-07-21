@@ -311,6 +311,10 @@ _package_nomakepkg() {
 	  msg2 "### Remember to use $_prefix/bin/wine instead of just wine (same for winecfg etc.)"
 	elif [ "$_EXTERNAL_INSTALL" = "proton" ]; then
 	  touch "${pkgdir}"/../HL3_confirmed
+	else
+	  if [ -e "$_where"/tarplz ];then
+	    ( cd "$_where"/non-makepkg-builds && tar -cvf "${_nomakepkg_pkgname}".tar "${_nomakepkg_pkgname}" && rm -rf "${_nomakepkg_pkgname}" )
+	  fi
 	fi
 }
 
