@@ -1,12 +1,26 @@
 # Wine to rule them all !
 
-Wine Nightly builds | [Arch Linux](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-arch.yml) | [Fedora](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-fedora.yml) | [Ubuntu](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-ubuntu.yml) |
+## Wine nightly builds
+
+- wine-staging patchset applied
+
+Wine | [Arch Linux](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-arch.yml) | [Fedora](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-fedora.yml) | [Ubuntu](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-ubuntu.yml) |
 -------------|--------|--------|-------|
 
-Proton Nightly builds (glibc 2.35 minimum) | [Valve Exp Bleeding Edge](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/proton-valvexbe-arch-nopackage.yml) | [Wine Master](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/proton-arch-nopackage.yml) |
+Valve Wine | [Exp Bleeding Edge Arch Linux](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-valvexbe-pacman.yml) | [Exp Bleeding Edge Other distro](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/wine-valvexbe.yml) |
 -------------|--------|--------|
 
-(drop in `/$HOME/.steam/root/compatibilitytools.d/` or, for Ubuntu/Debian based `/$HOME/.steam/compatibilitytools.d/` dir)
+*The Exp Bleeding Edge Other distro version is built on Ubuntu latest, which should work fine on most distros not using years old packages*
+
+## Proton nightly builds
+
+- wine-staging patchset applied
+- built on Arch current, making glibc 2.35 a requirement
+
+Proton | [Valve Exp Bleeding Edge](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/proton-valvexbe-arch-nopackage.yml) | [Wine Master](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/proton-arch-nopackage.yml) |
+-------------|--------|--------|
+
+(drop the extracted folder in `/$HOME/.steam/root/compatibilitytools.d/` or, for Ubuntu/Debian based, the `/$HOME/.steam/compatibilitytools.d/` dir)
 
 ## PLEASE DO NOT REPORT BUGS ENCOUNTERED WITH THIS AT WINEHQ OR VALVESOFTWARE, REPORT HERE INSTEAD !
 
