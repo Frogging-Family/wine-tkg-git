@@ -293,17 +293,32 @@ msg2 ''
   else
     if [ ! -e "$_where"/BIG_UGLY_FROGMINER ] && [ -z "$_LOCAL_PRESET" ]; then
       msg2 "No _LOCAL_PRESET set in .cfg. Please select your desired base (or hit enter for default) :"
+      warning "(mainline and staging options will make clean & untouched wine and wine-staging builds)"
 
       i=0
       for _profiles in "$_where/wine-tkg-profiles"/wine-tkg-*.cfg; do
         _GOTCHA=( "${_profiles//*\/wine-tkg-/}" )
         msg2 "  $i - ${_GOTCHA//.cfg/}" && ((i+=1))
       done
+      msg2 "  $i - other & legacy"
 
-      _profiles=( `ls "$_where/wine-tkg-profiles"/wine-tkg-*.cfg` )
-      _strip_profiles=( "${_profiles[@]//*\/wine-tkg-/}" )
+      _separator="$i"
+      ((i+=1))
 
       read -rp "  choice [0-$(($i-1))]: " _SELECT_PRESET;
+
+      if [ "$_SELECT_PRESET" = "$_separator" ]; then
+        i=0
+        for _profiles in "$_where/wine-tkg-profiles"/legacy/wine-tkg-*.cfg; do
+          _GOTCHA=( "${_profiles//*\/wine-tkg-/}" )
+          msg2 "  $i - ${_GOTCHA//.cfg/}" && ((i+=1))
+        done
+        read -rp "  choice [0-$(($i-1))]: " _SELECT_PRESET;
+        _profiles=( `ls "$_where/wine-tkg-profiles"/legacy/wine-tkg-*.cfg` )
+      else
+        _profiles=( `ls "$_where/wine-tkg-profiles"/wine-tkg-*.cfg` )
+      fi
+      _strip_profiles=( "${_profiles[@]//*\/wine-tkg-/}" )
 
       _LOCAL_PRESET="${_strip_profiles[$_SELECT_PRESET]//.cfg/}"
 
