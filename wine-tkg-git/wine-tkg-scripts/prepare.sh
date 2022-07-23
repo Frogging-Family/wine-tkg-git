@@ -1021,6 +1021,9 @@ _polish() {
 	  # Set custom version so that it reports the same as pkgver
 	  if [ "$_versioning_string" = "wine_srcdir" ]; then
 	    sed -i "s/GIT_DIR=\${$_versioning_string}.git git describe HEAD 2>\\/dev\\/null || echo \\\\\"wine-\\\\\$(PACKAGE_VERSION)\\\\\"/echo \\\\\"wine-$_realwineversion\\\\\"/g" "$_versioning_path"
+	    if [ -e "${srcdir}/${_winesrcdir}/configure" ]; then
+	      sed -i "s/GIT_DIR=\${$_versioning_string}.git git describe HEAD 2>\\/dev\\/null || echo \\\\\"wine-\\\\\$(PACKAGE_VERSION)\\\\\"/echo \\\\\"wine-$_realwineversion\\\\\"/g" "${srcdir}/${_winesrcdir}/configure"
+	    fi
 	  else
 	    sed -i "s/GIT_DIR=\$($_versioning_string)\\/.git git describe HEAD 2>\\/dev\\/null || echo \"wine-\$(PACKAGE_VERSION)\"/echo \"wine-$_realwineversion\"/g" "$_versioning_path"
 	  fi
@@ -1033,13 +1036,13 @@ _polish() {
 	  else
 	    _version_tags+=(Plain)
 	  fi
-	  if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ]; then
+	  if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	   _version_tags+=(Esync)
 	  fi
-	  if [ "$_use_fsync" = "true" ] && [ "$_staging_esync" = "true" ]; then
+	  if [ "$_use_fsync" = "true" ] && [ "$_staging_esync" = "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	    _version_tags+=(Fsync)
 	  fi
-	  if [ "$_use_pba" = "true" ] && [ "$_pba_version" != "none" ]; then
+	  if [ "$_use_pba" = "true" ] && [ "$_pba_version" != "none" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	    _version_tags+=(PBA)
 	  fi
 	  if [ "$_use_legacy_gallium_nine" = "true" ]; then
