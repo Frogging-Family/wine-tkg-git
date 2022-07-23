@@ -18,7 +18,7 @@
 
 ## You're on your own to resolve additional dependencies you might want to build with, such as Faudio.
 
-pkgname=wine-tkg-git
+pkgname=wine-tkg
 
 _build_in_tmpfs="true"
 
