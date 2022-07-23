@@ -323,7 +323,7 @@ msg2 ''
       _LOCAL_PRESET="${_strip_profiles[$_SELECT_PRESET]//.cfg/}"
 
       # Clear the default preset
-      if [ "$_LOCAL_PRESET" = "default" ]; then
+      if [ "$_LOCAL_PRESET" = "default-tkg" ]; then
         _LOCAL_PRESET="none"
       fi
 
