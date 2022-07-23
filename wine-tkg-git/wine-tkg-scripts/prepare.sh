@@ -386,28 +386,30 @@ _pkgnaming() {
     msg2 "Overriding default pkgname. New pkgname: ${pkgname}"
   else
     if [ "$_use_staging" = "true" ]; then
-      pkgname="${pkgname/%-git/-staging-git}"
+      pkgname+="-staging"
       msg2 "Using staging patchset"
     fi
 
     if [ "$_use_esync" = "true" ]; then
       if [ "$_use_fsync" = "true" ]; then
-        pkgname="${pkgname/%-git/-fsync-git}"
+        pkgname+="-fsync"
         msg2 "Using fsync patchset"
       else
-        pkgname="${pkgname/%-git/-esync-git}"
+        pkgname+="-esync"
         msg2 "Using esync patchset"
       fi
     fi
     if [ "$_use_legacy_gallium_nine" = "true" ]; then
-      pkgname="${pkgname/%-git/-nine-git}"
+      pkgname+="-nine"
       msg2 "Using gallium nine patchset (legacy)"
     fi
+    # Add trailing -git for non-overriden pkgnames
+    pkgname+="-git"
   fi
 
   # External install
   if [ "$_EXTERNAL_INSTALL" = "true" ]; then
-    pkgname="${pkgname/%-git/-$_EXTERNAL_INSTALL_TYPE-git}"
+    pkgname+="-$_EXTERNAL_INSTALL_TYPE"
     msg2 "Installing to $_DEFAULT_EXTERNAL_PATH/$pkgname"
   elif [ "$_EXTERNAL_INSTALL" = "proton" ]; then
     pkgname="proton_dist"
