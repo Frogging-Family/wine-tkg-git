@@ -11,6 +11,7 @@ Valve Wine | [Exp Bleeding Edge Arch Linux](https://github.com/Frogging-Family/w
 -------------|--------|--------|
 
 *The Exp Bleeding Edge Other distro and LoL versions are built on Ubuntu latest, which should work fine on most distros not using years old packages*
+
 *! The LoL version should only be used for League of Legends !*
 
 ## Proton nightly builds
