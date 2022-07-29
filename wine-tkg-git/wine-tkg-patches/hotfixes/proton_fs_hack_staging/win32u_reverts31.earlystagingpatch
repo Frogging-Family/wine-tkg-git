@@ -1,0 +1,355 @@
+From 528f60759567aa778eafbcd1eb4ffb2579de03c8 Mon Sep 17 00:00:00 2001
+From: Tk-Glitch <ti3nou@gmail.com>
+Date: Fri, 29 Jul 2022 10:54:32 +0200
+Subject: Revert "Rebase against d909f2759066afd128aa1a299d3367c7ab76da8f."
+
+This reverts commit 87083566479467a536b2d3d373e3ef28ab517875.
+
+diff --git a/patches/eventfd_synchronization/0013-server-Create-eventfd-file-descriptors-for-process-o.patch b/patches/eventfd_synchronization/0013-server-Create-eventfd-file-descriptors-for-process-o.patch
+index 2278a283..57e376d2 100644
+--- a/patches/eventfd_synchronization/0013-server-Create-eventfd-file-descriptors-for-process-o.patch
++++ b/patches/eventfd_synchronization/0013-server-Create-eventfd-file-descriptors-for-process-o.patch
+@@ -1,4 +1,4 @@
+-From 61fb7e02aa6779469e94c79f1132c4991cb27244 Mon Sep 17 00:00:00 2001
++From 3e714e2eb10fe17f12b747731c0ce7e18fd4b7a0 Mon Sep 17 00:00:00 2001
+ From: Zebediah Figura <zfigura@codeweavers.com>
+ Date: Mon, 6 Jul 2020 15:11:12 -0500
+ Subject: [PATCH] server: Create eventfd file descriptors for process objects.
+@@ -40,16 +40,16 @@ index c7b0323f204..27049ffbdb0 100644
+  {
+      struct esync *esync;
+ diff --git a/server/esync.h b/server/esync.h
+-index 00f9e638d83..8522d8a69ae 100644
++index 7ca4ca89394..6a0a367124d 100644
+ --- a/server/esync.h
+ +++ b/server/esync.h
+-@@ -22,3 +22,4 @@
++@@ -20,3 +20,4 @@
+  
+  extern int do_esync(void);
+  void esync_init(void);
+ +int esync_create_fd( int initval, int flags );
+ diff --git a/server/process.c b/server/process.c
+-index da11b90c613..22ac16fb540 100644
++index da972a41955..91b26d00ec0 100644
+ --- a/server/process.c
+ +++ b/server/process.c
+ @@ -63,6 +63,7 @@
+@@ -77,7 +77,7 @@ index da11b90c613..22ac16fb540 100644
+      no_satisfied,                /* satisfied */
+      no_signal,                   /* signal */
+      no_get_fd,                   /* get_fd */
+-@@ -686,6 +688,7 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
++@@ -684,6 +686,7 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
+      process->rawinput_mouse  = NULL;
+      process->rawinput_kbd    = NULL;
+      memset( &process->image_info, 0, sizeof(process->image_info) );
+@@ -85,7 +85,7 @@ index da11b90c613..22ac16fb540 100644
+      list_init( &process->kernel_object );
+      list_init( &process->thread_list );
+      list_init( &process->locks );
+-@@ -742,6 +745,9 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
++@@ -741,6 +744,9 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
+      if (!token_assign_label( process->token, &high_label_sid ))
+          goto error;
+  
+@@ -95,15 +95,15 @@ index da11b90c613..22ac16fb540 100644
+      set_fd_events( process->msg_fd, POLLIN );  /* start listening to events */
+      return process;
+  
+-@@ -789,6 +795,7 @@ static void process_destroy( struct object *obj )
+-     free( process->rawinput_devices );
++@@ -787,6 +793,7 @@ static void process_destroy( struct object *obj )
++     if (process->token) release_object( process->token );
+      free( process->dir_cache );
+      free( process->image );
+ +    if (do_esync()) close( process->esync_fd );
+  }
+  
+  /* dump a process on stdout for debugging purposes */
+-@@ -806,6 +813,13 @@ static int process_signaled( struct object *obj, struct wait_queue_entry *entry
++@@ -804,6 +811,13 @@ static int process_signaled( struct object *obj, struct wait_queue_entry *entry
+      return !process->running_threads;
+  }
+  
+@@ -118,10 +118,10 @@ index da11b90c613..22ac16fb540 100644
+  {
+      access = default_map_access( obj, access );
+ diff --git a/server/process.h b/server/process.h
+-index 97e0d455ece..a0a071d8f88 100644
++index 632faf9c4bf..1ba69b3406e 100644
+ --- a/server/process.h
+ +++ b/server/process.h
+-@@ -85,6 +85,7 @@ struct process
++@@ -90,6 +90,7 @@ struct process
+      const struct rawinput_device *rawinput_kbd;   /* rawinput keyboard device, if any */
+      struct list          kernel_object;   /* list of kernel object pointers */
+      pe_image_info_t      image_info;      /* main exe image info */
+@@ -130,5 +130,5 @@ index 97e0d455ece..a0a071d8f88 100644
+  
+  /* process functions */
+ -- 
+-2.35.1
++2.34.1
+ 
+diff --git a/patches/eventfd_synchronization/0021-server-ntdll-Implement-message-waits.patch b/patches/eventfd_synchronization/0021-server-ntdll-Implement-message-waits.patch
+index f88a31d4..6459ab88 100644
+--- a/patches/eventfd_synchronization/0021-server-ntdll-Implement-message-waits.patch
++++ b/patches/eventfd_synchronization/0021-server-ntdll-Implement-message-waits.patch
+@@ -1,4 +1,4 @@
+-From ca6a89f3bfb6aa5d7ac05bb0c469b527ae1a9d9d Mon Sep 17 00:00:00 2001
++From e0a89702e35941e75ce06f795966c92b3f195ed8 Mon Sep 17 00:00:00 2001
+ From: Zebediah Figura <zfigura@codeweavers.com>
+ Date: Mon, 6 Jul 2020 16:11:23 -0500
+ Subject: [PATCH] server, ntdll: Implement message waits.
+@@ -10,10 +10,10 @@ Subject: [PATCH] server, ntdll: Implement message waits.
+  3 files changed, 75 insertions(+), 2 deletions(-)
+ 
+ diff --git a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
+-index 2ae334d8417..608c318c1c7 100644
++index fcbe563bb5a..88490e08ef9 100644
+ --- a/dlls/ntdll/unix/esync.c
+ +++ b/dlls/ntdll/unix/esync.c
+-@@ -475,12 +475,13 @@ static void update_grabbed_object( struct esync *obj )
++@@ -482,12 +482,13 @@ static void update_grabbed_object( struct esync *obj )
+  
+  /* A value of STATUS_NOT_IMPLEMENTED returned from this function means that we
+   * need to delegate to server_select(). */
+@@ -28,7 +28,7 @@ index 2ae334d8417..608c318c1c7 100644
+      LONGLONG timeleft;
+      LARGE_INTEGER now;
+      ULONGLONG end;
+-@@ -508,6 +509,9 @@ NTSTATUS esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_an
++@@ -515,6 +516,9 @@ NTSTATUS esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_an
+              return ret;
+      }
+  
+@@ -38,7 +38,7 @@ index 2ae334d8417..608c318c1c7 100644
+      if (has_esync && has_server)
+          FIXME("Can't wait on esync and server objects at the same time!\n");
+      else if (has_server)
+-@@ -519,6 +523,9 @@ NTSTATUS esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_an
++@@ -526,6 +530,9 @@ NTSTATUS esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_an
+          for (i = 0; i < count; i++)
+              TRACE(" %p", handles[i]);
+  
+@@ -48,7 +48,7 @@ index 2ae334d8417..608c318c1c7 100644
+          if (!timeout)
+              TRACE(", timeout = INFINITE.\n");
+          else
+-@@ -558,7 +565,9 @@ NTSTATUS esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_an
++@@ -565,7 +572,9 @@ NTSTATUS esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_an
+                          int64_t value;
+                          ssize_t size;
+  
+@@ -59,7 +59,7 @@ index 2ae334d8417..608c318c1c7 100644
+                          {
+                              /* Don't grab the object, just check if it's signaled. */
+                              if (fds[i].revents & POLLIN)
+-@@ -603,6 +612,44 @@ NTSTATUS esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_an
++@@ -610,6 +619,44 @@ NTSTATUS esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_an
+      }
+  }
+  
+@@ -105,10 +105,10 @@ index 2ae334d8417..608c318c1c7 100644
+  {
+      struct stat st;
+ diff --git a/server/protocol.def b/server/protocol.def
+-index 5cf63cbac21..f837944574e 100644
++index cf00ab99c63..ecbb78cc9bb 100644
+ --- a/server/protocol.def
+ +++ b/server/protocol.def
+-@@ -3797,3 +3797,8 @@ enum esync_type
++@@ -3734,3 +3734,8 @@ enum esync_type
+      int          type;
+      unsigned int shm_idx;
+  @END
+@@ -118,10 +118,10 @@ index 5cf63cbac21..f837944574e 100644
+ +    int          in_msgwait;    /* are we in a message wait? */
+ +@END
+ diff --git a/server/queue.c b/server/queue.c
+-index 1702acb8480..9593ae532d4 100644
++index d34bc284d08..f4edb299dc3 100644
+ --- a/server/queue.c
+ +++ b/server/queue.c
+-@@ -144,6 +144,7 @@ struct msg_queue
++@@ -146,6 +146,7 @@ struct msg_queue
+      int                    keystate_lock;   /* owns an input keystate lock */
+      unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
+      int                    esync_fd;        /* esync file descriptor (signalled on message) */
+@@ -129,7 +129,7 @@ index 1702acb8480..9593ae532d4 100644
+  };
+  
+  struct hotkey
+-@@ -317,6 +318,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
++@@ -319,6 +320,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+          queue->keystate_lock   = 0;
+          queue->ignore_post_msg = 0;
+          queue->esync_fd        = -1;
+@@ -137,7 +137,7 @@ index 1702acb8480..9593ae532d4 100644
+          list_init( &queue->send_result );
+          list_init( &queue->callback_result );
+          list_init( &queue->pending_timers );
+-@@ -1001,6 +1003,10 @@ static int is_queue_hung( struct msg_queue *queue )
++@@ -1002,6 +1004,10 @@ static int is_queue_hung( struct msg_queue *queue )
+          if (get_wait_queue_thread(entry)->queue == queue)
+              return 0;  /* thread is waiting on queue -> not hung */
+      }
+@@ -148,9 +148,9 @@ index 1702acb8480..9593ae532d4 100644
+      return 1;
+  }
+  
+-@@ -3456,3 +3462,18 @@ DECL_HANDLER(update_rawinput_devices)
+-     process->rawinput_mouse = find_rawinput_device( process, 1, 2 );
+-     process->rawinput_kbd = find_rawinput_device( process, 1, 6 );
++@@ -3416,3 +3422,18 @@ DECL_HANDLER(get_rawinput_devices)
++             devices[i++] = e->device;
++     }
+  }
+ +
+ +DECL_HANDLER(esync_msgwait)
+@@ -168,5 +168,5 @@ index 1702acb8480..9593ae532d4 100644
+ +        set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
+ +}
+ -- 
+-2.35.1
++2.30.2
+ 
+diff --git a/patches/user32-DM_SETDEFID/0001-user32-Do-not-initialize-dialog-info-for-every-windo.patch b/patches/user32-DM_SETDEFID/0001-user32-Do-not-initialize-dialog-info-for-every-windo.patch
+index 794ad816..aa1c9b70 100644
+--- a/patches/user32-DM_SETDEFID/0001-user32-Do-not-initialize-dialog-info-for-every-windo.patch
++++ b/patches/user32-DM_SETDEFID/0001-user32-Do-not-initialize-dialog-info-for-every-windo.patch
+@@ -1,4 +1,4 @@
+-From fccb5f82e6bf351fdf815f7a77f0c6be4ef1f8a4 Mon Sep 17 00:00:00 2001
++From f5f76efccaf16896cfaf455c3f8e5383675a5b79 Mon Sep 17 00:00:00 2001
+ From: Dmitry Timoshkov <dmitry@baikal.ru>
+ Date: Wed, 15 Jun 2016 14:57:10 +0800
+ Subject: [PATCH] user32: Do not initialize dialog info for every window passed
+@@ -18,11 +18,11 @@ has been forced, so passing TRUE to DIALOG_get_info() is redundant there.
+  2 files changed, 3 insertions(+), 3 deletions(-)
+ 
+ diff --git a/dlls/user32/defdlg.c b/dlls/user32/defdlg.c
+-index 238951aa21c..ad2b0fe9fa9 100644
++index 3c7a8a78855..b7d30a7f1cf 100644
+ --- a/dlls/user32/defdlg.c
+ +++ b/dlls/user32/defdlg.c
+-@@ -325,7 +325,7 @@ static LRESULT USER_DefDlgProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
+-     LRESULT result;
++@@ -361,7 +361,7 @@ static LRESULT USER_DefDlgProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
++     LRESULT result = 0;
+  
+      /* Perform DIALOGINFO initialization if not done */
+ -    if(!(dlgInfo = DIALOG_get_info( hwnd, TRUE ))) return 0;
+@@ -30,17 +30,17 @@ index 238951aa21c..ad2b0fe9fa9 100644
+  
+      SetWindowLongPtrW( hwnd, DWLP_MSGRESULT, 0 );
+  
+-@@ -377,7 +377,7 @@ static LRESULT USER_DefDlgProcW( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
+-     LRESULT result;
++@@ -415,7 +415,7 @@ static LRESULT USER_DefDlgProcW( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
++     LRESULT result = 0;
+  
+      /* Perform DIALOGINFO initialization if not done */
+ -    if(!(dlgInfo = DIALOG_get_info( hwnd, TRUE ))) return 0;
+ +    if (!(dlgInfo = DIALOG_get_info( hwnd, msg == WM_NCCREATE ))) return 0;
+  
+      SetWindowLongPtrW( hwnd, DWLP_MSGRESULT, 0 );
+-     result = WINPROC_CallDlgProcW( hwnd, msg, wParam, lParam );
++ 
+ diff --git a/dlls/user32/dialog.c b/dlls/user32/dialog.c
+-index 5c74de65ac0..5c74d00973d 100644
++index a3efd5b6742..a226c764c49 100644
+ --- a/dlls/user32/dialog.c
+ +++ b/dlls/user32/dialog.c
+ @@ -212,7 +212,7 @@ static const WORD *DIALOG_GetControl32( const WORD *p, DLG_CONTROL_INFO *info,
+diff --git a/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch b/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
+index 67ec5c86..b4cc86c0 100644
+--- a/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
++++ b/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
+@@ -1,4 +1,4 @@
+-From bdef98a34241f02651374715cc03f90faef96bc0 Mon Sep 17 00:00:00 2001
++From c336f99371aaf087b85257de1087b475452f2f84 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
+ Date: Mon, 22 Jul 2019 15:29:25 +0300
+ Subject: [PATCH] user32/focus: Prevent a recursive loop with the activation
+@@ -21,7 +21,7 @@ Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
+  3 files changed, 30 insertions(+), 14 deletions(-)
+ 
+ diff --git a/dlls/user32/tests/msg.c b/dlls/user32/tests/msg.c
+-index 63388e2250e..6ddac9cc7d3 100644
++index c0a74d8edbe..585ff299142 100644
+ --- a/dlls/user32/tests/msg.c
+ +++ b/dlls/user32/tests/msg.c
+ @@ -5571,7 +5571,7 @@ static void test_messages(void)
+@@ -34,10 +34,10 @@ index 63388e2250e..6ddac9cc7d3 100644
+  
+      if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_MINIMIZE)
+ diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+-index a478a549fb2..ac0b51dfd73 100644
++index 28fc5a918c8..b8fd5622468 100644
+ --- a/dlls/win32u/input.c
+ +++ b/dlls/win32u/input.c
+-@@ -1569,7 +1569,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1547,7 +1547,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+  {
+      HWND previous = get_active_window();
+      BOOL ret;
+@@ -46,7 +46,7 @@ index a478a549fb2..ac0b51dfd73 100644
+      CBTACTIVATESTRUCT cbt;
+  
+      if (previous == hwnd)
+-@@ -1578,16 +1578,24 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1556,16 +1556,24 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          return TRUE;
+      }
+  
+@@ -80,7 +80,7 @@ index a478a549fb2..ac0b51dfd73 100644
+      }
+  
+      SERVER_START_REQ( set_active_window )
+-@@ -1607,7 +1615,11 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1585,7 +1593,11 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          if (send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ))
+              send_message_timeout( HWND_BROADCAST, WM_PALETTEISCHANGING, (WPARAM)hwnd, 0,
+                                    SMTO_ABORTIFHUNG, 2000, NULL, FALSE );
+@@ -93,7 +93,7 @@ index a478a549fb2..ac0b51dfd73 100644
+      }
+  
+      old_thread = previous ? get_window_thread( previous, NULL ) : 0;
+-@@ -1639,7 +1651,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1617,7 +1629,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          }
+      }
+  
+@@ -102,7 +102,7 @@ index a478a549fb2..ac0b51dfd73 100644
+      {
+          send_message( hwnd, WM_NCACTIVATE, hwnd == NtUserGetForegroundWindow(), (LPARAM)previous );
+          send_message( hwnd, WM_ACTIVATE,
+-@@ -1666,12 +1678,15 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1637,12 +1649,15 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          /* Do not change focus if the window is no more active */
+          if (hwnd == info.hwndActive)
+          {
+@@ -120,17 +120,17 @@ index a478a549fb2..ac0b51dfd73 100644
+  
+  /**********************************************************************
+ diff --git a/dlls/win32u/ntuser_private.h b/dlls/win32u/ntuser_private.h
+-index 3ecd7424f77..cc27526235d 100644
++index fe9d7e18bc9..e852a0d5aa0 100644
+ --- a/dlls/win32u/ntuser_private.h
+ +++ b/dlls/win32u/ntuser_private.h
+-@@ -105,6 +105,7 @@ typedef struct tagWND
++@@ -121,6 +121,7 @@ typedef struct tagWND
+  #define WIN_NEEDS_SHOW_OWNEDPOPUP 0x0020 /* WM_SHOWWINDOW:SC_SHOW must be sent in the next ShowOwnedPopup call */
+  #define WIN_CHILDREN_MOVED        0x0040 /* children may have moved, ignore stored positions */
+  #define WIN_HAS_IME_WIN           0x0080 /* the window has been registered with imm32 */
+ +#define WIN_IS_IN_ACTIVATION      0x0100 /* the window is in an activation process */
+  
+- #define WND_OTHER_PROCESS ((WND *)1)  /* returned by get_win_ptr on unknown window handles */
+- #define WND_DESKTOP       ((WND *)2)  /* returned by get_win_ptr on the desktop window */
++ #define WND_OTHER_PROCESS ((WND *)1)  /* returned by WIN_GetPtr on unknown window handles */
++ #define WND_DESKTOP       ((WND *)2)  /* returned by WIN_GetPtr on the desktop window */
+ -- 
+-2.35.1
++2.34.1
+ 
