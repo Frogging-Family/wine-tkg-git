@@ -6,7 +6,7 @@
 
   cd "$_nowhere"/external-resources
 
-  git clone https://gitlab.freedesktop.org/gstreamer/gstreamer.git || true # It'll complain the path already exists on subsequent builds
+  git clone https://github.com/GStreamer/gstreamer.git || true # It'll complain the path already exists on subsequent builds
   cd gstreamer
   git reset --hard HEAD
   git clean -xdf
