@@ -334,7 +334,12 @@ msg2 ''
   # Load preset configuration files if present and selected. All values will overwrite customization.cfg ones.
   if [ -n "$_LOCAL_PRESET" ] && ( [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ] || [ -e "$_where"/wine-tkg-profiles/legacy/wine-tkg-"$_LOCAL_PRESET".cfg ] ); then
     if [ "$_LOCAL_PRESET" = "valve" ] || [[ "$_LOCAL_PRESET" = valve-exp* ]]; then
-      source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg && msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
+      if [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
+        source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg
+      elif [ -e "$_where"/wine-tkg-profiles/legacy/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
+        source "$_where"/wine-tkg-profiles/legacy/wine-tkg-"$_LOCAL_PRESET".cfg
+      fi
+      msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
     else
       source "$_where"/wine-tkg-profiles/wine-tkg.cfg
       if [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
