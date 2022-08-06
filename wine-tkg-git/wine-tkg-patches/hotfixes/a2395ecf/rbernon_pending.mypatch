@@ -1,0 +1,195 @@
+From fcc817923bfb6c4942c0ef2c6bdb7eb953a65e0d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 5 Aug 2022 15:46:05 +0200
+Subject: [PATCH 1/4] server: Avoid reallocating rawinput device array with
+ zero size.
+
+It actually frees the pointer.
+---
+ server/queue.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/server/queue.c b/server/queue.c
+index 0d72fbd46d4..a9ab5295bb4 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -3397,6 +3397,14 @@ DECL_HANDLER(update_rawinput_devices)
+     size_t size = device_count * sizeof(*devices);
+     struct process *process = current->process;
+
++    if (!device_count)
++    {
++        process->rawinput_device_count = 0;
++        process->rawinput_mouse = NULL;
++        process->rawinput_kbd = NULL;
++        return;
++    }
++
+     if (!(tmp = realloc( process->rawinput_devices, size )))
+     {
+         set_error( STATUS_NO_MEMORY );
+--
+GitLab
+
+
+From cc8cb848aca8b4ad101c94c1e754077a3466f6ed Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 5 Aug 2022 15:49:17 +0200
+Subject: [PATCH 2/4] win32u: Avoid reallocating rawinput device array with
+ zero size.
+
+It actually frees the pointer.
+---
+ dlls/win32u/rawinput.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/dlls/win32u/rawinput.c b/dlls/win32u/rawinput.c
+index 8e3f3ace15a..44951522442 100644
+--- a/dlls/win32u/rawinput.c
++++ b/dlls/win32u/rawinput.c
+@@ -856,6 +856,12 @@ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT d
+
+     pthread_mutex_lock( &rawinput_mutex );
+
++    if (!registered_device_count && !device_count)
++    {
++        pthread_mutex_unlock( &rawinput_mutex );
++        return TRUE;
++    }
++
+     size = (SIZE_T)device_size * (registered_device_count + device_count);
+     registered_devices = realloc( registered_devices, size );
+     if (registered_devices) for (i = 0; i < device_count; ++i) register_rawinput_device( devices + i );
+--
+GitLab
+
+
+From 650df2c9e8d68d407ae5d835762a328e60648c92 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 5 Aug 2022 11:25:49 +0200
+Subject: [PATCH 3/4] win32u: Send the total number of registered devices to
+ the server.
+
+Instead of device_count which is the number of registration updates,
+and execute the request within the rawinput_mutex to ensure atomicity
+of the update and consistency between the client and the server state.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=53468
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=53487
+---
+ dlls/win32u/rawinput.c | 27 +++++++++++++++++----------
+ 1 file changed, 17 insertions(+), 10 deletions(-)
+
+diff --git a/dlls/win32u/rawinput.c b/dlls/win32u/rawinput.c
+index 44951522442..2dc03e7fe2d 100644
+--- a/dlls/win32u/rawinput.c
++++ b/dlls/win32u/rawinput.c
+@@ -866,8 +866,15 @@ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT d
+     registered_devices = realloc( registered_devices, size );
+     if (registered_devices) for (i = 0; i < device_count; ++i) register_rawinput_device( devices + i );
+
+-    server_devices = malloc( registered_device_count * sizeof(*server_devices) );
+-    if (server_devices) for (i = 0; i < registered_device_count; ++i)
++    if (!(device_count = registered_device_count)) server_devices = NULL;
++    else if (!(server_devices = malloc( device_count * sizeof(*server_devices) )))
++    {
++        pthread_mutex_unlock( &rawinput_mutex );
++        SetLastError( ERROR_OUTOFMEMORY );
++        return FALSE;
++    }
++
++    for (i = 0; i < device_count; ++i)
+     {
+         server_devices[i].usage_page = registered_devices[i].usUsagePage;
+         server_devices[i].usage = registered_devices[i].usUsage;
+@@ -875,14 +882,6 @@ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT d
+         server_devices[i].target = wine_server_user_handle( registered_devices[i].hwndTarget );
+     }
+
+-    pthread_mutex_unlock( &rawinput_mutex );
+-
+-    if (!registered_devices || !server_devices)
+-    {
+-        SetLastError( ERROR_OUTOFMEMORY );
+-        return FALSE;
+-    }
+-
+     SERVER_START_REQ( update_rawinput_devices )
+     {
+         wine_server_add_data( req, server_devices, device_count * sizeof(*server_devices) );
+@@ -892,6 +891,14 @@ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT d
+
+     free( server_devices );
+
++    pthread_mutex_unlock( &rawinput_mutex );
++
++    if (!registered_devices)
++    {
++        SetLastError( ERROR_OUTOFMEMORY );
++        return FALSE;
++    }
++
+     return ret;
+ }
+
+--
+GitLab
+
+
+From 4915bb2f06b7806dd5e04e1debb7be1de7b423a6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Sat, 6 Aug 2022 10:16:58 +0200
+Subject: [PATCH 4/4] win32u: Avoid invalid access when registered device alloc
+ failed. (Coverity)
+
+---
+ dlls/win32u/rawinput.c | 18 ++++++++++--------
+ 1 file changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/win32u/rawinput.c b/dlls/win32u/rawinput.c
+index 2dc03e7fe2d..cf150b60a8c 100644
+--- a/dlls/win32u/rawinput.c
++++ b/dlls/win32u/rawinput.c
+@@ -821,6 +821,7 @@ static void register_rawinput_device( const RAWINPUTDEVICE *device )
+ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT device_count, UINT device_size )
+ {
+     struct rawinput_device *server_devices;
++    RAWINPUTDEVICE *new_registered_devices;
+     SIZE_T size;
+     BOOL ret;
+     UINT i;
+@@ -863,8 +864,15 @@ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT d
+     }
+
+     size = (SIZE_T)device_size * (registered_device_count + device_count);
+-    registered_devices = realloc( registered_devices, size );
+-    if (registered_devices) for (i = 0; i < device_count; ++i) register_rawinput_device( devices + i );
++    if (!(new_registered_devices = realloc( registered_devices, size )))
++    {
++        pthread_mutex_unlock( &rawinput_mutex );
++        SetLastError( ERROR_OUTOFMEMORY );
++        return FALSE;
++    }
++
++    registered_devices = new_registered_devices;
++    for (i = 0; i < device_count; ++i) register_rawinput_device( devices + i );
+
+     if (!(device_count = registered_device_count)) server_devices = NULL;
+     else if (!(server_devices = malloc( device_count * sizeof(*server_devices) )))
+@@ -893,12 +901,6 @@ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT d
+
+     pthread_mutex_unlock( &rawinput_mutex );
+
+-    if (!registered_devices)
+-    {
+-        SetLastError( ERROR_OUTOFMEMORY );
+-        return FALSE;
+-    }
+-
+     return ret;
+ }
+
+--
+GitLab
+
+
