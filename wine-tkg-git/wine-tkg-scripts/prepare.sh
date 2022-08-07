@@ -743,9 +743,29 @@ _prepare() {
 	  fi
 	}
 
+	# Backports
+	nonuser_cherry_picker() {
+	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
+	    if ! git merge-base --is-ancestor $_committocherrypick HEAD; then
+	      echo -e "\n$_committocherrypick cherry picked $_hotfixmsg" >> "$_where"/prepare.log
+	      git cherry-pick -n --keep-redundant-commits $_committocherrypick >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+	      if [ "$_hotfixmsg" != "(hotfix)" ] && [ "$_hotfixmsg" != "(staging hotfix)" ]; then
+	        echo -e "$_committocherrypick cherry picked $_hotfixmsg" >> "$_where"/last_build_config.log
+	      fi
+	    fi
+	  fi
+	}
+
 	# Hotfixer
 	if [ "$_LOCAL_PRESET" != "staging" ] && [ "$_LOCAL_PRESET" != "mainline" ] && [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW1" =~ [yY] ]]; then
 	  source "$_where"/wine-tkg-patches/hotfixes/hotfixer
+	  msg2 "cherry picking..."
+	  for _commit in ${_hotfix_mainlinebackports[@]}; do
+	    cd "${srcdir}"/"${_winesrcdir}"
+	    _committocherrypick=$_commit _hotfixmsg="(hotfix)" nonuser_cherry_picker
+	    cd "${srcdir}"/"${_winesrcdir}"
+	  done
+	  echo -e "Done applying backports hotfixes (if any) - list available in prepare.log" >> "$_where"/last_build_config.log
 	  msg2 "Hotfixing..."
 	  for _commit in ${_hotfix_mainlinereverts[@]}; do
 	    cd "${srcdir}"/"${_winesrcdir}"
