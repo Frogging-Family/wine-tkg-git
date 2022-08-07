@@ -72,7 +72,9 @@ _exit_cleanup() {
     echo "_build_gstreamer='${_build_gstreamer}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_lib32_gstreamer='${_lib32_gstreamer}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_build_ffmpeg='${_build_ffmpeg}'" >> "$_proton_tkg_path"/proton_tkg_token
-    echo "_build_faudio='${_build_faudio}'" >> "$_proton_tkg_path"/proton_tkg_token
+    if [[ "$_LOCAL_PRESET" = valve* ]]; then
+      echo "_build_faudio='${_build_faudio}'" >> "$_proton_tkg_path"/proton_tkg_token # FAudio is builtin on current usptream wine
+    fi
     echo "_reuse_built_gst='${_reuse_built_gst}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_unfrog='${_unfrog}'" >> "$_proton_tkg_path"/proton_tkg_token
   fi
