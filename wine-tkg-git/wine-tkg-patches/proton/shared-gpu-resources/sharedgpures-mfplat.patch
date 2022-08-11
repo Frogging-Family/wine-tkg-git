@@ -1,0 +1,343 @@
+From dcb7d79931982a15553c5be0b136457f31bceb1a Mon Sep 17 00:00:00 2001
+From: Giovanni Mascellani <gmascellani@codeweavers.com>
+Date: Mon, 6 Jun 2022 12:28:58 +0200
+Subject: [PATCH 1/3] mfplat: Implement IMF2DBuffer2::Copy2DTo().
+
+Signed-off-by: Giovanni Mascellani <gmascellani@codeweavers.com>
+---
+ dlls/mfplat/buffer.c | 84 ++++++++++++++++++++++++++++++++++----------
+ 1 file changed, 65 insertions(+), 19 deletions(-)
+
+diff --git a/dlls/mfplat/buffer.c b/dlls/mfplat/buffer.c
+index e3d38438b88..9f3c11f97e1 100644
+--- a/dlls/mfplat/buffer.c
++++ b/dlls/mfplat/buffer.c
+@@ -32,7 +32,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
+ 
+ #define ALIGN_SIZE(size, alignment) (((size) + (alignment)) & ~((alignment)))
+ 
+-typedef void (*p_copy_image_func)(BYTE *dest, LONG dest_stride, const BYTE *src, LONG src_stride, DWORD width, DWORD lines);
++typedef HRESULT (*p_copy_image_func)(BYTE *dest, LONG dest_stride, const BYTE *src, LONG src_stride, DWORD width, DWORD lines, DWORD dest_size);
+ 
+ struct buffer
+ {
+@@ -75,32 +75,49 @@ struct buffer
+     CRITICAL_SECTION cs;
+ };
+ 
+-static void copy_image(const struct buffer *buffer, BYTE *dest, LONG dest_stride, const BYTE *src,
+-        LONG src_stride, DWORD width, DWORD lines)
++static HRESULT copy_image(const struct buffer *buffer, BYTE *dest, LONG dest_stride, const BYTE *src,
++        LONG src_stride, DWORD width, DWORD lines, DWORD dest_size)
+ {
+     MFCopyImage(dest, dest_stride, src, src_stride, width, lines);
+ 
++    if (width > abs(dest_stride) || abs(dest_stride) * lines > dest_size)
++        return E_NOT_SUFFICIENT_BUFFER;
++
+     if (buffer->_2d.copy_image)
+     {
+         dest += dest_stride * lines;
+         src += src_stride * lines;
+-        buffer->_2d.copy_image(dest, dest_stride, src, src_stride, width, lines);
++        return buffer->_2d.copy_image(dest, dest_stride, src, src_stride, width, lines, dest_size);
+     }
++
++    return S_OK;
+ }
+ 
+-static void copy_image_nv12(BYTE *dest, LONG dest_stride, const BYTE *src, LONG src_stride, DWORD width, DWORD lines)
++static HRESULT copy_image_nv12(BYTE *dest, LONG dest_stride, const BYTE *src,
++        LONG src_stride, DWORD width, DWORD lines, DWORD dest_size)
+ {
+-    MFCopyImage(dest, dest_stride, src, src_stride, width, lines / 2);
++    if (abs(dest_stride) * lines * 3 / 2 > dest_size)
++        return E_NOT_SUFFICIENT_BUFFER;
++
++    return MFCopyImage(dest, dest_stride, src, src_stride, width, lines / 2);
+ }
+ 
+-static void copy_image_imc1(BYTE *dest, LONG dest_stride, const BYTE *src, LONG src_stride, DWORD width, DWORD lines)
++static HRESULT copy_image_imc1(BYTE *dest, LONG dest_stride, const BYTE *src,
++        LONG src_stride, DWORD width, DWORD lines, DWORD dest_size)
+ {
+-    MFCopyImage(dest, dest_stride, src, src_stride, width / 2, lines);
++    if (abs(dest_stride) * lines * 2 > dest_size)
++        return E_NOT_SUFFICIENT_BUFFER;
++
++    return MFCopyImage(dest, dest_stride, src, src_stride, width / 2, lines);
+ }
+ 
+-static void copy_image_imc2(BYTE *dest, LONG dest_stride, const BYTE *src, LONG src_stride, DWORD width, DWORD lines)
++static HRESULT copy_image_imc2(BYTE *dest, LONG dest_stride, const BYTE *src,
++        LONG src_stride, DWORD width, DWORD lines, DWORD dest_size)
+ {
+-    MFCopyImage(dest, dest_stride / 2, src, src_stride / 2, width / 2, lines);
++    if (abs(dest_stride) * 3 / 2 * lines > dest_size)
++        return E_NOT_SUFFICIENT_BUFFER;
++
++    return MFCopyImage(dest, dest_stride / 2, src, src_stride / 2, width / 2, lines);
+ }
+ 
+ static inline struct buffer *impl_from_IMFMediaBuffer(IMFMediaBuffer *iface)
+@@ -313,7 +330,7 @@ static HRESULT WINAPI memory_1d_2d_buffer_Lock(IMFMediaBuffer *iface, BYTE **dat
+ 
+         if (SUCCEEDED(hr))
+             copy_image(buffer, buffer->_2d.linear_buffer, buffer->_2d.width, buffer->data, buffer->_2d.pitch,
+-                    buffer->_2d.width, buffer->_2d.height);
++                    buffer->_2d.width, buffer->_2d.height, buffer->_2d.plane_size);
+     }
+ 
+     if (SUCCEEDED(hr))
+@@ -342,7 +359,7 @@ static HRESULT WINAPI memory_1d_2d_buffer_Unlock(IMFMediaBuffer *iface)
+     if (buffer->_2d.linear_buffer && !--buffer->_2d.locks)
+     {
+         copy_image(buffer, buffer->data, buffer->_2d.pitch, buffer->_2d.linear_buffer, buffer->_2d.width,
+-                buffer->_2d.width, buffer->_2d.height);
++                buffer->_2d.width, buffer->_2d.height, buffer->max_length);
+ 
+         free(buffer->_2d.linear_buffer);
+         buffer->_2d.linear_buffer = NULL;
+@@ -392,7 +409,7 @@ static HRESULT WINAPI d3d9_surface_buffer_Lock(IMFMediaBuffer *iface, BYTE **dat
+             if (SUCCEEDED(hr))
+             {
+                 copy_image(buffer, buffer->_2d.linear_buffer, buffer->_2d.width, rect.pBits, rect.Pitch,
+-                        buffer->_2d.width, buffer->_2d.height);
++                        buffer->_2d.width, buffer->_2d.height, buffer->_2d.plane_size);
+                 IDirect3DSurface9_UnlockRect(buffer->d3d9_surface.surface);
+             }
+         }
+@@ -431,7 +448,7 @@ static HRESULT WINAPI d3d9_surface_buffer_Unlock(IMFMediaBuffer *iface)
+         if (SUCCEEDED(hr = IDirect3DSurface9_LockRect(buffer->d3d9_surface.surface, &rect, NULL, 0)))
+         {
+             copy_image(buffer, rect.pBits, rect.Pitch, buffer->_2d.linear_buffer, buffer->_2d.width,
+-                    buffer->_2d.width, buffer->_2d.height);
++                    buffer->_2d.width, buffer->_2d.height, buffer->max_length);
+             IDirect3DSurface9_UnlockRect(buffer->d3d9_surface.surface);
+         }
+ 
+@@ -632,11 +649,40 @@ static HRESULT WINAPI memory_2d_buffer_Lock2DSize(IMF2DBuffer2 *iface, MF2DBuffe
+     return hr;
+ }
+ 
+-static HRESULT WINAPI memory_2d_buffer_Copy2DTo(IMF2DBuffer2 *iface, IMF2DBuffer2 *dest_buffer)
++static HRESULT WINAPI memory_2d_buffer_Copy2DTo(IMF2DBuffer2 *iface, IMF2DBuffer2 *dst_buffer)
+ {
+-    FIXME("%p, %p.\n", iface, dest_buffer);
++    BYTE *src_scanline0, *dst_scanline0, *src_buffer_start, *dst_buffer_start;
++    struct buffer *buffer = impl_from_IMF2DBuffer2(iface);
++    BOOL src_locked = FALSE, dst_locked = FALSE;
++    DWORD src_length, dst_length;
++    LONG src_pitch, dst_pitch;
++    HRESULT hr;
+ 
+-    return E_NOTIMPL;
++    TRACE("%p, %p.\n", iface, dst_buffer);
++
++    hr = IMF2DBuffer2_Lock2DSize(iface, MF2DBuffer_LockFlags_Read, &src_scanline0,
++            &src_pitch, &src_buffer_start, &src_length);
++    if (FAILED(hr))
++        goto end;
++    src_locked = TRUE;
++
++    hr = IMF2DBuffer2_Lock2DSize(dst_buffer, MF2DBuffer_LockFlags_Write, &dst_scanline0,
++            &dst_pitch, &dst_buffer_start, &dst_length);
++    if (FAILED(hr))
++        goto end;
++    dst_locked = TRUE;
++
++    hr = copy_image(buffer, dst_scanline0, dst_pitch, src_scanline0, src_pitch,
++            buffer->_2d.width, buffer->_2d.height, dst_length);
++
++end:
++    if (src_locked && FAILED(IMF2DBuffer2_Unlock2D(iface)))
++        WARN("Couldn't unlock source buffer %p, hr %#lx.\n", iface, hr);
++
++    if (dst_locked && FAILED(IMF2DBuffer2_Unlock2D(dst_buffer)))
++        WARN("Couldn't unlock destination buffer %p, hr %#lx.\n", dst_buffer, hr);
++
++    return hr;
+ }
+ 
+ static const IMF2DBuffer2Vtbl memory_2d_buffer_vtbl =
+@@ -971,7 +1017,7 @@ static HRESULT WINAPI dxgi_surface_buffer_Lock(IMFMediaBuffer *iface, BYTE **dat
+             if (SUCCEEDED(hr))
+             {
+                 copy_image(buffer, buffer->_2d.linear_buffer, buffer->_2d.width, buffer->dxgi_surface.map_desc.pData,
+-                        buffer->dxgi_surface.map_desc.RowPitch, buffer->_2d.width, buffer->_2d.height);
++                        buffer->dxgi_surface.map_desc.RowPitch, buffer->_2d.width, buffer->_2d.height, buffer->_2d.plane_size);
+             }
+         }
+     }
+@@ -1005,7 +1051,7 @@ static HRESULT WINAPI dxgi_surface_buffer_Unlock(IMFMediaBuffer *iface)
+     else if (!--buffer->_2d.locks)
+     {
+         copy_image(buffer, buffer->dxgi_surface.map_desc.pData, buffer->dxgi_surface.map_desc.RowPitch,
+-                buffer->_2d.linear_buffer, buffer->_2d.width, buffer->_2d.width, buffer->_2d.height);
++                buffer->_2d.linear_buffer, buffer->_2d.width, buffer->_2d.width, buffer->_2d.height, buffer->max_length);
+         dxgi_surface_buffer_unmap(buffer);
+ 
+         free(buffer->_2d.linear_buffer);
+-- 
+GitLab
+
+
+From 94a4b28634eef9c866370dc9470cca90b032c9a6 Mon Sep 17 00:00:00 2001
+From: Giovanni Mascellani <gmascellani@codeweavers.com>
+Date: Mon, 11 Jul 2022 11:30:48 +0200
+Subject: [PATCH 2/3] mfplat/tests: Test IMF2DBuffer2::Copy2DTo().
+
+Signed-off-by: Giovanni Mascellani <gmascellani@codeweavers.com>
+---
+ dlls/mfplat/tests/mfplat.c | 33 ++++++++++++++++++++++-----------
+ 1 file changed, 22 insertions(+), 11 deletions(-)
+
+diff --git a/dlls/mfplat/tests/mfplat.c b/dlls/mfplat/tests/mfplat.c
+index 0249e7a13fb..577811aa1d0 100644
+--- a/dlls/mfplat/tests/mfplat.c
++++ b/dlls/mfplat/tests/mfplat.c
+@@ -5728,12 +5728,12 @@ static void test_MFCreate2DMediaBuffer(void)
+ {
+     static const char two_aas[] = { 0xaa, 0xaa };
+     static const char eight_bbs[] = { 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb };
++    IMF2DBuffer2 *_2dbuffer2, *_2dtarget2;
+     DWORD max_length, length, length2;
+     BYTE *buffer_start, *data, *data2;
++    IMFMediaBuffer *buffer, *target;
+     LONG pitch, pitch2, stride;
+-    IMF2DBuffer2 *_2dbuffer2;
+     IMF2DBuffer *_2dbuffer;
+-    IMFMediaBuffer *buffer;
+     int i, j, k;
+     HRESULT hr;
+     BOOL ret;
+@@ -5935,10 +5935,10 @@ static void test_MFCreate2DMediaBuffer(void)
+         ok(length == ptr->max_length, "%u: unexpected maximum length %lu for %u x %u, format %s.\n",
+                 i, length, ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
+ 
+-        hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMF2DBuffer, (void **)&_2dbuffer);
++        hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMF2DBuffer2, (void **)&_2dbuffer2);
+         ok(hr == S_OK, "Failed to get interface, hr %#lx.\n", hr);
+ 
+-        hr = IMF2DBuffer_GetContiguousLength(_2dbuffer, &length);
++        hr = IMF2DBuffer2_GetContiguousLength(_2dbuffer2, &length);
+         ok(hr == S_OK, "Failed to get length, hr %#lx.\n", hr);
+         ok(length == ptr->contiguous_length, "%d: unexpected contiguous length %lu for %u x %u, format %s.\n",
+                 i, length, ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
+@@ -5994,10 +5994,22 @@ static void test_MFCreate2DMediaBuffer(void)
+         hr = IMFMediaBuffer_Unlock(buffer);
+         ok(hr == S_OK, "Failed to unlock buffer, hr %#lx.\n", hr);
+ 
+-        hr = IMF2DBuffer_Lock2D(_2dbuffer, &data, &pitch);
++        hr = pMFCreate2DMediaBuffer(ptr->width, ptr->height, ptr->subtype->Data1, FALSE, &target);
++        ok(hr == S_OK, "Failed to create a buffer, hr %#lx.\n", hr);
++
++        hr = IMFMediaBuffer_QueryInterface(target, &IID_IMF2DBuffer2, (void **)&_2dtarget2);
++        ok(hr == S_OK, "Failed to get interface, hr %#lx.\n", hr);
++
++        hr = IMF2DBuffer2_Copy2DTo(_2dbuffer2, _2dtarget2);
++        ok(hr == S_OK, "Failed to copy buffer, hr %#lx.\n", hr);
++
++        IMF2DBuffer2_Release(_2dbuffer2);
++        IMFMediaBuffer_Release(buffer);
++
++        hr = IMF2DBuffer2_Lock2D(_2dtarget2, &data, &pitch);
+         ok(hr == S_OK, "Failed to lock buffer, hr %#lx.\n", hr);
+ 
+-        hr = IMF2DBuffer_GetScanline0AndPitch(_2dbuffer, &data2, &pitch2);
++        hr = IMF2DBuffer2_GetScanline0AndPitch(_2dtarget2, &data2, &pitch2);
+         ok(hr == S_OK, "Failed to get scanline, hr %#lx.\n", hr);
+         ok(data2 == data, "Unexpected data pointer.\n");
+         ok(pitch == pitch2, "Unexpected pitch.\n");
+@@ -6044,20 +6056,19 @@ static void test_MFCreate2DMediaBuffer(void)
+                 ;
+         }
+ 
+-        hr = IMF2DBuffer_Unlock2D(_2dbuffer);
++        hr = IMF2DBuffer2_Unlock2D(_2dtarget2);
+         ok(hr == S_OK, "Failed to unlock buffer, hr %#lx.\n", hr);
+ 
+         ok(pitch == ptr->pitch, "%d: unexpected pitch %ld, expected %d, %u x %u, format %s.\n", i, pitch, ptr->pitch,
+                 ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
+ 
+         ret = TRUE;
+-        hr = IMF2DBuffer_IsContiguousFormat(_2dbuffer, &ret);
++        hr = IMF2DBuffer2_IsContiguousFormat(_2dtarget2, &ret);
+         ok(hr == S_OK, "Failed to get format flag, hr %#lx.\n", hr);
+         ok(!ret, "%d: unexpected format flag %d.\n", i, ret);
+ 
+-        IMF2DBuffer_Release(_2dbuffer);
+-
+-        IMFMediaBuffer_Release(buffer);
++        IMF2DBuffer2_Release(_2dtarget2);
++        IMFMediaBuffer_Release(target);
+     }
+ 
+     /* Alignment tests */
+-- 
+GitLab
+
+
+From 7b5adc0afd520e426f4f5a3bf3c6c3a93bf2af89 Mon Sep 17 00:00:00 2001
+From: Giovanni Mascellani <gmascellani@codeweavers.com>
+Date: Mon, 6 Jun 2022 13:37:48 +0200
+Subject: [PATCH 3/3] mfplat/sample: Use Copy2DTo when copying samples, if
+ available.
+
+Signed-off-by: Giovanni Mascellani <gmascellani@codeweavers.com>
+---
+ dlls/mfplat/sample.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/dlls/mfplat/sample.c b/dlls/mfplat/sample.c
+index 687ada1a477..a0082660235 100644
+--- a/dlls/mfplat/sample.c
++++ b/dlls/mfplat/sample.c
+@@ -791,6 +791,28 @@ static HRESULT WINAPI sample_GetTotalLength(IMFSample *iface, DWORD *total_lengt
+     return S_OK;
+ }
+ 
++static HRESULT copy_2d_buffer(IMFMediaBuffer *src, IMFMediaBuffer *dst)
++{
++    IMF2DBuffer2 *src2d = NULL, *dst2d = NULL;
++    HRESULT hr = S_OK;
++
++    hr = IMFMediaBuffer_QueryInterface(src, &IID_IMF2DBuffer2, (void **)&src2d);
++
++    if (SUCCEEDED(hr))
++        hr = IMFMediaBuffer_QueryInterface(dst, &IID_IMF2DBuffer2, (void **)&dst2d);
++
++    if (SUCCEEDED(hr))
++        hr = IMF2DBuffer2_Copy2DTo(src2d, dst2d);
++
++    if (src2d)
++        IMF2DBuffer2_Release(src2d);
++
++    if (dst2d)
++        IMF2DBuffer2_Release(dst2d);
++
++    return hr;
++}
++
+ static HRESULT WINAPI sample_CopyToBuffer(IMFSample *iface, IMFMediaBuffer *buffer)
+ {
+     struct sample *sample = impl_from_IMFSample(iface);
+@@ -804,6 +826,15 @@ static HRESULT WINAPI sample_CopyToBuffer(IMFSample *iface, IMFMediaBuffer *buff
+ 
+     EnterCriticalSection(&sample->attributes.cs);
+ 
++    if (sample->buffer_count == 1)
++    {
++        if (SUCCEEDED(hr = copy_2d_buffer(sample->buffers[0], buffer)))
++        {
++            LeaveCriticalSection(&sample->attributes.cs);
++            return hr;
++        }
++    }
++
+     total_length = sample_get_total_length(sample);
+     dst_current_length = 0;
+ 
+-- 
+GitLab
+

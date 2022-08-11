@@ -371,6 +371,7 @@ msg2 ''
     _mtga_fix="false"
     _protonify="false"
     _childwindow_fix="false"
+    _shared_gpu_resources="false"
     _plasma_systray_fix="false"
     _wined3d_additions="false"
     _re4_fix="false"
@@ -920,6 +921,7 @@ _prepare() {
 
     source "$_where"/wine-tkg-patches/proton/valve_proton_fullscreen_hack/valve_proton_fullscreen_hack
     source "$_where"/wine-tkg-patches/misc/childwindow/childwindow-proton
+    source "$_where"/wine-tkg-patches/proton/shared-gpu-resources/shared-gpu-resources
     source "$_where"/wine-tkg-patches/proton/proton-rawinput/proton-rawinput
     source "$_where"/wine-tkg-patches/misc/winevulkan/winevulkan
     source "$_where"/wine-tkg-patches/game-specific/overwatch-mfstub/overwatch-mfstub
