@@ -10,14 +10,16 @@
   cd gstreamer
   git reset --hard HEAD
   git clean -xdf
-  git checkout f0b045a69bb0b36515b84e3b64df9dc30c8f1e1a
+  git pull origin main
+  #git checkout f0b045a69bb0b36515b84e3b64df9dc30c8f1e1a
   cd ..
 
   git clone https://github.com/FFmpeg/FFmpeg.git || true # It'll complain the path already exists on subsequent builds
   cd FFmpeg
   git reset --hard HEAD
   git clean -xdf
-  git checkout a77521c
+  git pull origin master
+  #git checkout a77521c
   cd ..
 
   if [ "$_build_faudio" = "true" ]; then
