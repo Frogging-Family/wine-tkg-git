@@ -252,7 +252,7 @@ msg2 ''
     fi
     if [ -z "$_LOCAL_PRESET" ]; then
       msg2 "No _LOCAL_PRESET set in .cfg. Please select your desired base:"
-      read -p "    What kind of Proton base do you want?`echo $'\n    > 1.Valve Proton Experimental Bleeding Edge\n      2.Valve Proton Experimental\n      3.Valve Proton\n      4.Wine upstream Proton\n    choice[1-4?]: '`" CONDITION;
+      read -p "    What kind of Proton base do you want?`echo $'\n    > 1.Valve Proton Experimental Bleeding Edge (Recommended for gaming on the edge)\n      2.Valve Proton Experimental\n      3.Valve Proton\n      4.Wine upstream Proton (The most experimental)\n    choice[1-4?]: '`" CONDITION;
       if [ "$CONDITION" = "2" ]; then
         _LOCAL_PRESET="valve-exp"
       elif [ "$CONDITION" = "3" ]; then
