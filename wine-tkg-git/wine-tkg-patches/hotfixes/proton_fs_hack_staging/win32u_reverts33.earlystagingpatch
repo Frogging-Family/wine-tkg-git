@@ -1,0 +1,59 @@
+diff --git a/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch b/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
+index 33e5b6b8..67ec5c86 100644
+--- a/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
++++ b/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
+@@ -1,4 +1,4 @@
+-From 0845b0fa1713fbab8494e7709c78b771db111286 Mon Sep 17 00:00:00 2001
++From bdef98a34241f02651374715cc03f90faef96bc0 Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
+ Date: Mon, 22 Jul 2019 15:29:25 +0300
+ Subject: [PATCH] user32/focus: Prevent a recursive loop with the activation
+@@ -34,7 +34,7 @@ index 63388e2250e..6ddac9cc7d3 100644
+  
+      if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_MINIMIZE)
+ diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+-index bc5266d038f..e77875c3745 100644
++index a478a549fb2..ac0b51dfd73 100644
+ --- a/dlls/win32u/input.c
+ +++ b/dlls/win32u/input.c
+ @@ -1569,7 +1569,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+@@ -53,7 +53,7 @@ index bc5266d038f..e77875c3745 100644
+ -    /* call CBT hook chain */
+ -    cbt.fMouse     = mouse;
+ -    cbt.hWndActive = previous;
+--    if (call_hooks( WH_CBT, HCBT_ACTIVATE, (WPARAM)hwnd, (LPARAM)&cbt )) return FALSE;
++-    if (call_hooks( WH_CBT, HCBT_ACTIVATE, (WPARAM)hwnd, (LPARAM)&cbt, TRUE )) return FALSE;
+ -
+ -    if (is_window( previous ))
+ +    /* Prevent a recursive activation loop with the activation messages */
+@@ -68,7 +68,7 @@ index bc5266d038f..e77875c3745 100644
+ +        /* call CBT hook chain */
+ +        cbt.fMouse     = mouse;
+ +        cbt.hWndActive = previous;
+-+        if (call_hooks( WH_CBT, HCBT_ACTIVATE, (WPARAM)hwnd, (LPARAM)&cbt ))
+++        if (call_hooks( WH_CBT, HCBT_ACTIVATE, (WPARAM)hwnd, (LPARAM)&cbt, TRUE ))
+ +            goto clear_flags;
+ +
+ +        if (is_window(previous))
+@@ -83,7 +83,7 @@ index bc5266d038f..e77875c3745 100644
+ @@ -1607,7 +1615,11 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          if (send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ))
+              send_message_timeout( HWND_BROADCAST, WM_PALETTEISCHANGING, (WPARAM)hwnd, 0,
+-                                   SMTO_ABORTIFHUNG, 2000, FALSE );
++                                   SMTO_ABORTIFHUNG, 2000, NULL, FALSE );
+ -        if (!is_window(hwnd)) return FALSE;
+ +        if (!is_window(hwnd))
+ +        {
+@@ -120,10 +120,10 @@ index bc5266d038f..e77875c3745 100644
+  
+  /**********************************************************************
+ diff --git a/dlls/win32u/ntuser_private.h b/dlls/win32u/ntuser_private.h
+-index 9f93feea407..db5ef584fd8 100644
++index 3ecd7424f77..cc27526235d 100644
+ --- a/dlls/win32u/ntuser_private.h
+ +++ b/dlls/win32u/ntuser_private.h
+-@@ -104,6 +104,7 @@ typedef struct tagWND
++@@ -105,6 +105,7 @@ typedef struct tagWND
+  #define WIN_NEEDS_SHOW_OWNEDPOPUP 0x0020 /* WM_SHOWWINDOW:SC_SHOW must be sent in the next ShowOwnedPopup call */
+  #define WIN_CHILDREN_MOVED        0x0040 /* children may have moved, ignore stored positions */
+  #define WIN_HAS_IME_WIN           0x0080 /* the window has been registered with imm32 */
