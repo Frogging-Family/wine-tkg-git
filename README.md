@@ -17,7 +17,7 @@ Valve Wine | [Exp Bleeding Edge Arch Linux](https://github.com/Frogging-Family/w
 ## Proton nightly builds
 
 - wine-staging patchset applied
-- built on Arch current, making glibc 2.35 a requirement
+- built on Arch current, making glibc 2.36 a requirement
 
 Proton | [Valve Exp Bleeding Edge](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/proton-valvexbe-arch-nopackage.yml) | [Wine Master](https://github.com/Frogging-Family/wine-tkg-git/actions/workflows/proton-arch-nopackage.yml) |
 -------------|--------|--------|
