@@ -93,7 +93,7 @@
     -D gpl=enabled
     -D gst-examples=disabled
     -D libnice=disabled
-    -D vaapi=enabled
+    -D vaapi=disabled
     -D introspection=disabled
     -D gstreamer:dbghelp=disabled
     -D gstreamer:gobject-cast-checks=disabled
