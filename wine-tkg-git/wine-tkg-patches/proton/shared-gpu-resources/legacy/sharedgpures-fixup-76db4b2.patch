@@ -1,337 +1,36 @@
-From 5b04d18945c547144bf692f6418af5ec25315835 Mon Sep 17 00:00:00 2001
-From: Nikolay Sivov <nsivov@codeweavers.com>
-Date: Tue, 17 May 2022 15:30:47 +0300
-Subject: [PATCH 1/5] Revert "mfreadwrite/reader: Propagate resource sharing
- mode to the sample allocator."
+From 76db4b2459920eb2e2004255e3388b069dd1d6f9 Mon Sep 17 00:00:00 2001
+From: Henri Verbeet <hverbeet@codeweavers.com>
+Date: Tue, 23 Aug 2022 10:38:41 +0200
+Subject: [PATCH] mfreadwrite/reader: Only attempt to copy sample buffers from
+ responses with non-NULL samples.
 
-This reverts commit 5b04d18945c547144bf692f6418af5ec25315835.
+For example, queueing a MF_SOURCE_READERF_ENDOFSTREAM response will set
+a NULL sample. This fixes a regression introduced by commit
+68fa3f673633c138596b86ad2ed1befcd0cc63c5.
 ---
- dlls/mfreadwrite/reader.c | 32 +-------------------------------
- 1 file changed, 1 insertion(+), 31 deletions(-)
+ dlls/mfreadwrite/reader.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/dlls/mfreadwrite/reader.c b/dlls/mfreadwrite/reader.c
-index 76348458fac..d1900eef74d 100644
+index f29d48b6a9e..5296e77f3c3 100644
 --- a/dlls/mfreadwrite/reader.c
 +++ b/dlls/mfreadwrite/reader.c
-@@ -1655,30 +1655,9 @@ static HRESULT source_reader_set_compatible_media_type(struct source_reader *rea
-     return type_set ? S_OK : S_FALSE;
- }
+@@ -958,7 +958,7 @@ static struct stream_response *media_stream_pop_response(struct source_reader *r
  
--static HRESULT source_reader_create_sample_allocator_attributes(const struct source_reader *reader,
--        IMFAttributes **attributes)
--{
--    UINT32 shared = 0, shared_without_mutex = 0;
--    HRESULT hr;
--
--    if (FAILED(hr = MFCreateAttributes(attributes, 1)))
--        return hr;
--
--    IMFAttributes_GetUINT32(reader->attributes, &MF_SA_D3D11_SHARED, &shared);
--    IMFAttributes_GetUINT32(reader->attributes, &MF_SA_D3D11_SHARED_WITHOUT_MUTEX, &shared_without_mutex);
--
--    if (shared_without_mutex)
--        hr = IMFAttributes_SetUINT32(*attributes, &MF_SA_D3D11_SHARED_WITHOUT_MUTEX, TRUE);
--    else if (shared)
--        hr = IMFAttributes_SetUINT32(*attributes, &MF_SA_D3D11_SHARED, TRUE);
--
--    return hr;
--}
--
- static HRESULT source_reader_setup_sample_allocator(struct source_reader *reader, unsigned int index)
- {
-     struct media_stream *stream = &reader->streams[index];
--    IMFAttributes *attributes = NULL;
-     GUID major = { 0 };
-     HRESULT hr;
- 
-@@ -1705,17 +1684,8 @@ static HRESULT source_reader_setup_sample_allocator(struct source_reader *reader
-         return hr;
-     }
- 
--    if (FAILED(hr = source_reader_create_sample_allocator_attributes(reader, &attributes)))
--        WARN("Failed to create allocator attributes, hr %#lx.\n", hr);
--
--    if (FAILED(hr = IMFVideoSampleAllocatorEx_InitializeSampleAllocatorEx(stream->allocator, 2, 8,
--            attributes, stream->current)))
--    {
-+    if (FAILED(hr = IMFVideoSampleAllocatorEx_InitializeSampleAllocatorEx(stream->allocator, 2, 8, NULL, stream->current)))
-         WARN("Failed to initialize sample allocator, hr %#lx.\n", hr);
--    }
--
--    if (attributes)
--        IMFAttributes_Release(attributes);
- 
-     return hr;
- }
--- 
-2.37.1
-
-From 68fa3f673633c138596b86ad2ed1befcd0cc63c5 Mon Sep 17 00:00:00 2001
-From: Nikolay Sivov <nsivov@codeweavers.com>
-Date: Fri, 13 May 2022 19:34:13 +0300
-Subject: [PATCH 2/5] Revert "mfreadwrite/reader: Allocate output samples on
- read requests."
-
-This reverts commit 68fa3f673633c138596b86ad2ed1befcd0cc63c5.
----
- dlls/mfreadwrite/reader.c | 138 +++++++++++++++++++++++++++++++-------
- 1 file changed, 113 insertions(+), 25 deletions(-)
-
-diff --git a/dlls/mfreadwrite/reader.c b/dlls/mfreadwrite/reader.c
-index d1900eef74d..c6a10fa0e8d 100644
---- a/dlls/mfreadwrite/reader.c
-+++ b/dlls/mfreadwrite/reader.c
-@@ -52,6 +52,7 @@ struct stream_response
-     DWORD stream_flags;
-     LONGLONG timestamp;
-     IMFSample *sample;
-+    unsigned int sa_pending : 1;
- };
- 
- enum media_stream_state
-@@ -86,6 +87,7 @@ struct media_stream
-     IMFMediaType *current;
-     struct stream_transform decoder;
-     IMFVideoSampleAllocatorEx *allocator;
-+    IMFVideoSampleAllocatorNotify notify_cb;
-     DWORD id;
-     unsigned int index;
-     enum media_stream_state state;
-@@ -102,6 +104,7 @@ enum source_reader_async_op
-     SOURCE_READER_ASYNC_SEEK,
-     SOURCE_READER_ASYNC_FLUSH,
-     SOURCE_READER_ASYNC_SAMPLE_READY,
-+    SOURCE_READER_ASYNC_SA_READY,
- };
- 
- struct source_reader_async_command
-@@ -198,6 +201,11 @@ static struct source_reader_async_command *impl_from_async_command_IUnknown(IUnk
-     return CONTAINING_RECORD(iface, struct source_reader_async_command, IUnknown_iface);
- }
- 
-+static struct media_stream *impl_stream_from_IMFVideoSampleAllocatorNotify(IMFVideoSampleAllocatorNotify *iface)
-+{
-+    return CONTAINING_RECORD(iface, struct media_stream, notify_cb);
-+}
-+
- static void source_reader_release_responses(struct source_reader *reader, struct media_stream *stream);
- 
- static ULONG source_reader_addref(struct source_reader *reader)
-@@ -386,7 +394,7 @@ static void source_reader_response_ready(struct source_reader *reader, struct st
-     struct media_stream *stream = &reader->streams[response->stream_index];
-     HRESULT hr;
- 
--    if (!stream->requests)
-+    if (!stream->requests || response->sa_pending)
-         return;
- 
-     if (reader->async_callback)
-@@ -438,6 +446,20 @@ static void source_reader_copy_sample_buffer(IMFSample *src, IMFSample *dst)
-     }
- }
- 
-+static void source_reader_set_sa_response(struct source_reader *reader, struct stream_response *response)
-+{
-+    struct media_stream *stream = &reader->streams[response->stream_index];
-+    IMFSample *sample;
-+
-+    if (SUCCEEDED(IMFVideoSampleAllocatorEx_AllocateSample(stream->allocator, &sample)))
-+    {
-+        source_reader_copy_sample_buffer(response->sample, sample);
-+        response->sa_pending = 0;
-+        IMFSample_Release(response->sample);
-+        response->sample = sample;
-+    }
-+}
-+
- static HRESULT source_reader_queue_response(struct source_reader *reader, struct media_stream *stream, HRESULT status,
-         DWORD stream_flags, LONGLONG timestamp, IMFSample *sample)
- {
-@@ -454,6 +476,12 @@ static HRESULT source_reader_queue_response(struct source_reader *reader, struct
-     if (response->sample)
-         IMFSample_AddRef(response->sample);
- 
-+    if (response->sample && stream->allocator)
-+    {
-+        response->sa_pending = 1;
-+        source_reader_set_sa_response(reader, response);
-+    }
-+
-     list_add_tail(&reader->responses, &response->entry);
-     stream->responses++;
- 
-@@ -949,37 +977,26 @@ static struct stream_response * media_stream_detach_response(struct source_reade
- static struct stream_response *media_stream_pop_response(struct source_reader *reader, struct media_stream *stream)
- {
-     struct stream_response *response;
--    IMFSample *sample;
--    HRESULT hr;
- 
-     LIST_FOR_EACH_ENTRY(response, &reader->responses, struct stream_response, entry)
-     {
--        if (stream && response->stream_index != stream->index)
-+        if ((stream && response->stream_index != stream->index) || response->sa_pending)
-             continue;
- 
--        if (!stream) stream = &reader->streams[response->stream_index];
-+        return media_stream_detach_response(reader, response);
-+    }
+         if (!stream) stream = &reader->streams[response->stream_index];
  
 -        if (stream->allocator)
--        {
--            /* Return allocation error to the caller, while keeping original response sample in for later. */
--            if (SUCCEEDED(hr = IMFVideoSampleAllocatorEx_AllocateSample(stream->allocator, &sample)))
--            {
--                source_reader_copy_sample_buffer(response->sample, sample);
--                IMFSample_Release(response->sample);
--                response->sample = sample;
--            }
--            else
--            {
--                if (!(response = calloc(1, sizeof(*response))))
--                    return NULL;
-+    return NULL;
-+}
- 
--                response->status = hr;
--                response->stream_flags = MF_SOURCE_READERF_ERROR;
--                return response;
--            }
--        }
-+static struct stream_response *media_stream_pick_pending_response(struct source_reader *reader, unsigned int stream)
-+{
-+    struct stream_response *response;
- 
--        return media_stream_detach_response(reader, response);
-+    LIST_FOR_EACH_ENTRY(response, &reader->responses, struct stream_response, entry)
-+    {
-+        if (response->stream_index == stream && response->sa_pending)
-+            return response;
-     }
- 
-     return NULL;
-@@ -1055,7 +1072,7 @@ static BOOL source_reader_got_response_for_stream(struct source_reader *reader,
- 
-     LIST_FOR_EACH_ENTRY(response, &reader->responses, struct stream_response, entry)
-     {
--        if (response->stream_index == stream->index)
-+        if (response->stream_index == stream->index && !response->sa_pending)
-             return TRUE;
-     }
- 
-@@ -1290,6 +1307,18 @@ static HRESULT WINAPI source_reader_async_commands_callback_Invoke(IMFAsyncCallb
- 
-             break;
- 
-+        case SOURCE_READER_ASYNC_SA_READY:
-+
-+            EnterCriticalSection(&reader->cs);
-+            if ((response = media_stream_pick_pending_response(reader, command->u.sa.stream_index)))
-+            {
-+                source_reader_set_sa_response(reader, response);
-+                source_reader_response_ready(reader, response);
-+            }
-+            LeaveCriticalSection(&reader->cs);
-+
-+            break;
-+
-         case SOURCE_READER_ASYNC_SAMPLE_READY:
- 
-             EnterCriticalSection(&reader->cs);
-@@ -1658,6 +1687,7 @@ static HRESULT source_reader_set_compatible_media_type(struct source_reader *rea
- static HRESULT source_reader_setup_sample_allocator(struct source_reader *reader, unsigned int index)
- {
-     struct media_stream *stream = &reader->streams[index];
-+    IMFVideoSampleAllocatorCallback *callback;
-     GUID major = { 0 };
-     HRESULT hr;
- 
-@@ -1687,6 +1717,13 @@ static HRESULT source_reader_setup_sample_allocator(struct source_reader *reader
-     if (FAILED(hr = IMFVideoSampleAllocatorEx_InitializeSampleAllocatorEx(stream->allocator, 2, 8, NULL, stream->current)))
-         WARN("Failed to initialize sample allocator, hr %#lx.\n", hr);
- 
-+    if (SUCCEEDED(IMFVideoSampleAllocatorEx_QueryInterface(stream->allocator, &IID_IMFVideoSampleAllocatorCallback, (void **)&callback)))
-+    {
-+        if (FAILED(hr = IMFVideoSampleAllocatorCallback_SetCallback(callback, &stream->notify_cb)))
-+            WARN("Failed to set allocator callback, hr %#lx.\n", hr);
-+        IMFVideoSampleAllocatorCallback_Release(callback);
-+    }
-+
-     return hr;
- }
- 
-@@ -2255,6 +2292,56 @@ static DWORD reader_get_first_stream_index(IMFPresentationDescriptor *descriptor
-     return MF_SOURCE_READER_INVALID_STREAM_INDEX;
- }
- 
-+static HRESULT WINAPI stream_sample_allocator_cb_QueryInterface(IMFVideoSampleAllocatorNotify *iface,
-+        REFIID riid, void **obj)
-+{
-+    if (IsEqualIID(riid, &IID_IMFVideoSampleAllocatorNotify) ||
-+            IsEqualIID(riid, &IID_IUnknown))
-+    {
-+        *obj = iface;
-+        IMFVideoSampleAllocatorNotify_AddRef(iface);
-+        return S_OK;
-+    }
-+
-+    *obj = NULL;
-+    return E_NOINTERFACE;
-+}
-+
-+static ULONG WINAPI stream_sample_allocator_cb_AddRef(IMFVideoSampleAllocatorNotify *iface)
-+{
-+    struct media_stream *stream = impl_stream_from_IMFVideoSampleAllocatorNotify(iface);
-+    return source_reader_addref(stream->reader);
-+}
-+
-+static ULONG WINAPI stream_sample_allocator_cb_Release(IMFVideoSampleAllocatorNotify *iface)
-+{
-+    struct media_stream *stream = impl_stream_from_IMFVideoSampleAllocatorNotify(iface);
-+    return source_reader_release(stream->reader);
-+}
-+
-+static HRESULT WINAPI stream_sample_allocator_cb_NotifyRelease(IMFVideoSampleAllocatorNotify *iface)
-+{
-+    struct media_stream *stream = impl_stream_from_IMFVideoSampleAllocatorNotify(iface);
-+    struct source_reader_async_command *command;
-+
-+    if (SUCCEEDED(source_reader_create_async_op(SOURCE_READER_ASYNC_SA_READY, &command)))
-+    {
-+        command->u.sa.stream_index = stream->index;
-+        MFPutWorkItem(stream->reader->queue, &stream->reader->async_commands_callback, &command->IUnknown_iface);
-+        IUnknown_Release(&command->IUnknown_iface);
-+    }
-+
-+    return S_OK;
-+}
-+
-+static const IMFVideoSampleAllocatorNotifyVtbl stream_sample_allocator_cb_vtbl =
-+{
-+    stream_sample_allocator_cb_QueryInterface,
-+    stream_sample_allocator_cb_AddRef,
-+    stream_sample_allocator_cb_Release,
-+    stream_sample_allocator_cb_NotifyRelease,
-+};
-+
- static HRESULT create_source_reader_from_source(IMFMediaSource *source, IMFAttributes *attributes,
-         BOOL shutdown_on_release, REFIID riid, void **out)
- {
-@@ -2326,6 +2413,7 @@ static HRESULT create_source_reader_from_source(IMFMediaSource *source, IMFAttri
-         if (FAILED(hr))
-             break;
- 
-+        object->streams[i].notify_cb.lpVtbl = &stream_sample_allocator_cb_vtbl;
-         object->streams[i].reader = object;
-         object->streams[i].index = i;
-     }
++        if (response->sample && stream->allocator)
+         {
+             /* Return allocation error to the caller, while keeping original response sample in for later. */
+             if (SUCCEEDED(hr = IMFVideoSampleAllocatorEx_AllocateSample(stream->allocator, &sample)))
 -- 
-2.37.1
+2.37.2
 
 From 3f8767dfb0944c3dbe8f9f9c010cd75502dd86b3 Mon Sep 17 00:00:00 2001
 From: Giovanni Mascellani <gmascellani@codeweavers.com>
 Date: Thu, 4 Nov 2021 12:51:31 +0100
-Subject: [PATCH 3/5] mfreadwrite/reader: Add a passthrough transform.
+Subject: [PATCH 1/3] mfreadwrite/reader: Add a passthrough transform.
 
 On Windows media sources typically produce compressed data, so
 the source reader automatically adds a transform to decompress it.
@@ -866,7 +565,7 @@ index 20521ff09d7..b5e0c05b171 100644
 From 40041c494d569c416da23e57f90221b48ab9444e Mon Sep 17 00:00:00 2001
 From: Giovanni Mascellani <gmascellani@codeweavers.com>
 Date: Thu, 4 Nov 2021 16:36:06 +0100
-Subject: [PATCH 4/5] mfreadwrite/reader: Initialize the sample allocators
+Subject: [PATCH 2/3] mfreadwrite/reader: Initialize the sample allocators
  with attributes from both the reader and the transform.
 
 Some applications (e.g., Trailmakers) set the output attribute
@@ -887,25 +586,10 @@ diff --git a/dlls/mfreadwrite/reader.c b/dlls/mfreadwrite/reader.c
 index b5e0c05b171..61c8bfd3210 100644
 --- a/dlls/mfreadwrite/reader.c
 +++ b/dlls/mfreadwrite/reader.c
-@@ -2125,6 +2125,7 @@ static HRESULT source_reader_setup_sample_allocator(struct source_reader *reader
- {
-     struct media_stream *stream = &reader->streams[index];
-     IMFVideoSampleAllocatorCallback *callback;
-+    IMFAttributes *attributes;
-     GUID major = { 0 };
-     HRESULT hr;
+@@ -2151,6 +2152,29 @@ static HRESULT source_reader_setup_sample_allocator(struct source_reader *reader
+     if (FAILED(hr = source_reader_create_sample_allocator_attributes(reader, &attributes)))
+         WARN("Failed to create allocator attributes, hr %#lx.\n", hr);
  
-@@ -2151,9 +2152,40 @@ static HRESULT source_reader_setup_sample_allocator(struct source_reader *reader
-         return hr;
-     }
- 
--    if (FAILED(hr = IMFVideoSampleAllocatorEx_InitializeSampleAllocatorEx(stream->allocator, 2, 8, NULL, stream->current)))
-+    if (FAILED(hr = MFCreateAttributes(&attributes, 8)))
-+    {
-+        WARN("Failed to create attributes object, hr %#x.\n", hr);
-+        return hr;
-+    }
-+
 +    if (reader->attributes)
 +    {
 +        if (FAILED(hr = IMFAttributes_CopyAllItems(reader->attributes, attributes)))
@@ -929,21 +613,16 @@ index b5e0c05b171..61c8bfd3210 100644
 +        }
 +    }
 +
-+    if (FAILED(hr = IMFVideoSampleAllocatorEx_InitializeSampleAllocatorEx(stream->allocator, 2, 8, attributes, stream->current)))
-         WARN("Failed to initialize sample allocator, hr %#lx.\n", hr);
- 
-+    IMFAttributes_Release(attributes);
-+
-     if (SUCCEEDED(IMFVideoSampleAllocatorEx_QueryInterface(stream->allocator, &IID_IMFVideoSampleAllocatorCallback, (void **)&callback)))
+     if (FAILED(hr = IMFVideoSampleAllocatorEx_InitializeSampleAllocatorEx(stream->allocator, 2, 8,
+             attributes, stream->current)))
      {
-         if (FAILED(hr = IMFVideoSampleAllocatorCallback_SetCallback(callback, &stream->notify_cb)))
 -- 
 2.37.1
 
 From 649717ad0a34e07886fd2568623b5e33b2a875f3 Mon Sep 17 00:00:00 2001
 From: Giovanni Mascellani <gmascellani@codeweavers.com>
 Date: Mon, 15 Nov 2021 13:06:10 +0100
-Subject: [PATCH 5/5] mfreadwrite/reader: Setup the sample allocator in
+Subject: [PATCH 3/3] mfreadwrite/reader: Setup the sample allocator in
  ReadSample.
 
 Currently the source reader creates a sample allocator as soon as
