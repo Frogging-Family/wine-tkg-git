@@ -372,6 +372,7 @@
 	-D gst-plugins-good:imagefreeze=disabled
 	-D gst-plugins-good:interleave=disabled
 	-D gst-plugins-good:jack=disabled
+	-D gst-plugins-good:lame=disabled
 	-D gst-plugins-good:law=disabled
 	-D gst-plugins-good:level=disabled
 	-D gst-plugins-good:libcaca=disabled
