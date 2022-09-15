@@ -1,0 +1,95 @@
+diff --git a/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch b/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
+index 2c5d3456..c13476a5 100644
+--- a/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
++++ b/patches/user32-recursive-activation/0001-user32-focus-Prevent-a-recursive-loop-with-the-activ.patch
+@@ -1,4 +1,4 @@
+-From 364612d585a26bb8b4b9f8428103585e05f7ee78 Mon Sep 17 00:00:00 2001
++From 757ca470261e45e8c3133ee0bb64e76198f6c02f Mon Sep 17 00:00:00 2001
+ From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
+ Date: Mon, 22 Jul 2019 15:29:25 +0300
+ Subject: [PATCH] user32/focus: Prevent a recursive loop with the activation
+@@ -15,15 +15,29 @@ actually depend on this behavior, so it is needed.
+ Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=46274
+ Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
+ ---
++ dlls/user32/tests/msg.c      |  2 +-
+  dlls/win32u/input.c          | 41 ++++++++++++++++++++++++------------
+  dlls/win32u/ntuser_private.h |  1 +
+- 2 files changed, 29 insertions(+), 13 deletions(-)
++ 3 files changed, 30 insertions(+), 14 deletions(-)
+ 
++diff --git a/dlls/user32/tests/msg.c b/dlls/user32/tests/msg.c
++index 63388e2250e..6ddac9cc7d3 100644
++--- a/dlls/user32/tests/msg.c
+++++ b/dlls/user32/tests/msg.c
++@@ -5571,7 +5571,7 @@ static void test_messages(void)
++ 
++     ShowWindow(hwnd, SW_MINIMIZE);
++     flush_events();
++-    ok_sequence(WmShowMinOverlappedSeq, "ShowWindow(SW_SHOWMINIMIZED):overlapped", TRUE);
+++    ok_sequence(WmShowMinOverlappedSeq, "ShowWindow(SW_SHOWMINIMIZED):overlapped", FALSE);
++     flush_sequence();
++ 
++     if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_MINIMIZE)
+ diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+-index f3b724e7010..9f89f21059f 100644
++index a2d1af57f78..8b1cae060e2 100644
+ --- a/dlls/win32u/input.c
+ +++ b/dlls/win32u/input.c
+-@@ -1599,7 +1599,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1569,7 +1569,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+  {
+      HWND previous = get_active_window();
+      BOOL ret;
+@@ -32,7 +46,7 @@ index f3b724e7010..9f89f21059f 100644
+      CBTACTIVATESTRUCT cbt;
+  
+      if (previous == hwnd)
+-@@ -1608,16 +1608,24 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1578,16 +1578,24 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          return TRUE;
+      }
+  
+@@ -66,7 +80,7 @@ index f3b724e7010..9f89f21059f 100644
+      }
+  
+      SERVER_START_REQ( set_active_window )
+-@@ -1637,7 +1645,11 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1607,7 +1615,11 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          if (send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ))
+              send_message_timeout( HWND_BROADCAST, WM_PALETTEISCHANGING, (WPARAM)hwnd, 0,
+                                    SMTO_ABORTIFHUNG, 2000, FALSE );
+@@ -79,7 +93,7 @@ index f3b724e7010..9f89f21059f 100644
+      }
+  
+      old_thread = previous ? get_window_thread( previous, NULL ) : 0;
+-@@ -1669,7 +1681,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1639,7 +1651,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          }
+      }
+  
+@@ -88,7 +102,7 @@ index f3b724e7010..9f89f21059f 100644
+      {
+          send_message( hwnd, WM_NCACTIVATE, hwnd == NtUserGetForegroundWindow(), (LPARAM)previous );
+          send_message( hwnd, WM_ACTIVATE,
+-@@ -1689,12 +1701,15 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
++@@ -1666,12 +1678,15 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+          /* Do not change focus if the window is no more active */
+          if (hwnd == info.hwndActive)
+          {
+@@ -106,7 +120,7 @@ index f3b724e7010..9f89f21059f 100644
+  
+  /**********************************************************************
+ diff --git a/dlls/win32u/ntuser_private.h b/dlls/win32u/ntuser_private.h
+-index 8287126258e..38ac4498a83 100644
++index 9f93feea407..db5ef584fd8 100644
+ --- a/dlls/win32u/ntuser_private.h
+ +++ b/dlls/win32u/ntuser_private.h
+ @@ -104,6 +104,7 @@ typedef struct tagWND
+@@ -118,5 +132,5 @@ index 8287126258e..38ac4498a83 100644
+  #define WND_OTHER_PROCESS ((WND *)1)  /* returned by get_win_ptr on unknown window handles */
+  #define WND_DESKTOP       ((WND *)2)  /* returned by get_win_ptr on the desktop window */
+ -- 
+-2.37.2
++2.35.1
+ 
