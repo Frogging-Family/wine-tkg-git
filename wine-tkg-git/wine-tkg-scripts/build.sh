@@ -18,6 +18,11 @@ _prebuild_common() {
 	  echo -e "CUSTOM_GCC_PATH = ${CUSTOM_GCC_PATH##*/}" >> "$_where"/last_build_config.log #"
 	fi
 
+	if [ "$_pkg_strip" != "true" ]; then
+	  sed 's|${STRIPPROG-strip}||g' "$srcdir/$_winesrcdir"/tools/install-sh -i
+	  echo "Stripping disabled" >> "$_where"/last_build_config.log
+	fi
+
 	echo "" >> "$_where"/last_build_config.log
 
 	# compiler flags
@@ -111,6 +116,10 @@ _build() {
 			"${_configure_args64[@]}" \
 			"${_configure_args[@]}"
 	  fi
+	  if [ "$_pkg_strip" != "true" ]; then
+	    msg2 "Disable strip"
+	    sed 's|STRIP = strip|STRIP =|g' "${srcdir}/${pkgname}"-64-build/Makefile -i
+	  fi
 	  if [ "$_LOCAL_OPTIMIZED" = 'true' ]; then
 	    # make using all available threads
 	    if [ "$_log_errors_to_file" = "true" ]; then
@@ -171,6 +180,10 @@ _build() {
 		      "${_configure_args[@]}" \
 		      --with-wine64="${srcdir}/${pkgname}"-64-build
 		 fi
+	  fi
+	  if [ "$_pkg_strip" != "true" ]; then
+	    msg2 "Disable strip"
+	    sed 's|STRIP = strip|STRIP =|g' "${srcdir}/${pkgname}"-32-build/Makefile -i
 	  fi
 	  if [ "$_LOCAL_OPTIMIZED" = 'true' ]; then
 	    # make using all available threads
