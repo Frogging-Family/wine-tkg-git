@@ -102,98 +102,6 @@ index 4c90673a5c5..67896165048 100644
 -- 
 2.37.1
 
-From 730fd8b7cb22b630b82be1e12104bdfe5946a027 Mon Sep 17 00:00:00 2001
-From: Derek Lesho <dlesho@codeweavers.com>
-Date: Wed, 13 Jul 2022 13:11:22 -0400
-Subject: [PATCH 03/14] sharedgpures.sys: Keep index into resource pool in
- FsContext instead of direct pointer to resource.
-
-This fixes the errors due to the pointers in FsContext becoming invalid when the resource pool was expanded.
-
-Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
----
- dlls/sharedgpures.sys/shared_resource.c | 19 +++++++++++--------
- 1 file changed, 11 insertions(+), 8 deletions(-)
-
-diff --git a/dlls/sharedgpures.sys/shared_resource.c b/dlls/sharedgpures.sys/shared_resource.c
-index b0a2aebdb01..0cd30c4a256 100644
---- a/dlls/sharedgpures.sys/shared_resource.c
-+++ b/dlls/sharedgpures.sys/shared_resource.c
-@@ -285,7 +285,7 @@ static NTSTATUS WINAPI dispatch_create(DEVICE_OBJECT *device, IRP *irp)
- static NTSTATUS WINAPI dispatch_close(DEVICE_OBJECT *device, IRP *irp)
- {
-     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation(irp);
--    struct shared_resource *res = stack->FileObject->FsContext;
-+    struct shared_resource *res = &resource_pool[ (UINT_PTR) stack->FileObject->FsContext ];
- 
-     TRACE("Freeing shared resouce %p.\n", res);
- 
-@@ -316,7 +316,7 @@ static NTSTATUS WINAPI dispatch_close(DEVICE_OBJECT *device, IRP *irp)
- static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
- {
-     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation( irp );
--    struct shared_resource **res = (struct shared_resource **) &stack->FileObject->FsContext;
-+    struct shared_resource *res = &resource_pool[ (UINT_PTR) stack->FileObject->FsContext ];
-     NTSTATUS status;
- 
-     TRACE( "ioctl %lx insize %lu outsize %lu\n",
-@@ -327,37 +327,37 @@ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
-     switch (stack->Parameters.DeviceIoControl.IoControlCode)
-     {
-         case IOCTL_SHARED_GPU_RESOURCE_CREATE:
--            status = shared_resource_create( res,
-+            status = shared_resource_create( &res,
-                                       irp->AssociatedIrp.SystemBuffer,
-                                       stack->Parameters.DeviceIoControl.InputBufferLength,
-                                       &irp->IoStatus );
-             break;
-         case IOCTL_SHARED_GPU_RESOURCE_OPEN:
--            status = shared_resource_open( res,
-+            status = shared_resource_open( &res,
-                                       irp->AssociatedIrp.SystemBuffer,
-                                       stack->Parameters.DeviceIoControl.InputBufferLength,
-                                       &irp->IoStatus );
-             break;
-         case IOCTL_SHARED_GPU_RESOURCE_GETKMT:
--            status = shared_resource_getkmt( *res,
-+            status = shared_resource_getkmt( res,
-                                       irp->AssociatedIrp.SystemBuffer,
-                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
-                                       &irp->IoStatus );
-             break;
-         case IOCTL_SHARED_GPU_RESOURCE_GET_UNIX_RESOURCE:
--            status = shared_resource_get_unix_resource( *res,
-+            status = shared_resource_get_unix_resource( res,
-                                       irp->AssociatedIrp.SystemBuffer,
-                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
-                                       &irp->IoStatus );
-             break;
-         case IOCTL_SHARED_GPU_RESOURCE_SET_METADATA:
--            status = shared_resource_set_metadata( *res,
-+            status = shared_resource_set_metadata( res,
-                                       irp->AssociatedIrp.SystemBuffer,
-                                       stack->Parameters.DeviceIoControl.InputBufferLength,
-                                       &irp->IoStatus );
-             break;
-         case IOCTL_SHARED_GPU_RESOURCE_GET_METADATA:
--            status = shared_resource_get_metadata( *res,
-+            status = shared_resource_get_metadata( res,
-                                       irp->AssociatedIrp.SystemBuffer,
-                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
-                                       &irp->IoStatus );
-@@ -368,6 +368,9 @@ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
-         break;
-     }
- 
-+    if (!status)
-+        stack->FileObject->FsContext = (UINT_PTR)(res - resource_pool);
-+
-     irp->IoStatus.u.Status = status;
-     IoCompleteRequest( irp, IO_NO_INCREMENT );
-     return status;
--- 
-2.37.1
-
 From c2e10847a3a9921c9d611dc4118dcb8c0bee0d4e Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Wed, 13 Jul 2022 13:14:04 -0400
@@ -393,32 +301,6 @@ index b81a9a1faea..a9cf215031a 100755
 -- 
 2.37.1
 
-From ef1dedf4c9e1b8f415593a6bcf669f7f7d0ed168 Mon Sep 17 00:00:00 2001
-From: Derek Lesho <dlesho@codeweavers.com>
-Date: Fri, 15 Jul 2022 15:12:52 -0400
-Subject: [PATCH 11/14] winegstreamer: Add MF_MT_VIDEO_NOMINAL_RANGE attribute
- to base video output type.
-
----
- dlls/winegstreamer/media_source.c | 2 ++
- 1 file changed, 2 insertions(+)
-
-diff --git a/dlls/winegstreamer/media_source.c b/dlls/winegstreamer/media_source.c
-index eab85c29bed..63e61e84f44 100644
---- a/dlls/winegstreamer/media_source.c
-+++ b/dlls/winegstreamer/media_source.c
-@@ -882,6 +882,8 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
-         IMFMediaType *base_type = mf_media_type_from_wg_format(&format);
-         GUID base_subtype;
- 
-+        IMFMediaType_SetUINT32(base_type, &MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_Normal);
-+
-         IMFMediaType_GetGUID(base_type, &MF_MT_SUBTYPE, &base_subtype);
- 
-         stream_types[0] = base_type;
--- 
-2.37.1
-
 From 65e8ff36eff59d827c4beedaf75a3f0418f05e16 Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Fri, 22 Apr 2022 11:53:02 -0400
@@ -448,7 +330,7 @@ index 89b2e7ee1e2..b81a9a1faea 100755
      "VK_KHR_external_fence_fd",
 -    "VK_KHR_external_semaphore_fd",
      "VK_SEC_amigo_profiling", # Angle specific.
-
+ 
      # Extensions which require callback handling
 @@ -126,6 +124,7 @@ UNSUPPORTED_EXTENSIONS = [
  # but not expose to applications (useful for test commits)
@@ -1953,7 +1835,7 @@ index e065c0bc253..1024bf04037 100644
 +    VkResult res;
 +    SIZE_T size;
 +
-+    TRACE("(%p, %p). semaphore = %p handle = %p\n", device, handle_info, handle_info->semaphore, handle_info->handle);
++    TRACE("(%p, %p). semaphore = %ld handle = %p\n", device, handle_info, handle_info->semaphore, handle_info->handle);
 +
 +    if (handle_info->handleType == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT && !semaphore->fence_timeline_semaphore)
 +    {

@@ -1718,6 +1718,98 @@ index b9f34eb978f..b0a2aebdb01 100644
 -- 
 2.37.1
 
+From 730fd8b7cb22b630b82be1e12104bdfe5946a027 Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 13 Jul 2022 13:11:22 -0400
+Subject: [PATCH 03/14] sharedgpures.sys: Keep index into resource pool in
+ FsContext instead of direct pointer to resource.
+
+This fixes the errors due to the pointers in FsContext becoming invalid when the resource pool was expanded.
+
+Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
+---
+ dlls/sharedgpures.sys/shared_resource.c | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/sharedgpures.sys/shared_resource.c b/dlls/sharedgpures.sys/shared_resource.c
+index b0a2aebdb01..0cd30c4a256 100644
+--- a/dlls/sharedgpures.sys/shared_resource.c
++++ b/dlls/sharedgpures.sys/shared_resource.c
+@@ -285,7 +285,7 @@ static NTSTATUS WINAPI dispatch_create(DEVICE_OBJECT *device, IRP *irp)
+ static NTSTATUS WINAPI dispatch_close(DEVICE_OBJECT *device, IRP *irp)
+ {
+     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation(irp);
+-    struct shared_resource *res = stack->FileObject->FsContext;
++    struct shared_resource *res = &resource_pool[ (UINT_PTR) stack->FileObject->FsContext ];
+ 
+     TRACE("Freeing shared resouce %p.\n", res);
+ 
+@@ -316,7 +316,7 @@ static NTSTATUS WINAPI dispatch_close(DEVICE_OBJECT *device, IRP *irp)
+ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
+ {
+     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation( irp );
+-    struct shared_resource **res = (struct shared_resource **) &stack->FileObject->FsContext;
++    struct shared_resource *res = &resource_pool[ (UINT_PTR) stack->FileObject->FsContext ];
+     NTSTATUS status;
+ 
+     TRACE( "ioctl %lx insize %lu outsize %lu\n",
+@@ -327,37 +327,37 @@ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
+     switch (stack->Parameters.DeviceIoControl.IoControlCode)
+     {
+         case IOCTL_SHARED_GPU_RESOURCE_CREATE:
+-            status = shared_resource_create( res,
++            status = shared_resource_create( &res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.InputBufferLength,
+                                       &irp->IoStatus );
+             break;
+         case IOCTL_SHARED_GPU_RESOURCE_OPEN:
+-            status = shared_resource_open( res,
++            status = shared_resource_open( &res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.InputBufferLength,
+                                       &irp->IoStatus );
+             break;
+         case IOCTL_SHARED_GPU_RESOURCE_GETKMT:
+-            status = shared_resource_getkmt( *res,
++            status = shared_resource_getkmt( res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
+                                       &irp->IoStatus );
+             break;
+         case IOCTL_SHARED_GPU_RESOURCE_GET_UNIX_RESOURCE:
+-            status = shared_resource_get_unix_resource( *res,
++            status = shared_resource_get_unix_resource( res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
+                                       &irp->IoStatus );
+             break;
+         case IOCTL_SHARED_GPU_RESOURCE_SET_METADATA:
+-            status = shared_resource_set_metadata( *res,
++            status = shared_resource_set_metadata( res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.InputBufferLength,
+                                       &irp->IoStatus );
+             break;
+         case IOCTL_SHARED_GPU_RESOURCE_GET_METADATA:
+-            status = shared_resource_get_metadata( *res,
++            status = shared_resource_get_metadata( res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
+                                       &irp->IoStatus );
+@@ -368,6 +368,9 @@ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
+         break;
+     }
+ 
++    if (!status)
++        stack->FileObject->FsContext = (UINT_PTR)(res - resource_pool);
++
+     irp->IoStatus.u.Status = status;
+     IoCompleteRequest( irp, IO_NO_INCREMENT );
+     return status;
+-- 
+2.37.1
+
 From d552e54dc4bc8cea60058aba95ca27d27ba2d796 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Tue, 1 Mar 2022 10:27:30 +0100
@@ -2148,6 +2240,32 @@ index 68912f4235b..2191cfb0ded 100644
          };
  
          IMFMediaType *base_type = mf_media_type_from_wg_format(&format);
+-- 
+2.37.1
+
+From ef1dedf4c9e1b8f415593a6bcf669f7f7d0ed168 Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Fri, 15 Jul 2022 15:12:52 -0400
+Subject: [PATCH 11/14] winegstreamer: Add MF_MT_VIDEO_NOMINAL_RANGE attribute
+ to base video output type.
+
+---
+ dlls/winegstreamer/media_source.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/dlls/winegstreamer/media_source.c b/dlls/winegstreamer/media_source.c
+index eab85c29bed..63e61e84f44 100644
+--- a/dlls/winegstreamer/media_source.c
++++ b/dlls/winegstreamer/media_source.c
+@@ -882,6 +882,8 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
+         IMFMediaType *base_type = mf_media_type_from_wg_format(&format);
+         GUID base_subtype;
+ 
++        IMFMediaType_SetUINT32(base_type, &MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_Normal);
++
+         IMFMediaType_GetGUID(base_type, &MF_MT_SUBTYPE, &base_subtype);
+ 
+         stream_types[0] = base_type;
 -- 
 2.37.1
 
