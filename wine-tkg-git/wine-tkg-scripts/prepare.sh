@@ -365,6 +365,7 @@ msg2 ''
     _fsync_futex_waitv="false"
 #    _use_staging="false"
     _proton_fs_hack="false"
+    _proton_rawinput="false"
     _large_address_aware="false"
     _proton_mf_hacks="false"
     _update_winevulkan="false"
