@@ -78,6 +78,10 @@ pkgver() {
   if [ -n "$_nomakepkg_dep_resolution_distro" ]; then
     source "$_where"/wine-tkg-scripts/deps
     if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ]; then
+      if [ "$_ci_build" != "true" ]; then
+        warning "PLEASE MAKE SURE TO READ https://github.com/Frogging-Family/wine-tkg-git/issues/773 BEFORE ATTEMPTING TO USE \"debuntu\" dependency resolution"
+        read -rp "Either press enter to continue, or ctrl+c to leave."
+      fi
       _debuntu_64
     elif [ "$_nomakepkg_dep_resolution_distro" = "fedora" ]; then
       _fedora_6432
