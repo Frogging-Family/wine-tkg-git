@@ -86,11 +86,6 @@ _prebuild_common() {
 	  fi
 	fi
 
-	# schedtool stupid-mode check
-	if [ -e "/usr/bin/schedtool" ]; then
-	  _schedtool="true"
-	fi
-
 	echo -e "\nconfigure arguments: ${_configure_args[@]}\n" >> "$_where"/last_build_config.log
 }
 
@@ -130,22 +125,16 @@ _build() {
 	    if [ "$_log_errors_to_file" = "true" ]; then
 	      make -j$(nproc) 2> "$_where/debug.log"
 	    else
-	      if [ "$_schedtool" = "true" ]; then
-	        _buildtime64=$( time ( schedtool -B -n 1 -e ionice -n 1 make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 )
-	      else
-	        _buildtime64=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 )
-	      fi
+	      #_buildtime64=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
+	      make -j$(nproc)
 	    fi
 	  else
 	    # make using makepkg settings
 	    if [ "$_log_errors_to_file" = "true" ]; then
 	      make -j$(nproc) 2> "$_where/debug.log"
 	    else
-	      if [ "$_schedtool" = "true" ]; then
-	        _buildtime64=$( time ( schedtool -B -n 1 -e ionice -n 1 make 2>&1 ) 3>&1 1>&2 2>&3 )
-	      else
-	        _buildtime64=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 )
-	      fi
+	      #_buildtime64=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
+	      make
 	    fi
 	  fi
 	fi
@@ -203,22 +192,16 @@ _build() {
 	    if [ "$_log_errors_to_file" = "true" ]; then
 	      make -j$(nproc) 2> "$_where/debug.log"
 	    else
-	      if [ "$_schedtool" = "true" ]; then
-	        _buildtime32=$( time ( schedtool -B -n 1 -e ionice -n 1 make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 )
-	      else
-	        _buildtime32=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 )
-	      fi
+	      #_buildtime32=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
+	      make -j$(nproc)
 	    fi
 	  else
 	    # make using makepkg settings
 	    if [ "$_log_errors_to_file" = "true" ]; then
 	      make -j$(nproc) 2> "$_where/debug.log"
 	    else
-	      if [ "$_schedtool" = "true" ]; then
-	        _buildtime32=$( time ( schedtool -B -n 1 -e ionice -n 1 make 2>&1 ) 3>&1 1>&2 2>&3 )
-	      else
-	        _buildtime32=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 )
-	      fi
+	      #_buildtime32=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
+	      make
 	    fi
 	  fi
 	  if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
