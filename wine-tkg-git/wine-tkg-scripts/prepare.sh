@@ -556,7 +556,8 @@ _prepare() {
     cd "${srcdir}"/"${_winesrcdir}"
     # change back to the wine upstream commit that this version of wine-staging is based in
     msg2 'Changing wine HEAD to the wine-staging base commit...'
-    git -c advice.detachedHead=false checkout "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)"
+    #git -c advice.detachedHead=false checkout "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)"
+    git -c advice.detachedHead=false checkout "$( cat ../"$_stgsrcdir"/staging/upstream-commit )"
   fi
 
   # Community patches
