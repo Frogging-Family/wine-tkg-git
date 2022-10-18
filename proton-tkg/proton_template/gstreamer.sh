@@ -38,6 +38,11 @@
 
   rm -rf "$_nowhere"/Proton/build/gst*
 
+  unset CFLAGS
+  unset CPPFLAGS
+  unset CXXFLAGS
+  unset LDFLAGS
+
   ##### 64
 
   # If /usr/lib32 doesn't exist (such as on Fedora), make sure we're using /usr/lib64 for 64-bit pkgconfig path
@@ -225,7 +230,7 @@
     -D gst-editing-services:validate=disabled
   )
 
-  meson "$_nowhere"/Proton/build/gst64 --prefix="$_nowhere/gst" --libdir="lib64" --buildtype=plain -Dpkg_config_path="$_nowhere/gst/lib64/pkgconfig" "${meson_options[@]}"
+  meson "$_nowhere"/Proton/build/gst64 --prefix="$_nowhere/gst" --libdir="lib64" --buildtype=release -Dpkg_config_path="$_nowhere/gst/lib64/pkgconfig" "${meson_options[@]}"
   meson compile -C "$_nowhere"/Proton/build/gst64
   meson install -C "$_nowhere"/Proton/build/gst64
 
@@ -476,7 +481,7 @@
     -D gst-editing-services:validate=disabled
     )
 
-    meson "$_nowhere"/Proton/build/gst32 --prefix="$_nowhere/gst" --libdir="lib" --buildtype=plain "${meson32_options[@]}"
+    meson "$_nowhere"/Proton/build/gst32 --prefix="$_nowhere/gst" --libdir="lib" --buildtype=release "${meson32_options[@]}"
     meson compile -C "$_nowhere"/Proton/build/gst32
     meson install -C "$_nowhere"/Proton/build/gst32
 
