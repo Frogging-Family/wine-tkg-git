@@ -1,0 +1,487 @@
+diff --git a/dlls/ntdll/tests/file.c b/dlls/ntdll/tests/file.c
+index 98d9e6b3b0a6fafbc19d51aaa3f04c68aa33f09a..9d3dd5cca29c43537d137e1e55fe581acbdeb05c 100644
+--- a/dlls/ntdll/tests/file.c
++++ b/dlls/ntdll/tests/file.c
+@@ -3971,6 +3971,87 @@ static void test_file_attribute_tag_information(void)
+     CloseHandle( h );
+ }
+ 
++#define lok ok_(__FILE__, line)
++#define rename_file(h,f) rename_file_(__LINE__,(h),(f))
++static BOOL rename_file_( int line, HANDLE h, const WCHAR *filename )
++{
++    FILE_RENAME_INFORMATION *fri;
++    UNICODE_STRING ntpath;
++    IO_STATUS_BLOCK io;
++    NTSTATUS status;
++    BOOLEAN ret;
++    ULONG size;
++
++    ret = pRtlDosPathNameToNtPathName_U( filename, &ntpath, NULL, NULL );
++    lok( ret, "RtlDosPathNameToNtPathName_U failed\n" );
++    if (!ret) return FALSE;
++
++    size = offsetof( FILE_RENAME_INFORMATION, FileName ) + ntpath.Length;
++    fri = HeapAlloc( GetProcessHeap(), 0, size );
++    lok( fri != NULL, "HeapAlloc failed\n" );
++    if (!fri) return FALSE;
++    fri->ReplaceIfExists = TRUE;
++    fri->RootDirectory = NULL;
++    fri->FileNameLength = ntpath.Length;
++    memcpy( fri->FileName, ntpath.Buffer, ntpath.Length );
++    pRtlFreeUnicodeString( &ntpath );
++
++    status = pNtSetInformationFile( h, &io, fri, size, FileRenameInformation );
++    HeapFree( GetProcessHeap(), 0, fri );
++    lok( status == STATUS_SUCCESS, "got %#lx\n", status );
++    return status == STATUS_SUCCESS;
++}
++#undef lok
++
++static void test_dotfile_file_attributes(void)
++{
++    char temppath[MAX_PATH], filename[MAX_PATH];
++    WCHAR temppathW[MAX_PATH], filenameW[MAX_PATH];
++    FILE_BASIC_INFORMATION info = {};
++    IO_STATUS_BLOCK io;
++    NTSTATUS status;
++    DWORD attrs;
++    HANDLE h;
++
++    GetTempPathA( MAX_PATH, temppath );
++    GetTempFileNameA( temppath, ".foo", 0, filename );
++    h = CreateFileA( filename, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_DELETE_ON_CLOSE, 0 );
++    ok( h != INVALID_HANDLE_VALUE, "failed to create temp file\n" );
++    if (h == INVALID_HANDLE_VALUE) return;
++
++    status = nt_get_file_attrs(filename, &attrs);
++    ok( status == STATUS_SUCCESS, "got %#lx\n", status );
++    ok( !(attrs & FILE_ATTRIBUTE_HIDDEN), "got attributes %#lx\n", info.FileAttributes );
++
++    status = pNtQueryInformationFile( h, &io, &info, sizeof(info), FileBasicInformation );
++    ok( status == STATUS_SUCCESS, "got %#lx\n", status );
++    ok( !(info.FileAttributes & FILE_ATTRIBUTE_HIDDEN), "got attributes %#lx\n", info.FileAttributes );
++
++    CloseHandle( h );
++
++    GetTempPathW( MAX_PATH, temppathW );
++    GetTempFileNameW( temppathW, L"foo", 0, filenameW );
++    h = CreateFileW( filenameW, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_DELETE_ON_CLOSE, 0 );
++    ok( h != INVALID_HANDLE_VALUE, "failed to create temp file\n" );
++    if (h == INVALID_HANDLE_VALUE) return;
++
++    GetTempFileNameW( temppathW, L".foo", 0, filenameW );
++    if (!rename_file( h, filenameW )) return;
++
++    status = pNtQueryInformationFile( h, &io, &info, sizeof(info), FileBasicInformation );
++    ok( status == STATUS_SUCCESS, "got %#lx\n", status );
++    ok( !(info.FileAttributes & FILE_ATTRIBUTE_HIDDEN), "got attributes %#lx\n", info.FileAttributes );
++
++    GetTempFileNameW( temppathW, L"foo", 0, filenameW );
++    if (!rename_file( h, filenameW )) return;
++
++    status = pNtQueryInformationFile( h, &io, &info, sizeof(info), FileBasicInformation );
++    ok( status == STATUS_SUCCESS, "got %#lx\n", status );
++    ok( !(info.FileAttributes & FILE_ATTRIBUTE_HIDDEN), "got attributes %#lx\n", info.FileAttributes );
++
++    CloseHandle( h );
++}
++
+ static void test_file_mode(void)
+ {
+     UNICODE_STRING file_name, pipe_dev_name, mountmgr_dev_name, mailslot_dev_name;
+@@ -5419,6 +5500,7 @@ START_TEST(file)
+     test_file_id_information();
+     test_file_access_information();
+     test_file_attribute_tag_information();
++    test_dotfile_file_attributes();
+     test_file_mode();
+     test_file_readonly_access();
+     test_query_volume_information_file();
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 6b73d9dc7e8efa986d8e102b7a649fdd6765b047..3da06f6ad6c0e8a6ccfe3877a4f7aaa567625b08 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -1268,20 +1268,20 @@ static BOOLEAN get_dir_case_sensitivity( const char *dir )
+ 
+ 
+ /***********************************************************************
+- *           is_hidden_file
++ *           is_hidden_file_unix
+  *
+- * Check if the specified file should be hidden based on its name and the show dot files option.
++ * Check if the specified file should be hidden based on its unix path and the show dot files option.
+  */
+-static BOOL is_hidden_file( const UNICODE_STRING *name )
++static BOOL is_hidden_file_unix( const char *name )
+ {
+-    WCHAR *p, *end;
++    const char *p, *end;
+ 
+     if (show_dot_files) return FALSE;
+ 
+-    end = p = name->Buffer + name->Length/sizeof(WCHAR);
+-    while (p > name->Buffer && p[-1] == '\\') p--;
+-    while (p > name->Buffer && p[-1] != '\\') p--;
+-    return (p < end && *p == '.');
++    end = p = name + strlen(name);
++    while (p > name && p[-1] == '/') p--;
++    while (p > name && p[-1] != '/') p--;
++    return (p < end && p + 1 != end && p[0] == '.' && p[1] != '/' && (p[1] != '.' || (p + 2 != end && p[2] != '/')));
+ }
+ 
+ 
+@@ -1549,7 +1549,7 @@ static BOOL fd_is_mount_point( int fd, const struct stat *st )
+ 
+ 
+ /* get the stat info and file attributes for a file (by file descriptor) */
+-static int fd_get_file_info( int fd, unsigned int options, struct stat *st, ULONG *attr )
++static int fd_get_file_info( int fd, const char *unix_name, unsigned int options, struct stat *st, ULONG *attr )
+ {
+     char attr_data[65];
+     int attr_len, ret;
+@@ -1567,6 +1567,8 @@ static int fd_get_file_info( int fd, unsigned int options, struct stat *st, ULON
+         *attr |= parse_samba_dos_attrib_data( attr_data, attr_len );
+     else
+     {
++        if (unix_name && is_hidden_file_unix( unix_name ))
++            *attr |= FILE_ATTRIBUTE_HIDDEN;
+         if (errno == ENOTSUP) return ret;
+ #ifdef ENODATA
+         if (errno == ENODATA) return ret;
+@@ -1578,11 +1580,11 @@ static int fd_get_file_info( int fd, unsigned int options, struct stat *st, ULON
+ }
+ 
+ 
+-static int fd_set_dos_attrib( int fd, ULONG attr )
++static int fd_set_dos_attrib( int fd, ULONG attr, BOOL force_set )
+ {
+     /* we only store the HIDDEN and SYSTEM attributes */
+     attr &= XATTR_ATTRIBS_MASK;
+-    if (attr != 0)
++    if (force_set || attr != 0)
+     {
+         /* encode the attributes in Samba 3 ASCII format. Samba 4 has extended
+          * this format with more features, but retains compatibility with the
+@@ -1596,7 +1598,7 @@ static int fd_set_dos_attrib( int fd, ULONG attr )
+ 
+ 
+ /* set the stat info and file attributes for a file (by file descriptor) */
+-NTSTATUS fd_set_file_info( int fd, ULONG attr )
++NTSTATUS fd_set_file_info( int fd, ULONG attr, BOOL force_set_xattr )
+ {
+     struct stat st;
+ 
+@@ -1615,7 +1617,7 @@ NTSTATUS fd_set_file_info( int fd, ULONG attr )
+     }
+     if (fchmod( fd, st.st_mode ) == -1) return errno_to_status( errno );
+ 
+-    if (fd_set_dos_attrib( fd, attr ) == -1 && errno != ENOTSUP)
++    if (fd_set_dos_attrib( fd, attr, force_set_xattr || st.st_nlink > 1 ) == -1 && errno != ENOTSUP)
+         WARN( "Failed to set extended attribute " SAMBA_XATTR_DOS_ATTRIB ". errno %d (%s)\n",
+               errno, strerror( errno ) );
+ 
+@@ -1660,6 +1662,8 @@ static int get_file_info( const char *path, struct stat *st, ULONG *attr )
+         *attr |= parse_samba_dos_attrib_data( attr_data, attr_len );
+     else
+     {
++        if (is_hidden_file_unix( path ))
++            *attr |= FILE_ATTRIBUTE_HIDDEN;
+         if (errno == ENOTSUP) return ret;
+ #ifdef ENODATA
+         if (errno == ENODATA) return ret;
+@@ -2230,11 +2234,6 @@ static NTSTATUS get_dir_data_entry( struct dir_data *dir_data, void *info_ptr, I
+     if (class != FileNamesInformation)
+     {
+         if (st.st_dev != dir_data->id.dev) st.st_ino = 0;  /* ignore inode if on a different device */
+-
+-        if (!show_dot_files && names->long_name[0] == '.' && names->long_name[1] &&
+-            (names->long_name[1] != '.' || names->long_name[2]))
+-            attributes |= FILE_ATTRIBUTE_HIDDEN;
+-
+         fill_file_info( &st, attributes, info, class );
+     }
+ 
+@@ -3944,6 +3943,7 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
+     OBJECT_ATTRIBUTES new_attr;
+     UNICODE_STRING nt_name;
+     char *unix_name;
++    BOOL name_hidden = FALSE;
+     BOOL created = FALSE;
+     NTSTATUS status;
+ 
+@@ -3986,6 +3986,7 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
+ 
+     if (status == STATUS_SUCCESS)
+     {
++        name_hidden = is_hidden_file_unix(unix_name);
+         status = open_unix_file( handle, unix_name, access, &new_attr, attributes,
+                                  sharing, disposition, options, ea_buffer, ea_length );
+         free( unix_name );
+@@ -4013,14 +4014,15 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
+             break;
+         }
+ 
+-        if (io->Information == FILE_CREATED && (attributes & XATTR_ATTRIBS_MASK))
++        if (io->Information == FILE_CREATED &&
++            ((attributes & XATTR_ATTRIBS_MASK) || name_hidden))
+         {
+             int fd, needs_close;
+ 
+             /* set any DOS extended attributes */
+             if (!server_get_unix_fd( *handle, 0, &fd, &needs_close, NULL, NULL ))
+             {
+-                if (fd_set_dos_attrib( fd, attributes ) == -1 && errno != ENOTSUP)
++                if (fd_set_dos_attrib( fd, attributes, TRUE ) == -1 && errno != ENOTSUP)
+                     WARN( "Failed to set extended attribute " SAMBA_XATTR_DOS_ATTRIB ". errno %d (%s)",
+                           errno, strerror( errno ) );
+                 if (needs_close) close( fd );
+@@ -4191,7 +4193,6 @@ NTSTATUS WINAPI NtQueryFullAttributesFile( const OBJECT_ATTRIBUTES *attr,
+             info->AllocationSize = std.AllocationSize;
+             info->EndOfFile      = std.EndOfFile;
+             info->FileAttributes = basic.FileAttributes;
+-            if (is_hidden_file( attr->ObjectName )) info->FileAttributes |= FILE_ATTRIBUTE_HIDDEN;
+         }
+         free( unix_name );
+     }
+@@ -4222,10 +4223,7 @@ NTSTATUS WINAPI NtQueryAttributesFile( const OBJECT_ATTRIBUTES *attr, FILE_BASIC
+         else if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
+             status = STATUS_INVALID_INFO_CLASS;
+         else
+-        {
+             status = fill_file_info( &st, attributes, info, FileBasicInformation );
+-            if (is_hidden_file( attr->ObjectName )) info->FileAttributes |= FILE_ATTRIBUTE_HIDDEN;
+-        }
+         free( unix_name );
+     }
+     else WARN( "%s not found (%x)\n", debugstr_us(attr->ObjectName), status );
+@@ -4334,18 +4332,26 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+     switch (class)
+     {
+     case FileBasicInformation:
+-        if (fd_get_file_info( fd, options, &st, &attr ) == -1)
+-            status = errno_to_status( errno );
+-        else if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
+-            status = STATUS_INVALID_INFO_CLASS;
+-        else
+-            fill_file_info( &st, attr, ptr, class );
+-        break;
++        {
++            char *unix_name;
++
++            if (server_get_unix_name( handle, &unix_name ))
++                unix_name = NULL;
++
++            if (fd_get_file_info( fd, unix_name, options, &st, &attr ) == -1)
++                status = errno_to_status( errno );
++            else if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
++                status = STATUS_INVALID_INFO_CLASS;
++            else
++                fill_file_info( &st, attr, ptr, class );
++            free( unix_name );
++            break;
++        }
+     case FileStandardInformation:
+         {
+             FILE_STANDARD_INFORMATION *info = ptr;
+ 
+-            if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
++            if (fd_get_file_info( fd, NULL, options, &st, &attr ) == -1) status = errno_to_status( errno );
+             else
+             {
+                 fill_file_info( &st, attr, info, class );
+@@ -4362,7 +4368,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+         }
+         break;
+     case FileInternalInformation:
+-        if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
++        if (fd_get_file_info( fd, NULL, options, &st, &attr ) == -1) status = errno_to_status( errno );
+         else fill_file_info( &st, attr, ptr, class );
+         break;
+     case FileEaInformation:
+@@ -4372,7 +4378,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+         }
+         break;
+     case FileEndOfFileInformation:
+-        if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
++        if (fd_get_file_info( fd, NULL, options, &st, &attr ) == -1) status = errno_to_status( errno );
+         else fill_file_info( &st, attr, ptr, class );
+         break;
+     case FileAllInformation:
+@@ -4380,10 +4386,13 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+             FILE_ALL_INFORMATION *info = ptr;
+             char *unix_name;
+ 
+-            if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
++            status = server_get_unix_name( handle, &unix_name );
++            if (fd_get_file_info( fd, unix_name, options, &st, &attr ) == -1) status = errno_to_status( errno );
++            else if (status)
++                break;
+             else if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
+                 status = STATUS_INVALID_INFO_CLASS;
+-            else if (!(status = server_get_unix_name( handle, &unix_name )))
++            else
+             {
+                 LONG name_len = len - FIELD_OFFSET(FILE_ALL_INFORMATION, NameInformation.FileName);
+ 
+@@ -4396,9 +4405,9 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+                 info->AlignmentInformation.AlignmentRequirement = 1;  /* FIXME */
+ 
+                 status = fill_name_info( unix_name, &info->NameInformation, &name_len );
+-                free( unix_name );
+                 io->Information = FIELD_OFFSET(FILE_ALL_INFORMATION, NameInformation.FileName) + name_len;
+             }
++            free( unix_name );
+         }
+         break;
+     case FileMailslotQueryInformation:
+@@ -4488,7 +4497,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+         }
+         break;
+     case FileIdInformation:
+-        if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
++        if (fd_get_file_info( fd, NULL, options, &st, &attr ) == -1) status = errno_to_status( errno );
+         else
+         {
+             struct mountmgr_unix_drive drive;
+@@ -4502,29 +4511,37 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+         }
+         break;
+     case FileAttributeTagInformation:
+-        if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
+-        else
+         {
+-            FILE_ATTRIBUTE_TAG_INFORMATION *info = ptr;
+-            info->FileAttributes = attr;
+-            info->ReparseTag = 0;
+-            if (attr & FILE_ATTRIBUTE_REPARSE_POINT)
+-            {
+-                REPARSE_DATA_BUFFER *buffer = NULL;
+-                ULONG buffer_len = 0;
+-
+-                if (get_reparse_point( handle, NULL, &buffer_len ) == STATUS_BUFFER_TOO_SMALL)
+-                {
+-                    buffer = malloc( buffer_len );
+-                    if (get_reparse_point( handle, buffer, &buffer_len ) == STATUS_SUCCESS)
+-                        info->ReparseTag = buffer->ReparseTag;
+-                    free( buffer );
+-                }
+-            }
+-            if ((options & FILE_OPEN_REPARSE_POINT) && fd_is_mount_point( fd, &st ))
+-                info->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
++            char *unix_name;
++
++            if (server_get_unix_name( handle, &unix_name ))
++                unix_name = NULL;
++
++            if (fd_get_file_info( fd, unix_name, options, &st, &attr ) == -1) status = errno_to_status( errno );
++            else
++            {
++                FILE_ATTRIBUTE_TAG_INFORMATION *info = ptr;
++                info->FileAttributes = attr;
++                info->ReparseTag = 0; /* FIXME */
++                if (attr & FILE_ATTRIBUTE_REPARSE_POINT)
++                {
++                    REPARSE_DATA_BUFFER *buffer = NULL;
++                    ULONG buffer_len = 0;
++
++                    if (get_reparse_point( handle, NULL, &buffer_len ) == STATUS_BUFFER_TOO_SMALL)
++                    {
++                        buffer = malloc( buffer_len );
++                        if (get_reparse_point( handle, buffer, &buffer_len ) == STATUS_SUCCESS)
++                            info->ReparseTag = buffer->ReparseTag;
++                        free( buffer );
++                    }
++                }
++                if ((options & FILE_OPEN_REPARSE_POINT) && fd_is_mount_point( fd, &st ))
++                    info->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
++            }
++            free( unix_name );
++            break;
+         }
+-        break;
+     default:
+         FIXME("Unsupported class (%d)\n", class);
+         status = STATUS_NOT_IMPLEMENTED;
+@@ -4523,6 +4540,33 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+ }
+ 
+ 
++static NTSTATUS refresh_file_attrs( HANDLE handle, BOOL force_set_xattr )
++{
++    unsigned int options;
++    BOOL needs_close;
++    NTSTATUS status;
++    char *unix_name;
++    struct stat st;
++    ULONG attrib;
++    int fd;
++
++    if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, &options )))
++        return status;
++    if (server_get_unix_name( handle, &unix_name ))
++        unix_name = NULL;
++
++    if (fd_get_file_info( fd, unix_name, options, &st, &attrib ) == -1)
++        status = errno_to_status( errno );
++    else
++        status = fd_set_file_info( fd, attrib, force_set_xattr );
++
++    free( unix_name );
++    if (needs_close)
++        close( fd );
++    return status;
++}
++
++
+ /******************************************************************************
+  *              NtSetInformationFile   (NTDLL.@)
+  */
+@@ -4541,10 +4585,14 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+         {
+             const FILE_BASIC_INFORMATION *info = ptr;
+             LARGE_INTEGER mtime, atime;
++            char *unix_name;
+ 
+             if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
+                 return io->u.Status = status;
+ 
++            if ((status = server_get_unix_name( handle, &unix_name )))
++                unix_name = NULL;
++
+             mtime.QuadPart = info->LastWriteTime.QuadPart == -1 ? 0 : info->LastWriteTime.QuadPart;
+             atime.QuadPart = info->LastAccessTime.QuadPart == -1 ? 0 : info->LastAccessTime.QuadPart;
+ 
+@@ -4552,9 +4600,13 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+                 status = set_file_times( fd, &mtime, &atime );
+ 
+             if (status == STATUS_SUCCESS && info->FileAttributes)
+-                status = fd_set_file_info( fd, info->FileAttributes );
++            {
++                BOOL force_xattr = unix_name && is_hidden_file_unix( unix_name );
++                status = fd_set_file_info( fd, info->FileAttributes, force_xattr );
++            }
+ 
+             if (needs_close) close( fd );
++            free( unix_name );
+         }
+         else status = STATUS_INVALID_PARAMETER_3;
+         break;
+@@ -4744,6 +4796,9 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+             status = nt_to_unix_file_name( &attr, &unix_name, FILE_OPEN_IF );
+             if (status == STATUS_SUCCESS || status == STATUS_NO_SUCH_FILE)
+             {
++                if (is_hidden_file_unix( unix_name ) && (status = refresh_file_attrs( handle, TRUE )))
++                    goto free_unix_name;
++
+                 SERVER_START_REQ( set_fd_name_info )
+                 {
+                     req->handle   = wine_server_obj_handle( handle );
+@@ -4757,6 +4812,7 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+                 }
+                 SERVER_END_REQ;
+ 
++            free_unix_name:
+                 free( unix_name );
+             }
+             free( redir.Buffer );
