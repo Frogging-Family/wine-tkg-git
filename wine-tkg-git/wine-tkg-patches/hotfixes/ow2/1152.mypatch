@@ -1,0 +1,79 @@
+diff --git a/dlls/ntdll/signal_x86_64.c b/dlls/ntdll/signal_x86_64.c
+index b1ab4933b93ccd318f1870990316fe6595d47915..ec78cacbaf633f4fd2a222b6e716bc3beb6aefe5 100644
+--- a/dlls/ntdll/signal_x86_64.c
++++ b/dlls/ntdll/signal_x86_64.c
+@@ -654,12 +654,7 @@ __ASM_GLOBAL_FUNC( KiUserApcDispatcher,
+                    "int3")
+ 
+ 
+-/*******************************************************************
+- *		KiUserCallbackDispatcher (NTDLL.@)
+- *
+- * FIXME: not binary compatible
+- */
+-void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
++void WINAPI user_callback_dispatcher( ULONG id, void *args, ULONG len )
+ {
+     NTSTATUS status;
+ 
+@@ -678,6 +673,28 @@ void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
+     RtlRaiseStatus( status );
+ }
+ 
++/*******************************************************************
++ *		KiUserCallbackDispatcher (NTDLL.@)
++ *
++ * FIXME: not binary compatible
++ */
++#ifdef __x86_64__
++__ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
++                  ".byte 0x0f, 0x1f, 0x44, 0x00, 0x00\n\t" /* Overwatch 2 replaces the first 5 bytes with a jump */
++                  "movq 0x28(%rsp), %rdx\n\t"
++                  "movl 0x30(%rsp), %ecx\n\t"
++                  "movl 0x34(%rsp), %r8d\n\t"
++                  "andq $0xFFFFFFFFFFFFFFF0, %rsp\n\t"
++                  __ASM_SEH(".seh_endprologue\n\t")
++                  "call " __ASM_NAME("user_callback_dispatcher") "\n\t"
++                  "int3")
++#else
++void WINAPI DECLSPEC_HOTPATCH KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
++{
++    return user_callback_dispatcher( id, args, len );
++}
++#endif
++
+ 
+ static ULONG64 get_int_reg( CONTEXT *context, int reg )
+ {
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index 5787f1dc6f9e80cd4e79c2c0143db0ce00ec86df..019d1ecefa2dc779c021d085d9d28dcaaf1fc566 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -2399,9 +2399,17 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void
+     if (!__wine_setjmpex( &callback_frame.jmpbuf, NULL ))
+     {
+         struct syscall_frame *frame = amd64_thread_data()->syscall_frame;
+-        void *args_data = (void *)((frame->rsp - len) & ~15);
++        void *args_data = (void *)(((frame->rsp - len) & ~15) - 8);
++        struct {
++            void *args;
++            ULONG id;
++            ULONG len;
++        } *params = (void *)((ULONG_PTR)args_data - 0x10);
+ 
+         memcpy( args_data, args, len );
++        params->args = args_data;
++        params->id = id;
++        params->len = len;
+ 
+         callback_frame.frame.rcx           = id;
+         callback_frame.frame.rdx           = (ULONG_PTR)args;
+@@ -2410,7 +2418,7 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void
+         callback_frame.frame.fs            = amd64_thread_data()->fs;
+         callback_frame.frame.gs            = ds64_sel;
+         callback_frame.frame.ss            = ds64_sel;
+-        callback_frame.frame.rsp           = (ULONG_PTR)args_data - 0x28;
++        callback_frame.frame.rsp           = (ULONG_PTR)params - 0x28;
+         callback_frame.frame.rip           = (ULONG_PTR)pKiUserCallbackDispatcher;
+         callback_frame.frame.eflags        = 0x200;
+         callback_frame.frame.restore_flags = CONTEXT_CONTROL | CONTEXT_INTEGER;
