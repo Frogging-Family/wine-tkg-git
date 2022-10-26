@@ -393,6 +393,11 @@ _pkgnaming() {
     else
       pkgname="${pkgname}-${_PKGNAME_OVERRIDE}"
     fi
+
+    # Add trailing -git for non-valve presets
+    if [ -n "$_LOCAL_PRESET" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
+      pkgname+="-git"
+    fi
     msg2 "Overriding default pkgname. New pkgname: ${pkgname}"
   else
     if [ "$_use_staging" = "true" ]; then
