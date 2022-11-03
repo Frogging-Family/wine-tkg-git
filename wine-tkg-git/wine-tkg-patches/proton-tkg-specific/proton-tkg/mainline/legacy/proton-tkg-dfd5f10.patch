@@ -3046,6 +3046,74 @@ index 82e5fbf811d..b1153ac4927 100644
          UINT sync_interval, UINT flags, const DXGI_PRESENT_PARAMETERS *present_parameters)
  {
      struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+From 0262122fc328410e6b0b410837c35881b3aa85af Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 19 Apr 2021 15:29:39 +0300
+Subject: [PATCH] winevulkan: Don't hardcode performance frequency.
+
+For Forza Horizon 4.
+---
+ dlls/winevulkan/loader.c    | 33 +++++++++++++++++++++++++++++++++
+ dlls/winevulkan/make_vulkan |  2 +-
+ 2 files changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/winevulkan/loader.c b/dlls/winevulkan/loader.c
+index d3ac9f57763..fcb79983114 100644
+--- a/dlls/winevulkan/loader.c
++++ b/dlls/winevulkan/loader.c
+@@ -442,6 +442,39 @@ void WINAPI vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice phys_dev,
+     }
+ }
+ 
++VkResult WINAPI vkGetCalibratedTimestampsEXT(VkDevice device, uint32_t timestampCount, const VkCalibratedTimestampInfoEXT *pTimestampInfos, uint64_t *pTimestamps, uint64_t *pMaxDeviation)
++{
++    struct vkGetCalibratedTimestampsEXT_params params;
++    static LARGE_INTEGER freq;
++    VkResult res;
++    uint32_t i;
++
++    if (!freq.QuadPart)
++    {
++        LARGE_INTEGER temp;
++
++        QueryPerformanceFrequency(&temp);
++        InterlockedCompareExchange64(&freq.QuadPart, temp.QuadPart, 0);
++    }
++
++    params.device = device;
++    params.timestampCount = timestampCount;
++    params.pTimestampInfos = pTimestampInfos;
++    params.pTimestamps = pTimestamps;
++    params.pMaxDeviation = pMaxDeviation;
++    res = vk_unix_call(unix_vkGetCalibratedTimestampsEXT, &params);
++    if (res != VK_SUCCESS)
++        return res;
++
++    for (i = 0; i < timestampCount; i++)
++    {
++        if (pTimestampInfos[i].timeDomain != VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT) continue;
++        pTimestamps[i] *= freq.QuadPart / 10000000;
++    }
++
++    return VK_SUCCESS;
++}
++
+ static BOOL WINAPI call_vulkan_debug_report_callback( struct wine_vk_debug_report_params *params, ULONG size )
+ {
+     return params->user_callback(params->flags, params->object_type, params->object_handle, params->location,
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index 516c817715f..a0287c1ff09 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -254,7 +254,7 @@ FUNCTION_OVERRIDES = {
+ 
+     # VK_EXT_calibrated_timestamps
+     "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+-    "vkGetCalibratedTimestampsEXT" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
++    "vkGetCalibratedTimestampsEXT" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
+ 
+     # VK_EXT_debug_utils
+     "vkCreateDebugUtilsMessengerEXT" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE},
 From fec2ecbd2dfd3c357f63c8f7bd9383b7a10d4553 Mon Sep 17 00:00:00 2001
 From: Esme Povirk <esme@codeweavers.com>
 Date: Thu, 22 Apr 2021 14:35:40 -0500
@@ -4145,6 +4213,56 @@ index 8e2e7d93a38..5f072956087 100644
  static const SIZE_T min_kernel_stack  = 0x2000;
  static const LONG teb_offset = 0x2000;
 
+From 3244ba9966c0e7bcd445a65b5c325801f9b77131 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 5 Jan 2022 13:31:14 +0300
+Subject: [PATCH] audioses: Add stub dll.
+
+CW-Bug-Id: #19918
+---
+ configure.ac                |  1 +
+ dlls/audioses/Makefile.in   |  1 +
+ dlls/audioses/audioses.spec | 11 +++++++++++
+ 3 files changed, 13 insertions(+)
+ create mode 100644 dlls/audioses/Makefile.in
+ create mode 100644 dlls/audioses/audioses.spec
+
+diff --git a/configure.ac b/configure.ac
+index f37f4e02324..95f9a35bf7f 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -2625,6 +2625,7 @@ WINE_CONFIG_MAKEFILE(dlls/atl90)
+ WINE_CONFIG_MAKEFILE(dlls/atlthunk)
+ WINE_CONFIG_MAKEFILE(dlls/atlthunk/tests)
+ WINE_CONFIG_MAKEFILE(dlls/atmlib)
++WINE_CONFIG_MAKEFILE(dlls/audioses)
+ WINE_CONFIG_MAKEFILE(dlls/authz)
+ WINE_CONFIG_MAKEFILE(dlls/avicap32)
+ WINE_CONFIG_MAKEFILE(dlls/avifil32)
+diff --git a/dlls/audioses/Makefile.in b/dlls/audioses/Makefile.in
+new file mode 100644
+index 00000000000..370949ea4fe
+--- /dev/null
++++ b/dlls/audioses/Makefile.in
+@@ -0,0 +1 @@
++MODULE    = audioses.dll
+diff --git a/dlls/audioses/audioses.spec b/dlls/audioses/audioses.spec
+new file mode 100644
+index 00000000000..a1884e53243
+--- /dev/null
++++ b/dlls/audioses/audioses.spec
+@@ -0,0 +1,11 @@
++# @ stub AUDIOSES_1
++# @ stub AUDIOSES_2
++# @ stub AUDIOSES_3
++# @ stub AUDIOSES_4
++# @ stub AUDIOSES_5
++# @ stub DllCanUnloadNow
++# @ stub AUDIOSES_7
++# @ stub DllGetActivationFactory
++# @ stub DllGetClassObject
++# @ stub DllRegisterServer
++# @ stub DllUnregisterServer
 From 9bf094c8a6e962b969a1832613127bc4b7cf0fb3 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Thu, 10 Feb 2022 16:17:41 +0300
@@ -4304,3 +4422,28 @@ index 7e317912dc9..625f487251f 100755
  ]
 
  # Functions part of our winevulkan graphics driver interface.
+From 59b705ed31d38065c12f44e281dc8c18d5024acf Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 16 Sep 2022 17:14:54 -0500
+Subject: [PATCH] fixup! ntdll: Guard against syscall stack overrun.
+
+Make guard pages readable.
+
+CW-Bug-Id: #21305
+---
+ dlls/ntdll/unix/virtual.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 550d7f41dec..8dfe3da0a7e 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3271,7 +3271,7 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR zero_bits, SI
+         }
+         /* setup kernel stack no access guard page */
+         kernel_stack = (char *)view->base + view->size;
+-        set_page_vprot( kernel_stack, kernel_stack_guard_size, VPROT_COMMITTED );
++        set_page_vprot( kernel_stack, kernel_stack_guard_size, VPROT_COMMITTED | VPROT_READ );
+         mprotect_range( kernel_stack, kernel_stack_guard_size, 0, 0 );
+     }
+ 
