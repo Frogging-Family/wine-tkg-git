@@ -278,10 +278,26 @@ _package_nomakepkg() {
 	cp -v "$_where"/wine-tkg-scripts/wine-tkg-interactive "$_prefix"/bin/wine-tkg-interactive
 
 	# strip
-	if [ "$_pkg_strip" = "true" ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
-	  for _f in $( find "$_prefix" -type f '(' -iname '*.dll' -or -iname '*.so' -or -iname '*.sys' -or -iname '*.drv' -or -iname '*.exe' ')' ); do
-	    strip --strip-unneeded "$_f" && msg2 "$_f stripped"
-	  done
+	if [ "$_EXTERNAL_INSTALL" != "proton" ]; then
+	  if [ "$_protonify" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 2e5e5ade82b5e3b1d70ebe6b1a824bdfdedfd04e HEAD ); then
+	    if [ "$_pkg_strip" = "true" ]; then
+	      msg2 "Fixing x86_64 PE files..."
+	      find "$_prefix"/"$_lib64name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      msg2 "Fixing i386 PE files..."
+	      find "$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      find "$_prefix"/bin/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 sh -c 'objcopy --file-alignment=4096 "$@" > /dev/null 2>&1; exit 0' cmd
+	    else
+	      msg2 "Fixing x86_64 PE files..."
+	      find "$_prefix"/"$_lib64name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      msg2 "Fixing i386 PE files..."
+	      find "$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      find "$_prefix"/bin/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 sh -c 'objcopy --file-alignment=4096 "$@" > /dev/null 2>&1; exit 0' cmd
+	    fi
+	  elif [ "$_pkg_strip" = "true" ]; then
+	    for _f in $( find "$_prefix" -type f '(' -iname '*.dll' -or -iname '*.so' -or -iname '*.sys' -or -iname '*.drv' -or -iname '*.exe' ')' ); do
+	      strip --strip-unneeded "$_f" && msg2 "$_f stripped"
+	    done
+	  fi
 	fi
 
 	cp -v "$_where"/last_build_config.log "$_prefix"/share/wine/wine-tkg-config.txt
@@ -411,10 +427,26 @@ _package_makepkg() {
 	cp "$_where"/wine-tkg-scripts/wine-tkg-interactive "${pkgdir}$_prefix"/bin/wine-tkg-interactive
 
 	# strip
-	if [ "$_pkg_strip" = "true" ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
-	  for _f in $( find "${pkgdir}$_prefix" -type f '(' -iname '*.dll' -or -iname '*.so' -or -iname '*.sys' -or -iname '*.drv' -or -iname '*.exe' ')' ); do
-	    strip --strip-unneeded "$_f" && msg2 "$_f stripped"
-	  done
+	if [ "$_EXTERNAL_INSTALL" != "proton" ]; then
+	  if [ "$_protonify" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 2e5e5ade82b5e3b1d70ebe6b1a824bdfdedfd04e HEAD ); then
+	    if [ "$_pkg_strip" = "true" ]; then
+	      msg2 "Fixing x86_64 PE files..."
+	      find "${pkgdir}$_prefix"/"$_lib64name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      msg2 "Fixing i386 PE files..."
+	      find "${pkgdir}$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      find "${pkgdir}$_prefix"/bin/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 sh -c 'objcopy --file-alignment=4096 "$@" > /dev/null 2>&1; exit 0' cmd
+	    else
+	      msg2 "Fixing x86_64 PE files..."
+	      find "${pkgdir}$_prefix"/"$_lib64name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      msg2 "Fixing i386 PE files..."
+	      find "${pkgdir}$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      find "${pkgdir}$_prefix"/bin/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 sh -c 'objcopy --file-alignment=4096 "$@" > /dev/null 2>&1; exit 0' cmd
+	    fi
+	  elif [ "$_pkg_strip" = "true" ]; then
+	    for _f in $( find "${pkgdir}$_prefix" -type f '(' -iname '*.dll' -or -iname '*.so' -or -iname '*.sys' -or -iname '*.drv' -or -iname '*.exe' ')' ); do
+	      strip --strip-unneeded "$_f" && msg2 "$_f stripped"
+	    done
+	  fi
 	fi
 
 	cp "$_where"/last_build_config.log "${pkgdir}$_prefix"/share/wine/wine-tkg-config.txt
