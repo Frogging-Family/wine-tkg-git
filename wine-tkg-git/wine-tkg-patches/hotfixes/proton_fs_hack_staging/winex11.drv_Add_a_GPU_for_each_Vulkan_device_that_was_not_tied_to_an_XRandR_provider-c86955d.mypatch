@@ -1,4 +1,4 @@
-From 90bc8edf1d4eae1cb328ba1e829f987a1e1e2108 Mon Sep 17 00:00:00 2001
+From 0597fa1ef89f5c4840c9b5762d74d7ce2e0abb56 Mon Sep 17 00:00:00 2001
 From: Arkadiusz Hiler <ahiler@codeweavers.com>
 Date: Wed, 23 Jun 2021 13:37:04 +0300
 Subject: [PATCH] winex11.drv: Add a GPU for each Vulkan device that was not
@@ -23,17 +23,17 @@ outputs.
 CW-Bug-Id: #18737
 CW-Bug-Id: #18925
 ---
- dlls/winex11.drv/xrandr.c | 151 +++++++++++++++++++++++++++++++++++---
- 1 file changed, 141 insertions(+), 10 deletions(-)
+ dlls/winex11.drv/xrandr.c | 149 +++++++++++++++++++++++++++++++++++---
+ 1 file changed, 139 insertions(+), 10 deletions(-)
 
 diff --git a/dlls/winex11.drv/xrandr.c b/dlls/winex11.drv/xrandr.c
-index 667013df5ac..9b237bca7d3 100644
+index 7edaaf07dc2..a17b8f47fbf 100644
 --- a/dlls/winex11.drv/xrandr.c
 +++ b/dlls/winex11.drv/xrandr.c
-@@ -623,6 +623,115 @@ static BOOL is_crtc_primary( RECT primary, const XRRCrtcInfo *crtc )
+@@ -602,6 +602,113 @@ static BOOL is_crtc_primary( RECT primary, const XRRCrtcInfo *crtc )
             crtc->y + crtc->height == primary.bottom;
  }
- 
+
 +static void add_remaining_gpus_via_vulkan( struct gdi_gpu **gpus, int *count )
 +{
 +    static const char *extensions[] =
@@ -52,7 +52,6 @@ index 667013df5ac..9b237bca7d3 100644
 +    INT gpu_idx, device_idx;
 +    INT original_gpu_count = *count;
 +    struct gdi_gpu *new_gpu;
-+    DWORD len;
 +    BOOL new;
 +    VkResult vr;
 +
@@ -131,8 +130,7 @@ index 667013df5ac..9b237bca7d3 100644
 +            memcpy( &new_gpu->vulkan_uuid, id.deviceUUID, sizeof(id.deviceUUID) );
 +            new_gpu->vendor_id = properties2.properties.vendorID;
 +            new_gpu->device_id = properties2.properties.deviceID;
-+            RtlUTF8ToUnicodeN( new_gpu->name, sizeof(new_gpu->name), &len, properties2.properties.deviceName,
-+                               strlen( properties2.properties.deviceName ) + 1 );
++            MultiByteToWideChar( CP_UTF8, 0, properties2.properties.deviceName, -1, new_gpu->name, ARRAY_SIZE(new_gpu->name) );
 +
 +            TRACE("Added a new GPU via Vulkan: %04x:%04x %s\n", new_gpu->vendor_id, new_gpu->device_id, debugstr_w(new_gpu->name));
 +    }
@@ -144,9 +142,9 @@ index 667013df5ac..9b237bca7d3 100644
 +}
 +
  VK_DEFINE_NON_DISPATCHABLE_HANDLE(VkDisplayKHR)
- 
+
  static BOOL get_gpu_properties_from_vulkan( struct gdi_gpu *gpu, const XRRProviderInfo *provider_info )
-@@ -742,6 +849,7 @@ static BOOL xrandr14_get_gpus2( struct gdi_gpu **new_gpus, int *count, BOOL get_
+@@ -718,6 +825,7 @@ static BOOL xrandr14_get_gpus2( struct gdi_gpu **new_gpus, int *count, BOOL g
      XRRProviderInfo *provider_info = NULL;
      XRRCrtcInfo *crtc_info = NULL;
      INT primary_provider = -1;
@@ -154,10 +152,10 @@ index 667013df5ac..9b237bca7d3 100644
      RECT primary_rect;
      BOOL ret = FALSE;
      INT i, j;
-@@ -754,22 +862,17 @@ static BOOL xrandr14_get_gpus2( struct gdi_gpu **new_gpus, int *count, BOOL get_
+@@ -730,22 +838,17 @@ static BOOL xrandr14_get_gpus2( struct gdi_gpu **new_gpus, int *count, BOOL g
      if (!provider_resources)
          goto done;
- 
+
 -    gpus = calloc( provider_resources->nproviders ? provider_resources->nproviders : 1, sizeof(*gpus) );
 -    if (!gpus)
 -        goto done;
@@ -174,25 +172,25 @@ index 667013df5ac..9b237bca7d3 100644
 -        goto done;
 +        goto fallback;
      }
- 
+
 +    gpus = calloc( provider_resources->nproviders, sizeof(*gpus) );
 +    if (!gpus) goto done;
 +
      primary_rect = get_primary_rect( screen_resources );
      for (i = 0; i < provider_resources->nproviders; ++i)
      {
-@@ -802,6 +905,7 @@ static BOOL xrandr14_get_gpus2( struct gdi_gpu **new_gpus, int *count, BOOL get_
+@@ -778,6 +881,7 @@ static BOOL xrandr14_get_gpus2( struct gdi_gpu **new_gpus, int *count, BOOL g
              /* FIXME: Add an alternate method of getting PCI IDs, for systems that don't support Vulkan */
          }
          pXRRFreeProviderInfo( provider_info );
 +        gpu_count++;
      }
- 
+
      /* Make primary GPU the first */
-@@ -812,8 +916,29 @@ static BOOL xrandr14_get_gpus2( struct gdi_gpu **new_gpus, int *count, BOOL get_
+@@ -788,8 +892,29 @@ static BOOL xrandr14_get_gpus2( struct gdi_gpu **new_gpus, int *count, BOOL g
          gpus[primary_provider] = tmp;
      }
- 
+
 +fallback:
 +    /* Add the Vulkan only GPUs only if we need all the detailed properties */
 +    if (get_properties)
@@ -220,10 +218,10 @@ index 667013df5ac..9b237bca7d3 100644
      ret = TRUE;
  done:
      if (provider_resources)
-@@ -858,6 +983,10 @@ static BOOL xrandr14_get_adapters( ULONG_PTR gpu_id, struct gdi_adapter **new_ad
+@@ -834,6 +959,10 @@ static BOOL xrandr14_get_adapters( ULONG_PTR gpu_id, struct x11drv_adapter **new
      if (!screen_resources)
          goto done;
- 
+
 +    /* Vulkan-only, adapter-less GPU */
 +    if (gpu_id == -1)
 +        goto done;

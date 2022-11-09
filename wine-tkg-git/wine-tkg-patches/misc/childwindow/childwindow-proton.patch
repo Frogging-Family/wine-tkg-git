@@ -1987,3 +1987,94 @@ index 1275bc18aa0..f358d34e1e8 100644
 -- 
 2.37.1
 
+From 9897cbc555f30b3b8574d5b23297a303d34d73d8 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 22 Feb 2022 18:11:13 +0300
+Subject: [PATCH] winex11.drv: Also treat VK_SUBOPTIMAL_KHR as success in
+ X11DRV_vkAcquireNextImageKHR().
+
+CW-Bug-Id: #20200
+---
+ dlls/winex11.drv/vulkan.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/winex11.drv/vulkan.c b/dlls/winex11.drv/vulkan.c
+index 8c822722591..918f32350b1 100644
+--- a/dlls/winex11.drv/vulkan.c
++++ b/dlls/winex11.drv/vulkan.c
+@@ -436,7 +436,7 @@ static VkResult X11DRV_vkAcquireNextImageKHR(VkDevice device,
+     }
+ 
+     result = pvkAcquireNextImageKHR(device, swapchain, timeout, semaphore, fence, image_index);
+-    if (result == VK_SUCCESS && hdc && surface && surface->offscreen)
++    if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && hdc && surface && surface->offscreen)
+     {
+         if (wait_fence) pvkWaitForFences(device, 1, &fence, 0, timeout);
+         escape.code = X11DRV_PRESENT_DRAWABLE;
+From 5b780cee2123052e2025bd8c7a2dc9781b6c1106 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 9 May 2022 12:44:00 -0500
+Subject: [PATCH] winex11.drv: Reparent client window back to whole window when
+ reactivating it.
+
+CW-Bug-Id: #20614
+
+Related to Vulkan child window / multiple swapchains handling,
+specificall this commit:
+"winex11.drv: Update client_window pointer on surface destroy."
+
+When the client window is replaced by the new one it gets reparented to
+dummy window (effectively hidden). When another swapchain gets deleted
+and the previous client window is brought back onscreen, in the current
+logic it makes sense to make it visible child of the whole window again.
+---
+ dlls/winex11.drv/window.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index e1d84c61575..fa22dd890d1 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -1749,9 +1749,19 @@ Window get_dummy_parent(void)
+ void update_client_window( HWND hwnd )
+ {
+     struct x11drv_win_data *data;
++    Window old_active;
++
+     if ((data = get_win_data( hwnd )))
+     {
++        old_active = data->client_window;
+         data->client_window = wine_vk_active_surface( hwnd );
++        if (data->client_window && data->whole_window && old_active != data->client_window)
++        {
++            TRACE( "%p reparent xwin %lx/%lx\n", data->hwnd, data->whole_window, data->client_window );
++            XReparentWindow( data->display, data->client_window, data->whole_window,
++                     data->client_rect.left - data->whole_rect.left,
++                     data->client_rect.top - data->whole_rect.top );
++        }
+         /* make sure any request that could use old client window has been flushed */
+         XFlush( data->display );
+         release_win_data( data );
+From fa9a87cdc728eb5bc6435bbe7c602e1c2a55b9d8 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 20 May 2022 16:20:29 -0500
+Subject: [PATCH] winex11.drv: Also call sync_vk_surface() for the child window
+ when WS_CHILD is changed.
+
+CW-Bug-Id: #19945
+---
+ dlls/winex11.drv/window.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index 521342d3e84..8fc05079d76 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -2106,6 +2106,7 @@ void CDECL X11DRV_SetWindowStyle( HWND hwnd, INT offset, STYLESTRUCT *style )
+             sync_vk_surface( parent, TRUE );
+         else
+             sync_vk_surface( parent, FALSE );
++        sync_vk_surface( hwnd, style->styleNew & WS_CHILD );
+     }
+ 
+     if (hwnd == NtUserGetDesktopWindow()) return;
