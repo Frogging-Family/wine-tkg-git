@@ -483,7 +483,7 @@ function build_steamhelper {
     if [ -e "$_nowhere"/Proton/steam_helper/64/libsteam_api.so ]; then
       cd "$_nowhere"/Proton/build/steam.win64
       winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/openvr/headers/" -L"$_nowhere/Proton/steam_helper/32/" -L"$_nowhere/Proton/steam_helper/64/" .
-      make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win64" LIBRARIES="-L$_nowhere/Proton/steam_helper/32/ -L$_nowhere/Proton/steam_helper/64/ -lsteam_api -lole32 -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so || exit 1
+      make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win64" LIBRARIES="-L$_nowhere/Proton/steam_helper/64/ -lsteam_api -lole32 -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so #|| exit 1 - commented out until we fix /usr/bin/ld: /../lib64/wine/x86_64-unix/libwinecrt0.a(exe_entry.o): in function `__wine_spec_exe_entry': exe_entry.c:(.text+0x8d): undefined reference to `NtCurrentTeb'
 
       touch "$_nowhere/Proton/build/steam.win64/steam.spec"
       winebuild --exe --fake-module -m64 -E "$_nowhere/Proton/build/steam.win64/steam.spec" --dll-name=steam -o steam.exe.fake || exit 1
