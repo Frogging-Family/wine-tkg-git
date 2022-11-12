@@ -1,89 +1,3 @@
-diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
-index f5a07b510c9e..5c7c2592018c 100644
---- a/dlls/ntdll/loader.c
-+++ b/dlls/ntdll/loader.c
-@@ -4600,3 +4600,16 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
-     if (reason == DLL_PROCESS_ATTACH) LdrDisableThreadCalloutsForDll( inst );
-     return TRUE;
- }
-+
-+
-+const struct unix_funcs *unix_funcs;
-+
-+/***********************************************************************
-+ *           __wine_set_unix_funcs
-+ */
-+NTSTATUS CDECL __wine_set_unix_funcs( int version, const struct unix_funcs *funcs )
-+{
-+    if (version != NTDLL_UNIXLIB_VERSION) return STATUS_REVISION_MISMATCH;
-+    unix_funcs = funcs;
-+    return STATUS_SUCCESS;
-+}
-diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
-index 74e37fccbb68..7a5a5afdb6b1 100644
---- a/dlls/ntdll/ntdll.spec
-+++ b/dlls/ntdll/ntdll.spec
-@@ -1692,6 +1692,7 @@
- # Unix interface
- @ stdcall -syscall __wine_unix_call(int64 long ptr)
- @ stdcall -syscall __wine_unix_spawnvp(long ptr)
-+@ cdecl __wine_set_unix_funcs(long ptr)
- @ stdcall __wine_ctrl_routine(ptr)
- @ extern __wine_syscall_dispatcher
- @ extern -arch=i386 __wine_ldt_copy
-diff --git a/dlls/ntdll/ntdll_misc.h b/dlls/ntdll/ntdll_misc.h
-index 1ce972e3b384..36972a966f1d 100644
---- a/dlls/ntdll/ntdll_misc.h
-+++ b/dlls/ntdll/ntdll_misc.h
-@@ -85,6 +85,7 @@ extern const WCHAR windows_dir[] DECLSPEC_HIDDEN;
- extern const WCHAR system_dir[] DECLSPEC_HIDDEN;
-
- extern void (FASTCALL *pBaseThreadInitThunk)(DWORD,LPTHREAD_START_ROUTINE,void *) DECLSPEC_HIDDEN;
-+extern const struct unix_funcs *unix_funcs DECLSPEC_HIDDEN;
-
- extern struct _KUSER_SHARED_DATA *user_shared_data DECLSPEC_HIDDEN;
-
-diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index 3f16d2f00867..35f2e5f986f7 100644
---- a/dlls/ntdll/unix/loader.c
-+++ b/dlls/ntdll/unix/loader.c
-@@ -116,6 +116,7 @@ void     (WINAPI *pRtlUserThreadStart)( PRTL_THREAD_START_ROUTINE entry, void *a
- void     (WINAPI *p__wine_ctrl_routine)(void*);
- SYSTEM_DLL_INIT_BLOCK *pLdrSystemDllInitBlock = NULL;
-
-+static NTSTATUS (CDECL *p__wine_set_unix_funcs)( int version, const struct unix_funcs *funcs );
- static void *p__wine_syscall_dispatcher;
-
- static void * const syscalls[] =
-@@ -1062,6 +1061,7 @@ static void load_ntdll_functions( HMODULE module )
-     GET_FUNC( LdrSystemDllInitBlock );
-     GET_FUNC( RtlUserThreadStart );
-     GET_FUNC( __wine_ctrl_routine );
-+    GET_FUNC( __wine_set_unix_funcs );
-     GET_FUNC( __wine_syscall_dispatcher );
- #ifdef __i386__
-     {
-@@ -2191,6 +2182,7 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
- static void start_main_thread(void)
- {
-     SYSTEM_SERVICE_TABLE syscall_table = { (ULONG_PTR *)syscalls, NULL, ARRAY_SIZE(syscalls), syscall_args };
-+    NTSTATUS status;
-     TEB *teb = virtual_alloc_first_teb();
-
-     signal_init_threading();
-@@ -2214,6 +2204,12 @@ static void start_main_thread(void)
-     if (main_image_info.Machine != current_machine) load_wow64_ntdll( main_image_info.Machine );
-     load_apiset_dll();
-     ntdll_init_syscalls( 0, &syscall_table, p__wine_syscall_dispatcher );
-+    status = p__wine_set_unix_funcs( NTDLL_UNIXLIB_VERSION, &unix_funcs );
-+    if (status == STATUS_REVISION_MISMATCH)
-+    {
-+        ERR( "ntdll library version mismatch\n" );
-+        NtTerminateProcess( GetCurrentProcess(), status );
-+    }
-     server_init_process_done();
- }
-
 From b9bb042502857bf088bdde3cdb0f998b6fbdcedc Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Tue, 13 Jun 2017 12:35:56 -0500
@@ -245,24 +159,16 @@ index 5dcab3455a0..ecf3cf33947 100644
 +}
 +
  /***********************************************************************
-  *           __wine_unix_call_funcs
+  *           unix_funcs
   */
-@@ -2069,6 +2135,15 @@ static struct unix_funcs unix_funcs =
-     steamclient_count++;
- }
-
-+/***********************************************************************
-+ *           unix_funcs
-+ */
-+static struct unix_funcs unix_funcs =
-+{
+@@ -2069,6 +2135,7 @@ static struct unix_funcs unix_funcs =
+ #ifdef __aarch64__
+     NtCurrentTeb,
+ #endif
 +    steamclient_setup_trampolines,
-+};
-+
-+
- /***********************************************************************
-  *           __wine_unix_call_funcs
-  */
+ };
+
+
 diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
 index 6bb5649e2b5..4f471ffb03b 100644
 --- a/dlls/ntdll/unix/signal_i386.c
@@ -331,19 +237,15 @@ diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
 index cb184431f82..8aca8fe31c3 100644
 --- a/dlls/ntdll/unixlib.h
 +++ b/dlls/ntdll/unixlib.h
-@@ -40,4 +40,13 @@ struct unix_funcs
-
- #define NTDLL_UNIX_CALL( func, params ) __wine_unix_call( ntdll_unix_handle, unix_ ## func, params )
-
-+/* increment this when you change the function table */
-+#define NTDLL_UNIXLIB_VERSION 139
+@@ -40,6 +40,9 @@ struct unix_funcs
+ #ifdef __aarch64__
+     TEB *         (WINAPI *NtCurrentTeb)(void);
+ #endif
 +
-+struct unix_funcs
-+{
 +    /* steamclient HACK */
 +    void          (CDECL *steamclient_setup_trampolines)( HMODULE src_mod, HMODULE tgt_mod );
-+};
-+
+ };
+
  #endif /* __NTDLL_UNIXLIB_H */
 From b25e4e6251675172321a561e1398874fd2dd0126 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
@@ -532,9 +434,9 @@ index bd8e1f5efe6..e361fac3a3b 100644
 --- a/dlls/ntdll/ntdll.spec
 +++ b/dlls/ntdll/ntdll.spec
 @@ -1636,6 +1636,7 @@
+ @ stdcall __wine_ctrl_routine(ptr)
  @ extern __wine_syscall_dispatcher
  @ extern -arch=i386 __wine_ldt_copy
- @ extern -arch=arm64 __wine_current_teb
 +@ cdecl __wine_set_unix_env(ptr ptr)
 
  # Debugging
@@ -557,8 +459,8 @@ index 5390b8f6779..a7e79a828ca 100644
 --- a/dlls/ntdll/unix/loader.c
 +++ b/dlls/ntdll/unix/loader.c
 @@ -2157,6 +2157,7 @@ static struct unix_funcs unix_funcs =
- static struct unix_funcs unix_funcs =
- {
+     NtCurrentTeb,
+ #endif
      steamclient_setup_trampolines,
 +    set_unix_env,
  };
@@ -582,7 +484,7 @@ index 8aca8fe31c3..595c3931904 100644
 --- a/dlls/ntdll/unixlib.h
 +++ b/dlls/ntdll/unixlib.h
 @@ -43,6 +43,7 @@ struct unix_funcs
- {
+
      /* steamclient HACK */
      void          (CDECL *steamclient_setup_trampolines)( HMODULE src_mod, HMODULE tgt_mod );
 +    void          (CDECL *set_unix_env)( const char *var, const char *val );
