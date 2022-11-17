@@ -1023,8 +1023,10 @@ _polish() {
 
 	echo "" >> "$_where"/last_build_config.log
 
-    source "$_where"/wine-tkg-patches/misc/wine-tkg/wine-tkg
+	source "$_where"/wine-tkg-patches/misc/wine-tkg/wine-tkg
 
+	git add * && true
+	tools/make_makefiles
 	echo -e "\nRunning make_vulkan" >> "$_where"/prepare.log && dlls/winevulkan/make_vulkan >> "$_where"/prepare.log 2>&1
 	tools/make_requests
 	autoreconf -fiv
@@ -1112,9 +1114,6 @@ _polish() {
 	    sed -i "s|-lldap_r|-lldap|" "$srcdir/$_winesrcdir/configure"
 	  fi
 	fi
-
-	# fix path of opencl headers
-	sed 's|OpenCL/opencl.h|CL/opencl.h|g' -i configure*
 
 	_commitmsg="07-tags-n-polish" _committer
 
