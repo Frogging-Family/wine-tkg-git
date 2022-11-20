@@ -1,5 +1,7 @@
 # Wine to rule them all !
 
+You must be logged in to GitHub in order to download Wine or Proton nightly builds.
+
 ## Wine nightly builds
 
 - wine-staging patchset applied
