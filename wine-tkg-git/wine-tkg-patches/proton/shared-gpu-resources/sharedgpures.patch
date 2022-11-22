@@ -1,4 +1,1823 @@
-From a2efaf1d8b8a848dfe60d5c45238d48a6a653b68 Mon Sep 17 00:00:00 2001
+From 6c1f9fd04809527fb6c5698f1084b2b362a8534c Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 19 May 2021 13:33:36 -0400
+Subject: [PATCH 1/4] winevulkan: Implement VK_KHR_external_memory_win32 for
+ buffers.
+
+Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
+---
+ dlls/vulkan-1/tests/vulkan.c     |   5 +-
+ dlls/winevulkan/make_vulkan      |  27 ++-
+ dlls/winevulkan/vulkan.c         | 397 ++++++++++++++++++++++++++++++-
+ dlls/winevulkan/vulkan_private.h |  24 ++
+ 4 files changed, 431 insertions(+), 22 deletions(-)
+
+diff --git a/dlls/vulkan-1/tests/vulkan.c b/dlls/vulkan-1/tests/vulkan.c
+index 11d20120d1d..ee323c69ec0 100644
+--- a/dlls/vulkan-1/tests/vulkan.c
++++ b/dlls/vulkan-1/tests/vulkan.c
+@@ -615,8 +615,9 @@ static void import_memory(VkDevice vk_device, VkMemoryAllocateInfo alloc_info, V
+         import_handle_info.name = L"wine_test_buffer_export_name";
+ 
+         vr = vkAllocateMemory(vk_device, &alloc_info, NULL, &memory);
+-        ok(vr == VK_SUCCESS, "vkAllocateMemory failed, VkResult %d.\n", vr);
+-        vkFreeMemory(vk_device, memory, NULL);
++        todo_wine ok(vr == VK_SUCCESS, "vkAllocateMemory failed, VkResult %d.\n", vr);
++        if (vr == VK_SUCCESS)
++            vkFreeMemory(vk_device, memory, NULL);
+     }
+ }
+ 
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index 6facd0d146f..f0ac59a4c42 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -111,7 +111,6 @@ UNSUPPORTED_EXTENSIONS = [
+     "VK_EXT_physical_device_drm",
+     "VK_GOOGLE_surfaceless_query",
+     "VK_KHR_external_fence_fd",
+-    "VK_KHR_external_memory_fd",
+     "VK_KHR_external_semaphore_fd",
+     "VK_SEC_amigo_profiling", # Angle specific.
+ 
+@@ -127,7 +126,7 @@ UNSUPPORTED_EXTENSIONS = [
+ # winevulkan may nonetheless use, or extensions we want to generate headers for
+ # but not expose to applications (useful for test commits)
+ UNEXPOSED_EXTENSIONS = {
+-    "VK_KHR_external_memory_win32",
++    "VK_KHR_external_memory_fd",
+ }
+ 
+ # The Vulkan loader provides entry-points for core functionality and important
+@@ -192,7 +191,7 @@ FUNCTION_OVERRIDES = {
+     "vkEnumerateDeviceLayerProperties": {"dispatch": True, "driver": False, "thunk": ThunkType.NONE},
+     "vkEnumeratePhysicalDeviceGroups" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkEnumeratePhysicalDevices" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+-    "vkGetPhysicalDeviceExternalBufferProperties" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
++    "vkGetPhysicalDeviceExternalBufferProperties" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkGetPhysicalDeviceExternalFenceProperties" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkGetPhysicalDeviceExternalSemaphoreProperties" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkGetPhysicalDeviceImageFormatProperties2" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PRIVATE},
+@@ -201,12 +200,15 @@ FUNCTION_OVERRIDES = {
+ 
+     # Device functions
+     "vkAllocateCommandBuffers" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
++    "vkAllocateMemory" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
++    "vkCreateBuffer" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkCreateCommandPool" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE, "extra_param" : "client_ptr"},
+     "vkCreateComputePipelines" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
+     "vkCreateGraphicsPipelines" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
+     "vkDestroyCommandPool" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
+     "vkDestroyDevice" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
+     "vkFreeCommandBuffers" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
++    "vkFreeMemory" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkGetDeviceProcAddr" : {"dispatch" : False, "driver" : True, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.NONE},
+     "vkGetDeviceQueue" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkGetDeviceQueue2" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE},
+@@ -238,7 +240,7 @@ FUNCTION_OVERRIDES = {
+     "vkGetPhysicalDeviceExternalFencePropertiesKHR" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
+ 
+     # VK_KHR_external_memory_capabilities
+-    "vkGetPhysicalDeviceExternalBufferPropertiesKHR" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
++    "vkGetPhysicalDeviceExternalBufferPropertiesKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkGetPhysicalDeviceImageFormatProperties2KHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PRIVATE},
+ 
+     # VK_KHR_external_semaphore_capabilities
+@@ -268,12 +270,20 @@ FUNCTION_OVERRIDES = {
+ 
+     # VK_NV_ray_tracing
+     "vkCreateRayTracingPipelinesNV" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
++
++    # VK_KHR_external_memory_win32
++    "vkGetMemoryWin32HandleKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
++    "vkGetMemoryWin32HandlePropertiesKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+ }
+ 
+ STRUCT_CHAIN_CONVERSIONS = {
+     # Ignore to not confuse host loader.
+     "VkDeviceCreateInfo": ["VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO"],
+     "VkInstanceCreateInfo": ["VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO"],
++
++    # Structs which require pNext chain modification
++    "VkBufferCreateInfo": [],
++    "VkMemoryAllocateInfo": ["VK_STRUCTURE_TYPE_EXPORT_MEMORY_WIN32_HANDLE_INFO_KHR", "VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR"],
+ }
+ 
+ 
+@@ -1120,6 +1130,8 @@ class VkHandle(object):
+             return "wine_queue_from_handle({0})->queue".format(name)
+         if self.name == "VkSurfaceKHR":
+             return "wine_surface_from_handle({0})->surface".format(name)
++        if self.name == "VkDeviceMemory":
++            return "wine_dev_mem_from_handle({0})->dev_mem".format(name)
+         if self.is_dispatchable():
+             LOGGER.error("Unhandled native handle for: {0}".format(self.name))
+         return None
+@@ -1262,7 +1274,8 @@ class VkMember(object):
+                     LOGGER.err("OUTPUT parameter {0}.{1} cannot be unwrapped".format(self.type, self.name))
+                 else:
+                     handle = self.type_info["data"]
+-                    return "{0}{1} = {2};\n".format(output, self.name, handle.driver_handle("{0}{1}".format(input, self.name)))
++                    input_name = "{0}{1}".format(input, self.name)
++                    return "{0}{1} = {2} ? {3} : VK_NULL_HANDLE;\n".format(output, self.name, input_name, handle.driver_handle(input_name))
+             elif self.is_generic_handle():
+                 if direction == Direction.OUTPUT:
+                     LOGGER.err("OUTPUT parameter {0}.{1} cannot be unwrapped".format(self.type, self.name))
+@@ -2195,7 +2208,7 @@ class ConversionFunction(object):
+                         body += "#endif /* USE_STRUCT_CONVERSION */\n"
+ 
+         elif isinstance(self.operand, VkHandle) and self.direction == Direction.INPUT:
+-            body += "        out[i] = " + self.operand.driver_handle("in[i]") + ";\n"
++            body += "        out[i] = in[i] ? " + self.operand.driver_handle("in[i]") + " : VK_NULL_HANDLE;\n"
+         else:
+             LOGGER.warn("Unhandled conversion operand type")
+             body += "        out[i] = in[i];\n"
+@@ -2337,7 +2350,7 @@ class ConversionFunction(object):
+                         body += "    " + unwrap
+                         body += "#endif /* USE_STRUCT_CONVERSION */\n"
+         elif isinstance(self.operand, VkHandle) and self.direction == Direction.INPUT:
+-            body += "        out[i] = " + self.operand.driver_handle("in[i]") + ";\n"
++            body += "        out[i] = in[i] ? " + self.operand.driver_handle("in[i]") + " : VK_NULL_HANDLE;\n"
+         else:
+             LOGGER.warn("Unhandled conversion operand type")
+             body += "        out[i] = in[i];\n"
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 7bc8712d7ca..07f767a394b 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -23,6 +23,11 @@
+ 
+ #include "config.h"
+ #include <time.h>
++#include <unistd.h>
++
++#include "ntstatus.h"
++#define WIN32_NO_STATUS
++#include "wine/server.h"
+ 
+ #include "vulkan_private.h"
+ #include "wine/vulkan_driver.h"
+@@ -268,6 +273,15 @@ static struct wine_phys_dev *wine_vk_physical_device_alloc(struct wine_instance
+      */
+     for (i = 0; i < num_host_properties; i++)
+     {
++        if (!strcmp(host_properties[i].extensionName, "VK_KHR_external_memory_fd"))
++        {
++            TRACE("Substituting VK_KHR_external_memory_fd for VK_KHR_external_memory_win32\n");
++
++            snprintf(host_properties[i].extensionName, sizeof(host_properties[i].extensionName),
++                    VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
++            host_properties[i].specVersion = VK_KHR_EXTERNAL_MEMORY_WIN32_SPEC_VERSION;
++        }
++
+         if (wine_vk_device_extension_supported(host_properties[i].extensionName))
+         {
+             TRACE("Enabling extension '%s' for physical device %p\n", host_properties[i].extensionName, object);
+@@ -374,7 +388,7 @@ static void wine_vk_device_free_create_info(VkDeviceCreateInfo *create_info)
+ static VkResult wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src,
+         VkDeviceCreateInfo *dst)
+ {
+-    unsigned int i;
++    unsigned int i, replace_win32 = 0;
+     VkResult res;
+ 
+     *dst = *src;
+@@ -389,19 +403,41 @@ static VkResult wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src
+     dst->enabledLayerCount = 0;
+     dst->ppEnabledLayerNames = NULL;
+ 
+-    TRACE("Enabled %u extensions.\n", dst->enabledExtensionCount);
+-    for (i = 0; i < dst->enabledExtensionCount; i++)
++    for (i = 0; i < src->enabledExtensionCount; i++)
+     {
+-        const char *extension_name = dst->ppEnabledExtensionNames[i];
+-        TRACE("Extension %u: %s.\n", i, debugstr_a(extension_name));
+-        if (!wine_vk_device_extension_supported(extension_name))
++        if (!strcmp(src->ppEnabledExtensionNames[i], "VK_KHR_external_memory_win32"))
+         {
+-            WARN("Extension %s is not supported.\n", debugstr_a(extension_name));
+-            wine_vk_device_free_create_info(dst);
+-            return VK_ERROR_EXTENSION_NOT_PRESENT;
++            replace_win32 = 1;
++            break;
+         }
+     }
+ 
++    if (replace_win32)
++    {
++        unsigned int o = 0;
++        char **new_extensions_list;
++ 
++        new_extensions_list = malloc(sizeof(char *) * (dst->enabledExtensionCount));
++
++        for (i = 0; i < dst->enabledExtensionCount; i++)
++        {
++            if (replace_win32 && !strcmp(src->ppEnabledExtensionNames[i], "VK_KHR_external_memory_win32"))
++                new_extensions_list[o] = strdup("VK_KHR_external_memory_fd");
++            else
++                new_extensions_list[o] = strdup(dst->ppEnabledExtensionNames[i]);
++            ++o;
++        }
++
++        dst->enabledExtensionCount = o;
++        dst->ppEnabledExtensionNames = (const char * const *)new_extensions_list;
++    }
++
++    TRACE("Enabled %u extensions.\n", dst->enabledExtensionCount);
++    for (i = 0; i < dst->enabledExtensionCount; i++)
++    {
++        TRACE("Extension %u: %s.\n", i, debugstr_a(dst->ppEnabledExtensionNames[i]));
++    }
++
+     return VK_SUCCESS;
+ }
+ 
+@@ -1275,27 +1311,80 @@ NTSTATUS wine_vkGetPhysicalDeviceExternalFencePropertiesKHR(void *args)
+     return STATUS_SUCCESS;
+ }
+ 
++static inline void wine_vk_normalize_handle_types_win(VkExternalMemoryHandleTypeFlags *types)
++{
++    *types &=
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT |
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT |
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT |
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT |
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT |
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT |
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT |
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT;
++}
++
++static inline void wine_vk_normalize_handle_types_host(VkExternalMemoryHandleTypeFlags *types)
++{
++    *types &=
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT |
++/*      predicated on VK_KHR_external_memory_dma_buf
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT | */
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT;
++}
++
++static void wine_vk_get_physical_device_external_buffer_properties(struct wine_phys_dev *phys_dev,
++        void (*p_vkGetPhysicalDeviceExternalBufferProperties)(VkPhysicalDevice, const VkPhysicalDeviceExternalBufferInfo *, VkExternalBufferProperties *),
++        const VkPhysicalDeviceExternalBufferInfo *buffer_info, VkExternalBufferProperties *properties)
++{
++    VkPhysicalDeviceExternalBufferInfo buffer_info_dup = *buffer_info;
++
++    wine_vk_normalize_handle_types_win(&buffer_info_dup.handleType);
++    if (buffer_info_dup.handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT)
++        buffer_info_dup.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
++    wine_vk_normalize_handle_types_host(&buffer_info_dup.handleType);
++
++    if (buffer_info->handleType && !buffer_info_dup.handleType)
++    {
++        memset(&properties->externalMemoryProperties, 0, sizeof(properties->externalMemoryProperties));
++        return;
++    }
++
++    p_vkGetPhysicalDeviceExternalBufferProperties(phys_dev->phys_dev, &buffer_info_dup, properties);
++
++    if (properties->externalMemoryProperties.exportFromImportedHandleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
++        properties->externalMemoryProperties.exportFromImportedHandleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
++    wine_vk_normalize_handle_types_win(&properties->externalMemoryProperties.exportFromImportedHandleTypes);
++
++    if (properties->externalMemoryProperties.compatibleHandleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
++        properties->externalMemoryProperties.compatibleHandleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
++    wine_vk_normalize_handle_types_win(&properties->externalMemoryProperties.compatibleHandleTypes);
++}
++
+ NTSTATUS wine_vkGetPhysicalDeviceExternalBufferProperties(void *args)
+ {
+     struct vkGetPhysicalDeviceExternalBufferProperties_params *params = args;
+-    VkPhysicalDevice phys_dev = params->physicalDevice;
++    struct wine_phys_dev *phys_dev = wine_phys_dev_from_handle(params->physicalDevice);
+     const VkPhysicalDeviceExternalBufferInfo *buffer_info = params->pExternalBufferInfo;
+     VkExternalBufferProperties *properties = params->pExternalBufferProperties;
+ 
+     TRACE("%p, %p, %p\n", phys_dev, buffer_info, properties);
+-    memset(&properties->externalMemoryProperties, 0, sizeof(properties->externalMemoryProperties));
++
++    wine_vk_get_physical_device_external_buffer_properties(phys_dev, phys_dev->instance->funcs.p_vkGetPhysicalDeviceExternalBufferProperties, buffer_info, properties);
+     return STATUS_SUCCESS;
+ }
+ 
+ NTSTATUS wine_vkGetPhysicalDeviceExternalBufferPropertiesKHR(void *args)
+ {
+     struct vkGetPhysicalDeviceExternalBufferPropertiesKHR_params *params = args;
+-    VkPhysicalDevice phys_dev = params->physicalDevice;
++    struct wine_phys_dev *phys_dev = wine_phys_dev_from_handle(params->physicalDevice);
+     const VkPhysicalDeviceExternalBufferInfo *buffer_info = params->pExternalBufferInfo;
+     VkExternalBufferProperties *properties = params->pExternalBufferProperties;
+ 
+     TRACE("%p, %p, %p\n", phys_dev, buffer_info, properties);
+-    memset(&properties->externalMemoryProperties, 0, sizeof(properties->externalMemoryProperties));
++
++    wine_vk_get_physical_device_external_buffer_properties(phys_dev, phys_dev->instance->funcs.p_vkGetPhysicalDeviceExternalBufferPropertiesKHR, buffer_info, properties);
+     return STATUS_SUCCESS;
+ }
+ 
+@@ -1886,5 +1975,287 @@ NTSTATUS vk_is_available_device_function(void *arg)
+ {
+     struct is_available_device_function_params *params = arg;
+     struct wine_device *device = wine_device_from_handle(params->device);
++    if (!strcmp(params->name, "vkGetMemoryWin32HandleKHR") || !strcmp(params->name, "vkGetMemoryWin32HandlePropertiesKHR"))
++        return !!vk_funcs->p_vkGetDeviceProcAddr(device->device, "vkGetMemoryFdKHR");
+     return !!vk_funcs->p_vkGetDeviceProcAddr(device->device, params->name);
+ }
++
++static HANDLE create_gpu_resource(int fd, LPCWSTR name)
++{
++    HANDLE ret = INVALID_HANDLE_VALUE;
++
++    TRACE("Creating shared vulkan resource fd %d name %s.\n", fd, debugstr_w(name));
++
++    if (name)
++        FIXME("Naming gpu resources not supported.\n");
++
++    wine_server_fd_to_handle(fd, GENERIC_ALL, 0, &ret);
++
++    return ret;
++}
++
++NTSTATUS wine_vkAllocateMemory(void *args)
++{
++    struct vkAllocateMemory_params *params = args;
++    struct wine_device *device = wine_device_from_handle(params->device);
++    const VkMemoryAllocateInfo *allocate_info = params->pAllocateInfo;
++    const VkAllocationCallbacks *allocator = params->pAllocator;
++    VkDeviceMemory *memory = params->pMemory;
++
++    const VkImportMemoryWin32HandleInfoKHR *handle_import_info;
++    const VkExportMemoryWin32HandleInfoKHR *handle_export_info;
++    VkMemoryAllocateInfo allocate_info_dup = *allocate_info;
++    VkExportMemoryAllocateInfo *export_info;
++    VkImportMemoryFdInfoKHR fd_import_info;
++    struct wine_dev_mem *object;
++    VkResult res;
++    int fd;
++
++#if defined(USE_STRUCT_CONVERSION)
++    VkMemoryAllocateInfo_host allocate_info_host;
++    VkMemoryGetFdInfoKHR_host get_fd_info;
++#else
++    VkMemoryAllocateInfo allocate_info_host;
++    VkMemoryGetFdInfoKHR get_fd_info;
++#endif
++
++    TRACE("%p %p %p %p\n", device, allocate_info, allocator, memory);
++
++    if (allocator)
++        FIXME("Support for allocation callbacks not implemented yet\n");
++
++    if ((res = convert_VkMemoryAllocateInfo_struct_chain(allocate_info->pNext, &allocate_info_dup)) < 0)
++    {
++        WARN("Failed to convert VkMemoryAllocateInfo pNext chain, res=%d.\n", res);
++        return res;
++    }
++
++    if (!(object = calloc(1, sizeof(*object))))
++    {
++        free_VkMemoryAllocateInfo_struct_chain(&allocate_info_dup);
++        return VK_ERROR_OUT_OF_HOST_MEMORY;
++    }
++
++    object->dev_mem = VK_NULL_HANDLE;
++    object->handle = INVALID_HANDLE_VALUE;
++    fd_import_info.fd = -1;
++    fd_import_info.pNext = NULL;
++
++    /* find and process handle import/export info and grab it */
++    handle_import_info = wine_vk_find_struct(allocate_info, IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR);
++    handle_export_info = wine_vk_find_struct(allocate_info, EXPORT_MEMORY_WIN32_HANDLE_INFO_KHR);
++    if (handle_export_info && handle_export_info->pAttributes && handle_export_info->pAttributes->lpSecurityDescriptor)
++        FIXME("Support for custom security descriptor not implemented.\n");
++
++    if ((export_info = wine_vk_find_struct(&allocate_info_dup, EXPORT_MEMORY_ALLOCATE_INFO)))
++    {
++        object->handle_types = export_info->handleTypes;
++        if (export_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT)
++            export_info->handleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
++        wine_vk_normalize_handle_types_host(&export_info->handleTypes);
++    }
++
++    /* Vulkan consumes imported FDs, but not imported HANDLEs */
++    if (handle_import_info)
++    {
++        fd_import_info.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR;
++        fd_import_info.pNext = allocate_info_dup.pNext;
++        fd_import_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
++
++        switch (handle_import_info->handleType)
++        {
++            case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT:
++                if (handle_import_info->handle)
++                    NtDuplicateObject( NtCurrentProcess(), handle_import_info->handle, NtCurrentProcess(), &object->handle, 0, 0, DUPLICATE_SAME_ACCESS );
++                else if (handle_import_info->name)
++                    FIXME("Importing device memory by resource name not supported.\n");
++                break;
++            default:
++                WARN("Invalid handle type %08x passed in.\n", handle_import_info->handleType);
++                res = VK_ERROR_INVALID_EXTERNAL_HANDLE;
++                goto done;
++        }
++
++        if (object->handle != INVALID_HANDLE_VALUE)
++            wine_server_handle_to_fd(object->handle, FILE_READ_DATA, &fd_import_info.fd, NULL);
++
++        if (fd_import_info.fd == -1)
++        {
++            TRACE("Couldn't access resource handle or name. type=%08x handle=%p name=%s\n", handle_import_info->handleType, handle_import_info->handle,
++                    handle_import_info->name ? debugstr_w(handle_import_info->name) : "");
++            res = VK_ERROR_INVALID_EXTERNAL_HANDLE;
++            goto done;
++        }
++    }
++
++    allocate_info_host.sType = allocate_info_dup.sType;
++    allocate_info_host.pNext = fd_import_info.fd == -1 ? allocate_info_dup.pNext : &fd_import_info;
++    allocate_info_host.allocationSize = allocate_info_dup.allocationSize;
++    allocate_info_host.memoryTypeIndex = allocate_info_dup.memoryTypeIndex;
++
++    if ((res = device->funcs.p_vkAllocateMemory(device->device, &allocate_info_host, NULL, &object->dev_mem)) == VK_SUCCESS)
++    {
++        if (object->handle == INVALID_HANDLE_VALUE && export_info && export_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
++        {
++            get_fd_info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
++            get_fd_info.pNext = NULL;
++            get_fd_info.memory = object->dev_mem;
++            get_fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
++
++            if (device->funcs.p_vkGetMemoryFdKHR(device->device, &get_fd_info, &fd) == VK_SUCCESS)
++            {
++                object->handle = create_gpu_resource(fd, handle_export_info ? handle_export_info->name : NULL);
++                object->access = handle_export_info ? handle_export_info->dwAccess : GENERIC_ALL;
++                if (handle_export_info && handle_export_info->pAttributes)
++                    object->inherit = handle_export_info->pAttributes->bInheritHandle;
++                else
++                    object->inherit = FALSE;
++                close(fd);
++            }
++
++            if (object->handle == INVALID_HANDLE_VALUE)
++            {
++                res = VK_ERROR_OUT_OF_HOST_MEMORY;
++                goto done;
++            }
++        }
++
++        WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, object, object->dev_mem, object);
++        *memory = wine_dev_mem_to_handle(object);
++    }
++
++    done:
++
++    if (res != VK_SUCCESS)
++    {
++        device->funcs.p_vkFreeMemory(device->device, object->dev_mem, NULL);
++        if (fd_import_info.fd != -1)
++            close(fd_import_info.fd);
++        if (object->handle != INVALID_HANDLE_VALUE)
++            NtClose(object->handle);
++        free(object);
++    }
++
++    free_VkMemoryAllocateInfo_struct_chain(&allocate_info_dup);
++
++    return res;
++}
++
++NTSTATUS wine_vkGetMemoryWin32HandleKHR(void *args)
++{
++    struct vkGetMemoryWin32HandleKHR_params *params = args;
++    VkDevice device = params->device;
++    const VkMemoryGetWin32HandleInfoKHR *handle_info = params->pGetWin32HandleInfo;
++    HANDLE *handle = params->pHandle;
++
++    struct wine_dev_mem *dev_mem = wine_dev_mem_from_handle(handle_info->memory);
++    const VkBaseInStructure *chain;
++
++    TRACE("%p, %p %p\n", device, handle_info, handle);
++
++    if (!(dev_mem->handle_types & handle_info->handleType))
++        return VK_ERROR_UNKNOWN;
++
++    if ((chain = handle_info->pNext))
++        FIXME("Ignoring a linked structure of type %u.\n", chain->sType);
++
++    switch(handle_info->handleType)
++    {
++        case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT:
++            return !NtDuplicateObject( NtCurrentProcess(), dev_mem->handle, NtCurrentProcess(), handle, dev_mem->access, dev_mem->inherit ? OBJ_INHERIT : 0, 0) ?
++                VK_SUCCESS : VK_ERROR_OUT_OF_HOST_MEMORY;
++        default:
++            FIXME("Unable to get handle of type %x, did the application ignore the capabilities?\n", handle_info->handleType);
++            return VK_ERROR_UNKNOWN;
++    }
++}
++
++NTSTATUS wine_vkFreeMemory(void *args)
++{
++    struct vkFreeMemory_params *params = args;
++    struct wine_device *device = wine_device_from_handle(params->device);
++    VkDeviceMemory handle = params->memory;
++    const VkAllocationCallbacks *allocator = params->pAllocator;
++
++    struct wine_dev_mem *dev_mem = wine_dev_mem_from_handle(handle);
++
++    TRACE("%p 0x%s, %p\n", device, wine_dbgstr_longlong(handle), allocator);
++
++    if (allocator)
++        FIXME("Support for allocation callbacks not implemented yet\n");
++
++    if (!handle)
++        return STATUS_SUCCESS;
++
++    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, dev_mem);
++    device->funcs.p_vkFreeMemory(device->device, dev_mem->dev_mem, NULL);
++    if (dev_mem->handle != INVALID_HANDLE_VALUE)
++        NtClose(dev_mem->handle);
++    free(dev_mem);
++    return STATUS_SUCCESS;
++}
++
++NTSTATUS wine_vkGetMemoryWin32HandlePropertiesKHR(void *args)
++{
++    struct vkGetMemoryWin32HandlePropertiesKHR_params *params = args;
++    VkDevice device = params->device;
++    VkExternalMemoryHandleTypeFlagBits type = params->handleType;
++    HANDLE handle = params->handle;
++    VkMemoryWin32HandlePropertiesKHR *properties = params->pMemoryWin32HandleProperties;
++
++    TRACE("%p %u %p %p\n", device, type, handle, properties);
++
++    /* VUID-vkGetMemoryWin32HandlePropertiesKHR-handleType-00666
++       handleType must not be one of the handle types defined as opaque */
++    return VK_ERROR_INVALID_EXTERNAL_HANDLE;
++}
++
++NTSTATUS wine_vkCreateBuffer(void *args)
++{
++    struct vkCreateBuffer_params *params = args;
++    struct wine_device *device = wine_device_from_handle(params->device);
++    const VkBufferCreateInfo *create_info = params->pCreateInfo;
++    const VkAllocationCallbacks *allocator = params->pAllocator;
++    VkBuffer *buffer = params->pBuffer;
++
++    VkExternalMemoryBufferCreateInfo *external_memory_info;
++    VkResult res;
++
++#if defined(USE_STRUCT_CONVERSION)
++    VkBufferCreateInfo_host create_info_host;
++#else
++    VkBufferCreateInfo create_info_host;
++#endif
++
++    TRACE("%p %p %p %p\n", device, create_info, allocator, buffer);
++
++    if (allocator)
++        FIXME("Support for allocation callbacks not implemented yet\n");
++
++    if ((res = convert_VkBufferCreateInfo_struct_chain(create_info->pNext, (VkBufferCreateInfo *) &create_info_host)))
++    {
++        WARN("Failed to convert VkBufferCreateInfo pNext chain, res=%d.\n", res);
++        return res;
++    }
++
++    if ((external_memory_info = wine_vk_find_struct(&create_info_host, EXTERNAL_MEMORY_BUFFER_CREATE_INFO)))
++    {
++        if (external_memory_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT)
++            external_memory_info->handleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
++        wine_vk_normalize_handle_types_host(&external_memory_info->handleTypes);
++    }
++
++    create_info_host.sType = create_info->sType;
++    create_info_host.flags = create_info->flags;
++    create_info_host.size = create_info->size;
++    create_info_host.usage = create_info->usage;
++    create_info_host.sharingMode = create_info->sharingMode;
++    create_info_host.queueFamilyIndexCount = create_info->queueFamilyIndexCount;
++    create_info_host.pQueueFamilyIndices = create_info->pQueueFamilyIndices;
++
++    res = device->funcs.p_vkCreateBuffer(device->device, &create_info_host, NULL, buffer);
++
++    free_VkBufferCreateInfo_struct_chain((VkBufferCreateInfo *) &create_info_host);
++
++    return res;
++}
+diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
+index a9f2aa024e6..b58ea52045d 100644
+--- a/dlls/winevulkan/vulkan_private.h
++++ b/dlls/winevulkan/vulkan_private.h
+@@ -226,6 +226,30 @@ static inline VkSurfaceKHR wine_surface_to_handle(struct wine_surface *surface)
+     return (VkSurfaceKHR)(uintptr_t)surface;
+ }
+ 
++struct wine_dev_mem
++{
++    VkDeviceMemory dev_mem;
++
++    VkExternalMemoryHandleTypeFlagBits handle_types;
++
++    BOOL inherit;
++    DWORD access;
++
++    HANDLE handle;
++
++    struct wine_vk_mapping mapping;
++};
++
++static inline struct wine_dev_mem *wine_dev_mem_from_handle(VkDeviceMemory handle)
++{
++    return (struct wine_dev_mem *)(uintptr_t)handle;
++}
++
++static inline VkDeviceMemory wine_dev_mem_to_handle(struct wine_dev_mem *dev_mem)
++{
++    return (VkDeviceMemory)(uintptr_t)dev_mem;
++}
++
+ BOOL wine_vk_device_extension_supported(const char *name) DECLSPEC_HIDDEN;
+ BOOL wine_vk_instance_extension_supported(const char *name) DECLSPEC_HIDDEN;
+ 
+-- 
+2.37.3
+
+From ecf7edf31093da6d777c7066890106215cd11c09 Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 19 May 2021 13:38:12 -0400
+Subject: [PATCH 2/4] winevulkan: Implement VK_KHR_external_memory_win32 for
+ images.
+
+Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
+---
+ dlls/winevulkan/make_vulkan |   3 +
+ dlls/winevulkan/vulkan.c    | 111 ++++++++++++++++++++++++++++--------
+ 2 files changed, 91 insertions(+), 23 deletions(-)
+
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index f0ac59a4c42..56a38c558ac 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -205,6 +205,7 @@ FUNCTION_OVERRIDES = {
+     "vkCreateCommandPool" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE, "extra_param" : "client_ptr"},
+     "vkCreateComputePipelines" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
+     "vkCreateGraphicsPipelines" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
++    "vkCreateImage" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkDestroyCommandPool" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
+     "vkDestroyDevice" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
+     "vkFreeCommandBuffers" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
+@@ -283,7 +284,9 @@ STRUCT_CHAIN_CONVERSIONS = {
+ 
+     # Structs which require pNext chain modification
+     "VkBufferCreateInfo": [],
++    "VkImageCreateInfo": [],
+     "VkMemoryAllocateInfo": ["VK_STRUCTURE_TYPE_EXPORT_MEMORY_WIN32_HANDLE_INFO_KHR", "VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR"],
++    "VkPhysicalDeviceImageFormatInfo2": [],
+ }
+ 
+ 
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 07f767a394b..febb447835f 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -1388,52 +1388,80 @@ NTSTATUS wine_vkGetPhysicalDeviceExternalBufferPropertiesKHR(void *args)
+     return STATUS_SUCCESS;
+ }
+ 
+-NTSTATUS wine_vkGetPhysicalDeviceImageFormatProperties2(void *args)
++static VkResult wine_vk_get_physical_device_image_format_properties_2(VkPhysicalDevice phys_dev,
++        VkResult (*p_vkGetPhysicalDeviceImageFormatProperties2)(VkPhysicalDevice, const VkPhysicalDeviceImageFormatInfo2 *, VkImageFormatProperties2 *),
++        const VkPhysicalDeviceImageFormatInfo2 *format_info, VkImageFormatProperties2 *properties)
+ {
+-    struct vkGetPhysicalDeviceImageFormatProperties2_params *params = args;
+-    VkPhysicalDevice phys_dev = params->physicalDevice;
+-    const VkPhysicalDeviceImageFormatInfo2 *format_info = params->pImageFormatInfo;
+-    VkImageFormatProperties2 *properties = params->pImageFormatProperties;
++    VkPhysicalDeviceExternalImageFormatInfo *external_image_info_dup = NULL;
++    const VkPhysicalDeviceExternalImageFormatInfo *external_image_info;
++    VkPhysicalDeviceImageFormatInfo2 format_info_host = *format_info;
+     VkExternalImageFormatProperties *external_image_properties;
+     VkResult res;
+ 
+-    TRACE("%p, %p, %p\n", phys_dev, format_info, properties);
++    if ((external_image_info = wine_vk_find_struct(format_info, PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO)) && external_image_info->handleType)
++    {
++        if ((res = convert_VkPhysicalDeviceImageFormatInfo2_struct_chain(format_info->pNext, &format_info_host)) < 0)
++        {
++            WARN("Failed to convert VkPhysicalDeviceImageFormatInfo2 pNext chain, res=%d.\n", res);
++            return res;
++        }
++        external_image_info_dup = wine_vk_find_struct(&format_info_host, PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO);
++
++        wine_vk_normalize_handle_types_win(&external_image_info_dup->handleType);
++
++        if (external_image_info_dup->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT)
++            external_image_info_dup->handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
++
++        wine_vk_normalize_handle_types_host(&external_image_info_dup->handleType);
++        if (!external_image_info_dup->handleType)
++        {
++            WARN("Unsupported handle type %#x.\n", external_image_info->handleType);
++            return VK_ERROR_FORMAT_NOT_SUPPORTED;
++        }
++    }
+ 
+-    res = thunk_vkGetPhysicalDeviceImageFormatProperties2(phys_dev, format_info, properties);
++    res = p_vkGetPhysicalDeviceImageFormatProperties2(phys_dev, &format_info_host, properties);
++
++    if (external_image_info_dup)
++        free_VkPhysicalDeviceImageFormatInfo2_struct_chain(&format_info_host);
+ 
+     if ((external_image_properties = wine_vk_find_struct(properties, EXTERNAL_IMAGE_FORMAT_PROPERTIES)))
+     {
+         VkExternalMemoryProperties *p = &external_image_properties->externalMemoryProperties;
+-        p->externalMemoryFeatures = 0;
+-        p->exportFromImportedHandleTypes = 0;
+-        p->compatibleHandleTypes = 0;
++        if (p->exportFromImportedHandleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
++            p->exportFromImportedHandleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
++        wine_vk_normalize_handle_types_win(&p->exportFromImportedHandleTypes);
++
++        if (p->compatibleHandleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
++            p->compatibleHandleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
++        wine_vk_normalize_handle_types_win(&p->compatibleHandleTypes);
+     }
+ 
+     return res;
+ }
+ 
+-NTSTATUS wine_vkGetPhysicalDeviceImageFormatProperties2KHR(void *args)
++NTSTATUS wine_vkGetPhysicalDeviceImageFormatProperties2(void *args)
+ {
+-    struct vkGetPhysicalDeviceImageFormatProperties2KHR_params *params = args;
++    struct vkGetPhysicalDeviceImageFormatProperties2_params *params = args;
+     VkPhysicalDevice phys_dev = params->physicalDevice;
+     const VkPhysicalDeviceImageFormatInfo2 *format_info = params->pImageFormatInfo;
+     VkImageFormatProperties2 *properties = params->pImageFormatProperties;
+-    VkExternalImageFormatProperties *external_image_properties;
+-    VkResult res;
+ 
+     TRACE("%p, %p, %p\n", phys_dev, format_info, properties);
+ 
+-    res = thunk_vkGetPhysicalDeviceImageFormatProperties2KHR(phys_dev, format_info, properties);
++    return wine_vk_get_physical_device_image_format_properties_2(phys_dev, thunk_vkGetPhysicalDeviceImageFormatProperties2, format_info, properties);
++}
+ 
+-    if ((external_image_properties = wine_vk_find_struct(properties, EXTERNAL_IMAGE_FORMAT_PROPERTIES)))
+-    {
+-        VkExternalMemoryProperties *p = &external_image_properties->externalMemoryProperties;
+-        p->externalMemoryFeatures = 0;
+-        p->exportFromImportedHandleTypes = 0;
+-        p->compatibleHandleTypes = 0;
+-    }
++NTSTATUS wine_vkGetPhysicalDeviceImageFormatProperties2KHR(void *args)
++{
++    struct vkGetPhysicalDeviceImageFormatProperties2KHR_params *params = args;
++    VkPhysicalDevice phys_dev = params->physicalDevice;
++    const VkPhysicalDeviceImageFormatInfo2 *format_info = params->pImageFormatInfo;
++    VkImageFormatProperties2 *properties = params->pImageFormatProperties;
+ 
+-    return res;
++    TRACE("%p, %p, %p\n", phys_dev, format_info, properties);
++
++    return wine_vk_get_physical_device_image_format_properties_2(phys_dev, thunk_vkGetPhysicalDeviceImageFormatProperties2KHR, format_info, properties);
+ }
+ 
+ /* From ntdll/unix/sync.c */
+@@ -2259,3 +2287,40 @@ NTSTATUS wine_vkCreateBuffer(void *args)
+ 
+     return res;
+ }
++
++NTSTATUS wine_vkCreateImage(void *args)
++{
++    struct vkCreateImage_params *params = args;
++    struct wine_device *device = wine_device_from_handle(params->device);
++    const VkImageCreateInfo *create_info = params->pCreateInfo;
++    const VkAllocationCallbacks *allocator = params->pAllocator;
++    VkImage *image = params->pImage;
++
++    VkExternalMemoryImageCreateInfo *external_memory_info;
++    VkImageCreateInfo create_info_host = *create_info;
++    VkResult res;
++
++    TRACE("%p %p %p %p\n", device, create_info, allocator, image);
++
++    if (allocator)
++        FIXME("Support for allocation callbacks not implemented yet\n");
++
++    if ((res = convert_VkImageCreateInfo_struct_chain(create_info->pNext, &create_info_host)))
++    {
++        WARN("Failed to convert VkImageCreateInfo pNext chain, res=%d.\n", res);
++        return res;
++    }
++
++    if ((external_memory_info = wine_vk_find_struct(&create_info_host, EXTERNAL_MEMORY_IMAGE_CREATE_INFO)))
++    {
++        if (external_memory_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT_KHR)
++            external_memory_info->handleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
++        wine_vk_normalize_handle_types_host(&external_memory_info->handleTypes);
++    }
++
++    res = device->funcs.p_vkCreateImage(device->device, &create_info_host, NULL, image);
++
++    free_VkImageCreateInfo_struct_chain(&create_info_host);
++
++    return res;
++}
+-- 
+2.37.3
+
+From 652ae29ce20fc3c5214380a9d123db740ee8ac9a Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 13 Oct 2021 13:16:44 +0200
+Subject: [PATCH 3/4] winevulkan: Implement support for KMT handles and named
+ objects.
+
+---
+ configure.ac                                |   1 +
+ dlls/sharedgpures.sys/Makefile.in           |   6 +
+ dlls/sharedgpures.sys/shared_resource.c     | 348 ++++++++++++++++++++
+ dlls/sharedgpures.sys/sharedgpures.sys.spec |   1 +
+ dlls/winevulkan/vulkan.c                    | 190 ++++++++++-
+ dlls/winevulkan/vulkan_private.h            |   7 +
+ include/ddk/wdm.h                           |   1 +
+ loader/wine.inf.in                          |  13 +
+ 8 files changed, 552 insertions(+), 15 deletions(-)
+ create mode 100644 dlls/sharedgpures.sys/Makefile.in
+ create mode 100644 dlls/sharedgpures.sys/shared_resource.c
+ create mode 100644 dlls/sharedgpures.sys/sharedgpures.sys.spec
+
+diff --git a/configure.ac b/configure.ac
+index 16844c42f7a..1542311d3ba 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -3074,6 +3074,7 @@ WINE_CONFIG_MAKEFILE(dlls/setupapi/tests)
+ WINE_CONFIG_MAKEFILE(dlls/setupx.dll16,enable_win16)
+ WINE_CONFIG_MAKEFILE(dlls/sfc)
+ WINE_CONFIG_MAKEFILE(dlls/sfc_os)
++WINE_CONFIG_MAKEFILE(dlls/sharedgpures.sys)
+ WINE_CONFIG_MAKEFILE(dlls/shcore)
+ WINE_CONFIG_MAKEFILE(dlls/shcore/tests)
+ WINE_CONFIG_MAKEFILE(dlls/shdoclc)
+diff --git a/dlls/sharedgpures.sys/Makefile.in b/dlls/sharedgpures.sys/Makefile.in
+new file mode 100644
+index 00000000000..2d64a476826
+--- /dev/null
++++ b/dlls/sharedgpures.sys/Makefile.in
+@@ -0,0 +1,6 @@
++MODULE    = sharedgpures.sys
++IMPORTS   = ntoskrnl
++EXTRADLLFLAGS = -Wl,--subsystem,native -mno-cygwin
++
++C_SRCS = \
++	shared_resource.c
+diff --git a/dlls/sharedgpures.sys/shared_resource.c b/dlls/sharedgpures.sys/shared_resource.c
+new file mode 100644
+index 00000000000..b9f34eb978f
+--- /dev/null
++++ b/dlls/sharedgpures.sys/shared_resource.c
+@@ -0,0 +1,348 @@
++#include <stdarg.h>
++
++#define NONAMELESSUNION
++#include "ntstatus.h"
++#define WIN32_NO_STATUS
++#include "windef.h"
++#include "winbase.h"
++#include "winternl.h"
++#include "winioctl.h"
++
++#include "ddk/wdm.h"
++
++#include "wine/debug.h"
++#include "wine/list.h"
++#include "wine/server.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(sharedgpures);
++
++static DRIVER_OBJECT *sharedgpures_driver;
++
++struct shared_resource
++{
++    unsigned int ref_count;
++    void *unix_resource;
++    WCHAR *name;
++};
++
++static struct shared_resource *resource_pool;
++static unsigned int resource_pool_size;
++
++/* TODO: If/when ntoskrnl gets support for referencing user handles directly, remove this function */
++static void *reference_client_handle(obj_handle_t handle)
++{
++    HANDLE client_process, kernel_handle;
++    OBJECT_ATTRIBUTES attr;
++    void *object = NULL;
++    CLIENT_ID cid;
++
++    attr.Length = sizeof(OBJECT_ATTRIBUTES);
++    attr.RootDirectory = 0;
++    attr.Attributes = OBJ_KERNEL_HANDLE;
++    attr.ObjectName = NULL;
++    attr.SecurityDescriptor = NULL;
++    attr.SecurityQualityOfService = NULL;
++
++    cid.UniqueProcess = PsGetCurrentProcessId();
++    cid.UniqueThread = 0;
++
++    if (NtOpenProcess(&client_process, PROCESS_ALL_ACCESS, &attr, &cid) != STATUS_SUCCESS)
++        return NULL;
++
++    if (NtDuplicateObject(client_process, wine_server_ptr_handle(handle), NtCurrentProcess(), &kernel_handle,
++                               0, OBJ_KERNEL_HANDLE, DUPLICATE_SAME_ACCESS) != STATUS_SUCCESS)
++    {
++        NtClose(client_process);
++        return NULL;
++    }
++
++    ObReferenceObjectByHandle(kernel_handle, 0, NULL, KernelMode, &object, NULL);
++
++    NtClose(client_process);
++    NtClose(kernel_handle);
++
++    return object;
++}
++
++#define IOCTL_SHARED_GPU_RESOURCE_CREATE           CTL_CODE(FILE_DEVICE_VIDEO, 0, METHOD_BUFFERED, FILE_WRITE_ACCESS)
++
++struct shared_resource_create
++{
++    obj_handle_t unix_handle;
++    WCHAR name[1];
++};
++
++static NTSTATUS shared_resource_create(struct shared_resource **res, void *buff, SIZE_T insize, IO_STATUS_BLOCK *iosb)
++{
++    struct shared_resource_create *input = buff;
++    void *unix_resource;
++    unsigned int i;
++    LPWSTR name;
++
++    if (insize < sizeof(*input))
++        return STATUS_INFO_LENGTH_MISMATCH;
++
++    if (input->name[ ((insize - offsetof(struct shared_resource_create, name)) / sizeof(WCHAR)) - 1 ])
++        return STATUS_INVALID_PARAMETER;
++
++    if (!(unix_resource = reference_client_handle(input->unix_handle)))
++        return STATUS_INVALID_HANDLE;
++
++    if (insize == sizeof(*input))
++        name = NULL;
++    else
++    {
++        name = ExAllocatePoolWithTag(NonPagedPool, insize - offsetof(struct shared_resource_create, name), 0);
++        wcscpy(name, &input->name[0]);
++    }
++
++    for (i = 0; i < resource_pool_size; i++)
++        if (!resource_pool[i].ref_count)
++            break;
++
++    if (i == resource_pool_size)
++    {
++        struct shared_resource *expanded_pool =
++            ExAllocatePoolWithTag(NonPagedPool, sizeof(struct shared_resource) * (resource_pool_size + 1024), 0);
++
++        if (resource_pool)
++        {
++            memcpy(expanded_pool, resource_pool, resource_pool_size * sizeof(struct shared_resource));
++            ExFreePoolWithTag(resource_pool, 0);
++        }
++
++        memset(&expanded_pool[resource_pool_size], 0, 1024 * sizeof (struct shared_resource));
++
++        resource_pool = expanded_pool;
++        resource_pool_size += 1024;
++    }
++
++    *res = &resource_pool[i];
++    (*res)->ref_count = 1;
++    (*res)->unix_resource = unix_resource;
++    (*res)->name = name;
++
++    iosb->Information = 0;
++    return STATUS_SUCCESS;
++}
++
++#define IOCTL_SHARED_GPU_RESOURCE_OPEN             CTL_CODE(FILE_DEVICE_VIDEO, 1, METHOD_BUFFERED, FILE_WRITE_ACCESS)
++
++struct shared_resource_open
++{
++    obj_handle_t kmt_handle;
++    WCHAR name[1];
++};
++
++static unsigned int kmt_to_index(obj_handle_t kmt)
++{
++    if (!(kmt & 0x40000000) || (kmt - 2) % 4)
++        return -1;
++    return (((unsigned int) kmt & ~0x40000000) - 2) / 4;
++}
++
++static NTSTATUS shared_resource_open(struct shared_resource **res, void *buff, SIZE_T insize, IO_STATUS_BLOCK *iosb)
++{
++    struct shared_resource_open *input = buff;
++    unsigned int i;
++
++    if (insize < sizeof(*input))
++        return STATUS_INFO_LENGTH_MISMATCH;
++
++    if (input->kmt_handle)
++    {
++        if (kmt_to_index(input->kmt_handle) >= resource_pool_size)
++            return STATUS_INVALID_HANDLE;
++
++        *res = &resource_pool[kmt_to_index(input->kmt_handle)];
++    }
++    else
++    {
++        if (input->name[ ((insize - offsetof(struct shared_resource_open, name)) / sizeof(WCHAR)) - 1 ])
++            return STATUS_INVALID_PARAMETER;
++
++        /* name lookup */
++        for (i = 0; i < resource_pool_size; i++)
++        {
++            if (!wcscmp(resource_pool[i].name, &input->name[0]))
++            {
++                *res = &resource_pool[i];
++                break;
++            }
++        }
++
++        if (i == resource_pool_size)
++            return STATUS_OBJECT_NAME_NOT_FOUND;
++    }
++
++    (*res)->ref_count++;
++    iosb->Information = 0;
++    return STATUS_SUCCESS;
++}
++
++#define IOCTL_SHARED_GPU_RESOURCE_GETKMT           CTL_CODE(FILE_DEVICE_VIDEO, 2, METHOD_BUFFERED, FILE_READ_ACCESS)
++
++static obj_handle_t index_to_kmt(unsigned int idx)
++{
++    return (idx * 4 + 2) | 0x40000000;
++}
++
++static NTSTATUS shared_resource_getkmt(struct shared_resource *res, void *buff, SIZE_T outsize, IO_STATUS_BLOCK *iosb)
++{
++    if (outsize < sizeof(unsigned int))
++        return STATUS_INFO_LENGTH_MISMATCH;
++
++    *((unsigned int *)buff) = index_to_kmt(res - resource_pool);
++
++    iosb->Information = sizeof(unsigned int);
++    return STATUS_SUCCESS;
++}
++
++/* TODO: If/when ntoskrnl gets support for opening user handles directly, remove this function */
++static obj_handle_t open_client_handle(void *object)
++{
++    HANDLE client_process, kernel_handle, handle = NULL;
++    OBJECT_ATTRIBUTES attr;
++    CLIENT_ID cid;
++
++    attr.Length = sizeof(OBJECT_ATTRIBUTES);
++    attr.RootDirectory = 0;
++    attr.Attributes = OBJ_KERNEL_HANDLE;
++    attr.ObjectName = NULL;
++    attr.SecurityDescriptor = NULL;
++    attr.SecurityQualityOfService = NULL;
++
++    cid.UniqueProcess = PsGetCurrentProcessId();
++    cid.UniqueThread = 0;
++
++    if (NtOpenProcess(&client_process, PROCESS_ALL_ACCESS, &attr, &cid) != STATUS_SUCCESS)
++        return 0;
++
++    if (ObOpenObjectByPointer(object, 0, NULL, GENERIC_ALL, NULL, KernelMode, &kernel_handle) != STATUS_SUCCESS)
++    {
++        NtClose(client_process);
++        return 0;
++    }
++
++    NtDuplicateObject(NtCurrentProcess(), kernel_handle, client_process, &handle,
++                        0, 0, DUPLICATE_SAME_ACCESS);
++
++    NtClose(client_process);
++    NtClose(kernel_handle);
++
++    return wine_server_obj_handle(handle);
++}
++
++#define IOCTL_SHARED_GPU_RESOURCE_GET_UNIX_RESOURCE           CTL_CODE(FILE_DEVICE_VIDEO, 3, METHOD_BUFFERED, FILE_READ_ACCESS)
++
++static NTSTATUS shared_resource_get_unix_resource(struct shared_resource *res, void *buff, SIZE_T outsize, IO_STATUS_BLOCK *iosb)
++{
++    if (outsize < sizeof(obj_handle_t))
++        return STATUS_INFO_LENGTH_MISMATCH;
++
++    *((obj_handle_t *)buff) = open_client_handle(res->unix_resource);
++
++    iosb->Information = sizeof(obj_handle_t);
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS WINAPI dispatch_create(DEVICE_OBJECT *device, IRP *irp)
++{
++    irp->IoStatus.u.Status = STATUS_SUCCESS;
++    IoCompleteRequest(irp, IO_NO_INCREMENT);
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS WINAPI dispatch_close(DEVICE_OBJECT *device, IRP *irp)
++{
++    IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation(irp);
++    struct shared_resource *res = stack->FileObject->FsContext;
++
++    TRACE("Freeing shared resouce %p.\n", res);
++
++    if (res)
++    {
++        res->ref_count--;
++        if (!res->ref_count && res->unix_resource)
++        {
++            /* TODO: see if its possible to destroy the object here (unlink?) */
++            ObDereferenceObject(res->unix_resource);
++            res->unix_resource = NULL;
++        }
++    }
++
++    irp->IoStatus.u.Status = STATUS_SUCCESS;
++    IoCompleteRequest(irp, IO_NO_INCREMENT);
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
++{
++    IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation( irp );
++    struct shared_resource **res = (struct shared_resource **) &stack->FileObject->FsContext;
++    NTSTATUS status;
++
++    TRACE( "ioctl %lx insize %lu outsize %lu\n",
++           stack->Parameters.DeviceIoControl.IoControlCode,
++           stack->Parameters.DeviceIoControl.InputBufferLength,
++           stack->Parameters.DeviceIoControl.OutputBufferLength );
++
++    switch (stack->Parameters.DeviceIoControl.IoControlCode)
++    {
++        case IOCTL_SHARED_GPU_RESOURCE_CREATE:
++            status = shared_resource_create( res,
++                                      irp->AssociatedIrp.SystemBuffer,
++                                      stack->Parameters.DeviceIoControl.InputBufferLength,
++                                      &irp->IoStatus );
++            break;
++        case IOCTL_SHARED_GPU_RESOURCE_OPEN:
++            status = shared_resource_open( res,
++                                      irp->AssociatedIrp.SystemBuffer,
++                                      stack->Parameters.DeviceIoControl.InputBufferLength,
++                                      &irp->IoStatus );
++            break;
++        case IOCTL_SHARED_GPU_RESOURCE_GETKMT:
++            status = shared_resource_getkmt( *res,
++                                      irp->AssociatedIrp.SystemBuffer,
++                                      stack->Parameters.DeviceIoControl.OutputBufferLength,
++                                      &irp->IoStatus );
++            break;
++        case IOCTL_SHARED_GPU_RESOURCE_GET_UNIX_RESOURCE:
++            status = shared_resource_get_unix_resource( *res,
++                                      irp->AssociatedIrp.SystemBuffer,
++                                      stack->Parameters.DeviceIoControl.OutputBufferLength,
++                                      &irp->IoStatus );
++            break;
++    default:
++        FIXME( "ioctl %lx not supported\n", stack->Parameters.DeviceIoControl.IoControlCode );
++        status = STATUS_NOT_SUPPORTED;
++        break;
++    }
++
++    irp->IoStatus.u.Status = status;
++    IoCompleteRequest( irp, IO_NO_INCREMENT );
++    return status;
++}
++
++NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
++{
++    static const WCHAR device_nameW[] = L"\\Device\\SharedGpuResource";
++    static const WCHAR link_nameW[] = L"\\??\\SharedGpuResource";
++    UNICODE_STRING device_name, link_name;
++    DEVICE_OBJECT *device;
++    NTSTATUS status;
++
++    sharedgpures_driver = driver;
++
++    driver->MajorFunction[IRP_MJ_CREATE] = dispatch_create;
++    driver->MajorFunction[IRP_MJ_CLOSE] = dispatch_close;
++    driver->MajorFunction[IRP_MJ_DEVICE_CONTROL] = dispatch_ioctl;
++
++    RtlInitUnicodeString(&device_name, device_nameW);
++    RtlInitUnicodeString(&link_name, link_nameW);
++
++    if ((status = IoCreateDevice(driver, 0, &device_name, 0, 0, FALSE, &device)))
++        return status;
++
++    return IoCreateSymbolicLink(&link_name, &device_name);
++}
+diff --git a/dlls/sharedgpures.sys/sharedgpures.sys.spec b/dlls/sharedgpures.sys/sharedgpures.sys.spec
+new file mode 100644
+index 00000000000..76421d7e35b
+--- /dev/null
++++ b/dlls/sharedgpures.sys/sharedgpures.sys.spec
+@@ -0,0 +1 @@
++# nothing to export
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index febb447835f..48630521d7a 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -27,6 +27,9 @@
+ 
+ #include "ntstatus.h"
+ #define WIN32_NO_STATUS
++#include "windef.h"
++#include "winnt.h"
++#include "winioctl.h"
+ #include "wine/server.h"
+ 
+ #include "vulkan_private.h"
+@@ -1334,6 +1337,10 @@ static inline void wine_vk_normalize_handle_types_host(VkExternalMemoryHandleTyp
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT;
+ }
+ 
++static const VkExternalMemoryHandleTypeFlagBits wine_vk_handle_over_fd_types =
++                VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT |
++                VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT;
++
+ static void wine_vk_get_physical_device_external_buffer_properties(struct wine_phys_dev *phys_dev,
+         void (*p_vkGetPhysicalDeviceExternalBufferProperties)(VkPhysicalDevice, const VkPhysicalDeviceExternalBufferInfo *, VkExternalBufferProperties *),
+         const VkPhysicalDeviceExternalBufferInfo *buffer_info, VkExternalBufferProperties *properties)
+@@ -1341,7 +1348,7 @@ static void wine_vk_get_physical_device_external_buffer_properties(struct wine_p
+     VkPhysicalDeviceExternalBufferInfo buffer_info_dup = *buffer_info;
+ 
+     wine_vk_normalize_handle_types_win(&buffer_info_dup.handleType);
+-    if (buffer_info_dup.handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT)
++    if (buffer_info_dup.handleType & wine_vk_handle_over_fd_types)
+         buffer_info_dup.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+     wine_vk_normalize_handle_types_host(&buffer_info_dup.handleType);
+ 
+@@ -1354,11 +1361,11 @@ static void wine_vk_get_physical_device_external_buffer_properties(struct wine_p
+     p_vkGetPhysicalDeviceExternalBufferProperties(phys_dev->phys_dev, &buffer_info_dup, properties);
+ 
+     if (properties->externalMemoryProperties.exportFromImportedHandleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
+-        properties->externalMemoryProperties.exportFromImportedHandleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
++        properties->externalMemoryProperties.exportFromImportedHandleTypes |= wine_vk_handle_over_fd_types;
+     wine_vk_normalize_handle_types_win(&properties->externalMemoryProperties.exportFromImportedHandleTypes);
+ 
+     if (properties->externalMemoryProperties.compatibleHandleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
+-        properties->externalMemoryProperties.compatibleHandleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
++        properties->externalMemoryProperties.compatibleHandleTypes |= wine_vk_handle_over_fd_types;
+     wine_vk_normalize_handle_types_win(&properties->externalMemoryProperties.compatibleHandleTypes);
+ }
+ 
+@@ -1409,7 +1416,7 @@ static VkResult wine_vk_get_physical_device_image_format_properties_2(VkPhysical
+ 
+         wine_vk_normalize_handle_types_win(&external_image_info_dup->handleType);
+ 
+-        if (external_image_info_dup->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT)
++        if (external_image_info_dup->handleType & wine_vk_handle_over_fd_types)
+             external_image_info_dup->handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+ 
+         wine_vk_normalize_handle_types_host(&external_image_info_dup->handleType);
+@@ -1429,11 +1436,11 @@ static VkResult wine_vk_get_physical_device_image_format_properties_2(VkPhysical
+     {
+         VkExternalMemoryProperties *p = &external_image_properties->externalMemoryProperties;
+         if (p->exportFromImportedHandleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
+-            p->exportFromImportedHandleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
++            p->exportFromImportedHandleTypes |= wine_vk_handle_over_fd_types;
+         wine_vk_normalize_handle_types_win(&p->exportFromImportedHandleTypes);
+ 
+         if (p->compatibleHandleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
+-            p->compatibleHandleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
++            p->compatibleHandleTypes |= wine_vk_handle_over_fd_types;
+         wine_vk_normalize_handle_types_win(&p->compatibleHandleTypes);
+     }
+ 
+@@ -2008,18 +2015,154 @@ NTSTATUS vk_is_available_device_function(void *arg)
+     return !!vk_funcs->p_vkGetDeviceProcAddr(device->device, params->name);
+ }
+ 
++#define IOCTL_SHARED_GPU_RESOURCE_CREATE           CTL_CODE(FILE_DEVICE_VIDEO, 0, METHOD_BUFFERED, FILE_WRITE_ACCESS)
++
++struct shared_resource_create
++{
++    obj_handle_t unix_handle;
++    WCHAR name[1];
++};
++
+ static HANDLE create_gpu_resource(int fd, LPCWSTR name)
+ {
+-    HANDLE ret = INVALID_HANDLE_VALUE;
++    static const WCHAR shared_gpu_resourceW[] = {'\\','?','?','\\','S','h','a','r','e','d','G','p','u','R','e','s','o','u','r','c','e',0};
++    HANDLE unix_resource = INVALID_HANDLE_VALUE;
++    struct shared_resource_create *inbuff;
++    UNICODE_STRING shared_gpu_resource_us;
++    HANDLE shared_resource;
++    OBJECT_ATTRIBUTES attr;
++    IO_STATUS_BLOCK iosb;
++    NTSTATUS status;
++    DWORD in_size;
+ 
+     TRACE("Creating shared vulkan resource fd %d name %s.\n", fd, debugstr_w(name));
+ 
++    if (wine_server_fd_to_handle(fd, GENERIC_ALL, 0, &unix_resource) != STATUS_SUCCESS)
++        return INVALID_HANDLE_VALUE;
++
++    init_unicode_string(&shared_gpu_resource_us, shared_gpu_resourceW);
++
++    attr.Length = sizeof(attr);
++    attr.RootDirectory = 0;
++    attr.Attributes = 0;
++    attr.ObjectName = &shared_gpu_resource_us;
++    attr.SecurityDescriptor = NULL;
++    attr.SecurityQualityOfService = NULL;
++
++    if ((status = NtCreateFile(&shared_resource, GENERIC_READ | GENERIC_WRITE, &attr, &iosb, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN, 0, NULL, 0)))
++    {
++        ERR("Failed to load open a shared resource handle, status %#lx.\n", (long int)status);
++        NtClose(unix_resource);
++        return INVALID_HANDLE_VALUE;
++    }
++
++    in_size = sizeof(*inbuff) + (name ? lstrlenW(name) * sizeof(WCHAR) : 0);
++    inbuff = calloc(1, in_size);
++    inbuff->unix_handle = wine_server_obj_handle(unix_resource);
++    if (name)
++        lstrcpyW(&inbuff->name[0], name);
++
++    if ((status = NtDeviceIoControlFile(shared_resource, NULL, NULL, NULL, &iosb, IOCTL_SHARED_GPU_RESOURCE_CREATE,
++            inbuff, in_size, NULL, 0)))
++
++    free(inbuff);
++    NtClose(unix_resource);
++
++    if (status)
++    {
++        ERR("Failed to create video resource, status %#lx.\n", (long int)status);
++        NtClose(shared_resource);
++        return INVALID_HANDLE_VALUE;
++    }
++
++    return shared_resource;
++}
++
++#define IOCTL_SHARED_GPU_RESOURCE_OPEN             CTL_CODE(FILE_DEVICE_VIDEO, 1, METHOD_BUFFERED, FILE_WRITE_ACCESS)
++
++struct shared_resource_open
++{
++    obj_handle_t kmt_handle;
++    WCHAR name[1];
++};
++
++static HANDLE open_shared_resource(HANDLE kmt_handle, LPCWSTR name)
++{
++    static const WCHAR shared_gpu_resourceW[] = {'\\','?','?','\\','S','h','a','r','e','d','G','p','u','R','e','s','o','u','r','c','e',0};
++    UNICODE_STRING shared_gpu_resource_us;
++    struct shared_resource_open *inbuff;
++    HANDLE shared_resource;
++    OBJECT_ATTRIBUTES attr;
++    IO_STATUS_BLOCK iosb;
++    NTSTATUS status;
++    DWORD in_size;
++
++    init_unicode_string(&shared_gpu_resource_us, shared_gpu_resourceW);
++
++    attr.Length = sizeof(attr);
++    attr.RootDirectory = 0;
++    attr.Attributes = 0;
++    attr.ObjectName = &shared_gpu_resource_us;
++    attr.SecurityDescriptor = NULL;
++    attr.SecurityQualityOfService = NULL;
++
++    if ((status = NtCreateFile(&shared_resource, GENERIC_READ | GENERIC_WRITE, &attr, &iosb, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN, 0, NULL, 0)))
++    {
++        ERR("Failed to load open a shared resource handle, status %#lx.\n", (long int)status);
++        return INVALID_HANDLE_VALUE;
++    }
++
++    in_size = sizeof(*inbuff) + (name ? lstrlenW(name) * sizeof(WCHAR) : 0);
++    inbuff = calloc(1, in_size);
++    inbuff->kmt_handle = wine_server_obj_handle(kmt_handle);
+     if (name)
+-        FIXME("Naming gpu resources not supported.\n");
++        lstrcpyW(&inbuff->name[0], name);
++
++    status = NtDeviceIoControlFile(shared_resource, NULL, NULL, NULL, &iosb, IOCTL_SHARED_GPU_RESOURCE_OPEN,
++            inbuff, in_size, NULL, 0);
++
++    free(inbuff);
++
++    if (status)
++    {
++        ERR("Failed to open video resource, status %#lx.\n", (long int)status);
++        NtClose(shared_resource);
++        return INVALID_HANDLE_VALUE;
++    }
++
++    return shared_resource;
++}
+ 
+-    wine_server_fd_to_handle(fd, GENERIC_ALL, 0, &ret);
++#define IOCTL_SHARED_GPU_RESOURCE_GET_UNIX_RESOURCE           CTL_CODE(FILE_DEVICE_VIDEO, 3, METHOD_BUFFERED, FILE_READ_ACCESS)
+ 
+-    return ret;
++static int get_shared_resource_fd(HANDLE shared_resource)
++{
++    IO_STATUS_BLOCK iosb;
++    obj_handle_t unix_resource;
++    NTSTATUS status;
++    int ret;
++
++    if (NtDeviceIoControlFile(shared_resource, NULL, NULL, NULL, &iosb, IOCTL_SHARED_GPU_RESOURCE_GET_UNIX_RESOURCE,
++            NULL, 0, &unix_resource, sizeof(unix_resource)))
++        return -1;
++
++    status = wine_server_handle_to_fd(wine_server_ptr_handle(unix_resource), FILE_READ_DATA, &ret, NULL);
++    NtClose(wine_server_ptr_handle(unix_resource));
++    return status == STATUS_SUCCESS ? ret : -1;
++}
++
++#define IOCTL_SHARED_GPU_RESOURCE_GETKMT           CTL_CODE(FILE_DEVICE_VIDEO, 2, METHOD_BUFFERED, FILE_READ_ACCESS)
++
++static HANDLE get_shared_resource_kmt_handle(HANDLE shared_resource)
++{
++    IO_STATUS_BLOCK iosb;
++    obj_handle_t kmt_handle;
++
++    if (NtDeviceIoControlFile(shared_resource, NULL, NULL, NULL, &iosb, IOCTL_SHARED_GPU_RESOURCE_GETKMT,
++            NULL, 0, &kmt_handle, sizeof(kmt_handle)))
++        return INVALID_HANDLE_VALUE;
++
++    return wine_server_ptr_handle(kmt_handle);
+ }
+ 
+ NTSTATUS wine_vkAllocateMemory(void *args)
+@@ -2078,7 +2221,7 @@ NTSTATUS wine_vkAllocateMemory(void *args)
+     if ((export_info = wine_vk_find_struct(&allocate_info_dup, EXPORT_MEMORY_ALLOCATE_INFO)))
+     {
+         object->handle_types = export_info->handleTypes;
+-        if (export_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT)
++        if (export_info->handleTypes & wine_vk_handle_over_fd_types)
+             export_info->handleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+         wine_vk_normalize_handle_types_host(&export_info->handleTypes);
+     }
+@@ -2096,7 +2239,16 @@ NTSTATUS wine_vkAllocateMemory(void *args)
+                 if (handle_import_info->handle)
+                     NtDuplicateObject( NtCurrentProcess(), handle_import_info->handle, NtCurrentProcess(), &object->handle, 0, 0, DUPLICATE_SAME_ACCESS );
+                 else if (handle_import_info->name)
+-                    FIXME("Importing device memory by resource name not supported.\n");
++                    object->handle = open_shared_resource( 0, handle_import_info->name );
++                break;
++            case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT:
++                /* FIXME: the spec says that device memory imported from a KMT handle doesn't keep a reference to the underyling payload.
++                   This means that in cases where on windows an application leaks VkDeviceMemory objects, we leak the full payload.  To
++                   fix this, we would need wine_dev_mem objects to store no reference to the payload, that means no host VkDeviceMemory
++                   object (as objects imported from FDs hold a reference to the payload), and no win32 handle to the object. We would then
++                   extend make_vulkan to have the thunks converting wine_dev_mem to native handles open the VkDeviceMemory from the KMT
++                   handle, use it in the host function, then close it again. */
++                object->handle = open_shared_resource( handle_import_info->handle, NULL );
+                 break;
+             default:
+                 WARN("Invalid handle type %08x passed in.\n", handle_import_info->handleType);
+@@ -2105,7 +2257,7 @@ NTSTATUS wine_vkAllocateMemory(void *args)
+         }
+ 
+         if (object->handle != INVALID_HANDLE_VALUE)
+-            wine_server_handle_to_fd(object->handle, FILE_READ_DATA, &fd_import_info.fd, NULL);
++            fd_import_info.fd = get_shared_resource_fd(object->handle);
+ 
+         if (fd_import_info.fd == -1)
+         {
+@@ -2178,6 +2330,7 @@ NTSTATUS wine_vkGetMemoryWin32HandleKHR(void *args)
+ 
+     struct wine_dev_mem *dev_mem = wine_dev_mem_from_handle(handle_info->memory);
+     const VkBaseInStructure *chain;
++    HANDLE ret;
+ 
+     TRACE("%p, %p %p\n", device, handle_info, handle);
+ 
+@@ -2192,6 +2345,13 @@ NTSTATUS wine_vkGetMemoryWin32HandleKHR(void *args)
+         case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT:
+             return !NtDuplicateObject( NtCurrentProcess(), dev_mem->handle, NtCurrentProcess(), handle, dev_mem->access, dev_mem->inherit ? OBJ_INHERIT : 0, 0) ?
+                 VK_SUCCESS : VK_ERROR_OUT_OF_HOST_MEMORY;
++        case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT:
++        {
++            if ((ret = get_shared_resource_kmt_handle(dev_mem->handle)) == INVALID_HANDLE_VALUE)
++                return VK_ERROR_OUT_OF_HOST_MEMORY;
++            *handle = ret;
++            return VK_SUCCESS;
++        }
+         default:
+             FIXME("Unable to get handle of type %x, did the application ignore the capabilities?\n", handle_info->handleType);
+             return VK_ERROR_UNKNOWN;
+@@ -2268,7 +2428,7 @@ NTSTATUS wine_vkCreateBuffer(void *args)
+ 
+     if ((external_memory_info = wine_vk_find_struct(&create_info_host, EXTERNAL_MEMORY_BUFFER_CREATE_INFO)))
+     {
+-        if (external_memory_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT)
++        if (external_memory_info->handleTypes & wine_vk_handle_over_fd_types)
+             external_memory_info->handleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+         wine_vk_normalize_handle_types_host(&external_memory_info->handleTypes);
+     }
+@@ -2313,7 +2473,7 @@ NTSTATUS wine_vkCreateImage(void *args)
+ 
+     if ((external_memory_info = wine_vk_find_struct(&create_info_host, EXTERNAL_MEMORY_IMAGE_CREATE_INFO)))
+     {
+-        if (external_memory_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT_KHR)
++        if (external_memory_info->handleTypes & wine_vk_handle_over_fd_types)
+             external_memory_info->handleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
+         wine_vk_normalize_handle_types_host(&external_memory_info->handleTypes);
+     }
+diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
+index b58ea52045d..3944b1f62af 100644
+--- a/dlls/winevulkan/vulkan_private.h
++++ b/dlls/winevulkan/vulkan_private.h
+@@ -263,4 +263,11 @@ NTSTATUS WINAPI vk_direct_unix_call(unixlib_handle_t handle, unsigned int code,
+ NTSTATUS vk_is_available_instance_function(void *arg) DECLSPEC_HIDDEN;
+ NTSTATUS vk_is_available_device_function(void *arg) DECLSPEC_HIDDEN;
+ 
++static inline void init_unicode_string( UNICODE_STRING *str, const WCHAR *data )
++{
++    str->Length = lstrlenW(data) * sizeof(WCHAR);
++    str->MaximumLength = str->Length + sizeof(WCHAR);
++    str->Buffer = (WCHAR *)data;
++}
++
+ #endif /* __WINE_VULKAN_PRIVATE_H */
+diff --git a/include/ddk/wdm.h b/include/ddk/wdm.h
+index 0aad83ade8c..97e978af801 100644
+--- a/include/ddk/wdm.h
++++ b/include/ddk/wdm.h
+@@ -1818,6 +1818,7 @@ NTSTATUS  WINAPI ObRegisterCallbacks(POB_CALLBACK_REGISTRATION, void**);
+ NTSTATUS  WINAPI ObReferenceObjectByHandle(HANDLE,ACCESS_MASK,POBJECT_TYPE,KPROCESSOR_MODE,PVOID*,POBJECT_HANDLE_INFORMATION);
+ NTSTATUS  WINAPI ObReferenceObjectByName(UNICODE_STRING*,ULONG,ACCESS_STATE*,ACCESS_MASK,POBJECT_TYPE,KPROCESSOR_MODE,void*,void**);
+ NTSTATUS  WINAPI ObReferenceObjectByPointer(void*,ACCESS_MASK,POBJECT_TYPE,KPROCESSOR_MODE);
++NTSTATUS  WINAPI ObOpenObjectByPointer(void *,ULONG,ACCESS_STATE*,ACCESS_MASK,POBJECT_TYPE,KPROCESSOR_MODE,HANDLE*);
+ void      WINAPI ObUnRegisterCallbacks(void*);
+ 
+ NTSTATUS  WINAPI PoCallDriver(DEVICE_OBJECT*,IRP*);
+diff --git a/loader/wine.inf.in b/loader/wine.inf.in
+index c13c9b8d9a3..79e216844f3 100644
+--- a/loader/wine.inf.in
++++ b/loader/wine.inf.in
+@@ -187,6 +187,7 @@ AddService=Winmgmt,0,WinmgmtService
+ AddService=wuauserv,0,wuauService
+ AddService=NDIS,0x800,NDISService
+ AddService=nsiproxy,0x800,NsiProxyService
++AddService=SharedGpuResources,0x800,SharedGpuResourcesService
+ 
+ [DefaultInstall.NT.Services]
+ AddService=BITS,0,BITSService
+@@ -206,6 +207,7 @@ AddService=Winmgmt,0,WinmgmtService
+ AddService=wuauserv,0,wuauService
+ AddService=NDIS,0x800,NDISService
+ AddService=nsiproxy,0x800,NsiProxyService
++AddService=SharedGpuResources,0x800,SharedGpuResourcesService
+ 
+ [DefaultInstall.ntamd64.Services]
+ AddService=BITS,0,BITSService
+@@ -225,6 +227,7 @@ AddService=Winmgmt,0,WinmgmtService
+ AddService=wuauserv,0,wuauService
+ AddService=NDIS,0x800,NDISService
+ AddService=nsiproxy,0x800,NsiProxyService
++AddService=SharedGpuResources,0x800,SharedGpuResourcesService
+ 
+ [DefaultInstall.ntarm64.Services]
+ AddService=BITS,0,BITSService
+@@ -244,6 +247,7 @@ AddService=Winmgmt,0,WinmgmtService
+ AddService=wuauserv,0,wuauService
+ AddService=NDIS,0x800,NDISService
+ AddService=nsiproxy,0x800,NsiProxyService
++AddService=SharedGpuResources,0x800,SharedGpuResourcesService
+ 
+ [Strings]
+ MciExtStr="Software\Microsoft\Windows NT\CurrentVersion\MCI Extensions"
+@@ -2571,6 +2575,15 @@ LoadOrderGroup="System Bus Extender"
+ [NsiProxyServiceKeys]
+ HKR,,"Tag",0x10001,1
+ 
++[SharedGpuResourcesService]
++Description="Shared GPU Resources Manager Service"
++DisplayName="Shared GPU Resources Manager"
++ServiceBinary="%12%\sharedgpures.sys"
++ServiceType=1
++StartType=2
++ErrorControl=1
++LoadOrderGroup="System Bus Extender"
++
+ [RpcSsService]
+ Description="RPC service"
+ DisplayName="Remote Procedure Call (RPC)"
+-- 
+2.37.3
+
+From 3ea90943e89291996f721bb48ba628622785cd88 Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 13 Oct 2021 13:34:49 +0200
+Subject: [PATCH 4/4] sharedgpures: Add support for arbitrary metadata.
+
+---
+ dlls/sharedgpures.sys/shared_resource.c | 57 +++++++++++++++++++++++--
+ 1 file changed, 53 insertions(+), 4 deletions(-)
+
+diff --git a/dlls/sharedgpures.sys/shared_resource.c b/dlls/sharedgpures.sys/shared_resource.c
+index b9f34eb978f..b0a2aebdb01 100644
+--- a/dlls/sharedgpures.sys/shared_resource.c
++++ b/dlls/sharedgpures.sys/shared_resource.c
+@@ -23,6 +23,8 @@ struct shared_resource
+     unsigned int ref_count;
+     void *unix_resource;
+     WCHAR *name;
++    void *metadata;
++    SIZE_T metadata_size;
+ };
+ 
+ static struct shared_resource *resource_pool;
+@@ -246,6 +248,33 @@ static NTSTATUS shared_resource_get_unix_resource(struct shared_resource *res, v
+     return STATUS_SUCCESS;
+ }
+ 
++#define IOCTL_SHARED_GPU_RESOURCE_SET_METADATA           CTL_CODE(FILE_DEVICE_VIDEO, 4, METHOD_BUFFERED, FILE_WRITE_ACCESS)
++
++static NTSTATUS shared_resource_set_metadata(struct shared_resource *res, void *buff, SIZE_T insize, IO_STATUS_BLOCK *iosb)
++{
++    res->metadata = ExAllocatePoolWithTag(NonPagedPool, insize, 0);
++    memcpy(res->metadata, buff, insize);
++    res->metadata_size = insize;
++
++    iosb->Information = 0;
++    return STATUS_SUCCESS;
++}
++
++#define IOCTL_SHARED_GPU_RESOURCE_GET_METADATA           CTL_CODE(FILE_DEVICE_VIDEO, 5, METHOD_BUFFERED, FILE_READ_ACCESS)
++
++static NTSTATUS shared_resource_get_metadata(struct shared_resource *res, void *buff, SIZE_T outsize, IO_STATUS_BLOCK *iosb)
++{
++    if (!res->metadata)
++        return STATUS_NOT_FOUND;
++
++    if (res->metadata_size > outsize)
++        return STATUS_BUFFER_TOO_SMALL;
++
++    memcpy(buff, res->metadata, res->metadata_size);
++    iosb->Information = res->metadata_size;
++    return STATUS_SUCCESS;
++}
++
+ static NTSTATUS WINAPI dispatch_create(DEVICE_OBJECT *device, IRP *irp)
+ {
+     irp->IoStatus.u.Status = STATUS_SUCCESS;
+@@ -263,11 +292,19 @@ static NTSTATUS WINAPI dispatch_close(DEVICE_OBJECT *device, IRP *irp)
+     if (res)
+     {
+         res->ref_count--;
+-        if (!res->ref_count && res->unix_resource)
++        if (!res->ref_count)
+         {
+-            /* TODO: see if its possible to destroy the object here (unlink?) */
+-            ObDereferenceObject(res->unix_resource);
+-            res->unix_resource = NULL;
++            if (res->unix_resource)
++            {
++                /* TODO: see if its possible to destroy the object here (unlink?) */
++                ObDereferenceObject(res->unix_resource);
++                res->unix_resource = NULL;
++            }
++            if (res->metadata)
++            {
++                ExFreePoolWithTag(res->metadata, 0);
++                res->metadata = NULL;
++            }
+         }
+     }
+ 
+@@ -313,6 +350,18 @@ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
+                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
+                                       &irp->IoStatus );
+             break;
++        case IOCTL_SHARED_GPU_RESOURCE_SET_METADATA:
++            status = shared_resource_set_metadata( *res,
++                                      irp->AssociatedIrp.SystemBuffer,
++                                      stack->Parameters.DeviceIoControl.InputBufferLength,
++                                      &irp->IoStatus );
++            break;
++        case IOCTL_SHARED_GPU_RESOURCE_GET_METADATA:
++            status = shared_resource_get_metadata( *res,
++                                      irp->AssociatedIrp.SystemBuffer,
++                                      stack->Parameters.DeviceIoControl.OutputBufferLength,
++                                      &irp->IoStatus );
++            break;
+     default:
+         FIXME( "ioctl %lx not supported\n", stack->Parameters.DeviceIoControl.IoControlCode );
+         status = STATUS_NOT_SUPPORTED;
+-- 
+2.37.3
+
+From 0f525b8e023273303ba7703f411ef1e79d36c799 Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 13 Jul 2022 13:11:22 -0400
+Subject: [PATCH 03/14] sharedgpures.sys: Keep index into resource pool in
+ FsContext instead of direct pointer to resource.
+
+This fixes the errors due to the pointers in FsContext becoming invalid when the resource pool was expanded.
+
+Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
+---
+ dlls/sharedgpures.sys/shared_resource.c | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/sharedgpures.sys/shared_resource.c b/dlls/sharedgpures.sys/shared_resource.c
+index b0a2aebdb01..0cd30c4a256 100644
+--- a/dlls/sharedgpures.sys/shared_resource.c
++++ b/dlls/sharedgpures.sys/shared_resource.c
+@@ -285,7 +285,7 @@ static NTSTATUS WINAPI dispatch_create(DEVICE_OBJECT *device, IRP *irp)
+ static NTSTATUS WINAPI dispatch_close(DEVICE_OBJECT *device, IRP *irp)
+ {
+     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation(irp);
+-    struct shared_resource *res = stack->FileObject->FsContext;
++    struct shared_resource *res = &resource_pool[ (UINT_PTR) stack->FileObject->FsContext ];
+ 
+     TRACE("Freeing shared resouce %p.\n", res);
+ 
+@@ -316,7 +316,7 @@ static NTSTATUS WINAPI dispatch_close(DEVICE_OBJECT *device, IRP *irp)
+ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
+ {
+     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation( irp );
+-    struct shared_resource **res = (struct shared_resource **) &stack->FileObject->FsContext;
++    struct shared_resource *res = &resource_pool[ (UINT_PTR) stack->FileObject->FsContext ];
+     NTSTATUS status;
+ 
+     TRACE( "ioctl %lx insize %lu outsize %lu\n",
+@@ -327,37 +327,37 @@ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
+     switch (stack->Parameters.DeviceIoControl.IoControlCode)
+     {
+         case IOCTL_SHARED_GPU_RESOURCE_CREATE:
+-            status = shared_resource_create( res,
++            status = shared_resource_create( &res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.InputBufferLength,
+                                       &irp->IoStatus );
+             break;
+         case IOCTL_SHARED_GPU_RESOURCE_OPEN:
+-            status = shared_resource_open( res,
++            status = shared_resource_open( &res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.InputBufferLength,
+                                       &irp->IoStatus );
+             break;
+         case IOCTL_SHARED_GPU_RESOURCE_GETKMT:
+-            status = shared_resource_getkmt( *res,
++            status = shared_resource_getkmt( res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
+                                       &irp->IoStatus );
+             break;
+         case IOCTL_SHARED_GPU_RESOURCE_GET_UNIX_RESOURCE:
+-            status = shared_resource_get_unix_resource( *res,
++            status = shared_resource_get_unix_resource( res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
+                                       &irp->IoStatus );
+             break;
+         case IOCTL_SHARED_GPU_RESOURCE_SET_METADATA:
+-            status = shared_resource_set_metadata( *res,
++            status = shared_resource_set_metadata( res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.InputBufferLength,
+                                       &irp->IoStatus );
+             break;
+         case IOCTL_SHARED_GPU_RESOURCE_GET_METADATA:
+-            status = shared_resource_get_metadata( *res,
++            status = shared_resource_get_metadata( res,
+                                       irp->AssociatedIrp.SystemBuffer,
+                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
+                                       &irp->IoStatus );
+@@ -368,6 +368,9 @@ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
+         break;
+     }
+ 
++    if (!status)
++        stack->FileObject->FsContext = (UINT_PTR)(res - resource_pool);
++
+     irp->IoStatus.u.Status = status;
+     IoCompleteRequest( irp, IO_NO_INCREMENT );
+     return status;
+-- 
+2.37.3
+
+From 859e691ed93edbd7feb1f8a62f5982a2bb67e791 Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Wed, 13 Jul 2022 13:08:41 -0400
 Subject: [PATCH 02/14] ntoskrnl, server: Support referencing section objects.
@@ -10,7 +1829,7 @@ Needed for the shared resource manager to track the shared memory object for sha
  2 files changed, 24 insertions(+), 2 deletions(-)
 
 diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
-index 38a25bc5092..1802d483bbf 100644
+index 031e9900544..7a64f0f70da 100644
 --- a/dlls/ntoskrnl.exe/ntoskrnl.c
 +++ b/dlls/ntoskrnl.exe/ntoskrnl.c
 @@ -260,6 +260,15 @@ POBJECT_TYPE WINAPI ObGetObjectType( void *object )
@@ -40,10 +1859,10 @@ index 38a25bc5092..1802d483bbf 100644
  
  DECLARE_CRITICAL_SECTION(handle_map_cs);
 diff --git a/server/mapping.c b/server/mapping.c
-index 4c90673a5c5..67896165048 100644
+index 1a8d480cfa9..9221e6a7eae 100644
 --- a/server/mapping.c
 +++ b/server/mapping.c
-@@ -160,6 +160,7 @@ struct type_descr mapping_type =
+@@ -157,6 +157,7 @@ struct type_descr mapping_type =
  struct mapping
  {
      struct object   obj;             /* object header */
@@ -51,7 +1870,7 @@ index 4c90673a5c5..67896165048 100644
      mem_size_t      size;            /* mapping size */
      unsigned int    flags;           /* SEC_* flags */
      struct fd      *fd;              /* fd for mapped file */
-@@ -171,6 +172,7 @@ struct mapping
+@@ -167,6 +168,7 @@ struct mapping
  
  static void mapping_dump( struct object *obj, int verbose );
  static struct fd *mapping_get_fd( struct object *obj );
@@ -59,7 +1878,7 @@ index 4c90673a5c5..67896165048 100644
  static void mapping_destroy( struct object *obj );
  static enum server_fd_type mapping_get_fd_type( struct fd *fd );
  
-@@ -195,7 +197,7 @@ static const struct object_ops mapping_ops =
+@@ -190,7 +192,7 @@ static const struct object_ops mapping_ops =
      directory_link_name,         /* link_name */
      default_unlink_name,         /* unlink_name */
      no_open_file,                /* open_file */
@@ -68,7 +1887,7 @@ index 4c90673a5c5..67896165048 100644
      no_close_handle,             /* close_handle */
      mapping_destroy              /* destroy */
  };
-@@ -903,6 +905,8 @@ static struct mapping *create_mapping( struct object *root, const struct unicode
+@@ -883,6 +885,8 @@ static struct mapping *create_mapping( struct object *root, const struct unicode
      if (get_error() == STATUS_OBJECT_NAME_EXISTS)
          return mapping;  /* Nothing else to do */
  
@@ -77,7 +1896,7 @@ index 4c90673a5c5..67896165048 100644
      mapping->size        = size;
      mapping->fd          = NULL;
      mapping->shared      = NULL;
-@@ -995,6 +999,8 @@ struct mapping *create_fd_mapping( struct object *root, const struct unicode_str
+@@ -974,6 +978,8 @@ struct mapping *create_fd_mapping( struct object *root, const struct unicode_str
      if (!(mapping = create_named_object( root, &mapping_ops, name, attr, sd ))) return NULL;
      if (get_error() == STATUS_OBJECT_NAME_EXISTS) return mapping;  /* Nothing else to do */
  
@@ -86,7 +1905,7 @@ index 4c90673a5c5..67896165048 100644
      mapping->shared    = NULL;
      mapping->committed = NULL;
      mapping->flags     = SEC_FILE;
-@@ -1101,6 +1107,12 @@ static struct fd *mapping_get_fd( struct object *obj )
+@@ -1080,6 +1086,12 @@ static struct fd *mapping_get_fd( struct object *obj )
      return (struct fd *)grab_object( mapping->fd );
  }
  
@@ -100,9 +1919,9 @@ index 4c90673a5c5..67896165048 100644
  {
      struct mapping *mapping = (struct mapping *)obj;
 -- 
-2.37.1
+2.37.3
 
-From c2e10847a3a9921c9d611dc4118dcb8c0bee0d4e Mon Sep 17 00:00:00 2001
+From a77baeadd8910ea82d0cd3504fb92c0cdfd97a32 Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Wed, 13 Jul 2022 13:14:04 -0400
 Subject: [PATCH 04/14] sharedgpures.sys: Add support for associating
@@ -237,9 +2056,9 @@ index 0cd30c4a256..ce0e778166f 100644
          FIXME( "ioctl %lx not supported\n", stack->Parameters.DeviceIoControl.IoControlCode );
          status = STATUS_NOT_SUPPORTED;
 -- 
-2.37.1
+2.37.3
 
-From 3e193e81d02fbe57d538eb05733baddbe57158b7 Mon Sep 17 00:00:00 2001
+From ab7d2ed87c3b10293c3a8e0334919f8da8fab1b5 Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Thu, 14 Jul 2022 15:44:46 -0400
 Subject: [PATCH 05/14] winevulkan: NULL check optional parameters when
@@ -250,27 +2069,24 @@ Subject: [PATCH 05/14] winevulkan: NULL check optional parameters when
  1 file changed, 9 insertions(+), 3 deletions(-)
 
 diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
-index b81a9a1faea..a9cf215031a 100755
+index cb6fd08373b..d9ed426a87e 100755
 --- a/dlls/winevulkan/make_vulkan
 +++ b/dlls/winevulkan/make_vulkan
-@@ -1514,7 +1514,7 @@ class VkMember(object):
- class VkParam(object):
+@@ -1504,11 +1504,12 @@ class VkMember(VkVariable):
+ class VkParam(VkVariable):
      """ Helper class which describes a parameter to a function call. """
  
 -    def __init__(self, type_info, const=None, pointer=None, name=None, array_len=None, dyn_array_len=None, object_type=None):
 +    def __init__(self, type_info, const=None, pointer=None, name=None, array_len=None, dyn_array_len=None, object_type=None, optional=False):
-         self.const = const
-         self.name = name
-         self.array_len = array_len
-@@ -1522,6 +1522,7 @@ class VkParam(object):
-         self.pointer = pointer
-         self.object_type = object_type
-         self.type_info = type_info
+         VkVariable.__init__(self, const=const, type_info=type_info, type=type_info["name"], name=name,
+                             pointer=pointer, array_len=array_len, dyn_array_len=dyn_array_len,
+                             object_type=object_type)
+ 
 +        self.optional = optional
-         self.type = type_info["name"] # For convenience
-         self.handle = type_info["data"] if type_info["category"] == "handle" else None
-         self.struct = type_info["data"] if type_info["category"] == "struct" else None
-@@ -1561,12 +1562,14 @@ class VkParam(object):
+         self._set_direction()
+         self._set_format_string()
+         self._set_conversions()
+@@ -1544,12 +1545,14 @@ class VkParam(VkVariable):
          # Some uint64_t are actually handles with a separate type param
          object_type = param.get("objecttype", None)
  
@@ -286,7 +2102,7 @@ index b81a9a1faea..a9cf215031a 100755
  
      def _set_conversions(self):
          """ Internal helper function to configure any needed conversion functions. """
-@@ -1903,7 +1906,10 @@ class VkParam(object):
+@@ -1871,7 +1874,10 @@ class VkParam(VkVariable):
              # the wine driver's handle to calls which are wrapped by the driver.
              p = "{0}{1}".format(params_prefix, self.name)
              driver_handle = self.handle.driver_handle(p) if self.is_handle() else None
@@ -299,21 +2115,21 @@ index b81a9a1faea..a9cf215031a 100755
  
  class VkStruct(Sequence):
 -- 
-2.37.1
+2.37.3
 
-From 65e8ff36eff59d827c4beedaf75a3f0418f05e16 Mon Sep 17 00:00:00 2001
+From 3008166e6b98ddb50dab5efcb6a2a4a18035c189 Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Fri, 22 Apr 2022 11:53:02 -0400
 Subject: [PATCH 01/14] winevulkan: Implement VK_KHR_external_semaphore_win32
  for OPAQUE_WIN32 handleType.
 
 ---
- dlls/winevulkan/make_vulkan |  14 ++-
- dlls/winevulkan/vulkan.c    | 188 ++++++++++++++++++++++++++++++++++--
- 2 files changed, 191 insertions(+), 11 deletions(-)
+ dlls/winevulkan/make_vulkan |  13 ++-
+ dlls/winevulkan/vulkan.c    | 192 ++++++++++++++++++++++++++++++++++--
+ 2 files changed, 192 insertions(+), 13 deletions(-)
 
 diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
-index 89b2e7ee1e2..b81a9a1faea 100755
+index f65ef98a80f..d6bfbfd717f 100755
 --- a/dlls/winevulkan/make_vulkan
 +++ b/dlls/winevulkan/make_vulkan
 @@ -98,7 +98,6 @@ UNSUPPORTED_EXTENSIONS = [
@@ -332,7 +2148,7 @@ index 89b2e7ee1e2..b81a9a1faea 100755
      "VK_SEC_amigo_profiling", # Angle specific.
  
      # Extensions which require callback handling
-@@ -126,6 +124,7 @@ UNSUPPORTED_EXTENSIONS = [
+@@ -127,6 +125,7 @@ UNSUPPORTED_EXTENSIONS = [
  # but not expose to applications (useful for test commits)
  UNEXPOSED_EXTENSIONS = {
      "VK_KHR_external_memory_fd",
@@ -340,7 +2156,7 @@ index 89b2e7ee1e2..b81a9a1faea 100755
  }
  
  # The Vulkan loader provides entry-points for core functionality and important
-@@ -192,7 +191,7 @@ FUNCTION_OVERRIDES = {
+@@ -193,7 +192,7 @@ FUNCTION_OVERRIDES = {
      "vkEnumeratePhysicalDevices" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
      "vkGetPhysicalDeviceExternalBufferProperties" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
      "vkGetPhysicalDeviceExternalFenceProperties" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
@@ -349,15 +2165,15 @@ index 89b2e7ee1e2..b81a9a1faea 100755
      "vkGetPhysicalDeviceImageFormatProperties2" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PRIVATE},
      "vkGetPhysicalDeviceProperties2" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PUBLIC, "loader_thunk" : ThunkType.PRIVATE},
      "vkGetPhysicalDeviceProperties2KHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PUBLIC, "loader_thunk" : ThunkType.PRIVATE},
-@@ -205,6 +204,7 @@ FUNCTION_OVERRIDES = {
+@@ -206,6 +205,7 @@ FUNCTION_OVERRIDES = {
      "vkCreateComputePipelines" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
      "vkCreateGraphicsPipelines" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
      "vkCreateImage" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
 +    "vkCreateSemaphore" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
-     "vkDestroyCommandPool" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE},
-     "vkDestroyDevice" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
-     "vkFreeCommandBuffers" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
-@@ -244,7 +244,7 @@ FUNCTION_OVERRIDES = {
+     "vkDestroyCommandPool" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
+     "vkDestroyDevice" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
+     "vkFreeCommandBuffers" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
+@@ -245,7 +245,7 @@ FUNCTION_OVERRIDES = {
      "vkGetPhysicalDeviceImageFormatProperties2KHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PRIVATE},
  
      # VK_KHR_external_semaphore_capabilities
@@ -366,7 +2182,7 @@ index 89b2e7ee1e2..b81a9a1faea 100755
  
      # VK_KHR_device_group_creation
      "vkEnumeratePhysicalDeviceGroupsKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
-@@ -274,6 +274,10 @@ FUNCTION_OVERRIDES = {
+@@ -275,6 +275,10 @@ FUNCTION_OVERRIDES = {
      # VK_KHR_external_memory_win32
      "vkGetMemoryWin32HandleKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
      "vkGetMemoryWin32HandlePropertiesKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
@@ -377,7 +2193,7 @@ index 89b2e7ee1e2..b81a9a1faea 100755
  }
  
  STRUCT_CHAIN_CONVERSIONS = {
-@@ -286,6 +290,7 @@ STRUCT_CHAIN_CONVERSIONS = {
+@@ -287,6 +291,7 @@ STRUCT_CHAIN_CONVERSIONS = {
      "VkImageCreateInfo": [],
      "VkMemoryAllocateInfo": ["VK_STRUCTURE_TYPE_EXPORT_MEMORY_WIN32_HANDLE_INFO_KHR", "VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR"],
      "VkPhysicalDeviceImageFormatInfo2": [],
@@ -386,10 +2202,10 @@ index 89b2e7ee1e2..b81a9a1faea 100755
  
  
 diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
-index ce2c464c462..70ab0dddf0f 100644
+index 48630521d7a..bbcaf12f409 100644
 --- a/dlls/winevulkan/vulkan.c
 +++ b/dlls/winevulkan/vulkan.c
-@@ -285,6 +285,15 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
+@@ -285,6 +285,15 @@ static struct wine_phys_dev *wine_vk_physical_device_alloc(struct wine_instance
              host_properties[i].specVersion = VK_KHR_EXTERNAL_MEMORY_WIN32_SPEC_VERSION;
          }
  
@@ -423,7 +2239,7 @@ index ce2c464c462..70ab0dddf0f 100644
              else
                  new_extensions_list[o] = strdup(dst->ppEnabledExtensionNames[i]);
              ++o;
-@@ -1627,6 +1638,51 @@ NTSTATUS wine_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT(void *args)
+@@ -1627,31 +1638,74 @@ NTSTATUS wine_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT(void *args)
      return res;
  }
  
@@ -442,7 +2258,7 @@ index ce2c464c462..70ab0dddf0f 100644
 +        VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
 +}
 +
-+static void wine_vk_get_physical_device_external_semaphore_properties(VkPhysicalDevice phys_dev,
++static void wine_vk_get_physical_device_external_semaphore_properties(struct wine_phys_dev *phys_dev,
 +    void (*p_vkGetPhysicalDeviceExternalSemaphoreProperties)(VkPhysicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo *, VkExternalSemaphoreProperties *),
 +    const VkPhysicalDeviceExternalSemaphoreInfo *semaphore_info, VkExternalSemaphoreProperties *properties)
 +{
@@ -475,7 +2291,9 @@ index ce2c464c462..70ab0dddf0f 100644
  NTSTATUS wine_vkGetPhysicalDeviceExternalSemaphoreProperties(void *args)
  {
      struct vkGetPhysicalDeviceExternalSemaphoreProperties_params *params = args;
-@@ -1635,9 +1691,8 @@ NTSTATUS wine_vkGetPhysicalDeviceExternalSemaphoreProperties(void *args)
+-    VkPhysicalDevice phys_dev = params->physicalDevice;
++    struct wine_phys_dev *phys_dev = wine_phys_dev_from_handle(params->physicalDevice);
+     const VkPhysicalDeviceExternalSemaphoreInfo *semaphore_info = params->pExternalSemaphoreInfo;
      VkExternalSemaphoreProperties *properties = params->pExternalSemaphoreProperties;
  
      TRACE("%p, %p, %p\n", phys_dev, semaphore_info, properties);
@@ -487,7 +2305,12 @@ index ce2c464c462..70ab0dddf0f 100644
      return STATUS_SUCCESS;
  }
  
-@@ -1649,9 +1704,8 @@ NTSTATUS wine_vkGetPhysicalDeviceExternalSemaphorePropertiesKHR(void *args)
+ NTSTATUS wine_vkGetPhysicalDeviceExternalSemaphorePropertiesKHR(void *args)
+ {
+     struct vkGetPhysicalDeviceExternalSemaphorePropertiesKHR_params *params = args;
+-    VkPhysicalDevice phys_dev = params->physicalDevice;
++    struct wine_phys_dev *phys_dev = wine_phys_dev_from_handle(params->physicalDevice);
+     const VkPhysicalDeviceExternalSemaphoreInfo *semaphore_info = params->pExternalSemaphoreInfo;
      VkExternalSemaphoreProperties *properties = params->pExternalSemaphoreProperties;
  
      TRACE("%p, %p, %p\n", phys_dev, semaphore_info, properties);
@@ -499,18 +2322,18 @@ index ce2c464c462..70ab0dddf0f 100644
      return STATUS_SUCCESS;
  }
  
-@@ -2008,6 +2062,10 @@ BOOL WINAPI wine_vk_is_available_device_function(VkDevice device, const char *na
- {
-     if (!strcmp(name, "vkGetMemoryWin32HandleKHR") || !strcmp(name, "vkGetMemoryWin32HandlePropertiesKHR"))
-         name = "vkGetMemoryFdKHR";
-+    if (!strcmp(name, "vkGetSemaphoreWin32HandleKHR"))
-+        name = "vkGetSemaphoreFdKHR";
-+    if (!strcmp(name, "vkImportSemaphoreWin32HandleKHR"))
-+        name = "vkImportSemaphoreFdKHR";
-     return !!vk_funcs->p_vkGetDeviceProcAddr(device->device, name);
+@@ -2012,6 +2066,10 @@ NTSTATUS vk_is_available_device_function(void *arg)
+     struct wine_device *device = wine_device_from_handle(params->device);
+     if (!strcmp(params->name, "vkGetMemoryWin32HandleKHR") || !strcmp(params->name, "vkGetMemoryWin32HandlePropertiesKHR"))
+         return !!vk_funcs->p_vkGetDeviceProcAddr(device->device, "vkGetMemoryFdKHR");
++    if (!strcmp(params->name, "vkGetSemaphoreWin32HandleKHR"))
++        return !!vk_funcs->p_vkGetDeviceProcAddr(device->device, "vkGetSemaphoreFdKHR");
++    if (!strcmp(params->name, "vkImportSemaphoreWin32HandleKHR"))
++        return !!vk_funcs->p_vkGetDeviceProcAddr(device->device, "vkImportSemaphoreFdKHR");
+     return !!vk_funcs->p_vkGetDeviceProcAddr(device->device, params->name);
  }
  
-@@ -2480,3 +2538,119 @@ NTSTATUS wine_vkCreateImage(void *args)
+@@ -2484,3 +2542,119 @@ NTSTATUS wine_vkCreateImage(void *args)
  
      return res;
  }
@@ -518,7 +2341,7 @@ index ce2c464c462..70ab0dddf0f 100644
 +NTSTATUS wine_vkCreateSemaphore(void *args)
 +{
 +    struct vkCreateSemaphore_params *params = args;
-+    VkDevice device = params->device;
++    struct wine_device *device = wine_device_from_handle(params->device);
 +    const VkSemaphoreCreateInfo *create_info = params->pCreateInfo;
 +    const VkAllocationCallbacks *allocator = params->pAllocator;
 +    VkSemaphore *semaphore = params->pSemaphore;
@@ -591,7 +2414,7 @@ index ce2c464c462..70ab0dddf0f 100644
 +NTSTATUS wine_vkImportSemaphoreWin32HandleKHR(void *args)
 +{
 +    struct vkImportSemaphoreWin32HandleKHR_params *params = args;
-+    VkDevice device = params->device;
++    struct wine_device *device = wine_device_from_handle(params->device);
 +    const VkImportSemaphoreWin32HandleInfoKHR *handle_info = params->pImportSemaphoreWin32HandleInfo;
 +
 +    VkImportSemaphoreFdInfoKHR_host fd_info;
@@ -631,32 +2454,33 @@ index ce2c464c462..70ab0dddf0f 100644
 +    return res;
 +}
 -- 
-2.37.1
+2.37.3
 
-From 9584889b6d5099efaa77344e688f2f8352eb1b3b Mon Sep 17 00:00:00 2001
-From: Dmitry Skvortsov <lvb.crd@protonmail.com>
-Date: Thu, 11 Aug 2022 21:59:59 +0300
-Subject: [PATCH] megacommit (fshack)
+From 739debb6e8a612240f69fe9e2d5934569eea123f Mon Sep 17 00:00:00 2001
+From: llde <lorenzofersteam@live.it>
+Date: Thu, 15 Sep 2022 19:14:55 +0200
+Subject: [PATCH] megacommit
 
-dd5f79790d01f4dbddcaa7970cbc2af10fa8c193 Derek Lesho winevulkan: Add initial support for D3D12-Fence compatible timeline semaphores.
-e8992e62caafe2ca81f587050c077ada5a65ef85 Derek Lesho winevulkan: Implement vkWaitForFences and vkSignalSemaphore for D3D12-Fence compatible timeline semaphores.
-e2bbca036deb6f86a8cdf8a1c9e24656bceb2a8b Derek Lesho winevulkan: Copy VkSubmitInfo structs so that they don't contain pointers to the source object.
-86d9e6efd9a9cab8bd551fa1652af845ba38bee7 Derek Lesho winevulkan: Support waiting for and signalling D3D12-Fence style timeline semaphores in Vulkan Queues.
-d27f6727eb2dba67e0a9e176a32db88f21ec0b82 Derek Lesho winevulkan: Add support for signalling VkFence from virtualized VkQueues.
-6d5ad56d49af8a355476dc37b89681b9a2b7b44b Derek Lesho winevulkan: Flush virtual queue before providing native handle.
-22118a4146aa2ccbb6829c4c9ea8c9b4d521f9e0 Derek Lesho winevulkan: Allowing importing D3D11 Texture handles as Vulkan memory objects.
-c68248d2dd50bd11ed8deab7c483d9ddd6a06377 Derek Lesho winevulkan: Expose VK_EXT_memory_priority and VK_KHR_win32_keyed_mutex for Crysis: Remastered.
+c537f52f86b364fc96f7eff72428104951949d5d Derek Lesho winevulkan: Add initial support for D3D12-Fence compatible timeline semaphores.
+87d29277b9f2109498c86976a6a29a019b97a5ba Derek Lesho winevulkan: Implement vkWaitForFences and vkSignalSemaphore for D3D12-Fence compatible timeline semaphores.
+cf578de79337d5bcd0027b5a5f8a81079cd131ec Derek Lesho winevulkan: Copy VkSubmitInfo structs so that they don't contain pointers to the source object.
+98bcbe746dcd9ef08c278daba2acb93f799a1a3c Derek Lesho winevulkan: Support waiting for and signalling D3D12-Fence style timeline semaphores in Vulkan Queues.
+fb589630d49df3952e4b43b641c4af033e8fb358 Derek Lesho winevulkan: Add support for signalling VkFence from virtualized VkQueues.
+5aa69d80ef3710c38af0b0cc28be4d333f428509 Derek Lesho winevulkan: Flush virtual queue before providing native handle.
+87b4432e2b5ec2cdf4a1aae0e3b924d220f4cd99 Derek Lesho winevulkan: Allowing importing D3D11 Texture handles as Vulkan memory objects.
+edbb73c9a1321bc0d70f72a61525e2127f8c0a25 Derek Lesho winevulkan: Expose VK_EXT_memory_priority and VK_KHR_win32_keyed_mutex for Crysis: Remastered.
 
 Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
+Signed-off-by: Dmitry Skvortsov <lvb.crd@protonmail.com>
 ---
  dlls/winevulkan/make_vulkan      |   51 +-
- dlls/winevulkan/vulkan.c         | 2238 ++++++++++++++++++++++++++++--
+ dlls/winevulkan/vulkan.c         | 2222 ++++++++++++++++++++++++++++--
  dlls/winevulkan/vulkan_loader.h  |    2 +
  dlls/winevulkan/vulkan_private.h |  108 ++
- 4 files changed, 2268 insertions(+), 131 deletions(-)
+ 4 files changed, 2264 insertions(+), 119 deletions(-)
 
 diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
-index cff1ab3f24f..12f0f1150d6 100755
+index d6bfbfd717f..3e5a1e0b22a 100755
 --- a/dlls/winevulkan/make_vulkan
 +++ b/dlls/winevulkan/make_vulkan
 @@ -100,7 +100,6 @@ UNSUPPORTED_EXTENSIONS = [
@@ -667,21 +2491,19 @@ index cff1ab3f24f..12f0f1150d6 100755
      "VK_NV_external_memory_rdma", # Needs shared resources work.
  
      # Extensions for other platforms
-@@ -215,6 +214,7 @@ FUNCTION_OVERRIDES = {
+@@ -203,16 +202,28 @@ FUNCTION_OVERRIDES = {
      "vkCreateBuffer" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
-     "vkCreateCommandPool" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkCreateCommandPool" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE, "extra_param" : "client_ptr"},
      "vkCreateComputePipelines" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
 +    "vkCreateFence" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE},
      "vkCreateGraphicsPipelines" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
      "vkCreateImage" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
-     "vkCreateComputePipelines" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
-@@ -222,11 +222,22 @@ FUNCTION_OVERRIDES = {
      "vkCreateSemaphore" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
-     "vkDestroyCommandPool" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE},
-     "vkDestroyDevice" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkDestroyCommandPool" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
+     "vkDestroyDevice" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
 +    "vkDestroyFence" : {"dispatch" : True, "driver" : False, "thunk": ThunkType.NONE},
 +    "vkDestroySemaphore" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
-     "vkFreeCommandBuffers" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+     "vkFreeCommandBuffers" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.PRIVATE},
      "vkFreeMemory" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
      "vkGetDeviceProcAddr" : {"dispatch" : False, "driver" : True, "thunk" : ThunkType.NONE, "loader_thunk" : ThunkType.NONE},
      "vkGetDeviceQueue" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE},
@@ -698,16 +2520,16 @@ index cff1ab3f24f..12f0f1150d6 100755
  
      # VK_KHR_surface
      "vkDestroySurfaceKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
-@@ -249,7 +260,7 @@ FUNCTION_OVERRIDES = {
-     "vkCreateSwapchainKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
-     "vkDestroySwapchainKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
-     "vkGetSwapchainImagesKHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
--    "vkQueuePresentKHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
+@@ -235,7 +246,7 @@ FUNCTION_OVERRIDES = {
+     "vkCreateSwapchainKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
+     "vkDestroySwapchainKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
+     "vkGetSwapchainImagesKHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
+-    "vkQueuePresentKHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
 +    "vkQueuePresentKHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PRIVATE},
  
      # VK_KHR_external_fence_capabilities
      "vkGetPhysicalDeviceExternalFencePropertiesKHR" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
-@@ -296,6 +307,14 @@ FUNCTION_OVERRIDES = {
+@@ -279,6 +290,14 @@ FUNCTION_OVERRIDES = {
      # VK_KHR_external_semaphore_win32
      "vkGetSemaphoreWin32HandleKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
      "vkImportSemaphoreWin32HandleKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
@@ -722,7 +2544,7 @@ index cff1ab3f24f..12f0f1150d6 100755
  }
  
  STRUCT_CHAIN_CONVERSIONS = {
-@@ -308,7 +327,10 @@ STRUCT_CHAIN_CONVERSIONS = {
+@@ -291,7 +310,10 @@ STRUCT_CHAIN_CONVERSIONS = {
      "VkImageCreateInfo": [],
      "VkMemoryAllocateInfo": ["VK_STRUCTURE_TYPE_EXPORT_MEMORY_WIN32_HANDLE_INFO_KHR", "VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR"],
      "VkPhysicalDeviceImageFormatInfo2": [],
@@ -733,7 +2555,7 @@ index cff1ab3f24f..12f0f1150d6 100755
  }
  
  
-@@ -1136,6 +1158,10 @@ class VkHandle(object):
+@@ -1140,6 +1162,10 @@ class VkHandle(object):
              return "wine_surface_from_handle({0})->surface".format(name)
          if self.name == "VkDeviceMemory":
              return "wine_dev_mem_from_handle({0})->dev_mem".format(name)
@@ -741,10 +2563,10 @@ index cff1ab3f24f..12f0f1150d6 100755
 +            return "wine_semaphore_host_handle( wine_semaphore_from_handle({0}) )".format(name)
 +        if self.name == "VkFence":
 +            return "wine_fence_from_handle({0})->fence".format(name)
- 
-         native_handle_name = None
- 
-@@ -1270,9 +1296,10 @@ class VkMember(object):
+         if self.is_dispatchable():
+             LOGGER.error("Unhandled native handle for: {0}".format(self.name))
+         return None
+@@ -1257,9 +1283,10 @@ class VkMember(object):
          return VkMember(const=const, struct_fwd_decl=struct_fwd_decl, _type=member_type, pointer=pointer, name=name_elem.text,
                  array_len=array_len, dyn_array_len=dyn_array_len, optional=optional, values=values, object_type=object_type, bit_width=bit_width)
  
@@ -757,7 +2579,7 @@ index cff1ab3f24f..12f0f1150d6 100755
  
          if (conv and self.needs_conversion()) or self.needs_unwrapping():
              if self.is_dynamic_array():
-@@ -1310,6 +1337,9 @@ class VkMember(object):
+@@ -1297,6 +1324,9 @@ class VkMember(object):
          elif self.is_static_array():
              bytes_count = "{0} * sizeof({1})".format(self.array_len, self.type)
              return "memcpy({0}{1}, {2}{1}, {3});\n".format(output, self.name, input, bytes_count)
@@ -767,7 +2589,7 @@ index cff1ab3f24f..12f0f1150d6 100755
          else:
              return "{0}{1} = {2}{1};\n".format(output, self.name, input)
  
-@@ -1788,9 +1818,6 @@ class VkParam(object):
+@@ -1775,9 +1805,6 @@ class VkParam(object):
          # 'parent' param requiring conversion.
          if self.is_struct():
              for m in self.struct:
@@ -777,7 +2599,7 @@ index cff1ab3f24f..12f0f1150d6 100755
                  if not m.needs_conversion() and not m.needs_unwrapping():
                      continue
  
-@@ -2562,10 +2589,11 @@ class FreeFunction(object):
+@@ -2549,10 +2576,11 @@ class FreeFunction(object):
  
  
  class StructChainConversionFunction(object):
@@ -790,7 +2612,7 @@ index cff1ab3f24f..12f0f1150d6 100755
          self.type = struct.name
  
          self.name = "convert_{0}_struct_chain".format(self.type)
-@@ -2615,8 +2643,8 @@ class StructChainConversionFunction(object):
+@@ -2602,8 +2630,8 @@ class StructChainConversionFunction(object):
                  if m.name == "pNext":
                      body += "            out->pNext = NULL;\n"
                  else:
@@ -801,7 +2623,7 @@ index cff1ab3f24f..12f0f1150d6 100755
                      if unwrap == convert:
                          body += "            " + unwrap
                      else:
-@@ -2752,7 +2780,8 @@ class VkGenerator(object):
+@@ -2739,7 +2767,8 @@ class VkGenerator(object):
  
          for struct in self.registry.structs:
              if struct.name in STRUCT_CHAIN_CONVERSIONS:
@@ -812,12 +2634,12 @@ index cff1ab3f24f..12f0f1150d6 100755
                  # Once we decide to support pNext chains conversion everywhere, move this under get_conversions
                  for e in struct.struct_extensions:
 diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
-index e065c0bc253..1024bf04037 100644
+index bbcaf12f409..622cd648e16 100644
 --- a/dlls/winevulkan/vulkan.c
 +++ b/dlls/winevulkan/vulkan.c
-@@ -26,6 +26,12 @@
+@@ -24,6 +24,12 @@
+ #include "config.h"
  #include <time.h>
- #include <stdlib.h>
  #include <unistd.h>
 +#include <stdbool.h>
 +#include <stdio.h>
@@ -828,16 +2650,16 @@ index e065c0bc253..1024bf04037 100644
  
  #include "ntstatus.h"
  #define WIN32_NO_STATUS
-@@ -33,6 +39,7 @@
+@@ -31,6 +37,7 @@
  #include "winnt.h"
  #include "winioctl.h"
  #include "wine/server.h"
 +#include "wine/list.h"
  
  #include "vulkan_private.h"
- #include "winreg.h"
-@@ -237,8 +244,14 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
-     struct VkPhysicalDevice_T *object;
+ #include "wine/vulkan_driver.h"
+@@ -235,8 +242,14 @@ static struct wine_phys_dev *wine_vk_physical_device_alloc(struct wine_instance
+     struct wine_phys_dev *object;
      uint32_t num_host_properties, num_properties = 0;
      VkExtensionProperties *host_properties = NULL;
 +#if defined(USE_STRUCT_CONVERSION)
@@ -851,17 +2673,17 @@ index e065c0bc253..1024bf04037 100644
  
      if (!(object = calloc(1, sizeof(*object))))
          return NULL;
-@@ -247,6 +260,9 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
-     object->instance = instance;
+@@ -245,6 +258,9 @@ static struct wine_phys_dev *wine_vk_physical_device_alloc(struct wine_instance
+     object->handle = handle;
      object->phys_dev = phys_dev;
  
 +    instance->funcs.p_vkGetPhysicalDeviceProperties(phys_dev, &physdev_properties);
 +    object->api_version = physdev_properties.apiVersion;
 +
-     WINE_VK_ADD_DISPATCHABLE_MAPPING(instance, object, phys_dev);
+     handle->base.unix_handle = (uintptr_t)object;
+     WINE_VK_ADD_DISPATCHABLE_MAPPING(instance, handle, phys_dev, object);
  
-     res = instance->funcs.p_vkEnumerateDeviceExtensionProperties(phys_dev,
-@@ -293,6 +309,10 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
+@@ -293,6 +309,10 @@ static struct wine_phys_dev *wine_vk_physical_device_alloc(struct wine_instance
                      VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME);
              host_properties[i].specVersion = VK_KHR_EXTERNAL_SEMAPHORE_WIN32_SPEC_VERSION;
          }
@@ -872,7 +2694,7 @@ index e065c0bc253..1024bf04037 100644
  
          if (wine_vk_device_extension_supported(host_properties[i].extensionName))
          {
-@@ -305,6 +325,12 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
+@@ -305,6 +325,12 @@ static struct wine_phys_dev *wine_vk_physical_device_alloc(struct wine_instance
          }
      }
  
@@ -885,7 +2707,7 @@ index e065c0bc253..1024bf04037 100644
      TRACE("Host supported extensions %u, Wine supported extensions %u\n", num_host_properties, num_properties);
  
      if (!(object->extensions = calloc(num_properties, sizeof(*object->extensions))))
-@@ -321,6 +347,27 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
+@@ -321,6 +347,27 @@ static struct wine_phys_dev *wine_vk_physical_device_alloc(struct wine_instance
              j++;
          }
      }
@@ -913,7 +2735,7 @@ index e065c0bc253..1024bf04037 100644
      object->extension_count = num_properties;
  
      free(host_properties);
-@@ -366,6 +413,14 @@ static void wine_vk_device_get_queues(struct VkDevice_T *device,
+@@ -368,6 +415,14 @@ static void wine_vk_device_get_queues(struct wine_device *device,
          queue->queue_index = i;
          queue->flags = flags;
  
@@ -933,7 +2755,7 @@ index e065c0bc253..1024bf04037 100644
  }
  
 -static VkResult wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src,
-+static VkResult wine_vk_device_convert_create_info(VkPhysicalDevice phys_dev, const VkDeviceCreateInfo *src,
++static VkResult wine_vk_device_convert_create_info(struct wine_phys_dev *phys_dev, const VkDeviceCreateInfo *src,
          VkDeviceCreateInfo *dst)
  {
 -    unsigned int i, replace_win32 = 0;
@@ -1044,7 +2866,7 @@ index e065c0bc253..1024bf04037 100644
      return VK_SUCCESS;
  }
  
-+static bool is_virtual_queue(struct VkQueue_T *queue)
++static bool is_virtual_queue(struct wine_queue *queue)
 +{
 +    return __atomic_load_n(&queue->virtual_queue, __ATOMIC_ACQUIRE);
 +}
@@ -1052,7 +2874,7 @@ index e065c0bc253..1024bf04037 100644
  /* Helper function used for freeing a device structure. This function supports full
   * and partial object cleanups and can thus be used for vkCreateDevice failures.
   */
-@@ -471,6 +576,28 @@ static void wine_vk_device_free(struct VkDevice_T *device)
+@@ -471,6 +576,28 @@ static void wine_vk_device_free(struct wine_device *device)
          for (i = 0; i < device->queue_count; i++)
          {
              queue = &device->queues[i];
@@ -1081,8 +2903,8 @@ index e065c0bc253..1024bf04037 100644
              if (queue && queue->queue)
                  WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, queue);
          }
-@@ -781,7 +907,7 @@ NTSTATUS wine_vkCreateDevice(void *args)
-     object->base.base.loader_magic = VULKAN_ICD_MAGIC_VALUE;
+@@ -787,7 +914,7 @@ NTSTATUS wine_vkCreateDevice(void *args)
+ 
      object->phys_dev = phys_dev;
  
 -    res = wine_vk_device_convert_create_info(create_info, &create_info_host);
@@ -1090,7 +2912,15 @@ index e065c0bc253..1024bf04037 100644
      if (res != VK_SUCCESS)
          goto fail;
  
-@@ -1013,6 +1130,23 @@ VkResult WINAPI __wine_create_vk_instance_with_callback(const VkInstanceCreateIn
+@@ -842,6 +969,7 @@ NTSTATUS wine_vkCreateDevice(void *args)
+ 
+     device_handle->quirks = phys_dev->instance->quirks;
+     device_handle->base.unix_handle = (uintptr_t)object;
++    object->handle = device_handle;
+     *ret_device = device_handle;
+     TRACE("Created device %p (native device %p).\n", object, object->device);
+     return VK_SUCCESS;
+@@ -902,6 +1030,23 @@ NTSTATUS wine_vkCreateInstance(void *args)
      ALL_VK_INSTANCE_FUNCS()
  #undef USE_VK_FUNC
  
@@ -1114,7 +2944,7 @@ index e065c0bc253..1024bf04037 100644
      /* Cache physical devices for vkEnumeratePhysicalDevices within the instance as
       * each vkPhysicalDevice is a dispatchable object, which means we need to wrap
       * the native physical devices and present those to the application.
-@@ -1026,18 +1160,6 @@ VkResult WINAPI __wine_create_vk_instance_with_callback(const VkInstanceCreateIn
+@@ -915,18 +1060,6 @@ NTSTATUS wine_vkCreateInstance(void *args)
          return res;
      }
  
@@ -1132,8 +2962,8 @@ index e065c0bc253..1024bf04037 100644
 -
      object->quirks |= WINEVULKAN_QUIRK_ADJUST_MAX_IMAGE_COUNT;
  
-     *instance = object;
-@@ -1469,7 +1591,9 @@ static inline void wine_vk_normalize_handle_types_host(VkExternalMemoryHandleTyp
+     client_instance->base.unix_handle = (uintptr_t)object;
+@@ -1350,7 +1483,9 @@ static inline void wine_vk_normalize_handle_types_host(VkExternalMemoryHandleTyp
  
  static const VkExternalMemoryHandleTypeFlagBits wine_vk_handle_over_fd_types =
                  VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT |
@@ -1142,9 +2972,9 @@ index e065c0bc253..1024bf04037 100644
 +                VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT |
 +                VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT;
  
- static void wine_vk_get_physical_device_external_buffer_properties(VkPhysicalDevice phys_dev,
+ static void wine_vk_get_physical_device_external_buffer_properties(struct wine_phys_dev *phys_dev,
          void (*p_vkGetPhysicalDeviceExternalBufferProperties)(VkPhysicalDevice, const VkPhysicalDeviceExternalBufferInfo *, VkExternalBufferProperties *),
-@@ -1776,29 +1900,90 @@ static void wine_vk_get_physical_device_external_semaphore_properties(VkPhysical
+@@ -1657,29 +1792,90 @@ static void wine_vk_get_physical_device_external_semaphore_properties(struct win
      void (*p_vkGetPhysicalDeviceExternalSemaphoreProperties)(VkPhysicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo *, VkExternalSemaphoreProperties *),
      const VkPhysicalDeviceExternalSemaphoreInfo *semaphore_info, VkExternalSemaphoreProperties *properties)
  {
@@ -1244,29 +3074,7 @@ index e065c0bc253..1024bf04037 100644
      wine_vk_normalize_semaphore_handle_types_win(&properties->compatibleHandleTypes);
  }
  
-@@ -2844,7 +3029,7 @@ NTSTATUS wine_vkAcquireNextImage2KHR(void *args)
-     image_info_host.pNext = pAcquireInfo->pNext;
-     image_info_host.swapchain = object->swapchain;
-     image_info_host.timeout = pAcquireInfo->timeout;
--    image_info_host.semaphore = pAcquireInfo->semaphore;
-+    image_info_host.semaphore = wine_semaphore_from_handle(pAcquireInfo->semaphore)->semaphore;
-     image_info_host.fence = pAcquireInfo->fence;
-     image_info_host.deviceMask = pAcquireInfo->deviceMask;
- 
-@@ -3338,11 +3523,8 @@ static VkResult record_graphics_cmd(VkDevice device, struct VkSwapchainKHR_T *sw
-     return VK_SUCCESS;
- }
- 
--NTSTATUS wine_vkQueuePresentKHR(void *args)
-+static VkResult fshack_vk_queue_present(VkQueue queue, const VkPresentInfoKHR *pPresentInfo)
- {
--    struct vkQueuePresentKHR_params *params = args;
--    VkQueue queue = params->queue;
--    const VkPresentInfoKHR *pPresentInfo = params->pPresentInfo;
-     VkResult res;
-     VkPresentInfoKHR our_presentInfo;
-     VkSwapchainKHR *arr;
-@@ -3800,6 +3991,23 @@ NTSTATUS wine_vkAllocateMemory(void *args)
+@@ -2259,6 +2455,23 @@ NTSTATUS wine_vkAllocateMemory(void *args)
          return res;
      }
  
@@ -1290,7 +3098,7 @@ index e065c0bc253..1024bf04037 100644
      if (!(object = calloc(1, sizeof(*object))))
      {
          free_VkMemoryAllocateInfo_struct_chain(&allocate_info_dup);
-@@ -3835,12 +4043,14 @@ NTSTATUS wine_vkAllocateMemory(void *args)
+@@ -2294,12 +2507,14 @@ NTSTATUS wine_vkAllocateMemory(void *args)
          switch (handle_import_info->handleType)
          {
              case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT:
@@ -1305,7 +3113,7 @@ index e065c0bc253..1024bf04037 100644
                  /* FIXME: the spec says that device memory imported from a KMT handle doesn't keep a reference to the underyling payload.
                     This means that in cases where on windows an application leaks VkDeviceMemory objects, we leak the full payload.  To
                     fix this, we would need wine_dev_mem objects to store no reference to the payload, that means no host VkDeviceMemory
-@@ -3942,9 +4152,11 @@ NTSTATUS wine_vkGetMemoryWin32HandleKHR(void *args)
+@@ -2401,9 +2616,11 @@ NTSTATUS wine_vkGetMemoryWin32HandleKHR(void *args)
      switch(handle_info->handleType)
      {
          case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT:
@@ -1317,7 +3125,7 @@ index e065c0bc253..1024bf04037 100644
          {
              if ((ret = get_shared_resource_kmt_handle(dev_mem->handle)) == INVALID_HANDLE_VALUE)
                  return VK_ERROR_OUT_OF_HOST_MEMORY;
-@@ -4084,118 +4296,1904 @@ NTSTATUS wine_vkCreateImage(void *args)
+@@ -2543,118 +2760,1907 @@ NTSTATUS wine_vkCreateImage(void *args)
      return res;
  }
  
@@ -1327,7 +3135,7 @@ index e065c0bc253..1024bf04037 100644
 +static bool set_shared_resource_object(HANDLE shared_resource, unsigned int index, HANDLE handle)
  {
 -    struct vkCreateSemaphore_params *params = args;
--    VkDevice device = params->device;
+-    struct wine_device *device = wine_device_from_handle(params->device);
 -    const VkSemaphoreCreateInfo *create_info = params->pCreateInfo;
 -    const VkAllocationCallbacks *allocator = params->pAllocator;
 -    VkSemaphore *semaphore = params->pSemaphore;
@@ -1343,16 +3151,16 @@ index e065c0bc253..1024bf04037 100644
 -    VkResult res;
 +    params.index = index;
 +    params.handle = wine_server_obj_handle(handle);
- 
--    TRACE("%p %p %p %p", device, create_info, allocator, semaphore);
++
 +    return NtDeviceIoControlFile(shared_resource, NULL, NULL, NULL, &iosb, IOCTL_SHARED_GPU_RESOURCE_SET_OBJECT,
 +            &params, sizeof(params), NULL, 0) == STATUS_SUCCESS;
 +}
  
+-    TRACE("%p %p %p %p", device, create_info, allocator, semaphore);
++#define IOCTL_SHARED_GPU_RESOURCE_GET_OBJECT           CTL_CODE(FILE_DEVICE_VIDEO, 6, METHOD_BUFFERED, FILE_READ_ACCESS)
+ 
 -    if (allocator)
 -        FIXME("Support for allocation callbacks not implemented yet\n");
-+#define IOCTL_SHARED_GPU_RESOURCE_GET_OBJECT           CTL_CODE(FILE_DEVICE_VIDEO, 6, METHOD_BUFFERED, FILE_READ_ACCESS)
-+
 +static HANDLE get_shared_resource_object(HANDLE shared_resource, unsigned int index)
 +{
 +    IO_STATUS_BLOCK iosb;
@@ -1370,7 +3178,8 @@ index e065c0bc253..1024bf04037 100644
 +    assert( semaphore->handle_type == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT );
 +    pthread_mutex_lock(&semaphore->d3d12_fence_shm->mutex);
 +}
-+
+ 
+-    if ((res = convert_VkSemaphoreCreateInfo_struct_chain(create_info->pNext, &create_info_host)))
 +static void d3d12_semaphore_unlock(struct wine_semaphore *semaphore)
 +{
 +    assert( semaphore->handle_type == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT );
@@ -1379,7 +3188,7 @@ index e065c0bc253..1024bf04037 100644
 +
 +/* returns -1 when there is no queued update that would satisfy the wait */
 +static uint64_t d3d12_semaphore_try_get_wait_value_locked(struct wine_semaphore *semaphore, uint64_t virtual_value,
-+        struct VkQueue_T *waiting_queue)
++        struct wine_queue *waiting_queue)
 +{
 +    struct pending_update *update;
 +    uint64_t ret = -1;
@@ -1387,8 +3196,7 @@ index e065c0bc253..1024bf04037 100644
 +
 +    if (semaphore->d3d12_fence_shm->virtual_value >= virtual_value)
 +        return 0;
- 
--    if ((res = convert_VkSemaphoreCreateInfo_struct_chain(create_info->pNext, &create_info_host)))
++
 +    for (i = 0; i < semaphore->d3d12_fence_shm->pending_updates_count; i++)
      {
 -        WARN("Failed to convert VkSemaphoreCreateInfo pNext chain, res=%d.\n", res);
@@ -1421,43 +3229,52 @@ index e065c0bc253..1024bf04037 100644
 +        wait = &semaphore->d3d12_fence_shm->pending_waits[i];
 +        if (!wait->present)
 +            break;
-     }
- 
--    if (wine_vk_find_struct(&create_info_host,  EXPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR))
--        FIXME("VkExportSemaphoreWin32HandleInfoKHR unhandled.\n");
--
--    res = device->funcs.p_vkCreateSemaphore(device->device, &create_info_host, NULL, semaphore);
++    }
++
 +    if (i == ARRAY_SIZE(semaphore->d3d12_fence_shm->pending_waits))
 +    {
 +        FIXME("Failed to wait on semaphore %p, maximum waits exceeded.\n", semaphore);
 +        return NULL;
-+    }
+     }
  
--    free_VkSemaphoreCreateInfo_struct_chain(&create_info_host);
+-    if (wine_vk_find_struct(&create_info_host,  EXPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR))
+-        FIXME("VkExportSemaphoreWin32HandleInfoKHR unhandled.\n");
 +    wait->present = true;
 +    wait->satisfied = false;
 +    wait->virtual_value = virtual_value;
 +    wait->physical_value = 0;
  
--    return res;
+-    res = device->funcs.p_vkCreateSemaphore(device->device, &create_info_host, NULL, semaphore);
 +    return wait;
++}
+ 
+-    free_VkSemaphoreCreateInfo_struct_chain(&create_info_host);
++static uint64_t d3d12_semaphore_pop_wait_locked(struct wine_semaphore *semaphore, struct pending_wait *wait)
++{
++    wait->satisfied = false;
++    wait->present = false;
+ 
+-    return res;
++    return wait->physical_value;
  }
  
 -NTSTATUS wine_vkGetSemaphoreWin32HandleKHR(void *args)
-+static uint64_t d3d12_semaphore_pop_wait_locked(struct wine_semaphore *semaphore, struct pending_wait *wait)
++static void d3d12_semaphore_satisfy_waits_locked(struct wine_semaphore *semaphore, uint64_t virtual_value,
++        uint64_t physical_value)
  {
 -    struct vkGetSemaphoreWin32HandleKHR_params *params = args;
 -    VkDevice device = params->device;
 -    const VkSemaphoreGetWin32HandleInfoKHR *handle_info = params->pGetWin32HandleInfo;
 -    HANDLE *handle = params->pHandle;
-+    wait->satisfied = false;
-+    wait->present = false;
++    struct pending_wait *wait;
++    unsigned int i;
  
 -    VkSemaphoreGetFdInfoKHR_host fd_info;
 -    VkResult res;
 -    int fd;
-+    return wait->physical_value;
-+}
++    for (i = 0; i < ARRAY_SIZE(semaphore->d3d12_fence_shm->pending_waits); i++)
++    {
++        wait = &semaphore->d3d12_fence_shm->pending_waits[i];
  
 -    fd_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
 -    fd_info.pNext = handle_info->pNext;
@@ -1466,19 +3283,6 @@ index e065c0bc253..1024bf04037 100644
 -    if (fd_info.handleType == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT)
 -        fd_info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
 -    wine_vk_normalize_semaphore_handle_types_host(&fd_info.handleType);
-+static void d3d12_semaphore_satisfy_waits_locked(struct wine_semaphore *semaphore, uint64_t virtual_value,
-+        uint64_t physical_value)
-+{
-+    struct pending_wait *wait;
-+    unsigned int i;
- 
--    res = device->funcs.p_vkGetSemaphoreFdKHR(device->device, &fd_info, &fd);
-+    for (i = 0; i < ARRAY_SIZE(semaphore->d3d12_fence_shm->pending_waits); i++)
-+    {
-+        wait = &semaphore->d3d12_fence_shm->pending_waits[i];
- 
--    if (res != VK_SUCCESS)
--        return res;
 +        if (wait->present && !wait->satisfied && wait->virtual_value <= virtual_value)
 +        {
 +            wait->satisfied = true;
@@ -1487,22 +3291,21 @@ index e065c0bc253..1024bf04037 100644
 +        }
 +    }
 +}
-+
+ 
+-    res = device->funcs.p_vkGetSemaphoreFdKHR(device->device, &fd_info, &fd);
 +static uint64_t d3d12_semaphore_add_pending_signal_locked(struct wine_semaphore *semaphore, uint64_t virtual_value,
-+        struct VkQueue_T *signalling_queue)
++        struct wine_queue *signalling_queue)
 +{
 +    struct pending_update *update;
  
--    if (wine_server_fd_to_handle(fd, GENERIC_ALL, 0, handle) != STATUS_SUCCESS)
+-    if (res != VK_SUCCESS)
+-        return res;
 +    if (semaphore->d3d12_fence_shm->pending_updates_count == ARRAY_SIZE(semaphore->d3d12_fence_shm->pending_updates))
-     {
--        close(fd);
--        return VK_ERROR_OUT_OF_HOST_MEMORY;
++    {
 +        FIXME("Failed to queue signal on d3d12 semaphore, maximum concurrent signals exceeded.\n");
 +        return 0;
-     }
- 
--    return VK_SUCCESS;
++    }
++
 +    update = &semaphore->d3d12_fence_shm->pending_updates[
 +        semaphore->d3d12_fence_shm->pending_updates_count++];
 +
@@ -1512,85 +3315,64 @@ index e065c0bc253..1024bf04037 100644
 +    update->signalling_queue = signalling_queue;
 +
 +    return update->physical_value;
- }
- 
--NTSTATUS wine_vkImportSemaphoreWin32HandleKHR(void *args)
++}
++
 +static struct pending_update d3d12_semaphore_peek_added_signal_locked(struct wine_semaphore *semaphore)
- {
--    struct vkImportSemaphoreWin32HandleKHR_params *params = args;
--    VkDevice device = params->device;
--    const VkImportSemaphoreWin32HandleInfoKHR *handle_info = params->pImportSemaphoreWin32HandleInfo;
--
--    VkImportSemaphoreFdInfoKHR_host fd_info;
--    VkResult res;
--    int fd;
++{
 +    return semaphore->d3d12_fence_shm->pending_updates[semaphore->d3d12_fence_shm->pending_updates_count - 1];
 +}
  
--    fd_info.sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR;
--    fd_info.pNext = handle_info->pNext;
--    fd_info.semaphore = handle_info->semaphore;
--    fd_info.flags = handle_info->flags;
--    fd_info.handleType = handle_info->handleType;
+-    if (wine_server_fd_to_handle(fd, GENERIC_ALL, 0, handle) != STATUS_SUCCESS)
 +static bool d3d12_semaphore_pop_pending_signal_locked(struct wine_semaphore *semaphore, uint64_t phys_val, struct pending_update *ret)
 +{
 +    struct pending_update *update;
 +    unsigned int i;
- 
--    if (fd_info.handleType == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT)
++
 +    for (i = 0; i < semaphore->d3d12_fence_shm->pending_updates_count; i++)
      {
--        if (handle_info->name)
+-        close(fd);
+-        return VK_ERROR_OUT_OF_HOST_MEMORY;
 +        if (semaphore->d3d12_fence_shm->pending_updates[i].physical_value == phys_val)
-         {
--            FIXME("Importing win32 semaphore by name not supported.\n");
--            return VK_ERROR_INVALID_EXTERNAL_HANDLE;
++        {
 +            update = &semaphore->d3d12_fence_shm->pending_updates[i];
 +            if (ret)
 +                *ret = *update;
 +            *update = semaphore->d3d12_fence_shm->pending_updates[--semaphore->d3d12_fence_shm->pending_updates_count];
 +            return true;
-         }
--
--        fd_info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
--        if (wine_server_handle_to_fd(handle_info->handle, GENERIC_ALL, &fd, NULL) != STATUS_SUCCESS)
--            return VK_ERROR_INVALID_EXTERNAL_HANDLE;
++        }
      }
--    wine_vk_normalize_semaphore_handle_types_host(&fd_info.handleType);
  
--    if (!fd_info.handleType)
+-    return VK_SUCCESS;
 +    return false;
-+}
-+
+ }
+ 
+-NTSTATUS wine_vkImportSemaphoreWin32HandleKHR(void *args)
 +static void d3d12_semaphore_update_phys_val_locked(struct wine_semaphore *sem, uint64_t phys_val)
-+{
+ {
+-    struct vkImportSemaphoreWin32HandleKHR_params *params = args;
 +    struct pending_update pending;
 +
 +    /* Based off linked VKD3D-Proton implementation, but we don't signal CPU waits here.
 +        * https://github.com/HansKristian-Work/vkd3d-proton/blob/829ac72e3d381006a843c183e613e8ee77e0b292/libs/vkd3d/command.c#L758 */
 +    while (sem->d3d12_fence_shm->physical_value < phys_val)
-     {
--        FIXME("Importing win32 semaphore with handle type %#x not supported.\n", handle_info->handleType);
--        return VK_ERROR_INVALID_EXTERNAL_HANDLE;
++    {
 +        sem->d3d12_fence_shm->physical_value++;
 +
 +        if (d3d12_semaphore_pop_pending_signal_locked(sem, sem->d3d12_fence_shm->physical_value, &pending))
 +            sem->d3d12_fence_shm->virtual_value = pending.virtual_value;
-     }
++    }
 +}
- 
--    /* importing FDs transfers ownership, importing NT handles does not  */
--    if ((res = device->funcs.p_vkImportSemaphoreFdKHR(device->device, &fd_info)) != VK_SUCCESS)
--        close(fd);
++
 +NTSTATUS wine_vkCreateSemaphore(void *args)
 +{
 +    struct vkCreateSemaphore_params *params = args;
-+    VkDevice device = params->device;
+     struct wine_device *device = wine_device_from_handle(params->device);
+-    const VkImportSemaphoreWin32HandleInfoKHR *handle_info = params->pImportSemaphoreWin32HandleInfo;
 +    const VkSemaphoreCreateInfo *create_info = params->pCreateInfo;
 +    const VkAllocationCallbacks *allocator = params->pAllocator;
 +    VkSemaphore *semaphore = params->pSemaphore;
  
--    return res;
+-    VkImportSemaphoreFdInfoKHR_host fd_info;
 +    VkExportSemaphoreWin32HandleInfoKHR *export_handle_info = wine_vk_find_struct(create_info, EXPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR);
 +    VkExportSemaphoreCreateInfo *export_semaphore_info, timeline_export_info;
 +    VkSemaphoreCreateInfo create_info_dup = *create_info, create_info_host;
@@ -1603,30 +3385,53 @@ index e065c0bc253..1024bf04037 100644
 +    HANDLE section_handle;
 +    LARGE_INTEGER li;
 +    unsigned int i;
-+    VkResult res;
+     VkResult res;
 +    SIZE_T size;
-+    int fd;
-+
+     int fd;
+ 
+-    fd_info.sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR;
+-    fd_info.pNext = handle_info->pNext;
+-    fd_info.semaphore = handle_info->semaphore;
+-    fd_info.flags = handle_info->flags;
+-    fd_info.handleType = handle_info->handleType;
 +    TRACE("(%p, %p, %p, %p)\n", device, create_info, allocator, semaphore);
-+
+ 
+-    if (fd_info.handleType == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT)
+-    {
+-        if (handle_info->name)
+-        {
+-            FIXME("Importing win32 semaphore by name not supported.\n");
+-            return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+-        }
 +    if (allocator)
 +        FIXME("Support for allocation callbacks not implemented yet\n");
-+
+ 
+-        fd_info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+-        if (wine_server_handle_to_fd(handle_info->handle, GENERIC_ALL, &fd, NULL) != STATUS_SUCCESS)
+-            return VK_ERROR_INVALID_EXTERNAL_HANDLE;
 +    if ((res = convert_VkSemaphoreCreateInfo_struct_chain(create_info->pNext, &create_info_dup)))
 +    {
 +        WARN("Failed to convert VkSemaphoreCreateInfo pNext chain, res=%d.\n", res);
 +        return res;
-+    }
-+
+     }
+-    wine_vk_normalize_semaphore_handle_types_host(&fd_info.handleType);
+ 
+-    if (!fd_info.handleType)
 +    if (!(object = calloc(1, sizeof(*object))))
-+    {
+     {
+-        FIXME("Importing win32 semaphore with handle type %#x not supported.\n", handle_info->handleType);
+-        return VK_ERROR_INVALID_EXTERNAL_HANDLE;
 +        free_VkSemaphoreCreateInfo_struct_chain(&create_info_dup);
 +        return VK_ERROR_OUT_OF_HOST_MEMORY;
-+    }
+     }
 +    object->handle = INVALID_HANDLE_VALUE;
-+
+ 
+-    /* importing FDs transfers ownership, importing NT handles does not  */
+-    if ((res = device->funcs.p_vkImportSemaphoreFdKHR(device->device, &fd_info)) != VK_SUCCESS)
+-        close(fd);
 +    create_info_host = create_info_dup;
-+
+ 
+-    return res;
 +    if ((export_semaphore_info = wine_vk_find_struct(&create_info_host, EXPORT_SEMAPHORE_CREATE_INFO)))
 +    {
 +        object->export_types = export_semaphore_info->handleTypes;
@@ -1742,10 +3547,10 @@ index e065c0bc253..1024bf04037 100644
 +            pthread_condattr_destroy(&cond_attr);
 +        }
 +
-+        WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, object, object->fence_timeline_semaphore);
++        WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, object, object->fence_timeline_semaphore, object);
 +    }
 +
-+    WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, object, object->semaphore);
++    WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, object, object->semaphore, object);
 +    *semaphore = wine_semaphore_to_handle(object);
 +
 +    done:
@@ -1789,7 +3594,7 @@ index e065c0bc253..1024bf04037 100644
 +NTSTATUS wine_vkDestroySemaphore(void *args)
 +{
 +    struct vkDestroySemaphore_params *params = args;
-+    VkDevice device = params->device;
++    struct wine_device *device = wine_device_from_handle(params->device);
 +    VkSemaphore handle = params->semaphore;
 +    const VkAllocationCallbacks *allocator = params->pAllocator;
 +
@@ -1822,7 +3627,7 @@ index e065c0bc253..1024bf04037 100644
 +NTSTATUS wine_vkImportSemaphoreWin32HandleKHR(void *args)
 +{
 +    struct vkImportSemaphoreWin32HandleKHR_params *params = args;
-+    VkDevice device = params->device;
++    struct wine_device *device = wine_device_from_handle(params->device);
 +    const VkImportSemaphoreWin32HandleInfoKHR *handle_info = params->pImportSemaphoreWin32HandleInfo;
 +
 +    struct wine_semaphore *semaphore = wine_semaphore_from_handle(handle_info->semaphore);
@@ -1854,7 +3659,7 @@ index e065c0bc253..1024bf04037 100644
 +            return res;
 +        };
 +
-+        WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, semaphore, semaphore->fence_timeline_semaphore);
++        WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, semaphore, semaphore->fence_timeline_semaphore, semaphore);
 +    }
 +
 +    output_semaphore = *semaphore;
@@ -1909,7 +3714,7 @@ index e065c0bc253..1024bf04037 100644
 +            size = sizeof(*output_semaphore.d3d12_fence_shm);
 +            if ((stat = NtMapViewOfSection(d3d12_fence_shm, GetCurrentProcess(), (void**) &output_semaphore.d3d12_fence_shm, 0, 0, NULL, &size, ViewShare, 0, PAGE_READWRITE)))
 +            {
-+                ERR("Failed to map D3D12 semaphore memory. stat %#x.\n", stat);
++                ERR("Failed to map D3D12 semaphore memory. stat %#lx.\n", (long int) stat);
 +                close(fd_info.fd);
 +                NtClose(d3d12_fence_shm);
 +                NtClose(output_semaphore.handle);
@@ -2276,7 +4081,7 @@ index e065c0bc253..1024bf04037 100644
 +
 +static void *queue_signaller_worker(void *arg)
 +{
-+    struct VkQueue_T *queue = (struct VkQueue_T *)arg;
++    struct wine_queue *queue = (struct wine_queue *)arg;
 +    VkSemaphoreWaitInfo wait_info;
 +    struct signal_op *signal_op;
 +    VkSemaphore sem_handle;
@@ -2315,7 +4120,7 @@ index e065c0bc253..1024bf04037 100644
 +            sem_handle = wine_semaphore_to_handle(signal_op->semaphore.obj);
 +            wait_info.pSemaphores = &sem_handle;
 +            wait_info.pValues = &signal_op->semaphore.phys_val;
-+            if (!device_lost && (vr = vk_wait_semaphores(queue->device, &wait_info, -1, signal_op->semaphore.khr)) < 0)
++            if (!device_lost && (vr = vk_wait_semaphores(queue->device->handle, &wait_info, -1, signal_op->semaphore.khr)) < 0)
 +            {
 +                /* likely GPU hang */
 +                fprintf(stderr, "winevulkan/queue_signaller_worker: Semaphore wait failed, vr %d.\n", vr);
@@ -2330,7 +4135,7 @@ index e065c0bc253..1024bf04037 100644
 +        {
 +            fence = wine_fence_to_handle(signal_op->fence);
 +
-+            if (!device_lost && (vr = thunk_vkWaitForFences(queue->device, 1, &fence, VK_TRUE, -1)) < 0)
++            if (!device_lost && (vr = thunk_vkWaitForFences(queue->device->handle, 1, &fence, VK_TRUE, -1)) < 0)
 +            {
 +                /* likely GPU hang */
 +                fprintf(stderr, "winevulkan/queue_signaller_worker: Fence wait failed, vr %d.\n", vr);
@@ -2548,7 +4353,7 @@ index e065c0bc253..1024bf04037 100644
 +
 +static void *virtual_queue_worker(void *arg)
 +{
-+    struct VkQueue_T *queue = (struct VkQueue_T *)arg;
++    struct wine_queue *queue = (struct wine_queue *)arg;
 +    struct queue_submit_unit *submit_unit;
 +    struct signal_op *signal_op;
 +    struct wine_semaphore *sem;
@@ -2606,13 +4411,13 @@ index e065c0bc253..1024bf04037 100644
 +        }
 +
 +        if (submit_unit->submits)
-+            vr = thunk_vkQueueSubmit(queue, submit_unit->submit_count, submit_unit->submits, submit_unit->fence);
++            vr = thunk_vkQueueSubmit(queue->handle, submit_unit->submit_count, submit_unit->submits, submit_unit->fence);
 +        else
 +        {
 +            if (submit_unit->khr)
-+                vr = thunk_vkQueueSubmit2KHR(queue, submit_unit->submit_count, submit_unit->submits2, submit_unit->fence);
++                vr = thunk_vkQueueSubmit2KHR(queue->handle, submit_unit->submit_count, submit_unit->submits2, submit_unit->fence);
 +            else
-+                vr = thunk_vkQueueSubmit2(queue, submit_unit->submit_count, submit_unit->submits2, submit_unit->fence);
++                vr = thunk_vkQueueSubmit2(queue->handle, submit_unit->submit_count, submit_unit->submits2, submit_unit->fence);
 +        }
 +
 +        pthread_mutex_lock(&queue->signaller_mutex);
@@ -2686,7 +4491,7 @@ index e065c0bc253..1024bf04037 100644
 +    return NULL;
 +}
 +
-+static void init_virtual_queue(struct VkQueue_T *queue)
++static void init_virtual_queue(struct wine_queue *queue)
 +{
 +    if (is_virtual_queue(queue))
 +        return;
@@ -2709,7 +4514,7 @@ index e065c0bc253..1024bf04037 100644
 +    pthread_mutex_unlock(&queue->submissions_mutex);
 +}
 +
-+static NTSTATUS virtual_queue_submit(struct VkQueue_T *queue, uint32_t submit_count, const VkSubmitInfo *submits, VkFence fence)
++static NTSTATUS virtual_queue_submit(struct wine_queue *queue, uint32_t submit_count, const VkSubmitInfo *submits, VkFence fence)
 +{
 +    VkTimelineSemaphoreSubmitInfo *timeline_submit_info, *host_timeline_values;
 +    VkD3D12FenceSubmitInfoKHR *d3d12_submit_info;
@@ -2806,7 +4611,8 @@ index e065c0bc253..1024bf04037 100644
 +NTSTATUS wine_vkQueueSubmit(void *args)
 +{
 +    struct vkQueueSubmit_params *params = args;
-+    VkQueue queue = params->queue;
++    VkQueue handle = params->queue;
++    struct wine_queue *queue = wine_queue_from_handle(handle);
 +    uint32_t submit_count = params->submitCount;
 +    const VkSubmitInfo *submits = params->pSubmits;
 +    VkFence fence = params->fence;
@@ -2841,10 +4647,10 @@ index e065c0bc253..1024bf04037 100644
 +    if (fence)
 +        wine_fence_from_handle(fence)->queue = queue;
 +
-+    return thunk_vkQueueSubmit(queue, submit_count, submits, fence);
++    return thunk_vkQueueSubmit(handle, submit_count, submits, fence);
 +}
 +
-+static NTSTATUS virtual_queue_submit2(struct VkQueue_T *queue, uint32_t submit_count, const VkSubmitInfo2 *submits, VkFence fence, bool khr)
++static NTSTATUS virtual_queue_submit2(struct wine_queue *queue, uint32_t submit_count, const VkSubmitInfo2 *submits, VkFence fence, bool khr)
 +{
 +    VkSemaphoreSubmitInfo *sem_submit_info;
 +    struct queue_submit_unit *submit_unit;
@@ -2914,9 +4720,10 @@ index e065c0bc253..1024bf04037 100644
 +    return VK_SUCCESS;
 +}
 +
-+static NTSTATUS vk_queue_submit_2(VkQueue queue, uint32_t submit_count, const VkSubmitInfo2 *submits, VkFence fence, bool khr)
++static NTSTATUS vk_queue_submit_2(VkQueue handle, uint32_t submit_count, const VkSubmitInfo2 *submits, VkFence fence, bool khr)
 +{
 +    unsigned int i, k;
++    struct wine_queue *queue = wine_queue_from_handle(handle);
 +
 +    TRACE("(%p, %u, %p, %s)\n", queue, submit_count, submits, wine_dbgstr_longlong(fence));
 +
@@ -2947,9 +4754,9 @@ index e065c0bc253..1024bf04037 100644
 +        wine_fence_from_handle(fence)->queue = queue;
 +
 +    if (khr)
-+        return thunk_vkQueueSubmit2KHR(queue, submit_count, submits, fence);
++        return thunk_vkQueueSubmit2KHR(handle, submit_count, submits, fence);
 +    else
-+        return thunk_vkQueueSubmit2(queue, submit_count, submits, fence);
++        return thunk_vkQueueSubmit2(handle, submit_count, submits, fence);
 +}
 +
 +NTSTATUS wine_vkQueueSubmit2(void *args)
@@ -3000,14 +4807,13 @@ index e065c0bc253..1024bf04037 100644
 +NTSTATUS wine_vkQueuePresentKHR(void *args)
 +{
 +    struct vkQueuePresentKHR_params *params = args;
-+    VkQueue queue = params->queue;
++    VkQueue handle = params->queue;
++    struct wine_queue *queue = wine_queue_from_handle(handle);
 +    const VkPresentInfoKHR *present_info = params->pPresentInfo;
 +
 +    VkPresentInfoKHR host_present_info = *present_info;
 +    struct wine_semaphore *semaphore;
-+    VkSemaphore *host_semaphores;
 +    unsigned int i;
-+    VkResult vr;
 +
 +    TRACE("%p %p\n", queue, present_info);
 +
@@ -3030,16 +4836,14 @@ index e065c0bc253..1024bf04037 100644
 +        pthread_mutex_unlock(&queue->submissions_mutex);
 +    }
 +
-+    host_present_info.pWaitSemaphores = host_semaphores = convert_VkSemaphore_array_win_to_host(present_info->pWaitSemaphores, present_info->waitSemaphoreCount);
-+    vr = fshack_vk_queue_present(queue, &host_present_info);
-+    free_VkSemaphore_array(host_semaphores, present_info->waitSemaphoreCount);
-+    return vr;
++    return thunk_vkQueuePresentKHR(handle, &host_present_info);
 +}
 +
 +NTSTATUS wine_vkQueueBindSparse(void *args)
 +{
 +    struct vkQueueBindSparse_params *params = args;
-+    VkQueue queue = params->queue;
++    VkQueue handle = params->queue;
++    struct wine_queue *queue = wine_queue_from_handle(handle);
 +    uint32_t bind_info_count = params->bindInfoCount;
 +    const VkBindSparseInfo *bind_info = params->pBindInfo;
 +    VkFence fence = params->fence;
@@ -3086,13 +4890,13 @@ index e065c0bc253..1024bf04037 100644
 +        }
 +    }
 +
-+    return thunk_vkQueueBindSparse(queue, bind_info_count, bind_info, fence);
++    return thunk_vkQueueBindSparse(handle, bind_info_count, bind_info, fence);
 +}
 +
 +NTSTATUS wine_vkCreateFence(void *args)
 +{
 +    struct vkCreateFence_params *params = args;
-+    VkDevice device = params->device;
++    struct wine_device *device = wine_device_from_handle(params->device);
 +    const VkFenceCreateInfo *create_info = params->pCreateInfo;
 +    const VkAllocationCallbacks *allocator = params->pAllocator;
 +    VkFence *fence = params->pFence;
@@ -3111,7 +4915,7 @@ index e065c0bc253..1024bf04037 100644
 +    if ((object->eventfd = eventfd(0, EFD_CLOEXEC)) == -1)
 +        ERR("Failed to create eventfd for fence.\n");
 +
-+    if ((vr = device->funcs.p_vkCreateFence(device->device, create_info, allocator, &object->fence)) == VK_SUCCESS)
++    if ((vr = device->funcs.p_vkCreateFence(device->device, create_info, NULL, &object->fence)) == VK_SUCCESS)
 +        *fence = wine_fence_to_handle(object);
 +    else
 +        free(object);
@@ -3122,7 +4926,7 @@ index e065c0bc253..1024bf04037 100644
 +NTSTATUS wine_vkDestroyFence(void *args)
 +{
 +    struct vkDestroyFence_params *params = args;
-+    VkDevice device = params->device;
++    struct wine_device *device = wine_device_from_handle(params->device);
 +    VkFence handle = params->fence;
 +    const VkAllocationCallbacks *allocator = params->pAllocator;
 +
@@ -3132,6 +4936,9 @@ index e065c0bc253..1024bf04037 100644
 +
 +    if (allocator)
 +        FIXME("Support for allocation callbacks not implemented yet\n");
++
++    if (!handle)
++        return VK_SUCCESS;
 +
 +    if (fence->eventfd != -1)
 +        close(fence->eventfd);
@@ -3284,7 +5091,8 @@ index e065c0bc253..1024bf04037 100644
 +NTSTATUS wine_vkQueueWaitIdle(void *args)
 +{
 +    struct vkQueueWaitIdle_params *params = args;
-+    VkQueue queue = params->queue;
++    VkQueue handle = params->queue;
++    struct wine_queue *queue = wine_queue_from_handle(handle);
 +
 +    TRACE("(%p)\n", queue);
 +
@@ -3299,10 +5107,10 @@ index e065c0bc253..1024bf04037 100644
 +    return queue->device->funcs.p_vkQueueWaitIdle(queue->queue);
  }
 diff --git a/dlls/winevulkan/vulkan_loader.h b/dlls/winevulkan/vulkan_loader.h
-index 275242657e3..10281bbc01f 100644
+index 64a136b0804..f37a00aa977 100644
 --- a/dlls/winevulkan/vulkan_loader.h
 +++ b/dlls/winevulkan/vulkan_loader.h
-@@ -42,6 +42,8 @@
+@@ -40,6 +40,8 @@
  #define WINEVULKAN_QUIRK_GET_DEVICE_PROC_ADDR 0x00000001
  #define WINEVULKAN_QUIRK_ADJUST_MAX_IMAGE_COUNT 0x00000002
  #define WINEVULKAN_QUIRK_IGNORE_EXPLICIT_LAYERS 0x00000004
@@ -3312,7 +5120,7 @@ index 275242657e3..10281bbc01f 100644
  /* Base 'class' for our Vulkan dispatchable objects such as VkDevice and VkInstance.
   * This structure MUST be the first element of a dispatchable object as the ICD
 diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
-index 88a87dd4317..4585a24bdcd 100644
+index 3944b1f62af..0764f84245c 100644
 --- a/dlls/winevulkan/vulkan_private.h
 +++ b/dlls/winevulkan/vulkan_private.h
 @@ -27,6 +27,7 @@
@@ -3321,10 +5129,10 @@ index 88a87dd4317..4585a24bdcd 100644
  #include <pthread.h>
 +#include <stdbool.h>
  
- #include "wine/list.h"
- 
-@@ -124,6 +125,8 @@ struct VkInstance_T
-     struct vulkan_instance_funcs funcs;
+ #include "vulkan_loader.h"
+ #include "vulkan_thunks.h"
+@@ -96,6 +97,8 @@ struct wine_instance
+     VkInstance handle; /* client instance */
      VkInstance instance; /* native instance */
  
 +    uint32_t api_version;
@@ -3332,8 +5140,8 @@ index 88a87dd4317..4585a24bdcd 100644
      /* We cache devices as we need to wrap them as they are
       * dispatchable objects.
       */
-@@ -150,9 +153,13 @@ struct VkPhysicalDevice_T
-     struct VkInstance_T *instance; /* parent */
+@@ -128,9 +131,13 @@ struct wine_phys_dev
+     VkPhysicalDevice handle; /* client physical device */
      VkPhysicalDevice phys_dev; /* native physical device */
  
 +    uint32_t api_version;
@@ -3346,7 +5154,7 @@ index 88a87dd4317..4585a24bdcd 100644
      struct wine_vk_mapping mapping;
  };
  
-@@ -166,6 +173,22 @@ struct VkQueue_T
+@@ -150,6 +157,22 @@ struct wine_queue
      uint32_t queue_index;
      VkDeviceQueueCreateFlags flags;
  
@@ -3369,7 +5177,7 @@ index 88a87dd4317..4585a24bdcd 100644
      struct wine_vk_mapping mapping;
  };
  
-@@ -266,6 +289,79 @@ static inline VkDeviceMemory wine_dev_mem_to_handle(struct wine_dev_mem *dev_mem
+@@ -250,6 +273,79 @@ static inline VkDeviceMemory wine_dev_mem_to_handle(struct wine_dev_mem *dev_mem
      return (VkDeviceMemory)(uintptr_t)dev_mem;
  }
  
@@ -3403,7 +5211,7 @@ index 88a87dd4317..4585a24bdcd 100644
 +            uint64_t virtual_value;
 +            uint64_t physical_value;
 +            pid_t signalling_pid;
-+            struct VkQueue_T *signalling_queue;
++            struct wine_queue *signalling_queue;
 +        } pending_updates[100];
 +        uint32_t pending_updates_count;
 +    } *d3d12_fence_shm;
@@ -3430,7 +5238,7 @@ index 88a87dd4317..4585a24bdcd 100644
 +{
 +    VkFence fence;
 +
-+    struct VkQueue_T *queue;
++    struct wine_queue *queue;
 +    struct VkSwapchainKHR_T *swapchain;
 +    bool wait_assist;
 +    int eventfd;
@@ -3449,7 +5257,7 @@ index 88a87dd4317..4585a24bdcd 100644
  BOOL wine_vk_device_extension_supported(const char *name) DECLSPEC_HIDDEN;
  BOOL wine_vk_instance_extension_supported(const char *name) DECLSPEC_HIDDEN;
  
-@@ -297,4 +393,16 @@ static inline void init_unicode_string( UNICODE_STRING *str, const WCHAR *data )
+@@ -270,4 +366,16 @@ static inline void init_unicode_string( UNICODE_STRING *str, const WCHAR *data )
      str->Buffer = (WCHAR *)data;
  }
  
@@ -3467,9 +5275,9 @@ index 88a87dd4317..4585a24bdcd 100644
 +
  #endif /* __WINE_VULKAN_PRIVATE_H */
 -- 
-2.37.1
+2.37.3
 
-From c3edb990858a5a430427e7dd70aea76ecaaad23a Mon Sep 17 00:00:00 2001
+From dfaa3cdcf8de902558cb7a93e0780068ab778a62 Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Mon, 22 Aug 2022 16:20:23 -0400
 Subject: [PATCH] winevulkan: Fix vkWaitSemaphores implementation with 32-bit
@@ -3480,10 +5288,10 @@ Subject: [PATCH] winevulkan: Fix vkWaitSemaphores implementation with 32-bit
  1 file changed, 8 insertions(+), 1 deletion(-)
 
 diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
-index 1024bf04037..61b74e49b1f 100644
+index 622cd648e16..0f7634fab67 100644
 --- a/dlls/winevulkan/vulkan.c
 +++ b/dlls/winevulkan/vulkan.c
-@@ -30,6 +30,7 @@
+@@ -28,6 +28,7 @@
  #include <stdio.h>
  #include <assert.h>
  #include <errno.h>
@@ -3491,7 +5299,7 @@ index 1024bf04037..61b74e49b1f 100644
  #include <poll.h>
  #include <sys/eventfd.h>
  
-@@ -4988,6 +4989,7 @@ static NTSTATUS wine_vk_wait_semaphores(VkDevice device, const VkSemaphoreWaitIn
+@@ -3452,6 +3453,7 @@ static NTSTATUS wine_vk_wait_semaphores(VkDevice device, const VkSemaphoreWaitIn
      unsigned int i, remaining_waits;
      VkSemaphore* semaphores_dup;
      uint64_t *values_dup;
@@ -3499,7 +5307,7 @@ index 1024bf04037..61b74e49b1f 100644
      uint64_t phys_val;
      int wait_stat;
      VkResult res;
-@@ -4998,13 +5000,18 @@ static NTSTATUS wine_vk_wait_semaphores(VkDevice device, const VkSemaphoreWaitIn
+@@ -3462,13 +3464,18 @@ static NTSTATUS wine_vk_wait_semaphores(VkDevice device, const VkSemaphoreWaitIn
      {
          clock_gettime(CLOCK_REALTIME, &start_time);
  
@@ -3520,58 +5328,5 @@ index 1024bf04037..61b74e49b1f 100644
  
      wait_info_dup.pSemaphores = semaphores_dup = calloc(wait_info->semaphoreCount, sizeof(VkSemaphore));
 -- 
-2.37.2
-
-From 693c201dbf44dacaa1462cfbb518b4f30d40875b Mon Sep 17 00:00:00 2001
-From: Derek Lesho <dlesho@codeweavers.com>
-Date: Mon, 29 Aug 2022 13:54:48 -0400
-Subject: [PATCH] fixup! winevulkan: Add support for signalling VkFence from
- virtualized VkQueues.
-
----
- dlls/winevulkan/vulkan.c | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
-index 61b74e49b1f..3bf0d0fa0cd 100644
---- a/dlls/winevulkan/vulkan.c
-+++ b/dlls/winevulkan/vulkan.c
-@@ -6017,7 +6017,7 @@ NTSTATUS wine_vkCreateFence(void *args)
-     if ((object->eventfd = eventfd(0, EFD_CLOEXEC)) == -1)
-         ERR("Failed to create eventfd for fence.\n");
- 
--    if ((vr = device->funcs.p_vkCreateFence(device->device, create_info, allocator, &object->fence)) == VK_SUCCESS)
-+    if ((vr = device->funcs.p_vkCreateFence(device->device, create_info, NULL, &object->fence)) == VK_SUCCESS)
-         *fence = wine_fence_to_handle(object);
-     else
-         free(object);
--- 
-2.37.2
-
-From 8e2c0c333fd59f45cc47bec4ac9bb57f0169cc51 Mon Sep 17 00:00:00 2001
-From: Derek Lesho <dlesho@codeweavers.com>
-Date: Thu, 1 Sep 2022 08:55:59 -0400
-Subject: [PATCH] fixup! winevulkan: Add support for signalling VkFence from
- virtualized VkQueues.
-
----
- dlls/winevulkan/vulkan.c | 3 +++
- 1 file changed, 3 insertions(+)
-
-diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
-index 3bf0d0fa0cd..03f0ad9d89b 100644
---- a/dlls/winevulkan/vulkan.c
-+++ b/dlls/winevulkan/vulkan.c
-@@ -6039,6 +6039,9 @@ NTSTATUS wine_vkDestroyFence(void *args)
-     if (allocator)
-         FIXME("Support for allocation callbacks not implemented yet\n");
- 
-+    if (!handle)
-+        return VK_SUCCESS;
-+
-     if (fence->eventfd != -1)
-         close(fence->eventfd);
- 
--- 
-2.37.2
+2.37.3
 
