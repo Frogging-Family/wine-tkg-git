@@ -48,5 +48,3 @@ makepkg -si
 ```
 **Your build will be found in the `PKGBUILD/wine-tkg-git/non-makepkg-builds` dir (independently of the chosen configuration)**
 
-
-Note for Ubuntu users who want to use docker instead: https://github.com/Tk-Glitch/PKGBUILDS/issues/69#issuecomment-450548800 Thanks to @yuiiio
