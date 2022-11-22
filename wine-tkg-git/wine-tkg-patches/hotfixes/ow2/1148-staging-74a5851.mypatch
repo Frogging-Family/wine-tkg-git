@@ -153,8 +153,8 @@ index 6b73d9dc7e8efa986d8e102b7a649fdd6765b047..3da06f6ad6c0e8a6ccfe3877a4f7aaa5
  }
  
  
--static int fd_set_dos_attrib( int fd, UINT attr )
-+static int fd_set_dos_attrib( int fd, UINT attr, BOOL force_set )
+-static int fd_set_dos_attrib( int fd, ULONG attr )
++static int fd_set_dos_attrib( int fd, ULONG attr, BOOL force_set )
  {
      /* we only store the HIDDEN and SYSTEM attributes */
      attr &= XATTR_ATTRIBS_MASK;
@@ -163,16 +163,16 @@ index 6b73d9dc7e8efa986d8e102b7a649fdd6765b047..3da06f6ad6c0e8a6ccfe3877a4f7aaa5
      {
          /* encode the attributes in Samba 3 ASCII format. Samba 4 has extended
           * this format with more features, but retains compatibility with the
-@@ -1596,7 +1598,7 @@ static int fd_set_dos_attrib( int fd, UINT attr )
+@@ -1596,7 +1598,7 @@ static int fd_set_dos_attrib( int fd, ULONG attr )
  
  
  /* set the stat info and file attributes for a file (by file descriptor) */
--NTSTATUS fd_set_file_info( int fd, UINT attr )
-+NTSTATUS fd_set_file_info( int fd, UINT attr, BOOL force_set_xattr )
+-NTSTATUS fd_set_file_info( int fd, ULONG attr )
++NTSTATUS fd_set_file_info( int fd, ULONG attr, BOOL force_set_xattr )
  {
      struct stat st;
  
-@@ -1615,7 +1617,7 @@ NTSTATUS fd_set_file_info( int fd, UINT attr )
+@@ -1615,7 +1617,7 @@ NTSTATUS fd_set_file_info( int fd, ULONG attr )
      }
      if (fchmod( fd, st.st_mode ) == -1) return errno_to_status( errno );
  
@@ -344,7 +344,7 @@ index 6b73d9dc7e8efa986d8e102b7a649fdd6765b047..3da06f6ad6c0e8a6ccfe3877a4f7aaa5
          else
          {
              struct mountmgr_unix_drive drive;
-@@ -4502,16 +4511,24 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+@@ -4502,29 +4511,37 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
          }
          break;
      case FileAttributeTagInformation:
@@ -353,7 +353,20 @@ index 6b73d9dc7e8efa986d8e102b7a649fdd6765b047..3da06f6ad6c0e8a6ccfe3877a4f7aaa5
          {
 -            FILE_ATTRIBUTE_TAG_INFORMATION *info = ptr;
 -            info->FileAttributes = attr;
--            info->ReparseTag = 0; /* FIXME */
+-            info->ReparseTag = 0;
+-            if (attr & FILE_ATTRIBUTE_REPARSE_POINT)
+-            {
+-                REPARSE_DATA_BUFFER *buffer = NULL;
+-                ULONG buffer_len = 0;
+-
+-                if (get_reparse_point( handle, NULL, &buffer_len ) == STATUS_BUFFER_TOO_SMALL)
+-                {
+-                    buffer = malloc( buffer_len );
+-                    if (get_reparse_point( handle, buffer, &buffer_len ) == STATUS_SUCCESS)
+-                        info->ReparseTag = buffer->ReparseTag;
+-                    free( buffer );
+-                }
+-            }
 -            if ((options & FILE_OPEN_REPARSE_POINT) && fd_is_mount_point( fd, &st ))
 -                info->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
 +            char *unix_name;
@@ -367,6 +380,19 @@ index 6b73d9dc7e8efa986d8e102b7a649fdd6765b047..3da06f6ad6c0e8a6ccfe3877a4f7aaa5
 +                FILE_ATTRIBUTE_TAG_INFORMATION *info = ptr;
 +                info->FileAttributes = attr;
 +                info->ReparseTag = 0; /* FIXME */
++                if (attr & FILE_ATTRIBUTE_REPARSE_POINT)
++                {
++                    REPARSE_DATA_BUFFER *buffer = NULL;
++                    ULONG buffer_len = 0;
++
++                    if (get_reparse_point( handle, NULL, &buffer_len ) == STATUS_BUFFER_TOO_SMALL)
++                    {
++                        buffer = malloc( buffer_len );
++                        if (get_reparse_point( handle, buffer, &buffer_len ) == STATUS_SUCCESS)
++                            info->ReparseTag = buffer->ReparseTag;
++                        free( buffer );
++                    }
++                }
 +                if ((options & FILE_OPEN_REPARSE_POINT) && fd_is_mount_point( fd, &st ))
 +                    info->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
 +            }
