@@ -62,6 +62,7 @@ _exit_cleanup() {
     echo "_NUKR='${_NUKR}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_winesrcdir='${_winesrcdir}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_standard_dlopen='${_standard_dlopen}'" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_processinfoclass='${_processinfoclass}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_no_loader_array='${_no_loader_array}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "CUSTOM_MINGW_PATH='${CUSTOM_MINGW_PATH}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "CUSTOM_GCC_PATH='${CUSTOM_GCC_PATH}'" >> "$_proton_tkg_path"/proton_tkg_token
@@ -996,6 +997,10 @@ _prepare() {
 	  _standard_dlopen="true"
 	else
 	  _standard_dlopen="false"
+	fi
+
+	if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor ce91ef6426bf5065bd31bb82fa4f76011e7a9a36 HEAD ); then
+	  _processinfoclass="true"
 	fi
 
 	echo -e "" >> "$_where"/last_build_config.log
