@@ -1030,8 +1030,12 @@ _polish() {
 
 	source "$_where"/wine-tkg-patches/misc/wine-tkg/wine-tkg
 
-	git add * && true
-	tools/make_makefiles
+	# tools/make_makefiles destroys Valve trees - disable on those
+	if [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
+	  git add * && true
+	  tools/make_makefiles
+	fi
+
 	echo -e "\nRunning make_vulkan" >> "$_where"/prepare.log && dlls/winevulkan/make_vulkan >> "$_where"/prepare.log 2>&1
 	tools/make_requests
 	autoreconf -fiv
