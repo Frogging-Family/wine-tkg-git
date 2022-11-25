@@ -999,7 +999,7 @@ _prepare() {
 	  _standard_dlopen="false"
 	fi
 
-	if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor ce91ef6426bf5065bd31bb82fa4f76011e7a9a36 HEAD ); then
+	if [[ "$_custom_wine_source" != *"ValveSoftware"* ]] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor ce91ef6426bf5065bd31bb82fa4f76011e7a9a36 HEAD ); then
 	  _processinfoclass="true"
 	fi
 
