@@ -625,8 +625,13 @@ function proton_tkg_uninstaller {
     i=1
     for build in ${_strip_builds[@]}; do
       if [ "$_to_uninstall" = "$i" ]; then
-        rm -rf "proton_tkg_$build" && _available_builds=( `ls -d proton_tkg_* | sort -V` ) && _newest_build="${_available_builds[-1]//proton_tkg_/}"
-        sed -i "s/\"Proton-tkg $build\"/\"Proton-tkg ${_newest_build[@]}\"/;s/\"TKG-proton-$build\"/\"TKG-proton-${_newest_build[@]}\"/" "$_config_file"
+        if [ -n "$_just_built" ]; then
+          rm -rf "proton_tkg_$build" && _available_builds=( `ls -d proton_tkg_* | sort -V` ) && _newest_build="${just_built/proton_tkg_/}"
+          sed -i "s/\"Proton-tkg $build\"/\"Proton-tkg ${_newest_build}\"/;s/\"TKG-proton-$build\"/\"TKG-proton-${_newest_build}\"/" "$_config_file"
+        else
+          rm -rf "proton_tkg_$build" && _available_builds=( `ls -d proton_tkg_* | sort -V` ) && _newest_build="${_available_builds[-1]//proton_tkg_/}"
+          sed -i "s/\"Proton-tkg $build\"/\"Proton-tkg ${_newest_build[@]}\"/;s/\"TKG-proton-$build\"/\"TKG-proton-${_newest_build[@]}\"/" "$_config_file"
+        fi
         echo "###########################################################################################################################"
         echo ""
         echo "Proton-tkg $build was uninstalled and games previously depending on it will now use Proton-tkg ${_newest_build[@]} instead."
@@ -1267,6 +1272,7 @@ else
           echo ""
           echo "####################################################################################################"
           if [ "$_skip_uninstaller" != "true" ]; then
+            _just_built="proton_tkg_$_protontkg_version"
             echo ""
             read -rp "Do you want to run the uninstaller to remove previous/superfluous builds? N/y: " _ask_uninstall;
             if [[ "$_ask_uninstall" =~ [yY] ]]; then
