@@ -363,6 +363,7 @@ msg2 ''
     _FS_bypass_compositor="false"
     _use_esync="false"
     _use_fsync="false"
+    _use_fastsync="false"
     _fsync_futex_waitv="false"
 #    _use_staging="false"
     _proton_fs_hack="false"
