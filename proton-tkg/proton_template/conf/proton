@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import errno
+import platform
 import stat
 import subprocess
 import sys
@@ -17,13 +18,21 @@ import tarfile
 import shlex
 
 from ctypes import CDLL
+from ctypes import CFUNCTYPE
 from ctypes import POINTER
 from ctypes import Structure
 from ctypes import addressof
 from ctypes import cast
+from ctypes import get_errno
+from ctypes import sizeof
 from ctypes import c_int
+from ctypes import c_int64
+from ctypes import c_uint
+from ctypes import c_long
 from ctypes import c_char_p
 from ctypes import c_void_p
+from ctypes import c_size_t
+from ctypes import c_ssize_t
 
 from filelock import FileLock
 from random import randrange
@@ -59,8 +68,14 @@ def append_to_env_str(env, variable, append_str, separator):
         env[variable] = env[variable] + separator + append_str
 
 def log(msg):
-    sys.stderr.write(PFX + msg + os.linesep)
-    sys.stderr.flush()
+    try:
+        sys.stderr.write(PFX + msg + os.linesep)
+        sys.stderr.flush()
+    except OSError:
+        # e.g. see https://github.com/ValveSoftware/Proton/issues/6277
+        # There's not much we can usefully do about this: printing a
+        # warning to stderr isn't going to work any better the second time
+        pass
 
 def file_is_wine_builtin_dll(path):
     if os.path.islink(path):
@@ -142,10 +157,15 @@ def try_copy(src, dst, prefix=None, add_write_perm=True, copy_metadata=False, op
         elif track_file and prefix is not None:
             track_file.write(os.path.relpath(dst, prefix) + '\n')
 
-        if copy_metadata:
-            shutil.copy2(src, dst, follow_symlinks=follow_symlinks)
+        if os.path.islink(src) and not follow_symlinks:
+            shutil.copyfile(src, dst, follow_symlinks=False)
         else:
-            shutil.copy(src, dst, follow_symlinks=follow_symlinks)
+            copyfile(src, dst)
+
+        if copy_metadata:
+            shutil.copystat(src, dst, follow_symlinks=follow_symlinks)
+        else:
+            shutil.copymode(src, dst, follow_symlinks=follow_symlinks)
 
         if add_write_perm:
             new_mode = os.lstat(dst).st_mode | stat.S_IWUSR | stat.S_IWGRP
@@ -175,15 +195,62 @@ def try_copy(src, dst, prefix=None, add_write_perm=True, copy_metadata=False, op
         else:
             raise
 
+# copy_file_range implementation for old Python versions
+__syscall__copy_file_range = None
+
+def copy_file_range_ctypes(fd_in, fd_out, count):
+    "Copy data using the copy_file_range syscall through ctypes, assuming x86_64 Linux"
+    global __syscall__copy_file_range
+    __NR_copy_file_range = 326
+
+    if __syscall__copy_file_range is None:
+        c_int64_p = POINTER(c_int64)
+        prototype = CFUNCTYPE(c_ssize_t, c_long, c_int, c_int64_p,
+            c_int, c_int64_p, c_size_t, c_uint, use_errno=True)
+        __syscall__copy_file_range = prototype(('syscall', CDLL(None, use_errno=True)))
+
+    while True:
+        ret = __syscall__copy_file_range(__NR_copy_file_range, fd_in, None, fd_out, None, count, 0)
+        if ret >= 0 or get_errno() != errno.EINTR:
+            break
+
+    if ret < 0:
+        raise OSError(get_errno(), errno.errorcode.get(get_errno(), 'unknown'))
+
+    return ret
+
+def copyfile_reflink(srcname, dstname):
+    "Copy srcname to dstname, making reflink if possible"
+    global copyfile
+    with open(srcname, 'rb', buffering=0) as src:
+        bytes_to_copy = os.fstat(src.fileno()).st_size
+        try:
+            with open(dstname, 'wb', buffering=0) as dst:
+                while bytes_to_copy > 0:
+                    bytes_to_copy -= copy_file_range(src.fileno(), dst.fileno(), bytes_to_copy)
+        except OSError as e:
+            if e.errno not in (errno.EXDEV, errno.ENOSYS, errno.EINVAL):
+                raise e
+            if e.errno == errno.ENOSYS:
+                copyfile = shutil.copyfile
+            shutil.copyfile(srcname, dstname)
+
+if hasattr(os, 'copy_file_range'):
+    copyfile = copyfile_reflink
+    copy_file_range = os.copy_file_range
+elif sys.platform == 'linux' and platform.machine() == 'x86_64' and sizeof(c_void_p) == 8:
+    copyfile = copyfile_reflink
+    copy_file_range = copy_file_range_ctypes
+else:
+    copyfile = shutil.copyfile
+
 def try_copyfile(src, dst):
     try:
         if os.path.isdir(dst):
-            dstfile = dst + "/" + os.path.basename(src)
-            if file_exists(dstfile, follow_symlinks=False):
-                os.remove(dstfile)
-        elif file_exists(dst, follow_symlinks=False):
+            dst = dst + "/" + os.path.basename(src)
+        if file_exists(dst, follow_symlinks=False):
             os.remove(dst)
-        shutil.copyfile(src, dst)
+        copyfile(src, dst)
     except PermissionError as e:
         if e.errno == errno.EPERM:
             #be forgiving about permissions errors; if it's a real problem, things will explode later anyway
@@ -211,23 +278,34 @@ def try_get_game_library_dir():
 
     return None
 
-def setup_game_dir_drive():
-        gamedrive_path = g_compatdata.prefix_dir + "dosdevices/s:"
-        if "gamedrive" in g_session.compat_config:
-            library_dir = try_get_game_library_dir()
-            if not library_dir:
-                if file_exists(gamedrive_path, follow_symlinks=False):
-                    os.remove(gamedrive_path)
+def try_get_steam_dir():
+    if not "STEAM_COMPAT_CLIENT_INSTALL_PATH" in g_session.env:
+        return None
+
+    return g_session.env["STEAM_COMPAT_CLIENT_INSTALL_PATH"]
+
+def setup_dir_drive(compat_option, drive_name, dest_dir):
+        drive_path = g_compatdata.prefix_dir + "dosdevices/" + drive_name
+        if compat_option in g_session.compat_config:
+            if not dest_dir:
+                if file_exists(drive_path, follow_symlinks=False):
+                    os.remove(drive_path)
             else:
-                if file_exists(gamedrive_path, follow_symlinks=False):
-                    cur_tgt = os.readlink(gamedrive_path)
-                    if cur_tgt != library_dir:
-                        os.remove(gamedrive_path)
-                        os.symlink(library_dir, gamedrive_path)
+                if file_exists(drive_path, follow_symlinks=False):
+                    cur_tgt = os.readlink(drive_path)
+                    if cur_tgt != dest_dir:
+                        os.remove(drive_path)
+                        os.symlink(dest_dir, drive_path)
                 else:
-                    os.symlink(library_dir, gamedrive_path)
-        elif file_exists(gamedrive_path, follow_symlinks=False):
-            os.remove(gamedrive_path)
+                    os.symlink(dest_dir, drive_path)
+        elif file_exists(drive_path, follow_symlinks=False):
+            os.remove(drive_path)
+
+def setup_game_dir_drive():
+        setup_dir_drive("gamedrive", "s:", try_get_game_library_dir())
+
+def setup_steam_dir_drive():
+        setup_dir_drive("steamdrive", "t:", try_get_steam_dir())
 
 # Function to find the installed location of DLL files for use by Wine/Proton
 # from the NVIDIA Linux driver
@@ -1055,6 +1133,12 @@ class CompatData:
                 g_session.dlloverrides["d3d12"] = "n"
 
             setup_game_dir_drive()
+            setup_steam_dir_drive()
+
+            # add Steam ffmpeg libraries to path
+            use_ffmpeg = "PROTON_NO_STEAM_FFMPEG" not in os.environ or not nonzero(os.environ["PROTON_NO_STEAM_FFMPEG"])
+            if use_ffmpeg and 'nosteamffmpeg' not in g_session.compat_config:
+                prepend_to_env_str(g_session.env, ld_path_var, steamdir + "/ubuntu12_64/video/:" + steamdir + "/ubuntu12_32/video/", ":")
 
 def comma_escaped(s):
     escaped = False
@@ -1110,8 +1194,63 @@ def default_compat_config():
             ret.add("nomfdxgiman")
 
         if appid in [
+                # OPWR may be causing text input delays in login windows in these games on Wayland due to
+                # blit happening before presentation
+                "1172620", #Sea of Thieves
+                "962130", #Grounded
+                "495420", #State of Decay 2: Juggernaut Edition
+                "976730", #Halo: The Master Chief Collection
+                "1017900", #Age of Empires: Definitive Edition
+                "1056090", #Ori and the Will of the Wisps
+                "1293830", #Forza Horizon 4
+                "1551360", #Forza Horizon 5
+                "271590", #Grand Theft Auto V
+                "5699", #Grand Theft Auto V Premium Edition
+                "1174180", #Red Dead Redemption 2
+                "1404210", #Red Dead Online
+                "12210", #Grand Theft Auto IV: Complete Edition
+                "204100", #Max Payne 3
+                "110800", #L.A. Noire
+                "12200", #Bully: Scholarship Edition
+                "12120", #Grand Theft Auto: San Andreas
+                "12110", #Grand Theft Auto: Vice City
+                "12100", #Grand Theft Auto III
+                "722230", #L.A. Noire: The VR Case Files
+                "813780", #Age of Empires II: Definitive Edition
+                "933110", #Age of Empires III: Definitive Edition
+                "1466860", #Age of Empires IV
+                "1097840", #Gears 5
+                "1244950", #Battletoads
+                "1189800", #Bleeding Edge
+                "1184050", #Gears Tactics
+                "1240440", #Halo Infinite
+                "1250410", #Microsoft Flight Simulator
+                "1672970", #Minecraft Dungeons
+                "1180660", #Tell Me Why
+                "1238430", #Tell Me Why Chapter 2
+                "1266670", #Tell Me Why Chapter 3
+                # Other issues arising from OWPR code path in apps, e. g., hitting unimplemented bits in
+                # d3dcompiler.
+                "230410", #Warframe
+                ]:
+            ret.add("noopwr")
+
+        if appid == "1621680":
+            ret.add("noforcelgadd")
+
+        if appid == "1341820":
+            ret.add("gamedrive")
+
+        if appid in [
+                "202990", #Call of Duty: Black Ops II - Multiplayer
+                "212910", #Call of Duty: Black Ops II - Zombies
+                ]:
+            ret.add("heapdelayfree")
+
+        if appid in [
                 # enable dxvknvapi for titles verified to benefit (e.g. working DLSS)
                 "673130", #amid evil
+                "1182900", #A Plague Tale: Requiem
                 "1291680", #apocalypse: 2.0 edition
                 "979690", #the ascent
                 "805550", #assetto corsa competizione
@@ -1123,8 +1262,10 @@ def default_compat_config():
                 "1577240", #cions of vega
                 "1632760", #cions of vega demo
                 "870780", #control ultimate edition
+                "884660", #CRSED
                 "1091500", #cyberpunk 2077
                 "1190460", #death stranding
+                "1850570", #Death Stranding Director's Cut
                 "1252330", #deathloop
                 "548430", #deep rock galactic
                 "428660", #deliver us the moon
@@ -1134,26 +1275,41 @@ def default_compat_config():
                 "1952070", #engine evolution 2022 demo
                 "1128920", #everspace 2
                 "1312800", #everspace 2 demo
+                "1330470", #F.I.S.T.: Forged In Shadow Torch
+                "1332390", #F.I.S.T.: Forged In Shadow Torch Demo
+                "1641960", #Forever Skies
+                "2141060", #Forever Skies Demo
                 "1080110", #f1 2020
                 "1098130", #get stuffed
                 "1139900", #ghostrunner
                 "1249200", #ghostrunner demo
+                "1475810", #Ghostwire: Tokyo
                 "1593500", #god of war
+                "1496790", #Gotham Knights
                 "414340", #hellblade: senua's sacrifice
                 "1659040", #hitman 3
                 "1847520", #hitman 3 free starter pack
+                "1151640", #Horizon Zero Dawn
                 "1650150", #island of the ancients
                 "1987940", #island of the ancients demo
                 "1371480", #iron conflict
                 "1544360", #lego builder's journey
+                "1363080", #Manor Lords
+                "2122820", #Manor Lords Demo
                 "1817070", #marvel's spider-man remastered
                 "784080", #mechwarrior 5: mercenaries
                 "1170950", #mortal online 2
                 "261550", #mount & blade II: bannerlord
+                "1222370", #Necromunda: Hired Gun
                 "275850", #no man's sky
+                "1386900", #Observer: System Redux
                 "1140100", #the persistence
                 "1322170", #pluviophile
+                "400", #Portal [RTX]
                 "1186640", #pumpkin jack
+                "1144200", #Ready Or Not
+                "1404210", #Red Dead Online
+                "1174180", #Red Dead Redemption 2
                 "391220", #rise of the tomb raider
                 "750920", #shadow of the tomb raider
                 "1602080", #soulstice
@@ -1168,12 +1324,12 @@ def default_compat_config():
                 "2050550", #the redress of mira demo
                 "1567740", #to hell with it
                 "1662690", #twin stones: the journey of bukka
+                "1659420", #Uncharted Legacy of Thieves
                 "236390", #war thunder
                 "936720", #wrench
                 "1249800", #xuan-yuan sword VII
                 ]:
             ret.add("enablenvapi")
-
     return ret
 
 class Session:
@@ -1262,7 +1418,7 @@ class Session:
         except (OSError, IOError, TypeError, KeyError):
             pass
 
-    def setup_logging(self, append_forever=False):
+    def setup_logging(self, *, append_forever):
         basedir = self.env.get("PROTON_LOG_DIR", os.environ["HOME"])
 
         if append_forever:
@@ -1306,14 +1462,17 @@ class Session:
             self.env.setdefault("VKD3D_SHADER_DEBUG", "fixme")
             self.env.setdefault("WINE_MONO_TRACE", "E:System.NotImplementedException")
 
+            if self.env["PROTON_LOG"] != "1":
+                append_to_env_str(self.env, "WINEDEBUG", self.env["PROTON_LOG"], ",")
+
         #for performance, logging is disabled by default; override with user_settings.py
         self.env.setdefault("WINEDEBUG", "-all")
         self.env.setdefault("DXVK_LOG_LEVEL", "none")
         self.env.setdefault("VKD3D_DEBUG", "none")
         self.env.setdefault("VKD3D_SHADER_DEBUG", "none")
 
-        #default wine-mono override for FNA games
-        self.env.setdefault("WINE_MONO_OVERRIDES", "Microsoft.Xna.Framework.*,Gac=n")
+        #disable XIM support until libx11 >= 1.7 is widespread
+        self.env.setdefault("WINE_ALLOW_XIM", "0")
 
         #temporarily disable dumping audio to disk
         self.env.setdefault("MEDIACONV_AUDIO_DONT_DUMP", "1")
@@ -1336,6 +1495,8 @@ class Session:
         self.check_environment("PROTON_NO_WRITE_WATCH", "nowritewatch")
         self.check_environment("PROTON_HIDE_NVIDIA_GPU", "hidenvgpu")
         self.check_environment("PROTON_SET_GAME_DRIVE", "gamedrive")
+        self.check_environment("PROTON_SET_STEAM_DRIVE", "steamdrive")
+        self.check_environment("PROTON_NO_XIM", "noxim")
         self.check_environment("PROTON_HEAP_DELAY_FREE", "heapdelayfree")
         self.check_environment("PROTON_ENABLE_NVAPI", "enablenvapi")
         self.check_environment("PROTON_DXVK_ASYNC", "dxvkasync")
@@ -1367,6 +1528,9 @@ class Session:
         else:
             self.env["WINEESYNC"] = "1"
 
+        if not "noxim" in self.compat_config:
+            self.env.pop("WINE_ALLOW_XIM")
+
         if "nofsync" in self.compat_config:
             self.env.pop("WINEFSYNC", "")
         else:
@@ -1397,14 +1561,22 @@ class Session:
         if "dxvkasync" in self.compat_config:
             self.env["DXVK_ASYNC"] = "1"
 
+        if "heapdelayfree" in self.compat_config:
+            self.env["WINE_HEAP_DELAY_FREE"] = "1"
+
+        if "vkd3dbindlesstb" in self.compat_config:
+            append_to_env_str(self.env, "VKD3D_CONFIG", "force_bindless_texel_buffer", ",")
+
         if "pulselowlat" in self.compat_config:
             self.env["PULSE_LATENCY_MSEC"] = "60"
 
-        if "hidenvgpu" in self.compat_config:
-            self.env["WINE_HIDE_NVIDIA_GPU"] = "1"
+        if "vkd3dfl12" in self.compat_config:
+            if not "VKD3D_FEATURE_LEVEL" in self.env:
+                self.env["VKD3D_FEATURE_LEVEL"] = "12_0"
 
-        if "heapdelayfree" in self.compat_config:
-            self.env["WINE_HEAP_DELAY_FREE"] = "1"
+        # enablenvapi beats hidenvgpu
+        if "hidenvgpu" in self.compat_config and "enablenvapi" not in self.compat_config:
+            self.env["WINE_HIDE_NVIDIA_GPU"] = "1"
 
         if "usenativexinput13" in self.compat_config:
             self.dlloverrides["xinput1_3"] = "n"
@@ -1414,6 +1586,9 @@ class Session:
 
         if "nomfdxgiman" in self.compat_config:
             self.env["WINE_DO_NOT_CREATE_DXGI_DEVICE_MANAGER"] = "1"
+
+        if "noopwr" in self.compat_config:
+            self.env["WINE_DISABLE_VULKAN_OPWR"] = "1"
 
         if "PROTON_CRASH_REPORT_DIR" in self.env:
             self.env["WINE_CRASH_REPORT_DIR"] = self.env["PROTON_CRASH_REPORT_DIR"]
@@ -1477,6 +1652,9 @@ class Session:
 
         if "nativevulkanloader" in self.compat_config:
             self.dlloverrides["vulkan-1"] = "n"
+
+        if "enablenvapi" in self.compat_config:
+            self.env["DXVK_ENABLE_NVAPI"] = "1"
 
         if "nonvapi" in self.compat_config and not "enablenvapi" in self.compat_config:
             self.dlloverrides["nvapi"] = "d"
@@ -1735,6 +1913,7 @@ if __name__ == "__main__":
     if sys.argv[1] == "run":
         #start target app
         setup_game_dir_drive()
+        setup_steam_dir_drive()
         rc = g_session.run()
     elif sys.argv[1] == "waitforexitandrun":
         #wait for wineserver to shut down
