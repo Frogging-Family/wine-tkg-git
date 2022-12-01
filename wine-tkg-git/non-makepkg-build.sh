@@ -160,7 +160,7 @@ _nomakepkgsrcinit() {
     rm -rf "${srcdir}/${_winesrcdir}" && git clone "$_where"/"${_winesrcdir}" "${srcdir}/${_winesrcdir}"
     cd "${srcdir}"/"${_winesrcdir}"
     git -c advice.detachedHead=false checkout --force --no-track -B makepkg origin/HEAD
-    if [ -n "$_plain_version" ] && [ "$_use_staging" != "true" ] || [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
+    if [ -n "$_plain_version" ] && [ "$_use_staging" != "true" ] || [[ "$_custom_wine_source" = *"ValveSoftware"* ]]; then
       git -c advice.detachedHead=false checkout "${_plain_version}"
       if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
         if [ -z "$_bleeding_tag" ]; then
