@@ -980,7 +980,7 @@ else
       fi
     fi
 
-    if [ "$_use_dxvk" = "git" ]; then
+    if [ "$_proton_nvapi_disable" != "true" ]; then
       build_dxvk_nvapi
       mkdir -p "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
       mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
