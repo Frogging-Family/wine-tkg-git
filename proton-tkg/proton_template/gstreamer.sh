@@ -1,5 +1,8 @@
 #!/bin/bash
 
+  # mpeg2dec and x264 are kinda widely used but unavailable as lib32 in Arch repos - enable optionally
+  _use_lib32_mpeg2dec_and_x264="false"
+
   _nowhere="$(dirname "$PWD")"
   #_nowhere="$PWD"
   source "$_nowhere/proton_tkg_token" || source "$_nowhere/src/proton_tkg_token"
@@ -300,6 +303,7 @@
     cd "$_nowhere"/Proton/gstreamer
     mkdir -p "$_nowhere"/Proton/build/gst32
 
+    # Not sure if amrnb and amrwbdec are used much in games
     meson32_options=(
     -D devtools=disabled
     -D tests=disabled
@@ -477,9 +481,18 @@
 	-D gst-plugins-bad:bs2b=disabled
 	-D gst-plugins-bad:timecode=disabled
     -D gst-plugins-ugly:gobject-cast-checks=disabled
+    -D gst-plugins-ugly:amrnb=disabled
+    -D gst-plugins-ugly:amrwbdec=disabled
+    -D gst-plugins-ugly:cdio=disabled
+    -D gst-plugins-ugly:dvdread=disabled
     -D gst-rtsp-server:gobject-cast-checks=disabled
     -D gst-editing-services:validate=disabled
     )
+
+    # mpeg2dec and x264 are kinda widely used but unavailable as lib32 in Arch repos - enable optionally
+    if [ "$_use_lib32_mpeg2dec_and_x264" != "true" ]; then
+      meson32_options+=(-D gst-plugins-ugly:mpeg2dec=disabled -D gst-plugins-ugly:x264=disabled)
+    fi
 
     meson "$_nowhere"/Proton/build/gst32 --prefix="$_nowhere/gst" --libdir="lib" --buildtype=release "${meson32_options[@]}"
     meson compile -C "$_nowhere"/Proton/build/gst32
