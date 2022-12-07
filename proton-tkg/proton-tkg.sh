@@ -616,9 +616,16 @@ function proton_tkg_uninstaller {
     echo "What Proton-tkg build do you want to uninstall?"
 
     i=1
-    for build in ${_strip_builds[@]}; do
-      echo "  $i - $build" && ((i+=1))
-    done
+    if [ -n "$_just_built" ]; then
+      _newest_build="${_just_built//proton_tkg_/}"
+      for build in ${_strip_builds[@]//$_newest_build/}; do
+        echo "  $i - $build" && ((i+=1))
+      done
+    else
+      for build in ${_strip_builds[@]}; do
+        echo "  $i - $build" && ((i+=1))
+      done
+    fi
 
     read -rp "choice [1-$(($i-1))]: " _to_uninstall;
 
@@ -626,7 +633,7 @@ function proton_tkg_uninstaller {
     for build in ${_strip_builds[@]}; do
       if [ "$_to_uninstall" = "$i" ]; then
         if [ -n "$_just_built" ]; then
-          rm -rf "proton_tkg_$build" && _available_builds=( `ls -d proton_tkg_* | sort -V` ) && _newest_build="${just_built/proton_tkg_/}"
+          rm -rf "proton_tkg_$build" && _available_builds=( `ls -d proton_tkg_* | sort -V` )
           sed -i "s/\"Proton-tkg $build\"/\"Proton-tkg ${_newest_build}\"/;s/\"TKG-proton-$build\"/\"TKG-proton-${_newest_build}\"/" "$_config_file"
         else
           rm -rf "proton_tkg_$build" && _available_builds=( `ls -d proton_tkg_* | sort -V` ) && _newest_build="${_available_builds[-1]//proton_tkg_/}"
