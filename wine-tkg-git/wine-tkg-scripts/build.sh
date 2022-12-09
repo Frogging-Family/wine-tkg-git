@@ -89,125 +89,78 @@ _prebuild_common() {
 	echo -e "\nconfigure arguments: ${_configure_args[@]}\n" >> "$_where"/last_build_config.log
 }
 
-_build() {
+_build_single_make() (
+  export _LAST_BUILD_CONFIG="$_where"/last_build_config.log
+  export _FROGMINER_VARFILE="$(mktemp)"
+  trap 'rm -f -- "$_FROGMINER_VARFILE"' EXIT
+  { ( unset MAKEFLAGS; unset MFLAGS; set ); echo; set +o; } >"$_FROGMINER_VARFILE"
+  if [ "$_LOCAL_OPTIMIZED" = 'true' ]; then
+    # make using all available threads
+    if [ "$_log_errors_to_file" = "true" ]; then
+      make -f "$_where"/wine-tkg-scripts/Makefile.single -j$(nproc) 2> "$_where/debug.log"
+    else
+      #_buildtime64=$( time ( make --jobserver-style=fifo -f "$_where"/wine-tkg-scripts/Makefile.single -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
+      make -f "$_where"/wine-tkg-scripts/Makefile.single -j$(nproc)
+    fi
+  else
+    # make using makepkg settings
+    if [ "$_log_errors_to_file" = "true" ]; then
+      make -f "$_where"/wine-tkg-scripts/Makefile.single 2> "$_where/debug.log"
+    else
+      #_buildtime64=$( time ( make -f "$_where"/wine-tkg-scripts/Makefile.single 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
+      make -f "$_where"/wine-tkg-scripts/Makefile.single
+    fi
+  fi
+)
+
+_build_serial() {
+  local _SINGLE_MAKE=false
+  local _LAST_BUILD_CONFIG="$_where"/last_build_config.log
+  . "$_where"/wine-tkg-scripts/build-64.sh
+  . "$_where"/wine-tkg-scripts/build-32.sh
 	if [ "$_NOLIB64" != "true" ]; then
 	  # build wine 64-bit
 	  # (according to the wine wiki, this 64-bit/32-bit building order is mandatory)
-	  if [ "$_NOCCACHE" != "true" ]; then
-		if [ -e /usr/bin/ccache ]; then
-			export CC="ccache gcc" && echo "CC = ${CC}" >> "$_where"/last_build_config.log
-			export CXX="ccache g++" && echo "CXX = ${CXX}" >> "$_where"/last_build_config.log
-		fi
-		if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
-			export CROSSCC="ccache x86_64-w64-mingw32-gcc" && echo "CROSSCC64 = ${CROSSCC}" >> "$_where"/last_build_config.log
-		fi
-	  fi
-	  # If /usr/lib32 doesn't exist (such as on Fedora), make sure we're using /usr/lib64 for 64-bit pkgconfig path
-	  if [ ! -d '/usr/lib32' ]; then
-	    export PKG_CONFIG_PATH='/usr/lib64/pkgconfig'
-	  fi
-	  msg2 'Building Wine-64...'
-	  cd  "${srcdir}"/"${pkgname}"-64-build
-	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW3" =~ [yY] ]]; then
-	  chmod +x ../"${_winesrcdir}"/configure
-	    ../"${_winesrcdir}"/configure \
-		    --prefix="$_prefix" \
-			--enable-win64 \
-			"${_configure_args64[@]}" \
-			"${_configure_args[@]}"
-	  fi
-	  if [ "$_pkg_strip" != "true" ]; then
-	    msg2 "Disable strip"
-	    sed 's|STRIP = strip|STRIP =|g' "${srcdir}/${pkgname}"-64-build/Makefile -i
-	  fi
-	  if [ "$_LOCAL_OPTIMIZED" = 'true' ]; then
-	    # make using all available threads
-	    if [ "$_log_errors_to_file" = "true" ]; then
-	      make -j$(nproc) 2> "$_where/debug.log"
-	    else
-	      #_buildtime64=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
-	      make -j$(nproc)
-	    fi
-	  else
-	    # make using makepkg settings
-	    if [ "$_log_errors_to_file" = "true" ]; then
-	      make -j$(nproc) 2> "$_where/debug.log"
-	    else
-	      #_buildtime64=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
-	      make
-	    fi
-	  fi
-	fi
-
+	  _exports_64
+	  _configure_64
+	  _build_64
+  fi
 	if [ "$_NOLIB32" != "true" ]; then
-	  # nomakepkg
-	  if [ "$_nomakepkg_midbuild_prompt" = "true" ]; then
-	    msg2 '64-bit side has been built, 32-bit will follow.'
-	    msg2 'This is the time to install the 32-bit devel packages you might need.'
-	    read -rp "    When ready, press enter to continue.."
-	  fi
-	  if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ]; then
-	    _debuntu_32
-	  fi
-	  # /nomakepkg
-	  if [ "$_NOCCACHE" != "true" ]; then
-		if [ -e /usr/bin/ccache ]; then
-			export CC="ccache gcc"
-			export CXX="ccache g++"
-		fi
-		if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
-			export CROSSCC="ccache i686-w64-mingw32-gcc" && echo "CROSSCC32 = ${CROSSCC}" >> "$_where"/last_build_config.log
-		fi
-	  fi
 	  # build wine 32-bit
-	  if [ -d '/usr/lib32/pkgconfig' ]; then # Typical Arch path
-	    export PKG_CONFIG_PATH='/usr/lib32/pkgconfig'
-	  elif [ -d '/usr/lib/i386-linux-gnu/pkgconfig' ]; then # Ubuntu 18.04/19.04 path
-	    export PKG_CONFIG_PATH='/usr/lib/i386-linux-gnu/pkgconfig'
-	  else
-	    export PKG_CONFIG_PATH='/usr/lib/pkgconfig' # Pretty common path, possibly helpful for OpenSuse & Fedora
-	  fi
-	  msg2 'Building Wine-32...'
-	  cd "${srcdir}/${pkgname}"-32-build
-	  if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW3" =~ [yY] ]]; then
-		 if [ "$_NOLIB64" = "true" ]; then
-	       ../"${_winesrcdir}"/configure \
-		      --prefix="$_prefix" \
-		      "${_configure_args32[@]}" \
-		      "${_configure_args[@]}"
-		  else
-	        ../"${_winesrcdir}"/configure \
-		      --prefix="$_prefix" \
-		      "${_configure_args32[@]}" \
-		      "${_configure_args[@]}" \
-		      --with-wine64="${srcdir}/${pkgname}"-64-build
-		 fi
-	  fi
-	  if [ "$_pkg_strip" != "true" ]; then
-	    msg2 "Disable strip"
-	    sed 's|STRIP = strip|STRIP =|g' "${srcdir}/${pkgname}"-32-build/Makefile -i
-	  fi
-	  if [ "$_LOCAL_OPTIMIZED" = 'true' ]; then
-	    # make using all available threads
-	    if [ "$_log_errors_to_file" = "true" ]; then
-	      make -j$(nproc) 2> "$_where/debug.log"
-	    else
-	      #_buildtime32=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
-	      make -j$(nproc)
-	    fi
-	  else
-	    # make using makepkg settings
-	    if [ "$_log_errors_to_file" = "true" ]; then
-	      make -j$(nproc) 2> "$_where/debug.log"
-	    else
-	      #_buildtime32=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
-	      make
-	    fi
-	  fi
-	  if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
-	    _debuntu_64
-	  fi
-	fi
+    # nomakepkg
+    if [ "$_nomakepkg_midbuild_prompt" = "true" ]; then
+      msg2 '64-bit side has been built, 32-bit will follow.'
+      msg2 'This is the time to install the 32-bit devel packages you might need.'
+      read -rp "    When ready, press enter to continue.."
+    fi
+    if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ]; then
+      _debuntu_32
+    fi
+    # /nomakepkg
+    _exports_32
+    _configure_32
+	  _build_32
+    if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
+      _debuntu_64
+    fi
+  fi
+}
+
+_build() {
+  if [ "$_SINGLE_MAKE" = 'true' ] && [ "$_NOLIB32" != "true" ]; then
+    warning "Using experimental single-make mode!"
+    if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ]; then
+      error "_SINGLE_MAKE is incompatible with debian/ubuntu"
+      return 1
+    fi
+    if [ "$_nomakepkg_midbuild_prompt" = "true" ]; then
+      error "_SINGLE_MAKE is incompatible with _nomakepkg_midbuild_prompt"
+      return 1
+    fi
+    _build_single_make
+  else
+    _build_serial
+  fi
 }
 
 _generate_debian_package() {
