@@ -575,13 +575,19 @@ _prepare() {
   fi
 
   # Community patches
+  if [[ "$(realpath -Lm . 2>&1)" =~ -Lm ]]; then
+    warning "Detected non-GNU realpath (busybox?), please disable community patches in case of issues"
+  else
+    _realpath_arg="-Lm"
+  fi
+
   if [ -n "$_community_patches" ]
   then
     _community_patches_repo_roots=()
 
     for _p in "../.." ".." "."
     do
-      _new_path="$(realpath -Lm "${_where}/${_p}/community-patches")"
+      _new_path="$(realpath $_realpath_arg "${_where}/${_p}/community-patches")"
 
       if [[ ${#_community_patches_repo_roots[@]} -eq 0 ]] || [[ ! ${_new_path} == ${_community_patches_repo_roots[${#_community_patches_repo_roots[@]}-1]} ]]
       then
