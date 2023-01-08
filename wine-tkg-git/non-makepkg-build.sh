@@ -112,12 +112,14 @@ _nomakepkgsrcinit() {
     _winesrcdir=$( sed 's|/|-|g' <<< $(sed 's|.*://.[^/]*/||g' <<< ${_custom_wine_source//./}))
     _winesrctarget="$_custom_wine_source"
   else
-    if [ "$_plain_mirrorsrc" = "true" ]; then
+    if [ "$_github_mirrorsrc" = "true" ]; then
       _winesrcdir="wine-mirror-git"
       _winesrctarget="https://github.com/wine-mirror/wine.git"
+      _stgsrctarget="https://github.com/wine-staging/wine-staging.git"
     else
       _winesrcdir="wine-git"
-      _winesrctarget="git://source.winehq.org/git/wine.git"
+      _winesrctarget="https://gitlab.winehq.org/wine/wine.git"
+      _stgsrctarget="https://gitlab.winehq.org/wine/wine-staging.git"
     fi
   fi
 
@@ -132,7 +134,7 @@ _nomakepkgsrcinit() {
     git clone --mirror "${_winesrctarget}" "$_winesrcdir" || true
 
     # Wine staging source
-    git clone --mirror https://github.com/wine-staging/wine-staging.git "$_stgsrcdir" || true
+    git clone --mirror "${_stgsrctarget}" "$_stgsrcdir" || true
 
     pushd "$srcdir" &>/dev/null
 
