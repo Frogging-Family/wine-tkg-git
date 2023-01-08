@@ -111,6 +111,7 @@ _nomakepkgsrcinit() {
   if [ -n "$_custom_wine_source" ]; then
     _winesrcdir=$( sed 's|/|-|g' <<< $(sed 's|.*://.[^/]*/||g' <<< ${_custom_wine_source//./}))
     _winesrctarget="$_custom_wine_source"
+    _stgsrctarget="https://gitlab.winehq.org/wine/wine-staging.git"
   else
     if [ "$_github_mirrorsrc" = "true" ]; then
       _winesrcdir="wine-mirror-git"
@@ -140,8 +141,8 @@ _nomakepkgsrcinit() {
 
     # Wine staging update and checkout
     cd "$_where"/"${_stgsrcdir}"
-    if [[ "https://github.com/wine-staging/wine-staging.git" != "$(git config --get remote.origin.url)" ]] ; then
-      echo "${_stgsrcdir} is not a clone of ${_stgsrcdir}. Please delete ${_winesrcdir} and src dirs and try again."
+    if [[ "${_stgsrctarget}" != "$(git config --get remote.origin.url)" ]] ; then
+      echo "${_stgsrcdir} is not a clone of ${_stgsrcdir}. Please delete ${_stgsrcdir} and src dirs and try again."
       exit 1
     fi
     git fetch --all -p
