@@ -107,14 +107,14 @@ pkgver() {
 
 _nomakepkgsrcinit() {
   # Wine source
-  _stgsrcdir='wine-staging-git'
-
   if [ "$_github_mirrorsrc" = "true" ]; then
     _winesrcdir="wine-mirror-git"
+    _stgsrcdir="wine-staging-mirror-git"
     _winesrctarget="https://github.com/wine-mirror/wine.git"
     _stgsrctarget="https://github.com/wine-staging/wine-staging.git"
   else
     _winesrcdir="wine-git"
+    _stgsrcdir="wine-staging-git"
     _winesrctarget="https://gitlab.winehq.org/wine/wine.git"
     _stgsrctarget="https://gitlab.winehq.org/wine/wine-staging.git"
   fi
