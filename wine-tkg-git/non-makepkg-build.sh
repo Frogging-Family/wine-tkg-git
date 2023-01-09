@@ -22,7 +22,6 @@ pkgname=wine-tkg
 
 _build_in_tmpfs="true"
 
-_stgsrcdir='wine-staging-git'
 _esyncsrcdir='esync'
 _where="$PWD" # track basedir as different Arch based distros are moving srcdir around
 
@@ -108,20 +107,21 @@ pkgver() {
 
 _nomakepkgsrcinit() {
   # Wine source
+  _stgsrcdir='wine-staging-git'
+
+  if [ "$_github_mirrorsrc" = "true" ]; then
+    _winesrcdir="wine-mirror-git"
+    _winesrctarget="https://github.com/wine-mirror/wine.git"
+    _stgsrctarget="https://github.com/wine-staging/wine-staging.git"
+  else
+    _winesrcdir="wine-git"
+    _winesrctarget="https://gitlab.winehq.org/wine/wine.git"
+    _stgsrctarget="https://gitlab.winehq.org/wine/wine-staging.git"
+  fi
+
   if [ -n "$_custom_wine_source" ]; then
     _winesrcdir=$( sed 's|/|-|g' <<< $(sed 's|.*://.[^/]*/||g' <<< ${_custom_wine_source//./}))
     _winesrctarget="$_custom_wine_source"
-    _stgsrctarget="https://gitlab.winehq.org/wine/wine-staging.git"
-  else
-    if [ "$_github_mirrorsrc" = "true" ]; then
-      _winesrcdir="wine-mirror-git"
-      _winesrctarget="https://github.com/wine-mirror/wine.git"
-      _stgsrctarget="https://github.com/wine-staging/wine-staging.git"
-    else
-      _winesrcdir="wine-git"
-      _winesrctarget="https://gitlab.winehq.org/wine/wine.git"
-      _stgsrctarget="https://gitlab.winehq.org/wine/wine-staging.git"
-    fi
   fi
 
   if [ "$_NUKR" != "debug" ]; then
