@@ -1197,9 +1197,9 @@ else
       ( cd "$_nowhere/proton_tkg_$_protontkg_version/files/$_x86_64_windows_tail"
       if [ "$_pkg_strip" = "true" ]; then
         if [ "$_pefixup" = "objcopy" ]; then
-          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
         else
-          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096
+          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096
         fi
       fi
       if [ "$_pefixup" = "py" ]; then
@@ -1211,9 +1211,9 @@ else
       ( cd "$_nowhere/proton_tkg_$_protontkg_version/files/$_i386_windows_tail"
       if [ "$_pkg_strip" = "true" ]; then
         if [ "$_pefixup" = "objcopy" ]; then
-          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
         else
-          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096
+          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096
         fi
       fi
       if [ "$_pefixup" = "py" ]; then
