@@ -58,7 +58,6 @@ _exit_cleanup() {
     echo "_proton_pkgdest='${pkgdir}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_branch_exp='${_proton_branch_exp}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_steamvr_support='${_steamvr_support}'" >> "$_proton_tkg_path"/proton_tkg_token
-    echo "_use_fastsync='${_use_fastsync}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_NUKR='${_NUKR}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_winesrcdir='${_winesrcdir}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_standard_dlopen='${_standard_dlopen}'" >> "$_proton_tkg_path"/proton_tkg_token

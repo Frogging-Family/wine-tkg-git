@@ -105,6 +105,9 @@ user_settings = {
     #Disable futex2-based in-process synchronization primitives
 #    "PROTON_NO_FUTEX2": "1",
 
+    #Disable support for fast (one syscall per NT syscall) synchronization primitives using the winesync driver in the kernel
+#    "PROTON_NO_NTSYNC": "1",
+
     #Enforce driver shader cache path when Steam's shader pre-caching is disabled
 #    "PROTON_BYPASS_SHADERCACHE_PATH": "",
 }
