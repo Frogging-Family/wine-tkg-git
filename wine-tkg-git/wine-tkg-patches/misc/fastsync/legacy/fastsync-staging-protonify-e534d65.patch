@@ -912,7 +912,7 @@ new file mode 100644
 index 00000000000..cbf14bf8081
 --- /dev/null
 +++ b/server/fast_sync.c
-@@ -0,0 +1,301 @@
+@@ -0,0 +1,302 @@
 +/*
 + * Fast synchronization primitives
 + *
@@ -1048,6 +1048,7 @@ index 00000000000..cbf14bf8081
 +    if (unix_fd == -1)
 +    {
 +        file_set_error();
++        fprintf( stderr, "fastsync: /dev/winesync not available. (Please check winesync module)\n" );
 +        return NULL;
 +    }
 +
@@ -5073,13 +5074,11 @@ diff --git a/server/fast_sync.c b/server/fast_sync.c
 index 6b738519c7a..8e7ac54d16c 100644
 --- a/server/fast_sync.c
 +++ b/server/fast_sync.c
-@@ -126,6 +126,14 @@ static struct linux_device *get_linux_device(void)
+@@ -126,6 +126,12 @@ static struct linux_device *get_linux_device(void)
      struct linux_device *device;
      int unix_fd;
  
-+    if (getenv( "WINE_DISABLE_FAST_SYNC" ) && atoi( getenv( "WINE_DISABLE_FAST_SYNC" ) ) ||
-+         getenv( "WINEESYNC" ) && atoi( getenv( "WINEESYNC" ) ) ||
-+         getenv( "WINEFSYNC" ) && atoi( getenv( "WINEFSYNC" ) ))
++    if (getenv( "WINE_DISABLE_FAST_SYNC" ) && atoi( getenv( "WINE_DISABLE_FAST_SYNC" ) ))
 +    {
 +        set_error( STATUS_NOT_IMPLEMENTED );
 +        return NULL;
@@ -5404,18 +5403,80 @@ index d71561e1247..59afc88cc6c 100644
 -- 
 2.35.3
 
+diff --git a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
+index 3b97bfd62ad..a1ed9961c00 100644
+--- a/dlls/ntdll/unix/esync.c
++++ b/dlls/ntdll/unix/esync.c
+@@ -60,7 +61,7 @@ int do_esync(void)
+     static int do_esync_cached = -1;
+ 
+     if (do_esync_cached == -1)
+-        do_esync_cached = getenv("WINEESYNC") && atoi(getenv("WINEESYNC")) && !do_fsync();
++        do_esync_cached = getenv("WINEESYNC") && atoi(getenv("WINEESYNC")) && !do_fsync() && getenv("WINE_DISABLE_FAST_SYNC") && atoi(getenv("WINE_DISABLE_FAST_SYNC"));
+ 
+     return do_esync_cached;
+ #else
+diff --git a/dlls/ntdll/unix/fsync.c b/dlls/ntdll/unix/fsync.c
+index 86bb7dce85a..0e09e4e42d9 100644
+--- a/dlls/ntdll/unix/fsync.c
++++ b/dlls/ntdll/unix/fsync.c
+@@ -167,7 +168,7 @@ int do_fsync(void)
+         }
+ 
+         syscall( __NR_futex_waitv, NULL, 0, 0, NULL, 0 );
+-        do_fsync_cached = getenv("WINEFSYNC") && atoi(getenv("WINEFSYNC")) && errno != ENOSYS;
++        do_fsync_cached = getenv("WINEFSYNC") && atoi(getenv("WINEFSYNC")) && errno != ENOSYS && getenv("WINE_DISABLE_FAST_SYNC") && atoi(getenv("WINE_DISABLE_FAST_SYNC"));
+     }
+ 
+     return do_fsync_cached;
+diff --git a/server/esync.c b/server/esync.c
+index f180a545314..9a91ce82cd3 100644
+--- a/server/esync.c
++++ b/server/esync.c
+@@ -50,7 +51,7 @@ int do_esync(void)
+     static int do_esync_cached = -1;
+ 
+     if (do_esync_cached == -1)
+-        do_esync_cached = getenv("WINEESYNC") && atoi(getenv("WINEESYNC")) && !do_fsync();
++        do_esync_cached = getenv("WINEESYNC") && atoi(getenv("WINEESYNC")) && !do_fsync() && getenv("WINE_DISABLE_FAST_SYNC") && atoi(getenv("WINE_DISABLE_FAST_SYNC"));
+ 
+     return do_esync_cached;
+ #else
+diff --git a/server/fsync.c b/server/fsync.c
+index 7e4ff469300..11ff602cac3 100644
+--- a/server/fsync.c
++++ b/server/fsync.c
+@@ -58,7 +59,7 @@ int do_fsync(void)
+     if (do_fsync_cached == -1)
+     {
+         syscall( __NR_futex_waitv, 0, 0, 0, 0, 0);
+-        do_fsync_cached = getenv("WINEFSYNC") && atoi(getenv("WINEFSYNC")) && errno != ENOSYS;
++        do_fsync_cached = getenv("WINEFSYNC") && atoi(getenv("WINEFSYNC")) && errno != ENOSYS && getenv("WINE_DISABLE_FAST_SYNC") && atoi(getenv("WINE_DISABLE_FAST_SYNC"));
+     }
+ 
+     return do_fsync_cached;
 diff --git a/server/main.c b/server/main.c
-index d935017cd8d..8bc1c47100a 100644
+index 6c4d8117514..701b99cbf77 100644
 --- a/server/main.c
 +++ b/server/main.c
-@@ -148,8 +148,8 @@ int main( int argc, char *argv[] )
-     if (do_esync())
+@@ -231,14 +232,17 @@ int main( int argc, char *argv[] )
+     sock_init();
+     open_master_socket();
+ 
+-    if (do_fsync())
++    if (getenv("WINE_DISABLE_FAST_SYNC") && atoi(getenv("WINE_DISABLE_FAST_SYNC")))
++    {
++      if (do_fsync())
+         fsync_init();
+ 
+-    if (do_esync())
++      if (do_esync())
          esync_init();
  
 -    if (!do_fsync() && !do_esync())
--        fprintf( stderr, "wineserver: using server-side synchronization.\n" );
-+//    if (!do_fsync() && !do_esync())
-+//        fprintf( stderr, "wineserver: using server-side synchronization.\n" );
-
++      if (!do_fsync() && !do_esync())
+         fprintf( stderr, "wineserver: using server-side synchronization.\n" );
++    }
+ 
      if (debug_level) fprintf( stderr, "wineserver: starting (pid=%ld)\n", (long) getpid() );
      set_current_time();

@@ -428,6 +428,20 @@ _package_makepkg() {
 	  fi
 	fi
 
+	if [ "$_use_fastsync" = "true" ]; then
+	  msg2 '##########################################################################################################################'
+	  msg2 ''
+	  msg2 'To disable NTsync, export WINE_DISABLE_FAST_SYNC=1'
+	  if [ "$_use_fsync" = "true" ]; then
+	    msg2 'Any WINEESYNC and WINEFSYNC values will be ignored unless NTsync is disabled via an environment variable'
+	  fi
+	  msg2 ''
+	  msg2 'https://github.com/Frogging-Family/wine-tkg-git/issues/936 - feedback topic for reporting test results'
+	  msg2 "(please do not report issues related to builds or NTsync installation there - it's only for testing results)"
+	  msg2 ''
+	  msg2 '##########################################################################################################################'
+	fi
+
 	# External install
 	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
 	  msg2 "### This wine will be installed to: $_prefix"

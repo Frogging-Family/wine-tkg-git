@@ -1,7 +1,23 @@
 #!/bin/bash
 
-	# winesync / fastsync
+	# fastsync / winesync
 	if [ "$_use_fastsync" = "true" ]; then
+
+	  # check Linux headers
+	  winesync_header_check=$(echo '#include <linux/winesync.h>' | gcc -H -E -fsyntax-only - 2>&1 | head -n1 | cut -d' ' -f2-)
+	  if [[ ! -s $winesync_header_check ]]; then
+	    error $winesync_header_check
+	    error "Winesync header was not found. Build is forcibly prevented."
+	    error 'Please use linux-tkg build with _winesync="true" or https://aur.archlinux.org/packages/winesync-dkms/'
+	    exit 1
+	  fi
+
+	  # not allowed on Valve tree
+	  if [[ "$_custom_wine_source" = *"ValveSoftware"* ]]; then
+	    error "Fastsync is not supported on Valve trees. Build is forcibly prevented. Please disable applying fastsync patches or use non-Valve trees"
+	    exit 1
+	  fi
+
 	  if [ "$_use_staging" = "true" ]; then
 	    if [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
 	      if [ "$_protonify" = "true" ]; then
@@ -18,12 +34,8 @@
 	        fi
 	      fi
 	    else
-	      if [[ "$_custom_wine_source" = *"ValveSoftware"* ]]; then
-	        warning "! Fastsync is not currently supported on Valve trees and will be disabled !"
-	      else
-	        warning "! _use_fastsync is enabled, but it depends on _use_fsync. Please enable it in your .cfg to use fastsync !"
-	        _use_fastsync="false"
-	      fi
+	      error "Fastsync for Staging trees depends on _use_fsync. Build is forcibly prevented. Please enable _use_fsync in your .cfg to use fastsync"
+	      exit 1
 	    fi
 	  else
 	    if [ "$_use_esync" = "false" ] && [ "$_use_fsync" = "false" ]; then
@@ -33,11 +45,12 @@
 	        _patchname='fastsync-mainline-f076e5f.patch' && _patchmsg="Using fastsync (mainline) patchset" && nonuser_patcher
 	      fi
 	    else
-	      warning "! _use_fastsync is enabled, but _use_esync/_use_fsync disables it. Please disable them in your .cfg to use fastsync !"
-	      _use_fastsync="false"
+	      error "Fastsync for Plain trees conflicts with _use_esync and _use_fsync. Build is forcibly prevented. Please disable them in your .cfg to use fastsync"
+	      exit 1
 	    fi
 	  fi
-	  if [ "$_use_fastsync" = "true" ] && [ "$_clock_monotonic" = "true" ]; then
+	  if [ "$_use_fastsync" = "true" ] && [ "$_clock_monotonic" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 36b45c6d1c124dd16b3475ba743fcbbc99d6862d HEAD ); then
 	    _patchname='fastsync-clock_monotonic-fixup.patch' && _patchmsg="Applied fastsync fix due clock_monotonic" && nonuser_patcher
 	  fi
+
 	fi
