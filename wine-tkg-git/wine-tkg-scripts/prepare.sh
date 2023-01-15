@@ -6,7 +6,7 @@ _exit_cleanup() {
   fi
 
   # Proton-tkg specifics to send to token
-  if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ -n "$_proton_tkg_path" ]; then
+  if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ -n "$_proton_tkg_path" ] && [ -d "${srcdir}"/"${_winesrcdir}" ]; then
     if [ -n "$_PROTON_NAME_ADDON" ]; then
       if [ "$_ispkgbuild" = "true" ]; then
         echo "_protontkg_version='makepkg.${_PROTON_NAME_ADDON}'" >> "$_proton_tkg_path"/proton_tkg_token

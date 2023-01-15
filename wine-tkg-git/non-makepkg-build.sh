@@ -132,17 +132,19 @@ _nomakepkgsrcinit() {
     ## Handle git repos similarly to makepkg to preserve repositories when building both with and without makepkg on Arch
     # Wine source
     cd "$_where"
-    git clone --mirror "${_winesrctarget}" "$_winesrcdir" || true
+    git clone --mirror "${_winesrctarget}" "$_winesrcdir" 2> "$_where"/prepare.log || true
 
     # Wine staging source
-    git clone --mirror "${_stgsrctarget}" "$_stgsrcdir" || true
+    git clone --mirror "${_stgsrctarget}" "$_stgsrcdir" 2>> "$_where"/prepare.log || true
 
     pushd "$srcdir" &>/dev/null
 
     # Wine staging update and checkout
     cd "$_where"/"${_stgsrcdir}"
     if [[ "${_stgsrctarget}" != "$(git config --get remote.origin.url)" ]] ; then
-      echo "${_stgsrcdir} is not a clone of ${_stgsrcdir}. Please delete ${_stgsrcdir} and src dirs and try again."
+      echo "${_stgsrcdir} is not a clone of ${_stgsrcdir}. Let's nuke stuff to get back on track, hopefully." >>"$_where"/prepare.log
+      rm -rf "$_where/${_stgsrcdir}" && rm -rf "${srcdir}/${_stgsrcdir}"
+      warning "Your ${_stgsrcdir} clone was deleted due to remote mismatch. Please give it another try so it gets freshly recreated."
       exit 1
     fi
     git fetch --all -p
@@ -150,13 +152,15 @@ _nomakepkgsrcinit() {
     cd "${srcdir}"/"${_stgsrcdir}"
     git -c advice.detachedHead=false checkout --force --no-track -B makepkg origin/HEAD
     if [ -n "$_staging_version" ] && [ "$_use_staging" = "true" ]; then
-      git -c advice.detachedHead=false checkout "${_staging_version}"
+      git -c advice.detachedHead=false checkout "${_staging_version}" 2>> "$_where"/prepare.log
     fi
 
     # Wine update and checkout
     cd "$_where"/"${_winesrcdir}"
     if [[ "${_winesrctarget}" != "$(git config --get remote.origin.url)" ]] ; then
-      echo "${_winesrcdir} is not a clone of ${_winesrcdir}. Please delete ${_winesrcdir} and src dirs and try again."
+      echo "${_winesrcdir} is not a clone of ${_winesrcdir}. Let's nuke stuff to get back on track, hopefully." >>"$_where"/prepare.log
+      rm -rf "$_where/${_winesrcdir}" && rm -rf "${srcdir}/${_winesrcdir}"
+      warning "Your ${_winesrcdir} clone was deleted due to remote mismatch. Please give it another try so it gets freshly recreated."
       exit 1
     fi
     git fetch --all -p
@@ -164,14 +168,14 @@ _nomakepkgsrcinit() {
     cd "${srcdir}"/"${_winesrcdir}"
     git -c advice.detachedHead=false checkout --force --no-track -B makepkg origin/HEAD
     if [ -n "$_plain_version" ] && [ "$_use_staging" != "true" ] || [[ "$_custom_wine_source" = *"ValveSoftware"* ]]; then
-      git -c advice.detachedHead=false checkout "${_plain_version}"
+      git -c advice.detachedHead=false checkout "${_plain_version}" 2>> "$_where"/prepare.log
       if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
         if [ -z "$_bleeding_tag" ]; then
           _bleeding_tag=$(git tag -l --sort=-v:refname | grep "bleeding" | head -n 1)
         fi
         echo -e "Bleeding edge tag: ${_bleeding_tag}" >> "$_where"/prepare.log
         _bleeding_commit=$(git rev-list -n 1 "${_bleeding_tag}")
-        echo -e "Bleeding edge commit: ${_bleeding_commit}" >> "$_where"/prepare.log
+        echo -e "Bleeding edge commit: ${_bleeding_commit}\n" >> "$_where"/prepare.log
         git -c advice.detachedHead=false checkout "${_bleeding_tag}"
       fi
     fi
@@ -204,7 +208,7 @@ build_wine_tkg() {
   if [ "$_SKIPBUILDING" != "true" ]; then
     msg2 "Cloning and preparing sources... Please be patient."
     if [ -z "$_localbuild" ]; then
-      _nomakepkgsrcinit > "$_where"/prepare.log 2>&1
+      _nomakepkgsrcinit
 
       _source_cleanup >> "$_where"/prepare.log
       _prepare
