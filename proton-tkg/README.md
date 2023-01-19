@@ -29,39 +29,13 @@ If you want to customize the patches and features of your builds, you can find b
 You can also create an external configuration file that will contain all settings in a centralized way and survive repo updates. A sample file for this can be found [here](https://github.com/Frogging-Family/wine-tkg-git/blob/master/proton-tkg/proton-tkg-profiles/sample-external-config.cfg). The default path for this file is `~/.config/frogminer/proton-tkg.cfg` and can be changed in `proton-tkg-profiles/advanced-customization.cfg` with the `_EXT_CONFIG_PATH` option.
 
 
-## Building :
+## Building ([wiki page if needed](https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git)) :
 
  * We need to get into the proton-tkg dir first:
 ```
 cd proton-tkg
 ```
-
-### For Arch (and other pacman/makepkg distros) :
-
-**You have two options on pacman based distros. You can either make a pacman package (with a few limitations), or use a more powerful but also less user-friendly way.**
-
-#### Unpackaged, vanilla way :
-
-This is the recommended way and doesn't have the limitations of the makepkg path below.
-
- * From the `proton-tkg` directory (where the PKGBUILD is located), run the following command in a terminal to start the building process :
-```
-./proton-tkg.sh
-```
-
-#### Pacman package way :
-
-Using this option will enforce a "proton-tkg-makepkg" naming scheme in Steam, and prevents having multiple versions installed side-by-side. This option also disables steamvr support currently.
-
- * From the `proton-tkg` directory (where the PKGBUILD is located), run the following command in a terminal to start the building process :
-```
-makepkg -si
-```
-
-
-### For other distros (make sure to check the [wiki page](https://github.com/Tk-Glitch/PKGBUILDS/wiki/wine-tkg-git)) :
-
- * From the `proton-tkg` directory (where the PKGBUILD is located), running the proton-tkg.sh script will launch the usual wine-tkg-git building process... with extra spice :
+ * Then run the build script
 ```
 ./proton-tkg.sh
 ```
@@ -108,7 +82,6 @@ Proton-tkg builds are coming with special additional features you can enable/dis
 - `PROTON_NVAPI_DISABLE` - Option disabled by default, it'll set nvapi and nvapi64 dlls to disabled. It is a common fix for many games.
 - `PROTON_WINEDBG_DISABLE` - Option disabled by default, it'll set winedbg.exe to disabled. It's a known fix for GTA V online.
 - `PROTON_PULSE_LOWLATENCY` - Option disabled by default, it'll set Pulseaudio latency to 60ms. This usually helps with audio crackling issues on some setups.
-- `PROTON_DXVK_ASYNC` - Disabled by default, it'll enable DXVK's async pipecompiler on a compatible DXVK build (official/default DXVK build doesn't support it). Known as the "poe hack", that option *could* be unsafe for anticheats, so beware.
 - `PROTON_USE_CUSTOMD3D9` - Disabled by default, it'll enable you to use a custom d3d9 lib that's not already available in proton-tkg (namely d9vk and wined3d), like Gallium9 for example.
 - `PROTON_WINETRICKS` - Enabled by default, the built-in winetricks integration will show a popup on game launch asking if you want to run winetricks (against your game's prefix). It requires that you have both the `winetricks` and `tk` (`python3-tk` on some distros) packages installed.
 
