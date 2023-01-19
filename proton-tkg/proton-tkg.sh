@@ -791,6 +791,10 @@ else
   # Wine-tkg-git has injected versioning and settings in the token for us, so get the values back
   source "$_nowhere/proton_tkg_token"
 
+  if [ "$_ispkgbuild" = "true" ]; then
+    sed -i "0,/pkgver=0/{s/pkgver=0/pkgver=$_protontkg_true_version/}" "${_nowhere}"/../PKGBUILD
+  fi
+
   # Prompt to re-use existing gst
   if [ -d "${_resources_path}"/gst ] && [ -z $_reuse_built_gst ]; then
     echo "    Existing proton gstreamer dir found. Do you want to use it instead of rebuilding?"

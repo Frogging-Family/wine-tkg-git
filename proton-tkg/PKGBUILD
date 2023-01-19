@@ -111,6 +111,9 @@ fi
 
 exit_cleanup() {
   if [ "$pkgver" != "0" ]; then
+    if [ -e "${_frogwhere}/proton-tkg-git-$pkgver-$pkgrel-x86_64"* ]; then
+      msg2 "proton-tkg-git-$pkgver-$pkgrel-x86_64 package was built successfully"
+    fi
     sed -i "s/pkgver=$pkgver.*/pkgver=0/g" "${_frogwhere}"/PKGBUILD
   fi
   rm -rf src
@@ -128,12 +131,6 @@ recursive_installer() {
   done
 }
 
-pkgver() {
-  cd "${_frogwhere}/../wine-tkg-git/${_pkgvertargdir}"
-
-  git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//'
-}
-
 prepare() {
   # Arch chroot workaround
   if [[ "${_frogwhere}" = "/startdir" ]]; then
@@ -146,54 +143,6 @@ prepare() {
     if [ -d wine-tkg-git/proton-tkg ]; then
       mv wine-tkg-git/proton-tkg/* /build/proton-tkg-git/
     fi
-  fi
-
-  # overcomplicated BS
-  _srcdirlock="${_frogwhere}/../wine-tkg-git"
-
-  warning "The next step might take some time, please be patient..."
-  source "${_frogwhere}"/proton-tkg.cfg
-  source "${_frogwhere}"/proton-tkg-profiles/advanced-customization.cfg
-  if [ -e "$_EXT_CONFIG_PATH" ]; then
-    source "$_EXT_CONFIG_PATH"
-  fi
-  if [ -n "$_LOCAL_PRESET" ] && [ -e "${_frogwhere}"/../wine-tkg-git/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
-    source "${_frogwhere}"/../wine-tkg-git/wine-tkg-profiles/wine-tkg.cfg && source "${_frogwhere}"/../wine-tkg-git/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg
-  fi
-  if [ -n "$_custom_wine_source" ]; then
-    _winesrcdir=$( sed 's|/|-|g' <<< $(sed 's|.*://.[^/]*/||g' <<< $_custom_wine_source))
-  else
-    if [ "$_plain_mirrorsrc" = "true" ]; then
-      _winesrcdir="wine-mirror-git"
-      _winesrctarget="https://github.com/wine-mirror/wine.git"
-    else
-      _winesrcdir="wine-git"
-      _winesrctarget="git://source.winehq.org/git/wine.git"
-    fi
-  fi
-
-  cd "${_srcdirlock}"
-  _pkgvertargdir="${_winesrcdir}"
-  # Empty clone failsafe
-  git clone --mirror "${_winesrctarget}" "$_winesrcdir" || true
-
-  if [ "$_use_staging" = "true" ]; then
-    _stgsrcdir='wine-staging-git'
-    _pkgvertargdir="${_stgsrcdir}"
-    # Empty clone failsafe
-    git clone --mirror https://github.com/wine-staging/wine-staging.git "$_stgsrcdir" || true
-  fi
-
-  cd "${_srcdirlock}/${_pkgvertargdir}"
-  git fetch --all -p >/dev/null 2>&1
-  rm -rf "${_srcdirlock}/src/${_pkgvertargdir}" && git clone "${_srcdirlock}/${_pkgvertargdir}" "${_srcdirlock}/src/${_pkgvertargdir}" >/dev/null 2>&1
-  cd "${_srcdirlock}/src/${_pkgvertargdir}"
-  git checkout --force --no-track -B makepkg origin/HEAD
-  if [ -n "$_plain_version" ] && [ "$_use_staging" != "true" ]; then
-    git checkout "${_plain_version}"
-  fi
-  if [ -n "$_staging_version" ] && [ "$_use_staging" = "true" ]; then
-    git checkout "${_staging_version}"
   fi
 
   cd "${_frogwhere}"
