@@ -142,10 +142,10 @@ _nomakepkgsrcinit() {
     # Wine staging update and checkout
     cd "$_where"/"${_stgsrcdir}"
     if [[ "${_stgsrctarget}" != "$(git config --get remote.origin.url)" ]] ; then
-      echo "${_stgsrcdir} is not a clone of ${_stgsrcdir}. Let's nuke stuff to get back on track, hopefully." >>"$_where"/prepare.log
+      echo "${_stgsrcdir} is not a clone of $(git config --get remote.origin.url) (\"${_stgsrctarget}\"). Let's nuke stuff to get back on track, hopefully." >>"$_where"/prepare.log
       rm -rf "$_where/${_stgsrcdir}" && rm -rf "${srcdir}/${_stgsrcdir}"
-      warning "Your ${_stgsrcdir} clone was deleted due to remote mismatch. Please give it another try so it gets freshly recreated."
-      exit 1
+      warning "Your ${_stgsrcdir} clone was deleted due to remote mismatch (\"${_stgsrctarget}\" differs from \"$(git config --get remote.origin.url)\"). Let's try again with a fresh clone."
+      _nomakepkgsrcinit
     fi
     git fetch --all -p
     rm -rf "${srcdir}/${_stgsrcdir}" && git clone "$_where"/"${_stgsrcdir}" "${srcdir}/${_stgsrcdir}"
@@ -158,10 +158,10 @@ _nomakepkgsrcinit() {
     # Wine update and checkout
     cd "$_where"/"${_winesrcdir}"
     if [[ "${_winesrctarget}" != "$(git config --get remote.origin.url)" ]] ; then
-      echo "${_winesrcdir} is not a clone of ${_winesrcdir}. Let's nuke stuff to get back on track, hopefully." >>"$_where"/prepare.log
+      echo "${_winesrcdir} is not a clone of $(git config --get remote.origin.url) (\"${_winesrctarget}\"). Let's nuke stuff to get back on track, hopefully." >>"$_where"/prepare.log
       rm -rf "$_where/${_winesrcdir}" && rm -rf "${srcdir}/${_winesrcdir}"
-      warning "Your ${_winesrcdir} clone was deleted due to remote mismatch. Please give it another try so it gets freshly recreated."
-      exit 1
+      warning "Your ${_winesrcdir} clone was deleted due to remote mismatch (\"${_winesrctarget}\" differs from \"$(git config --get remote.origin.url)\"). Let's try again with a fresh clone."
+      _nomakepkgsrcinit
     fi
     git fetch --all -p
     rm -rf "${srcdir}/${_winesrcdir}" && git clone "$_where"/"${_winesrcdir}" "${srcdir}/${_winesrcdir}"
