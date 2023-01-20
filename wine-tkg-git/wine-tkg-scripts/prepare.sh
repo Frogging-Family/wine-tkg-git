@@ -518,13 +518,13 @@ _describe_wine() {
   fi
   if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
     # On experimental bleeding edge, we want to keep only the first 7 out of 13 bits
-    if [ "$_ismakepkg" = "true" ] || [ "$_ispkgbuild" = "true" ]; then
+    if [ "$_ismakepkg" = "true" ]; then
       echo "$_bleeding_tag" | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//;s/\.wine//' | cut -d'.' -f1-7 | sed 's/experimental.//;s/bleeding.edge.//'
     else
       echo "$_bleeding_tag" | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//;s/\.wine//' | cut -d'.' -f1-7
     fi
   else
-    if [ "$_ismakepkg" = "true" ] || [ "$_ispkgbuild" = "true" ]; then
+    if [ "$_ismakepkg" = "true" ]; then
       git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//;s/experimental.//'
     else
       git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//'
