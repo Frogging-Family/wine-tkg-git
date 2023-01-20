@@ -182,6 +182,12 @@ _nomakepkgsrcinit() {
 
     popd &>/dev/null
   fi
+
+  # makepkg proton pkgver loop hack
+  if [ "$_ispkgbuild" = "true" ] && [ "$_isfirstloop" = "true" ]; then
+    echo "_tmp_ver=\"$(pkgver)\"" >> "$_where"/../proton-tkg/src/proton_tkg_tmp
+    exit 0
+  fi
 }
 
 nonuser_patcher() {

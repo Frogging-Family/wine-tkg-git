@@ -110,11 +110,11 @@ if msg2; then # Arch chroot workaround for even more looping fun
 fi
 
 exit_cleanup() {
+  if [ -d "${srcdir}" ]; then
+    cd "${srcdir}"/..
+  fi
   if [ "$pkgver" != "0" ]; then
-    if [ -e "${_frogwhere}/proton-tkg-git-$pkgver-$pkgrel-x86_64"* ]; then
-      msg2 "proton-tkg-git-$pkgver-$pkgrel-x86_64 package was built successfully"
-    fi
-    sed -i "s/pkgver=$pkgver.*/pkgver=0/g" "${_frogwhere}"/PKGBUILD
+    sed -i "0,/pkgver/{s/pkgver=$pkgver/pkgver=0/}" PKGBUILD
   fi
   rm -rf src
   remove_deps
@@ -129,6 +129,12 @@ recursive_installer() {
       recursive_installer "$_f/*" "$2"
     fi
   done
+}
+
+pkgver() {
+  cd "${srcdir}" && source proton_tkg_tmp
+  # makepkg doesn't accept more than major.minor.subver
+  echo "${_tmp_ver%.*}"
 }
 
 prepare() {
@@ -155,9 +161,7 @@ prepare() {
   ln -s -f "${_frogwhere}/proton-tkg.sh" "${srcdir}/"
   ln -s -f "${_frogwhere}/proton-tkg-userpatches" "${srcdir}/"
   ln -s -f "${_frogwhere}/proton-tkg-profiles" "${srcdir}/"
-}
 
-build() {
   warning "Please DO NOT use this PKGBUILD unless you really can't use the regular route (proton-tkg.sh script)."
   warning "Packaging proton requires some ugly hacks that can break expected behavior."
   warning "As a result, this path is not supported nor maintained."
@@ -165,7 +169,14 @@ build() {
   warning "independently of its functioning state in proton-tkg."
   read -rp "If you understand yet still want this, press enter to continue... (CTRL+C to exit)"
   cd "${srcdir}"
-  _ispkgbuild="true" ./proton-tkg.sh
+  # makepkg proton pkgver loop hack
+  _ispkgbuild="true" _isfirstloop="true" ./proton-tkg.sh
+}
+
+build() {
+  cd "${srcdir}"
+  source proton_tkg_tmp
+  _ispkgbuild="true" _isfirstloop="false" ./proton-tkg.sh
 }
 
 package() {
@@ -174,6 +185,7 @@ package() {
 
   cd "${srcdir}"
   rm -f proton_tkg_token
+  rm -f proton_tkg_tmp
 
   recursive_installer proton_tkg_* "${pkgdir}/usr/share/steam/compatibilitytools.d" >>"${_frogwhere}"/proton-tkg.log 2>&1
 

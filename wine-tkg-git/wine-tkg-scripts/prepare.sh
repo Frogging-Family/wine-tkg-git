@@ -250,6 +250,10 @@ msg2 ''
     if [[ "$_LOCAL_PRESET" != valve* ]] && [ "$_LOCAL_PRESET" != "none" ]; then
       _LOCAL_PRESET=""
     fi
+    # makepkg proton pkgver loop hack
+    if [ "$_ispkgbuild" = "true" ] && [ -e "$_proton_tkg_path"/proton_tkg_tmp ]; then
+      source "$_proton_tkg_path"/proton_tkg_tmp
+    fi
     if [ -z "$_LOCAL_PRESET" ]; then
       msg2 "No _LOCAL_PRESET set in .cfg. Please select your desired base:"
       warning "With Valve trees, most wine-specific customization options will be ignored such as game-specific patches, esync/fsync/fastsync or Proton-specific features support. Those patches and features are for the most part already in, but some bits deemed useful such as FSR support for Proton's fshack are made available through community patches. Staging and GE patches are available through regular .cfg options."
@@ -264,6 +268,13 @@ msg2 ''
         _LOCAL_PRESET="valve-exp-bleeding"
       fi
       echo "_LOCAL_PRESET='$_LOCAL_PRESET'" > "$_where"/temp
+      # makepkg proton pkgver loop hack
+      if [ "$_ispkgbuild" = "true" ]; then
+        if [ -z "$_LOCAL_PRESET" ]; then
+          _LOCAL_PRESET="none"
+        fi
+        echo "_LOCAL_PRESET='$_LOCAL_PRESET'" >> "$_proton_tkg_path"/proton_tkg_tmp
+      fi
     fi
     _EXTERNAL_INSTALL="proton"
     _EXTERNAL_NOVER="false"
@@ -507,13 +518,13 @@ _describe_wine() {
   fi
   if [ "$_LOCAL_PRESET" = "valve-exp-bleeding" ]; then
     # On experimental bleeding edge, we want to keep only the first 7 out of 13 bits
-    if [ "$_ismakepkg" = "true" ]; then
+    if [ "$_ismakepkg" = "true" ] || [ "$_ispkgbuild" = "true" ]; then
       echo "$_bleeding_tag" | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//;s/\.wine//' | cut -d'.' -f1-7 | sed 's/experimental.//;s/bleeding.edge.//'
     else
       echo "$_bleeding_tag" | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//;s/\.wine//' | cut -d'.' -f1-7
     fi
   else
-    if [ "$_ismakepkg" = "true" ]; then
+    if [ "$_ismakepkg" = "true" ] || [ "$_ispkgbuild" = "true" ]; then
       git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//;s/experimental.//'
     else
       git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//;s/\.rc/rc/;s/^wine\.//'
