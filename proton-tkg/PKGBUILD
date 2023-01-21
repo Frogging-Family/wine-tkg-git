@@ -5,7 +5,9 @@ pkgver=0
 pkgrel=1
 _frogwhere="$PWD"
 # Arch chroot workaround
-if [[ "${_frogwhere}" != "/startdir" ]]; then
+if [[ "${_frogwhere}" = "/startdir" ]]; then
+  touch /build/chroot
+elif [ ! -e /build/chroot ]; then
   export BUILDDIR="${_frogwhere}" # Override makepkg BUILDDIR path and use PKGBUILDs dirs instead
 fi
 arch=('x86_64')
@@ -113,7 +115,7 @@ exit_cleanup() {
   if [ -d "${srcdir}" ]; then
     cd "${srcdir}"/..
   fi
-  if [ "$pkgver" != "0" ]; then
+  if [ "$pkgver" != "0" ] && [ -e PKGBUILD ]; then
     sed -i "0,/pkgver/{s/pkgver=$pkgver/pkgver=0/}" PKGBUILD
   fi
   rm -rf src
@@ -140,14 +142,14 @@ prepare() {
   # Arch chroot workaround
   if [[ "${_frogwhere}" = "/startdir" ]]; then
     msg2 "Arch chroot detected!"
-    export _frogwhere=/build/proton-tkg
-    git clone https://github.com/Frogging-Family/wine-tkg-git.git || true
-    if [ -d wine-tkg-git/wine-tkg-git ]; then
-      mv wine-tkg-git/wine-tkg-git /build/wine-tkg-git
-    fi
-    if [ -d wine-tkg-git/proton-tkg ]; then
-      mv wine-tkg-git/proton-tkg/* /build/proton-tkg/
-    fi
+    ( cd /build && git clone https://github.com/Frogging-Family/wine-tkg-git.git wine-tkg
+      mv wine-tkg/wine-tkg-git /build/wine-tkg-git
+      for _protonstuff in wine-tkg/proton-tkg/*; do
+        if [[ "$_protonstuff" != *PKGBUILD ]]; then
+          mv "$_protonstuff" /build/proton-tkg/
+        fi
+      done
+    )
   fi
 
   cd "${_frogwhere}"
@@ -167,6 +169,7 @@ prepare() {
   warning "Also note that SteamVR support is forcefully disabled when using the PKGBUILD,"
   warning "independently of its functioning state in proton-tkg."
   read -rp "If you understand yet still want this, press enter to continue... (CTRL+C to exit)"
+
   cd "${srcdir}"
   # makepkg proton pkgver loop hack
   _ispkgbuild="true" _isfirstloop="true" ./proton-tkg.sh
@@ -190,7 +193,6 @@ package() {
 
   cd "${pkgdir}"/usr/share/steam/compatibilitytools.d/proton_tkg_*
   ln -s -f "/tmp" "__pycache__"
-
 }
 
 trap exit_cleanup EXIT
