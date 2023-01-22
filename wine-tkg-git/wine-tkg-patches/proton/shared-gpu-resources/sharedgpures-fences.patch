@@ -1,21 +1,21 @@
-From fa2fc59d92ef2a08b2766079b6454b49a80465e6 Mon Sep 17 00:00:00 2001
+From 80061eaa7c68efa722796c3bf8465844b731f084 Mon Sep 17 00:00:00 2001
 From: llde <lorenzofersteam@live.it>
-Date: Sat, 14 Jan 2023 00:39:09 +0100
+Date: Sun, 22 Jan 2023 03:39:33 +0100
 Subject: [PATCH] winevulkan: Implement shared VkFences and D3D12 fences
 
 ---
- dlls/winevulkan/make_vulkan      |   47 +-
+ dlls/winevulkan/make_vulkan      |   52 +-
  dlls/winevulkan/vulkan.c         | 2054 +++++++++++++++++++++++++++++-
  dlls/winevulkan/vulkan_loader.h  |    2 +
  dlls/winevulkan/vulkan_private.h |  528 +++++++-
- 4 files changed, 2594 insertions(+), 37 deletions(-)
+ 4 files changed, 2598 insertions(+), 38 deletions(-)
 
 diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
-index beb93d87ad2..01b2f048b39 100755
+index 4443a0cecfc..86fd7796868 100755
 --- a/dlls/winevulkan/make_vulkan
 +++ b/dlls/winevulkan/make_vulkan
-@@ -100,10 +100,8 @@ UNSUPPORTED_EXTENSIONS = [
-     "VK_EXT_hdr_metadata", # Needs WSI work.
+@@ -99,10 +99,8 @@ UNSUPPORTED_EXTENSIONS = [
+     "VK_EXT_full_screen_exclusive",
      "VK_GOOGLE_display_timing",
      "VK_KHR_external_fence_win32",
 -    "VK_KHR_external_semaphore_win32",
@@ -25,7 +25,7 @@ index beb93d87ad2..01b2f048b39 100755
      "VK_NV_external_memory_rdma", # Needs shared resources work.
  
      # Extensions for other platforms
-@@ -113,7 +111,6 @@ UNSUPPORTED_EXTENSIONS = [
+@@ -112,7 +110,6 @@ UNSUPPORTED_EXTENSIONS = [
      "VK_EXT_physical_device_drm",
      "VK_GOOGLE_surfaceless_query",
      "VK_KHR_external_fence_fd",
@@ -33,7 +33,7 @@ index beb93d87ad2..01b2f048b39 100755
      "VK_SEC_amigo_profiling", # Angle specific.
  
      # Extensions which require callback handling
-@@ -130,6 +127,7 @@ UNSUPPORTED_EXTENSIONS = [
+@@ -129,6 +126,7 @@ UNSUPPORTED_EXTENSIONS = [
  UNEXPOSED_EXTENSIONS = {
  #HACK With this the functions isn't generated in latest winevulkan commits. However as this is an unix only extension, it should be hidden in code 
  #    "VK_KHR_external_memory_fd", 
@@ -41,7 +41,7 @@ index beb93d87ad2..01b2f048b39 100755
  }
  
  # The Vulkan loader provides entry-points for core functionality and important
-@@ -197,7 +195,7 @@ FUNCTION_OVERRIDES = {
+@@ -196,7 +194,7 @@ FUNCTION_OVERRIDES = {
      "vkEnumeratePhysicalDevices" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
      "vkGetPhysicalDeviceExternalBufferProperties" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
      "vkGetPhysicalDeviceExternalFenceProperties" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
@@ -50,7 +50,7 @@ index beb93d87ad2..01b2f048b39 100755
      "vkGetPhysicalDeviceImageFormatProperties2" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PRIVATE},
      "vkGetPhysicalDeviceProperties2" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PUBLIC, "loader_thunk" : ThunkType.PRIVATE},
      "vkGetPhysicalDeviceProperties2KHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PUBLIC, "loader_thunk" : ThunkType.PRIVATE},
-@@ -217,6 +215,20 @@ FUNCTION_OVERRIDES = {
+@@ -216,6 +214,20 @@ FUNCTION_OVERRIDES = {
      "vkUnmapMemory" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PRIVATE},
      "vkCreateBuffer" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
      "vkCreateImage" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
@@ -71,7 +71,7 @@ index beb93d87ad2..01b2f048b39 100755
  
      # VK_KHR_surface
      "vkDestroySurfaceKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
-@@ -239,7 +251,7 @@ FUNCTION_OVERRIDES = {
+@@ -238,7 +250,7 @@ FUNCTION_OVERRIDES = {
      "vkCreateSwapchainKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
      "vkDestroySwapchainKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
      "vkGetSwapchainImagesKHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
@@ -80,7 +80,7 @@ index beb93d87ad2..01b2f048b39 100755
  
      # VK_KHR_external_fence_capabilities
      "vkGetPhysicalDeviceExternalFencePropertiesKHR" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
-@@ -249,7 +261,7 @@ FUNCTION_OVERRIDES = {
+@@ -248,7 +260,7 @@ FUNCTION_OVERRIDES = {
      "vkGetPhysicalDeviceImageFormatProperties2KHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PRIVATE},
  
      # VK_KHR_external_semaphore_capabilities
@@ -89,7 +89,7 @@ index beb93d87ad2..01b2f048b39 100755
  
      # VK_KHR_device_group_creation
      "vkEnumeratePhysicalDeviceGroupsKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
-@@ -274,6 +286,18 @@ FUNCTION_OVERRIDES = {
+@@ -273,6 +285,18 @@ FUNCTION_OVERRIDES = {
      "vkGetMemoryWin32HandleKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
      "vkGetMemoryWin32HandlePropertiesKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
  
@@ -108,7 +108,7 @@ index beb93d87ad2..01b2f048b39 100755
  }
  
  STRUCT_CHAIN_CONVERSIONS = {
-@@ -287,6 +311,11 @@ STRUCT_CHAIN_CONVERSIONS = {
+@@ -286,6 +310,11 @@ STRUCT_CHAIN_CONVERSIONS = {
   #   "VkImageCreateInfo": [],
   #   "VkMemoryAllocateInfo": ["VK_STRUCTURE_TYPE_EXPORT_MEMORY_WIN32_HANDLE_INFO_KHR", "VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR"],
  #    "VkPhysicalDeviceImageFormatInfo2": [],
@@ -120,7 +120,7 @@ index beb93d87ad2..01b2f048b39 100755
  }
  
  # Some struct members are conditionally ignored and callers are free to leave them uninitialized.
-@@ -1115,6 +1144,10 @@ class VkHandle(object):
+@@ -1114,6 +1143,10 @@ class VkHandle(object):
              return "wine_queue_from_handle({0})->queue".format(name)
          if self.name == "VkSurfaceKHR":
              return "wine_surface_from_handle({0})->surface".format(name)
@@ -131,7 +131,26 @@ index beb93d87ad2..01b2f048b39 100755
          if self.is_dispatchable():
              LOGGER.error("Unhandled native handle for: {0}".format(self.name))
          return None
-@@ -1893,7 +1926,7 @@ class VkParam(VkVariable):
+@@ -1480,7 +1513,8 @@ class VkMember(VkVariable):
+                 else:
+                     # Nothing needed this yet.
+                     LOGGER.warn("TODO: implement copying of static array for {0}.{1}".format(self.type, self.name))
+-            elif self.is_handle() and self.needs_unwrapping():
++            elif self.is_handle() and unwrap: ## Was self.need_unwrapping(). VkCommandBuffer command buffer wans't supposed to be converted to native handle from VkCommandBufferSubmitInfo conversion.
++                 #This was hitten in 32 bit conversion probably becouse it's a dispatchable type so conv == True. Force unwrap usage instead (unwrap is True for  Public Thunks, so direct call to uni side without PE implementation)
+                 handle = self.type_info["data"]
+                 if direction == Direction.OUTPUT:
+                     LOGGER.err("OUTPUT parameter {0}.{1} cannot be unwrapped".format(self.type, self.name))
+@@ -1489,6 +1523,8 @@ class VkMember(VkVariable):
+                         self.value(input, conv), handle.driver_handle(self.value(input, conv)))
+                 else:
+                     return "{0}{1} = {2};\n".format(output, self.name, handle.driver_handle(self.value(input, conv)))
++            elif self.is_handle() :  # To pass handle as is when there is a conversion (32bit so conv==True) but we don't need actual unwrapping
++                    return "{0}{1} = {2};\n".format(output, self.name, self.value(input, conv))
+             elif self.is_generic_handle():
+                 if direction == Direction.OUTPUT:
+                     LOGGER.err("OUTPUT parameter {0}.{1} cannot be unwrapped".format(self.type, self.name))
+@@ -1892,7 +1928,7 @@ class VkParam(VkVariable):
                  unwrap_handle = self.handle.driver_handle(p)
              if unwrap_handle:
                  if self.optional:
