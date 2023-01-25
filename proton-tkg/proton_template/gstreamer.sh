@@ -7,6 +7,12 @@
   #_nowhere="$PWD"
   source "$_nowhere/proton_tkg_token" || source "$_nowhere/src/proton_tkg_token"
 
+  # Disable lib32 stuff when _NOLIB32 is enabled
+  if [ "$_NOLIB32" = "true" ]; then
+    _lib32_gstreamer="false"
+    _use_lib32_mpeg2dec_and_x264="false"
+  fi
+
   cd "$_nowhere"/external-resources
 
   git clone https://github.com/GStreamer/gstreamer.git || true # It'll complain the path already exists on subsequent builds
@@ -103,6 +109,7 @@
     -D libnice=disabled
     -D vaapi=disabled
     -D introspection=disabled
+    -D orc-source=auto
     -D gstreamer:dbghelp=disabled
     -D gstreamer:gobject-cast-checks=disabled
     -D gstreamer:ptp-helper-permissions=capabilities
@@ -316,6 +323,7 @@
     -D libnice=disabled
     -D vaapi=disabled
     -D introspection=disabled
+    -D orc-source=auto
     -D gstreamer:dbghelp=disabled
     -D gstreamer:gobject-cast-checks=disabled
     -D gstreamer:ptp-helper-permissions=capabilities
