@@ -18,12 +18,20 @@ _configure_64() {
   msg2 'Configuring Wine-64...'
   cd  "${srcdir}"/"${pkgname}"-64-build
   if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW3" =~ [yY] ]]; then
-  chmod +x ../"${_winesrcdir}"/configure
-    ../"${_winesrcdir}"/configure \
+    chmod +x ../"${_winesrcdir}"/configure
+    if [ "$_NOLIB32" != "true" ]; then
+      ../"${_winesrcdir}"/configure \
 	    --prefix="$_prefix" \
 		--enable-win64 \
 		"${_configure_args64[@]}" \
 		"${_configure_args[@]}"
+    else
+      ../"${_winesrcdir}"/configure \
+	    --prefix="$_prefix" \
+		--enable-archs=i386,x86_64 \
+		"${_configure_args64[@]}" \
+		"${_configure_args[@]}"
+    fi
   fi
   if [ "$_pkg_strip" != "true" ]; then
     msg2 "Disable strip"

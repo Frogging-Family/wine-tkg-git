@@ -259,7 +259,10 @@ build_wine_tkg() {
     local _prefix="${_nomakepkg_prefix_path}/${_nomakepkg_pkgname}"
   fi
 
-  if [ -e /lib ] && [ -e /lib64 ] && [ -d /usr/lib ] && [ -d /usr/lib32 ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
+  if [ "$_NOLIB32" = "true" ]; then
+    local _lib32name="lib"
+    local _lib64name="lib"
+  elif [ -e /lib ] && [ -e /lib64 ] && [ -d /usr/lib ] && [ -d /usr/lib32 ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
     local _lib32name="lib32"
     local _lib64name="lib"
   else

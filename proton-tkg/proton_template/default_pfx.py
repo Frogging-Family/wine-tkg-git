@@ -64,6 +64,7 @@ def setup_dll_symlinks(default_pfx_dir, dist_dir):
                 elif bitness == 64:
                     libdir = os.path.join(dist_dir, 'lib64/wine')
                     newlibdir = os.path.join(dist_dir, 'lib64/wine/x86_64-windows')
+                    wow64libdir = os.path.join(dist_dir, 'lib/wine/x86_64-windows')
                 else:
                     continue
                 if os.path.exists(os.path.join(libdir, file_)):
@@ -72,6 +73,8 @@ def setup_dll_symlinks(default_pfx_dir, dist_dir):
                     target = os.path.join(libdir, 'fakedlls', file_)
                 elif os.path.exists(os.path.join(newlibdir, file_)):
                     target = os.path.join(newlibdir, file_)
+                elif os.path.exists(os.path.join(wow64libdir, file_)):
+                    target = os.path.join(wow64libdir, file_)
                 else:
                     continue
                 os.unlink(filename)

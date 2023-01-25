@@ -77,6 +77,7 @@ _exit_cleanup() {
     fi
     echo "_reuse_built_gst='${_reuse_built_gst}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_unfrog='${_unfrog}'" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_NOLIB32='${_NOLIB32}'" >> "$_proton_tkg_path"/proton_tkg_token
   fi
 
   rm -f "$_where"/BIG_UGLY_FROGMINER && msg2 'Removed BIG_UGLY_FROGMINER - Ribbit' # state tracker end
@@ -279,8 +280,10 @@ msg2 ''
     _EXTERNAL_INSTALL="proton"
     _EXTERNAL_NOVER="false"
     _nomakepkg_nover="true"
-    _NOLIB32="false"
-    _NOLIB64="false"
+    if [[ "$_LOCAL_PRESET" = valve* ]]; then
+      _NOLIB32="false"
+      _NOLIB64="false"
+    fi
     _esync_version=""
     _use_faudio="true"
     _highcorecount_fix="true"

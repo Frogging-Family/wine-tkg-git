@@ -118,15 +118,15 @@ _build_serial() {
   local _LAST_BUILD_CONFIG="$_where"/last_build_config.log
   . "$_where"/wine-tkg-scripts/build-64.sh
   . "$_where"/wine-tkg-scripts/build-32.sh
-	if [ "$_NOLIB64" != "true" ]; then
-	  # build wine 64-bit
-	  # (according to the wine wiki, this 64-bit/32-bit building order is mandatory)
-	  _exports_64
-	  _configure_64
-	  _build_64
+  if [ "$_NOLIB64" != "true" ]; then
+    # build wine 64-bit
+    # (according to the wine wiki, this 64-bit/32-bit building order is mandatory)
+    _exports_64
+    _configure_64
+    _build_64
   fi
-	if [ "$_NOLIB32" != "true" ]; then
-	  # build wine 32-bit
+  if [ "$_NOLIB32" != "true" ]; then
+    # build wine 32-bit
     # nomakepkg
     if [ "$_nomakepkg_midbuild_prompt" = "true" ]; then
       msg2 '64-bit side has been built, 32-bit will follow.'
@@ -139,7 +139,7 @@ _build_serial() {
     # /nomakepkg
     _exports_32
     _configure_32
-	  _build_32
+    _build_32
     if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
       _debuntu_64
     fi
@@ -181,12 +181,20 @@ _package_nomakepkg() {
 	else
 	  local _prefix="${_nomakepkg_prefix_path}/${_nomakepkg_pkgname}"
 	fi
-	local _lib32name="lib32"
-	local _lib64name="lib"
+
+	if [ "$_NOLIB32" = "true" ]; then
+	  local _lib32name="lib"
+	  local _lib64name="lib"
+	elif [ -e /lib ] && [ -e /lib64 ] && [ -d /usr/lib ] && [ -d /usr/lib32 ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
+	  local _lib32name="lib32"
+	  local _lib64name="lib"
+	else
+	  local _lib32name="lib"
+	  local _lib64name="lib64"
+	fi
 
 	# External install
 	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
-	  _lib32name="lib" && _lib64name="lib64"
 	  if [ "$_EXTERNAL_NOVER" = "true" ]; then
 	    _prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
 	  else
@@ -236,14 +244,18 @@ _package_nomakepkg() {
 	    if [ "$_pkg_strip" = "true" ]; then
 	      msg2 "Fixing x86_64 PE files..."
 	      find "$_prefix"/"$_lib64name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
-	      msg2 "Fixing i386 PE files..."
-	      find "$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      if [ "$_NOLIB32" != "true" ]; then
+	        msg2 "Fixing i386 PE files..."
+	        find "$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+		  fi
 	      find "$_prefix"/bin/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 sh -c 'objcopy --file-alignment=4096 "$@" > /dev/null 2>&1; exit 0' cmd
 	    else
 	      msg2 "Fixing x86_64 PE files..."
 	      find "$_prefix"/"$_lib64name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
-	      msg2 "Fixing i386 PE files..."
-	      find "$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      if [ "$_NOLIB32" != "true" ]; then
+	        msg2 "Fixing i386 PE files..."
+	        find "$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+		  fi
 	      find "$_prefix"/bin/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 sh -c 'objcopy --file-alignment=4096 "$@" > /dev/null 2>&1; exit 0' cmd
 	    fi
 	  elif [ "$_pkg_strip" = "true" ]; then
@@ -385,14 +397,18 @@ _package_makepkg() {
 	    if [ "$_pkg_strip" = "true" ]; then
 	      msg2 "Fixing x86_64 PE files..."
 	      find "${pkgdir}$_prefix"/"$_lib64name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' -or -iname '*.conf' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
-	      msg2 "Fixing i386 PE files..."
-	      find "${pkgdir}$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' -or -iname '*.conf' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      if [ "$_NOLIB32" != "true" ]; then
+	        msg2 "Fixing i386 PE files..."
+	        find "${pkgdir}$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' -or -iname '*.conf' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+		  fi
 	      find "${pkgdir}$_prefix"/bin/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '--strip-unneeded\0%p\0%p\0' | xargs -0 -r -P1 -n3 sh -c 'objcopy --file-alignment=4096 "$@" > /dev/null 2>&1; exit 0' cmd
 	    else
 	      msg2 "Fixing x86_64 PE files..."
 	      find "${pkgdir}$_prefix"/"$_lib64name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' -or -iname '*.conf' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
-	      msg2 "Fixing i386 PE files..."
-	      find "${pkgdir}$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' -or -iname '*.conf' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+	      if [ "$_NOLIB32" != "true" ]; then
+	        msg2 "Fixing i386 PE files..."
+	        find "${pkgdir}$_prefix"/"$_lib32name"/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' -or -iname '*.conf' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+		  fi
 	      find "${pkgdir}$_prefix"/bin/ -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.py' -or -iname '*.pyc' -or -iname '*.pl' ')' -printf '%p\0%p\0' | xargs -0 -r -P1 -n2 sh -c 'objcopy --file-alignment=4096 "$@" > /dev/null 2>&1; exit 0' cmd
 	    fi
 	  elif [ "$_pkg_strip" = "true" ]; then
