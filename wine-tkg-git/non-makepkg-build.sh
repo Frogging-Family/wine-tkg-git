@@ -83,9 +83,15 @@ pkgver() {
       fi
       _debuntu_64
     elif [ "$_nomakepkg_dep_resolution_distro" = "fedora" ]; then
-      _fedora_6432
+      _fedora_64
+      if [ "$_NOLIB32" != "true" ]; then
+        _fedora_32
+      fi
     elif [ "$_nomakepkg_dep_resolution_distro" = "archlinux" ]; then
-      _archlinux_6432
+      _archlinux_64
+      if [ "$_NOLIB32" != "true" ]; then
+        _archlinux_32
+      fi
     fi
   fi
 
