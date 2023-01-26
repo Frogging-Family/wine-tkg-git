@@ -650,23 +650,33 @@ function proton_tkg_uninstaller {
     read -rp "choice [1-$(($i-1))]: " _to_uninstall;
 
     i=1
-    for build in ${_strip_builds[@]}; do
-      if [ "$_to_uninstall" = "$i" ]; then
-        if [ -n "$_just_built" ]; then
+    if [ -n "$_just_built" ]; then
+      for build in ${_strip_builds[@]//$_newest_build/}; do
+        if [ "$_to_uninstall" = "$i" ]; then
           rm -rf "proton_tkg_$build" && _available_builds=( `ls -d proton_tkg_* | sort -V` )
           sed -i "s/\"Proton-tkg $build\"/\"Proton-tkg ${_newest_build}\"/;s/\"TKG-proton-$build\"/\"TKG-proton-${_newest_build}\"/" "$_config_file"
-        else
+          echo "###########################################################################################################################"
+          echo ""
+          echo "Proton-tkg $build was uninstalled and games previously depending on it will now use Proton-tkg ${_newest_build} instead."
+          echo ""
+          echo "###########################################################################################################################"
+        fi
+        ((i+=1))
+      done
+    else
+      for build in ${_strip_builds[@]}; do
+        if [ "$_to_uninstall" = "$i" ]; then
           rm -rf "proton_tkg_$build" && _available_builds=( `ls -d proton_tkg_* | sort -V` ) && _newest_build="${_available_builds[-1]//proton_tkg_/}"
           sed -i "s/\"Proton-tkg $build\"/\"Proton-tkg ${_newest_build[@]}\"/;s/\"TKG-proton-$build\"/\"TKG-proton-${_newest_build[@]}\"/" "$_config_file"
+          echo "###########################################################################################################################"
+          echo ""
+          echo "Proton-tkg $build was uninstalled and games previously depending on it will now use Proton-tkg ${_newest_build[@]} instead."
+          echo ""
+          echo "###########################################################################################################################"
         fi
-        echo "###########################################################################################################################"
-        echo ""
-        echo "Proton-tkg $build was uninstalled and games previously depending on it will now use Proton-tkg ${_newest_build[@]} instead."
-        echo ""
-        echo "###########################################################################################################################"
-      fi
-      ((i+=1))
-    done
+        ((i+=1))
+      done
+    fi
 
     echo ""
     read -rp "Wanna uninstall more? N/y: " _uninstall_more;
