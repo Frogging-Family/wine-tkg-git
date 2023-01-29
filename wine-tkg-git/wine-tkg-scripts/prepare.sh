@@ -372,6 +372,19 @@ msg2 ''
     error "Preset '$_LOCAL_PRESET' was not found anywhere! exiting..." && exit 1
   fi
 
+  # Load legacy options only when a custom commit is set
+  if [ "$_LOCAL_PRESET" != "valve" ] && [[ "$_LOCAL_PRESET" != valve-exp* ]]; then
+    if [ -n "$_plain_version" ] || [ -n "$_staging_version" ]; then
+      if [ -e "$_proton_tkg_path"/proton_tkg_token ]; then
+        msg2 "Loading legacy config file"
+        source "$_proton_tkg_path"/proton-tkg-profiles/legacy/legacy-options.cfg
+      else
+        msg2 "Loading legacy config file"
+        source "$_where"/wine-tkg-profiles/legacy/legacy-options.cfg
+      fi
+    fi
+  fi
+
   # Disable undesirable patchsets when using official proton wine source
   if [[ "$_custom_wine_source" = *"ValveSoftware"* ]]; then
     _clock_monotonic="false"
