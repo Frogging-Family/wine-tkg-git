@@ -142,6 +142,71 @@ if [ -d "${srcdir}"/"${_stgsrcdir}" ]; then
     fi
     # /community patches
 
+    # Fix wrong staging patches application order on 89aa62e
+    if ( cd "${srcdir}"/"${_stgsrcdir}" && [ "$(git rev-parse HEAD)" = "89aa62efe0299dd60ff9f40fadecf1097c367188" ] ); then
+      warning "Fixing wrong staging patches application order on 89aa62e (ntdll-WRITECOPY before ntdll-Placeholders)"
+      patch "${srcdir}"/"${_stgsrcdir}"/patches/patchinstall.sh << 'EOM'
+@@ -2049,6 +2060,28 @@ if test "$enable_ntdll_APC_Performance" -eq 1; then
+ 	patch_apply ntdll-APC_Performance/0001-ntdll-Reuse-old-async-fileio-structures-if-possible.patch
+ fi
+
++# Patchset ntdll-WRITECOPY
++# |
++# | This patchset fixes the following Wine bugs:
++# |   *	[#29384] Multiple applications expect correct handling of WRITECOPY memory protection (Voobly fails to launch Age of
++# | 	Empires II, MSYS2)
++# |
++# | Modified files:
++# |   *	dlls/kernel32/tests/virtual.c, dlls/ntdll/unix/loader.c, dlls/ntdll/unix/server.c, dlls/ntdll/unix/signal_arm.c,
++# | 	dlls/ntdll/unix/signal_arm64.c, dlls/ntdll/unix/signal_i386.c, dlls/ntdll/unix/signal_x86_64.c,
++# | 	dlls/ntdll/unix/unix_private.h, dlls/ntdll/unix/virtual.c, dlls/psapi/tests/psapi_main.c
++# |
++if test "$enable_ntdll_WRITECOPY" -eq 1; then
++	patch_apply ntdll-WRITECOPY/0001-ntdll-Trigger-write-watches-before-passing-userdata-.patch
++	patch_apply ntdll-WRITECOPY/0003-ntdll-Setup-a-temporary-signal-handler-during-proces.patch
++	patch_apply ntdll-WRITECOPY/0004-ntdll-Properly-handle-PAGE_WRITECOPY-protection.-try.patch
++	patch_apply ntdll-WRITECOPY/0005-ntdll-Track-if-a-WRITECOPY-page-has-been-modified.patch
++	patch_apply ntdll-WRITECOPY/0006-ntdll-Support-WRITECOPY-on-x64.patch
++	patch_apply ntdll-WRITECOPY/0007-ntdll-Report-unmodified-WRITECOPY-pages-as-shared.patch
++	patch_apply ntdll-WRITECOPY/0008-ntdll-Fallback-to-copy-pages-for-WRITECOPY.patch
++	patch_apply ntdll-WRITECOPY/0009-kernel32-tests-psapi-tests-Update-tests.patch
++fi
++
+ # Patchset ntdll-CriticalSection
+ # |
+ # | Modified files:
+@@ -2217,28 +2265,6 @@ if test "$enable_ntdll_Syscall_Emulation" -eq 1; then
+ 	patch_apply ntdll-Syscall_Emulation/0001-ntdll-Support-x86_64-syscall-emulation.patch
+ fi
+
+-# Patchset ntdll-WRITECOPY
+-# |
+-# | This patchset fixes the following Wine bugs:
+-# |   *	[#29384] Multiple applications expect correct handling of WRITECOPY memory protection (Voobly fails to launch Age of
+-# | 	Empires II, MSYS2)
+-# |
+-# | Modified files:
+-# |   *	dlls/kernel32/tests/virtual.c, dlls/ntdll/unix/loader.c, dlls/ntdll/unix/server.c, dlls/ntdll/unix/signal_arm.c,
+-# | 	dlls/ntdll/unix/signal_arm64.c, dlls/ntdll/unix/signal_i386.c, dlls/ntdll/unix/signal_x86_64.c,
+-# | 	dlls/ntdll/unix/unix_private.h, dlls/ntdll/unix/virtual.c, dlls/psapi/tests/psapi_main.c
+-# |
+-if test "$enable_ntdll_WRITECOPY" -eq 1; then
+-	patch_apply ntdll-WRITECOPY/0001-ntdll-Trigger-write-watches-before-passing-userdata-.patch
+-	patch_apply ntdll-WRITECOPY/0003-ntdll-Setup-a-temporary-signal-handler-during-proces.patch
+-	patch_apply ntdll-WRITECOPY/0004-ntdll-Properly-handle-PAGE_WRITECOPY-protection.-try.patch
+-	patch_apply ntdll-WRITECOPY/0005-ntdll-Track-if-a-WRITECOPY-page-has-been-modified.patch
+-	patch_apply ntdll-WRITECOPY/0006-ntdll-Support-WRITECOPY-on-x64.patch
+-	patch_apply ntdll-WRITECOPY/0007-ntdll-Report-unmodified-WRITECOPY-pages-as-shared.patch
+-	patch_apply ntdll-WRITECOPY/0008-ntdll-Fallback-to-copy-pages-for-WRITECOPY.patch
+-	patch_apply ntdll-WRITECOPY/0009-kernel32-tests-psapi-tests-Update-tests.patch
+-fi
+-
+ # Patchset ntdll-ext4-case-folder
+ # |
+ # | This patchset fixes the following Wine bugs:
+EOM
+    fi
+
     # Fix broken staging commit 86091d3b
     if ( cd "${srcdir}"/"${_stgsrcdir}" && git merge-base --is-ancestor 86091d3b1f5068693e1720ae1c301d2916dc975f HEAD && ! git merge-base --is-ancestor f2648a9a40cc7516ee4a469cca16778268053056 HEAD ); then
       warning "Disable broken xactengine3_7-callbacks patchset on staging 86091d3b+"
