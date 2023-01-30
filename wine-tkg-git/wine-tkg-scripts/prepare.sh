@@ -1138,7 +1138,7 @@ _polish() {
 	  if [ "$_use_legacy_gallium_nine" = "true" ]; then
 	    _version_tags+=(Nine)
 	  fi
-	  if [ "$_use_vkd3dlib" = "false" ]; then
+	  if [ "$_use_vkd3dlib" != "true" ]; then
 	    if [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
 	      _version_tags+=(Vkd3d DXVK-Compatible)
 	    fi

@@ -864,7 +864,7 @@ else
       _use_dxvk="latest"
     fi
   else
-    if [ "$_use_vkd3dlib" = "false" ]; then
+    if [ "$_use_vkd3dlib" != "true" ]; then
       _build_vkd3d="true"
     fi
     echo -e "######\nmingw-w64 gcc found\n######"
