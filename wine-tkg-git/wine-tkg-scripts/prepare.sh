@@ -392,7 +392,6 @@ msg2 ''
     _use_esync="false"
     _use_fsync="false"
     _use_fastsync="false"
-    _fsync_futex_waitv="false"
 #    _use_staging="false"
     _proton_fs_hack="false"
     _proton_rawinput="false"
