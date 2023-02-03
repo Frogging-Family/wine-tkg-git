@@ -294,10 +294,23 @@ _package_nomakepkg() {
 	  if [ "$_use_fsync" = "true" ]; then
 	    msg2 '##########################################################################################################################'
 	    msg2 ''
-	    msg2 'To enable fsync, export WINEFSYNC=1 and use a Fsync patched kernel (such as linux52-tkg or newer). If no compatible kernel'
-	    msg2 'is found and Esync is enabled, it will fallback to it. You can enable both to get a dynamic "failsafe" mechanism.'
-	    msg2 ''
-	    msg2 'https://steamcommunity.com/app/221410/discussions/0/3158631000006906163/'
+	    if [ "$_fsync_legacy" = "true" ]; then
+	      msg2 'To enable fsync legacy, export WINEFSYNC=1 and use a linux54-tkg or newer. If no compatible kernel'
+	      msg2 'is found and Esync is enabled, it will fallback to it. You can enable both to get a dynamic "failsafe" mechanism.'
+	      msg2 ''
+	      msg2 'https://steamcommunity.com/app/221410/discussions/0/3158631000006906163/'
+	        if [ "$_fsync_futex2" = "true" ]; then
+	          msg2 ''
+	          msg2 'To enable fsync_futex2, additionally export WINEFSYNC_FUTEX2=1 and use a linux510-tkg or newer.'
+	          msg2 ''
+	          msg2 'https://github.com/ValveSoftware/Proton/issues/4568'
+	        fi
+	    else
+	      msg2 'To enable fsync, export WINEFSYNC=1 and use a kernel 5.16+ (or at least linux513-tkg). If no compatible kernel'
+	      msg2 'is found and Esync is enabled, it will fallback to it. You can enable both to get a dynamic "failsafe" mechanism.'
+	      msg2 ''
+	      msg2 'https://github.com/ValveSoftware/wine/pull/128'
+	    fi
 	    msg2 ''
 	    msg2 '##########################################################################################################################'
 	  fi
@@ -435,10 +448,23 @@ _package_makepkg() {
 	  if [ "$_use_fsync" = "true" ]; then
 	    msg2 '##########################################################################################################################'
 	    msg2 ''
-	    msg2 'To enable fsync, export WINEFSYNC=1 and use a Fsync patched kernel (such as linux52-tkg or newer). If no compatible kernel'
-	    msg2 'is found and Esync is enabled, it will fallback to it. You can enable both to get a dynamic "failsafe" mechanism.'
-	    msg2 ''
-	    msg2 'https://steamcommunity.com/app/221410/discussions/0/3158631000006906163/'
+	    if [ "$_fsync_legacy" = "true" ]; then
+	      msg2 'To enable fsync legacy, export WINEFSYNC=1 and use a linux54-tkg or newer. If no compatible kernel'
+	      msg2 'is found and Esync is enabled, it will fallback to it. You can enable both to get a dynamic "failsafe" mechanism.'
+	      msg2 ''
+	      msg2 'https://steamcommunity.com/app/221410/discussions/0/3158631000006906163/'
+	        if [ "$_fsync_futex2" = "true" ]; then
+	          msg2 ''
+	          msg2 'To enable fsync_futex2, additionally export WINEFSYNC_FUTEX2=1 and use a linux510-tkg or newer.'
+	          msg2 ''
+	          msg2 'https://github.com/ValveSoftware/Proton/issues/4568'
+	        fi
+	    else
+	      msg2 'To enable fsync, export WINEFSYNC=1 and use a kernel 5.16+ (or at least linux513-tkg). If no compatible kernel'
+	      msg2 'is found and Esync is enabled, it will fallback to it. You can enable both to get a dynamic "failsafe" mechanism.'
+	      msg2 ''
+	      msg2 'https://github.com/ValveSoftware/wine/pull/128'
+	    fi
 	    msg2 ''
 	    msg2 '##########################################################################################################################'
 	  fi
