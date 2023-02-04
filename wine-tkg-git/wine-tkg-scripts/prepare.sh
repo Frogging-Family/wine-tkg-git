@@ -918,7 +918,7 @@ _prepare() {
 	    _staging_args=$( printf "%s" "${_staging_args[*]}" )
 	  fi
 	  # Not strictly necessary, but we haven't used the py script til now, so let's be conservative
-	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor e222e26baa7cb41568294d6c43ee0974c92f86ef HEAD ); then
+	  if ( cd "${srcdir}"/"${_stgsrcdir}" && ! git merge-base --is-ancestor f2f8b949b1ae1bedc2b3b16edc1d09a08110d2f6 HEAD ); then
 	    _staging_script="patches/patchinstall.sh"
 	  else
 	    _staging_script="staging/patchinstall.py"
