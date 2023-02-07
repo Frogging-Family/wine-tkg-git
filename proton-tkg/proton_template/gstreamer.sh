@@ -455,7 +455,6 @@
 	-D gst-plugins-bad:dts=disabled
 	-D gst-plugins-bad:faac=disabled
 	-D gst-plugins-bad:faad=disabled
-	-D gst-plugins-bad:libmms=disabled
 	-D gst-plugins-bad:mpeg2enc=disabled
 	-D gst-plugins-bad:mplex=disabled
 	-D gst-plugins-bad:neon=disabled
@@ -472,7 +471,6 @@
 	-D gst-plugins-bad:kate=disabled
 	-D gst-plugins-bad:openexr=disabled
 	-D gst-plugins-bad:ladspa=disabled
-	-D gst-plugins-bad:ofa=disabled
 	-D gst-plugins-bad:microdns=disabled
 	-D gst-plugins-bad:openh264=disabled
 	-D gst-plugins-bad:resindvd=disabled
