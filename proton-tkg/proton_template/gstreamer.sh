@@ -418,6 +418,7 @@
 	-D gst-plugins-good:wavenc=disabled
 	-D gst-plugins-good:ximagesrc=disabled
 	-D gst-plugins-good:y4m=disabled
+    -D gst-plugins-bad:dc1394=disabled
     -D gst-plugins-bad:directfb=disabled
     -D gst-plugins-bad:flite=disabled
     -D gst-plugins-bad:gobject-cast-checks=disabled
@@ -470,9 +471,14 @@
 	-D gst-plugins-bad:avtp=disabled
 	-D gst-plugins-bad:kate=disabled
 	-D gst-plugins-bad:openexr=disabled
+	-D gst-plugins-bad:soundtouch=disabled
+	-D gst-plugins-bad:svtav1=disabled
 	-D gst-plugins-bad:ladspa=disabled
+	-D gst-plugins-bad:ldac=disabled
+	-D gst-plugins-bad:openaptx=disabled
 	-D gst-plugins-bad:microdns=disabled
 	-D gst-plugins-bad:openh264=disabled
+	-D gst-plugins-bad:qroverlay=disabled
 	-D gst-plugins-bad:resindvd=disabled
 	-D gst-plugins-bad:spandsp=disabled
 	-D gst-plugins-bad:svthevcenc=disabled
