@@ -17,9 +17,6 @@ user_settings = {
     #Set DXVK custom config path
 #    "DXVK_CONFIG_FILE": "",
 
-    #Enable DXVK Async pipecompiler
-#    "PROTON_DXVK_ASYNC": "1",
-
     #Enable DXVK's HUD
 #    "DXVK_HUD": "devinfo,fps",
 
