@@ -589,10 +589,12 @@ _prepare() {
     cd "${srcdir}"/"${_winesrcdir}"
     # change back to the wine upstream commit that this version of wine-staging is based in
     msg2 'Changing wine HEAD to the wine-staging base commit...'
-    if [ ! -e ../"$_stgsrcdir"/staging/upstream-commit ] || $( git merge-base "$( cat ../"$_stgsrcdir"/staging/upstream-commit )" --is-ancestor "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)" ); then
-      msg2 "Using patchinstall.sh --upstream-commit"
-      # Use patchinstall.sh --upstream-commit
-      git -c advice.detachedHead=false checkout "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)"
+    if [ -e "$_stgsrcdir"/patches/patchinstall.sh ]; then
+      if [ ! -e ../"$_stgsrcdir"/staging/upstream-commit ] || $( git merge-base "$( cat ../"$_stgsrcdir"/staging/upstream-commit )" --is-ancestor "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)" ); then
+        msg2 "Using patchinstall.sh --upstream-commit"
+        # Use patchinstall.sh --upstream-commit
+        git -c advice.detachedHead=false checkout "$(../"$_stgsrcdir"/patches/patchinstall.sh --upstream-commit)"
+      fi
     else
       msg2 "Using upstream-commit file"
       # Use upstream-commit file if patchinstall.sh --upstream-commit doesn't report the same upstream commit target
