@@ -132,3 +132,112 @@ index 75266672f0b..428e13fea1f 100644
      wine_nt_to_unix_file_name,
      wine_unix_to_nt_file_name,
  };
+
+From 86e5515c1abe1dbedf3d4554e7e6624e613c83e1 Mon Sep 17 00:00:00 2001
+From: Torge Matthies <openglfreak@googlemail.com>
+Date: Sat, 18 Feb 2023 23:18:53 +0100
+Subject: [PATCH] Convert LAA syscall to a unix call
+
+---
+ dlls/ntdll/loader.c       | 9 +++++++++
+ dlls/ntdll/ntdll.spec     | 2 +-
+ dlls/ntdll/unix/loader.c  | 2 +-
+ dlls/ntdll/unix/virtual.c | 5 +++++
+ dlls/ntdll/unixlib.h      | 1 +
+ 5 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 133f6bacd89..6d1a078266f 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -3475,6 +3475,15 @@ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
+ }
+ 
+ 
++/***********************************************************************
++ *           __wine_needs_override_large_address_aware
++ */
++unsigned int CDECL __wine_needs_override_large_address_aware(void)
++{
++    return WINE_UNIX_CALL( unix_wine_needs_override_large_address_aware, NULL );
++}
++
++
+ /***********************************************************************
+  *           wine_server_call
+  */
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index e07806f8b0b..5a1bfcee3d7 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -1714,7 +1714,7 @@
+ @ cdecl -norelay __wine_dbg_strdup(str)
+ 
+ # Virtual memory
+-@ cdecl -syscall __wine_needs_override_large_address_aware()
++@ cdecl __wine_needs_override_large_address_aware()
+ 
+ # Version
+ @ cdecl wine_get_version()
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index ffa38448224..955cc8aec84 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -359,7 +359,6 @@ static void * const syscalls[] =
+     NtWriteFileGather,
+     NtWriteVirtualMemory,
+     NtYieldExecution,
+-    __wine_needs_override_large_address_aware,
+     wine_nt_to_unix_file_name,
+     wine_unix_to_nt_file_name,
+ };
+@@ -2104,6 +2103,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
+     load_so_dll,
+     unwind_builtin_dll,
+     unixcall_wine_dbg_write,
++    unixcall_wine_needs_override_large_address_aware,
+     unixcall_wine_server_call,
+     unixcall_wine_server_fd_to_handle,
+     unixcall_wine_server_handle_to_fd,
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 44336a43e8c..125e154f31e 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -322,6 +322,7 @@ extern void set_async_direct_result( HANDLE *async_handle, NTSTATUS status, ULON
+ extern struct cpu_topology_override *get_cpu_topology_override(void) DECLSPEC_HIDDEN;
+ 
+ extern NTSTATUS unixcall_wine_dbg_write( void *args ) DECLSPEC_HIDDEN;
++extern NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args ) DECLSPEC_HIDDEN;
+ extern NTSTATUS unixcall_wine_server_call( void *args ) DECLSPEC_HIDDEN;
+ extern NTSTATUS unixcall_wine_server_fd_to_handle( void *args ) DECLSPEC_HIDDEN;
+ extern NTSTATUS unixcall_wine_server_handle_to_fd( void *args ) DECLSPEC_HIDDEN;
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 9fb1fc8c688..c10f2468d48 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3508,6 +3508,11 @@ BOOL CDECL __wine_needs_override_large_address_aware(void)
+     return needs_override;
+ }
+ 
++NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args )
++{
++    return __wine_needs_override_large_address_aware();
++}
++
+ 
+ /***********************************************************************
+  *           virtual_map_hypervisor_shared_data
+diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
+index 22e5663990d..522d9b99978 100644
+--- a/dlls/ntdll/unixlib.h
++++ b/dlls/ntdll/unixlib.h
+@@ -71,6 +71,7 @@ enum ntdll_unix_funcs
+     unix_load_so_dll,
+     unix_unwind_builtin_dll,
+     unix_wine_dbg_write,
++    unix_wine_needs_override_large_address_aware,
+     unix_wine_server_call,
+     unix_wine_server_fd_to_handle,
+     unix_wine_server_handle_to_fd,
+-- 
+2.39.2
