@@ -928,7 +928,9 @@ _prepare() {
 	  "${srcdir}"/"${_stgsrcdir}"/$_staging_script DESTDIR="${srcdir}/${_winesrcdir}" --all $_staging_args >> "$_where"/prepare.log 2>&1 || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience."; msg2 "To use the last known good mainline version, please set _plain_version=\"$_last_known_good_mainline\" in your .cfg"; msg2 "To use the last known good staging version, please set _staging_version=\"$_last_known_good_staging\" in your .cfg (requires _use_staging=\"true\")" && exit 1)
 
 	  # Remove staging version tag
-	  sed -i "s/  (Staging)//g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
+	  if [ -e "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in ]; then
+	    sed -i "s/  (Staging)//g" "${srcdir}"/"${_winesrcdir}"/libs/wine/Makefile.in
+	  fi
 	  _commitmsg="03-staging" _committer
 	fi
 
