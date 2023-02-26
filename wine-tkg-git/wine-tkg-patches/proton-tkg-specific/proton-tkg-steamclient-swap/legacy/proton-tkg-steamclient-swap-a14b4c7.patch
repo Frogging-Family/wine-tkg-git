@@ -25,12 +25,12 @@ index 74e37fccbb68..7a5a5afdb6b1 100644
 +++ b/dlls/ntdll/ntdll.spec
 @@ -1692,6 +1692,7 @@
  # Unix interface
- @ stdcall __wine_unix_call(int64 long ptr)
- @ stdcall __wine_unix_spawnvp(long ptr)
+ @ stdcall -syscall __wine_unix_call(int64 long ptr)
+ @ stdcall -syscall __wine_unix_spawnvp(long ptr)
 +@ cdecl __wine_set_unix_funcs(long ptr)
  @ stdcall __wine_ctrl_routine(ptr)
- @ extern -private __wine_syscall_dispatcher
- @ extern -private __wine_unix_call_dispatcher
+ @ extern __wine_syscall_dispatcher
+ @ extern -arch=i386 __wine_ldt_copy
 diff --git a/dlls/ntdll/ntdll_misc.h b/dlls/ntdll/ntdll_misc.h
 index 1ce972e3b384..36972a966f1d 100644
 --- a/dlls/ntdll/ntdll_misc.h
@@ -72,9 +72,9 @@ index 3f16d2f00867..35f2e5f986f7 100644
 
      signal_init_threading();
 @@ -2214,6 +2204,12 @@ static void start_main_thread(void)
-     if (main_image_info.Machine != current_machine) load_wow64_ntdll( main_image_info.Machine );
      load_apiset_dll();
      ntdll_init_syscalls( 0, &syscall_table, p__wine_syscall_dispatcher );
+     *p__wine_unix_call_dispatcher = __wine_unix_call_dispatcher;
 +    status = p__wine_set_unix_funcs( NTDLL_UNIXLIB_VERSION, &unix_funcs );
 +    if (status == STATUS_REVISION_MISMATCH)
 +    {
@@ -248,10 +248,9 @@ index 5dcab3455a0..ecf3cf33947 100644
   *           __wine_unix_call_funcs
   */
 @@ -2069,6 +2135,15 @@ static struct unix_funcs unix_funcs =
- };
 
  #endif  /* _WIN64 */
-+
+
 +/***********************************************************************
 + *           unix_funcs
 + */
@@ -260,14 +259,15 @@ index 5dcab3455a0..ecf3cf33947 100644
 +    steamclient_setup_trampolines,
 +};
 +
-
++
  /***********************************************************************
   *           start_main_thread
+  */
 diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
 index 6bb5649e2b5..4f471ffb03b 100644
 --- a/dlls/ntdll/unix/signal_i386.c
 +++ b/dlls/ntdll/unix/signal_i386.c
-@@ -1887,6 +1887,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -1781,6 +1781,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
      struct xcontext xcontext;
      ucontext_t *ucontext = sigcontext;
      void *stack = setup_exception_record( sigcontext, &rec, &xcontext );
@@ -275,7 +275,7 @@ index 6bb5649e2b5..4f471ffb03b 100644
 
      switch (TRAP_sig(ucontext))
      {
-@@ -1922,6 +1922,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -1815,6 +1816,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
          }
          break;
      case TRAP_x86_PAGEFLT:  /* Page fault */
@@ -292,15 +292,15 @@ diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
 index 68e0c7ce66e..aa5dd47d789 100644
 --- a/dlls/ntdll/unix/signal_x86_64.c
 +++ b/dlls/ntdll/unix/signal_x86_64.c
-@@ -2182,6 +2182,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -2559,6 +2559,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
      EXCEPTION_RECORD rec = { 0 };
      struct xcontext context;
-     ucontext_t *ucontext = init_handler( sigcontext );
+     ucontext_t *ucontext = sigcontext;
 +    void *steamclient_addr = NULL;
 
      rec.ExceptionAddress = (void *)RIP_sig(ucontext);
-     save_context( &context, ucontext );
-@@ -2213,6 +2213,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+     save_context( &context, sigcontext );
+@@ -2590,6 +2591,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
          }
          break;
      case TRAP_x86_PAGEFLT:  /* Page fault */
@@ -674,25 +674,25 @@ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
 index de2270fb678..3790baa9fae 100644
 --- a/dlls/ntdll/unix/loader.c
 +++ b/dlls/ntdll/unix/loader.c
-@@ -1258,8 +1258,10 @@ static NTSTATUS dlopen_dll( const char *so_name, UNICODE_STRING *nt_name, void *
+@@ -1303,9 +1303,11 @@ static NTSTATUS dlopen_dll( const char *so_name, UNICODE_STRING *nt_name, void *
  {
      void *module, *handle;
      const IMAGE_NT_HEADERS *nt;
 +    BOOL mapped = FALSE;
 
+     callback_module = (void *)1;
 -    handle = dlopen( so_name, RTLD_NOW );
 +    if ((handle = dlopen( so_name, RTLD_NOW | RTLD_NOLOAD ))) mapped = TRUE;
 +    else handle = dlopen( so_name, RTLD_NOW );
      if (!handle)
      {
          WARN( "failed to load .so lib %s: %s\n", debugstr_a(so_name), dlerror() );
-@@ -1280,7 +1280,7 @@ static NTSTATUS dlopen_dll( const char *so_name, UNICODE_STRING *nt_name, void *
-         return STATUS_SUCCESS;
-     }
-
--    if (map_so_dll( nt, module ))
-+    if (!mapped && map_so_dll( nt, module ))
+@@ -1322,7 +1324,7 @@ static NTSTATUS dlopen_dll( const char *so_name, UNICODE_STRING *nt_name, void *
      {
-         dlclose( handle );
-         return STATUS_NO_MEMORY;
-
+         module = (HMODULE)((nt->OptionalHeader.ImageBase + 0xffff) & ~0xffff);
+         if (get_builtin_so_handle( module )) goto already_loaded;
+-        if (map_so_dll( nt, module ))
++        if (!mapped && map_so_dll( nt, module ))
+         {
+             dlclose( handle );
+             return STATUS_NO_MEMORY;
