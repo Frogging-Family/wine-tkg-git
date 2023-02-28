@@ -310,7 +310,7 @@ msg2 ''
     if [ ! -e "$_where"/BIG_UGLY_FROGMINER ] && [ -z "$_LOCAL_PRESET" ]; then
       msg2 "No _LOCAL_PRESET set in .cfg. Please select your desired base (or hit enter for default) :"
       warning "! \"mainline\" and \"staging\" options will make clean & untouched wine and wine-staging builds, ignoring your .cfg settings !"
-      warning "! \"valve\" profiles will use Valve proton wine trees instead of upstream, ignoring many incompatibble .cfg settings !"
+      warning "! \"valve\" profiles will use Valve proton wine trees instead of upstream, ignoring many incompatible .cfg settings !"
       warning "! \"default-tkg\" profile will use the main customization.cfg and wine-tkg-profiles/advanced-customization.cfg files !"
 
       i=0
