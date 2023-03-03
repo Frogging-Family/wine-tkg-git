@@ -481,7 +481,7 @@ index 6079d1fe28b..18e7b8a913e 100644
      output_filename( arch_make_variable( "LDFLAGS", arch ));
 +    output_filename( "-Wl,--file-alignment,4096" );
      output( "\n" );
-
+ 
      if (*dll_ext && make->is_exe && !make->is_win16 && strendswith( make->module, ".exe" ))
 From 213905a322620eb326b655ab89fbca07316e6357 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
@@ -946,8 +946,7 @@ diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
 index 20eb6a05922..d99c6b462b2 100644
 --- a/dlls/ntdll/unix/file.c
 +++ b/dlls/ntdll/unix/file.c
-@@ -3593,12 +3593,20 @@ NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret,
-     const WCHAR *name;
+@@ -3593,14 +3593,20 @@ NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret,
      char *unix_name;
      int name_len, unix_len;
      NTSTATUS status;
@@ -955,121 +954,19 @@ index 20eb6a05922..d99c6b462b2 100644
 +    if (!attr->ObjectName->Buffer && attr->ObjectName->Length)
 +        return STATUS_ACCESS_VIOLATION;
 +
-     if (!attr->RootDirectory)  /* without root dir fall back to normal lookup */
-+    {
+     fileobj.FileName = *attr->ObjectName;
+ reparse:
+     if (reparse_count++ == 31)
+         return STATUS_REPARSE_POINT_NOT_RESOLVED;
+     if (!rootdir) /* without root dir fall back to normal lookup */
+     {
 +        if (!attr->ObjectName->Buffer)
 +            return STATUS_OBJECT_PATH_SYNTAX_BAD;
 +
-         return nt_to_unix_file_name_no_root( attr->ObjectName, name_ret, disposition );
-+    }
- 
-     name     = attr->ObjectName->Buffer;
-     name_len = attr->ObjectName->Length / sizeof(WCHAR);
- 
-     if (name_len && name[0] == '\\') return STATUS_INVALID_PARAMETER;
-From cb427c70056654bf12fb0d7d6dcb13386d193ff4 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
-Date: Fri, 24 Apr 2020 14:37:58 +0300
-Subject: [PATCH] server: Try to retrieve the unix name on handles created from
- file descriptors.
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
-Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=46070
-Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
-
-Fixes Unity of Command II, and possibly other games that use
-Python38.dll.
----
- server/fd.c   | 39 +++++++++++++++++++++++++++++++++++++++
- server/file.c |  1 +
- server/file.h |  2 ++
- 3 files changed, 42 insertions(+)
-
-diff --git a/server/fd.c b/server/fd.c
-index 904c99029ca..990a1a708a0 100644
---- a/server/fd.c
-+++ b/server/fd.c
-@@ -2079,6 +2079,45 @@ struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops, int unix_fd, s
-     return NULL;
- }
- 
-+void set_unix_name_of_fd( struct fd *fd, const struct stat *fd_st )
-+{
-+#ifdef __linux__
-+    static const char procfs_fmt[] = "/proc/self/fd/%d";
-+
-+    char path[PATH_MAX], procfs_path[sizeof(procfs_fmt) - 2 /* %d */ + 11];
-+    struct stat path_st;
-+    ssize_t len;
-+
-+    sprintf( procfs_path, procfs_fmt, fd->unix_fd );
-+    len = readlink( procfs_path, path, sizeof(path) );
-+    if (len == -1 || len >= sizeof(path) )
-+        return;
-+    path[len] = '\0';
-+
-+    /* Make sure it's an absolute path, has at least one hardlink, and the same inode */
-+    if (path[0] != '/' || stat( path, &path_st ) || path_st.st_nlink < 1 ||
-+        path_st.st_dev != fd_st->st_dev || path_st.st_ino != fd_st->st_ino)
-+        return;
-+
-+    if (!(fd->unix_name = mem_alloc( len + 1 )))
-+        return;
-+    memcpy( fd->unix_name, path, len + 1 );
-+
-+#elif defined(F_GETPATH)
-+    char path[PATH_MAX];
-+    size_t size;
-+
-+    if (fcntl( fd->unix_fd, F_GETPATH, path ) == -1 || path[0] != '/')
-+        return;
-+
-+    size = strlen(path) + 1;
-+    if (!(fd->unix_name = mem_alloc( size )))
-+        return;
-+    memcpy( fd->unix_name, path, size );
-+
-+#endif
-+}
-+
- /* retrieve the object that is using an fd */
- void *get_fd_user( struct fd *fd )
- {
-diff --git a/server/file.c b/server/file.c
-index e5e367478ce..e469341c746 100644
---- a/server/file.c
-+++ b/server/file.c
-@@ -147,6 +147,7 @@ struct file *create_file_for_fd( int fd, unsigned int access, unsigned int shari
-         release_object( file );
-         return NULL;
-     }
-+    set_unix_name_of_fd( file->fd, &st );
-     allow_fd_caching( file->fd );
-     return file;
- }
-diff --git a/server/file.h b/server/file.h
-index 0e43a8170df..7d614569a16 100644
---- a/server/file.h
-+++ b/server/file.h
-@@ -22,6 +22,7 @@
- #define __WINE_SERVER_FILE_H
- 
- #include <sys/types.h>
-+#include <sys/stat.h>
- 
- #include "object.h"
- 
-@@ -82,6 +83,7 @@ extern struct fd *open_fd( struct fd *root, const char *name, int flags, mode_t
-                            unsigned int access, unsigned int sharing, unsigned int options );
- extern struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops,
-                                        int unix_fd, struct object *user, unsigned int options );
-+extern void set_unix_name_of_fd( struct fd *fd, const struct stat *fd_st );
- extern struct fd *dup_fd_object( struct fd *orig, unsigned int access, unsigned int sharing,
-                                  unsigned int options );
- extern struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsigned int sharing );
-
+         status = nt_to_unix_file_name_no_root( &fileobj, name_ret, disposition );
+         if (status == STATUS_REPARSE) goto reparse;
+         if (fileobj.FileName.Buffer != attr->ObjectName->Buffer) free( fileobj.FileName.Buffer);
+         return status;
 From 514d3e11c999b11a95ab35df5b4ab454d34fe791 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Wed, 13 May 2020 13:55:55 +0300
@@ -1666,22 +1563,22 @@ index af2094a96f0..9c98209d43d 100644
  BOOL grab_pointer = TRUE;
 -BOOL grab_fullscreen = FALSE;
 +BOOL grab_fullscreen = TRUE;
+ int keyboard_layout = -1;
+ BOOL keyboard_scancode_detect = FALSE;
  BOOL managed_mode = TRUE;
- BOOL decorated_mode = TRUE;
- BOOL private_color_map = FALSE;
-diff --git a/programs/winecfg/x11drvdlg.c b/programs/winecfg/x11drvdlg.c
+diff --git a/programs/winecfg/input.c b/programs/winecfg/input.c
 index fbc6716e94e..1ca8c3ed0fd 100644
---- a/programs/winecfg/x11drvdlg.c
-+++ b/programs/winecfg/x11drvdlg.c
-@@ -123,7 +123,7 @@ static void init_dialog(HWND dialog)
-     SendDlgItemMessageW(dialog, IDC_DESKTOP_WIDTH, EM_LIMITTEXT, RES_MAXLEN, 0);
-     SendDlgItemMessageW(dialog, IDC_DESKTOP_HEIGHT, EM_LIMITTEXT, RES_MAXLEN, 0);
+--- a/programs/winecfg/input.c
++++ b/programs/winecfg/input.c
+@@ -90,7 +90,7 @@ static void init_dialog(HWND dialog)
 
--    buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"N");
-+    buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"Y");
-     if (IS_OPTION_TRUE(*buf))
- 	CheckDlgButton(dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED);
-     else
+     updating_ui = TRUE;
+
+-    buffer = get_reg_key( config_key, keypath( L"X11 Driver" ), L"GrabFullscreen", L"N" );
++    buffer = get_reg_key( config_key, keypath( L"X11 Driver" ), L"GrabFullscreen", L"Y" );
+     if (IS_OPTION_TRUE( *buffer )) CheckDlgButton( dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED );
+     else CheckDlgButton( dialog, IDC_FULLSCREEN_GRAB, BST_UNCHECKED );
+     free( buffer );
 From 2452b57e7fed9ac5036df9bcace5c28366a8eb41 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Fri, 8 Jan 2021 13:47:39 -0600
@@ -1726,6 +1623,7 @@ index a4a10bc8e93..551ef146cd7 100644
 -EXTRADLLFLAGS = -Wb,--prefer-native
 -
  RC_SRCS = version.rc
+
 From 07461415f4399934a3c03c8dd6e146167bd67dfd Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Thu, 25 Mar 2021 17:53:37 +0300
@@ -1780,7 +1678,7 @@ index 4df88d1f386..1506a73573b 100644
      Misc,\
 +    Packages.wow64,\
      Tapi,\
-     VersionInfo,\
+     VersionInfo.ntamd64,\
      LicenseInformation
  
 @@ -247,6 +251,7 @@ CurrentVersion="Software\Microsoft\Windows\CurrentVersion"
@@ -2259,6 +2157,48 @@ index be59bc70f5f..c73cb8d26ef 100644
  LONG WINAPI GetPackagesByPackageFamily(const WCHAR *family_name, UINT32 *count, WCHAR **full_names,
          UINT32 *buffer_length, WCHAR *buffer);
  LONG WINAPI PackageFullNameFromId(const PACKAGE_ID *package_id, UINT32 *length, WCHAR *full_name);
+-- 
+2.30.2
+
+From 995fdfb8cdb0a8eed82e16640034dc9673ded681 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 12 Mar 2021 23:58:39 +0300
+Subject: [PATCH 14/16] esync: Fix restoring the objects state on wait all
+ objects retry.
+
+---
+ dlls/ntdll/unix/esync.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
+index 9a615fb277c..810477d02a0 100644
+--- a/dlls/ntdll/unix/esync.c
++++ b/dlls/ntdll/unix/esync.c
+@@ -1168,10 +1168,22 @@ tryagain:
+                         {
+                             /* We were too slow. Put everything back. */
+                             value = 1;
+-                            for (j = i; j >= 0; j--)
++                            for (j = i - 1; j >= 0; j--)
+                             {
+-                                if (write( obj->fd, &value, sizeof(value) ) == -1)
++                                struct esync *obj = objs[j];
++
++                                if (obj->type == ESYNC_MUTEX)
++                                {
++                                    struct mutex *mutex = obj->shm;
++
++                                    if (mutex->tid == GetCurrentThreadId())
++                                        continue;
++                                }
++                                if (write( fds[j].fd, &value, sizeof(value) ) == -1)
++                                {
++                                    ERR("write failed.\n");
+                                     return errno_to_status( errno );
++                                }
+                             }
+ 
+                             goto tryagain;  /* break out of two loops and a switch */
 -- 
 2.30.2
 
@@ -3153,6 +3093,8 @@ index 020faa26a11..ba7d3e78905 100644
 +
 +    return hr;
 +}
+
+
 From 43c3113aa696898ec5758118b92f8c2a5fb61714 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Fri, 30 Jul 2021 21:01:13 +0300
@@ -3208,7 +3150,6 @@ index 33197563cd8..9bcb377a62e 100644
 +        }
          app_name = name;
      }
-
 
 From a9ec37d83082b1623aea4bc5933f77f4c8a356cf Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
