@@ -398,6 +398,8 @@ function build_mediaconverter {
   fi
 
   if [ "$_build_mediaconv" = "true" ]; then
+    # git 2.40 workaround
+    git config --local index.skipHash false && git add . && git commit -m "index regen"
     if [ -d "$_nowhere"/Proton/media-converter ]; then
       cd "$_nowhere"/Proton/media-converter
 
