@@ -170,7 +170,7 @@ function build_vrclient {
   export CFLAGS="-O2 -g"
   export CXXFLAGS="-Wno-attributes -std=c++0x -O2 -g"
   PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
-  if [[ "$_proton_branch" = *6.* ]] || [[ "$_proton_branch" = *7.* ]]; then
+  if [[ "$_proton_branch" = *6.* ]] || [[ "$_proton_branch" = *7.* ]] || [[ "$_proton_branch" = *8.* ]]; then
     WINEMAKERFLAGS+=" -ldl"
   elif [ "$_standard_dlopen" = "true" ] && [[ "$_proton_branch" != *5.13 ]]; then
     patch -Np1 < "$_nowhere/proton_template/vrclient-remove-library.h-dep.patch" || exit 1
@@ -187,6 +187,9 @@ function build_vrclient {
   rm -rf build/vrclient.win32
   mkdir -p build/vrclient.win64
   mkdir -p build/vrclient.win32
+  if [ ! -e "$_nowhere/proton_dist_tmp/include/wine/unixlib.h" ]; then
+    cp "$_wine_tkg_git_path/src/$_winesrcdir/include/wine/unixlib.h" "$_nowhere/proton_dist_tmp/include/wine/"
+  fi
 
   cp -a "${_nowhere}"/Proton/vrclient_x64/* build/vrclient.win64
   cp -a "${_nowhere}"/Proton/vrclient_x64/* build/vrclient.win32 && mv build/vrclient.win32/vrclient_x64 build/vrclient.win32/vrclient && mv build/vrclient.win32/vrclient/vrclient_x64.spec build/vrclient.win32/vrclient/vrclient.spec
