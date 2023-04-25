@@ -490,7 +490,7 @@ function build_steamhelper {
     if [ "$_NOLIB32" != "true" ]; then
       # 32-bit
       if [ -e "$_nowhere"/Proton/steam_helper/32/libsteam_api.so ]; then
-        make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win32" LIBRARIES="-L$_nowhere/Proton/steam_helper/32/ -lsteam_api -lole32 -lmsi -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so || exit 1
+        make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win32" LIBRARIES="-L$_nowhere/Proton/steam_helper/32/ -lsteam_api -lole32 -lshlwapi -lmsi -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so || exit 1
       else
         make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win32" LIBRARIES="-lsteam_api -lole32 -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so || exit 1
       fi
@@ -505,7 +505,7 @@ function build_steamhelper {
     if [ -e "$_nowhere"/Proton/steam_helper/64/libsteam_api.so ]; then
       cd "$_nowhere"/Proton/build/steam.win64
       winemaker $WINEMAKERFLAGS --guiexe -lsteam_api -lole32 -I"$_nowhere/Proton/lsteamclient/steamworks_sdk_142/" -I"$_nowhere/openvr/headers/" -L"$_nowhere/Proton/steam_helper" .
-      make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win64" LIBRARIES="-L$_nowhere/Proton/steam_helper/64/ -lsteam_api -lmsi -lole32 -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so
+      make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/Proton/build/steam.win64" LIBRARIES="-L$_nowhere/Proton/steam_helper/64/ -lsteam_api -lshlwapi -lmsi -lole32 -ldl -static-libgcc -static-libstdc++" -j$(nproc) && strip --strip-debug steam.exe.so
 
 
       touch "$_nowhere/Proton/build/steam.win64/steam.spec"
