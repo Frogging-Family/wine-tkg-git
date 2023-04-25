@@ -11,6 +11,11 @@ _exports_32() {
   # build wine 32-bit
   if [ -d '/usr/lib32/pkgconfig' ]; then # Typical Arch path
     export PKG_CONFIG_PATH='/usr/lib32/pkgconfig'
+    # glib/gstreamer detection workaround for proton 8.0 trees
+    if [[ "$_plain_version" = *_8.0 ]]; then
+      CFLAGS+=" -I/usr/lib32/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib32/gstreamer-1.0/include"
+      CROSSCFLAGS+=" -I/usr/lib32/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib32/gstreamer-1.0/include"
+    fi
   elif [ -d '/usr/lib/i386-linux-gnu/pkgconfig' ]; then # Ubuntu 18.04/19.04 path
     export PKG_CONFIG_PATH='/usr/lib/i386-linux-gnu/pkgconfig'
   else
