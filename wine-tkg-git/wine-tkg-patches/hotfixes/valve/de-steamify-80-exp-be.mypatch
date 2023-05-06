@@ -1,0 +1,896 @@
+From 376d942ddb8a213528eddd45f9452e6ff2598cd6 Mon Sep 17 00:00:00 2001
+From: kotarac <stipe@kotarac.net>
+Date: Fri, 28 Apr 2023 23:26:04 +0200
+Subject: [PATCH] de-steamify
+
+---
+ dlls/advapi32/advapi.c        |  34 ++++----
+ dlls/dbghelp/dwarf.c          |   5 --
+ dlls/dinput/dinput_main.c     |   7 --
+ dlls/dinput/dinput_private.h  |   2 -
+ dlls/dinput/joystick_hid.c    |  20 -----
+ dlls/hidclass.sys/device.c    |   7 +-
+ dlls/hidclass.sys/hid.h       |   6 --
+ dlls/hidclass.sys/pnp.c       |  12 ---
+ dlls/kernelbase/process.c     |  15 ----
+ dlls/ntdll/loader.c           |   2 +-
+ dlls/ntdll/unix/loader.c      |  59 +-------------
+ dlls/secur32/secur32.c        |  15 +---
+ dlls/winebus.sys/bus_sdl.c    |   6 +-
+ dlls/winex11.drv/window.c     |  15 +---
+ dlls/xinput1_3/main.c         | 146 +++++++++++++---------------------
+ loader/wine.inf.in            |   1 -
+ programs/winedbg/debugger.h   |   1 -
+ programs/winedbg/tgt_active.c |  45 -----------
+ programs/winedbg/winedbg.c    |   9 +--
+ server/main.c                 |   2 +-
+ 20 files changed, 88 insertions(+), 321 deletions(-)
+
+diff --git a/dlls/advapi32/advapi.c b/dlls/advapi32/advapi.c
+index a22e896c88a..6b3ffe2ea25 100644
+--- a/dlls/advapi32/advapi.c
++++ b/dlls/advapi32/advapi.c
+@@ -44,15 +44,14 @@ WINE_DEFAULT_DEBUG_CHANNEL(advapi);
+  */
+ BOOL WINAPI GetUserNameA( LPSTR name, LPDWORD size )
+ {
+-    static const char steamuserA[] = {'s','t','e','a','m','u','s','e','r',0};
+-    if(*size < ARRAY_SIZE(steamuserA)){
+-        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+-        *size = ARRAY_SIZE(steamuserA);
+-        return FALSE;
+-    }
+-    memcpy(name, steamuserA, sizeof(steamuserA));
+-    *size = ARRAY_SIZE(steamuserA);
+-    return TRUE;
++    DWORD len = GetEnvironmentVariableA( "WINEUSERNAME", name, *size );
++    BOOL ret;
++
++    if (!len) return FALSE;
++    if ((ret = (len < *size))) len++;
++    else SetLastError( ERROR_INSUFFICIENT_BUFFER );
++    *size = len;
++    return ret;
+ }
+ 
+ /******************************************************************************
+@@ -60,15 +59,14 @@ BOOL WINAPI GetUserNameA( LPSTR name, LPDWORD size )
+  */
+ BOOL WINAPI GetUserNameW( LPWSTR name, LPDWORD size )
+ {
+-    static const WCHAR steamuserW[] = {'s','t','e','a','m','u','s','e','r',0};
+-    if(*size < ARRAY_SIZE(steamuserW)){
+-        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+-        *size = ARRAY_SIZE(steamuserW);
+-        return FALSE;
+-    }
+-    memcpy(name, steamuserW, sizeof(steamuserW));
+-    *size = ARRAY_SIZE(steamuserW);
+-    return TRUE;
++    DWORD len = GetEnvironmentVariableW( L"WINEUSERNAME", name, *size );
++    BOOL ret;
++
++    if (!len) return FALSE;
++    if ((ret = (len < *size))) len++;
++    else SetLastError( ERROR_INSUFFICIENT_BUFFER );
++    *size = len;
++    return ret;
+ }
+ 
+ /******************************************************************************
+diff --git a/dlls/dbghelp/dwarf.c b/dlls/dbghelp/dwarf.c
+index a2d57173587..9ed63463513 100644
+--- a/dlls/dbghelp/dwarf.c
++++ b/dlls/dbghelp/dwarf.c
+@@ -4200,11 +4200,6 @@ BOOL dwarf2_parse(struct module* module, ULONG_PTR load_offset,
+     struct module_format* dwarf2_modfmt;
+     dwarf2_parse_module_context_t module_ctx;
+ 
+-/* Our DWARF parser has been known to crash winedbg in some cases. Since
+- * probably no concerned parties are going to be using plain winedbg, just don't
+- * bother parsing anything. */
+-return FALSE;
+-
+     if (!dwarf2_init_section(&eh_frame,                fmap, ".eh_frame",     NULL,             &eh_frame_sect))
+         /* lld produces .eh_fram to avoid generating a long name */
+         dwarf2_init_section(&eh_frame,                fmap, ".eh_fram",      NULL,             &eh_frame_sect);
+diff --git a/dlls/dinput/dinput_main.c b/dlls/dinput/dinput_main.c
+index 33f98eda120..0d502821966 100644
+--- a/dlls/dinput/dinput_main.c
++++ b/dlls/dinput/dinput_main.c
+@@ -480,9 +480,6 @@ void check_dinput_events(void)
+     MsgWaitForMultipleObjectsEx(0, NULL, 0, QS_ALLINPUT, 0);
+ }
+ 
+-HANDLE steam_overlay_event;
+-HANDLE steam_keyboard_event;
+-
+ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, void *reserved )
+ {
+     TRACE( "inst %p, reason %lu, reserved %p.\n", inst, reason, reserved );
+@@ -491,16 +488,12 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, void *reserved )
+     {
+       case DLL_PROCESS_ATTACH:
+         DisableThreadLibraryCalls(inst);
+-        steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
+-        steam_keyboard_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_KeyboardActivated");
+         DINPUT_instance = inst;
+         register_di_em_win_class();
+         break;
+       case DLL_PROCESS_DETACH:
+         if (reserved) break;
+         unregister_di_em_win_class();
+-        CloseHandle(steam_overlay_event);
+-        CloseHandle(steam_keyboard_event);
+         break;
+     }
+     return TRUE;
+diff --git a/dlls/dinput/dinput_private.h b/dlls/dinput/dinput_private.h
+index b12936e750f..944d12b860f 100644
+--- a/dlls/dinput/dinput_private.h
++++ b/dlls/dinput/dinput_private.h
+@@ -46,8 +46,6 @@ struct dinput
+ 
+ extern const IDirectInput7AVtbl dinput7_a_vtbl DECLSPEC_HIDDEN;
+ extern const IDirectInput8AVtbl dinput8_a_vtbl DECLSPEC_HIDDEN;
+-extern HANDLE steam_overlay_event DECLSPEC_HIDDEN;
+-extern HANDLE steam_keyboard_event DECLSPEC_HIDDEN;
+ 
+ extern void dinput_internal_addref( struct dinput *dinput );
+ extern void dinput_internal_release( struct dinput *dinput );
+diff --git a/dlls/dinput/joystick_hid.c b/dlls/dinput/joystick_hid.c
+index e4fe64c0e81..5fbe3d1dff8 100644
+--- a/dlls/dinput/joystick_hid.c
++++ b/dlls/dinput/joystick_hid.c
+@@ -1142,7 +1142,6 @@ struct parse_device_state_params
+ {
+     BYTE old_state[DEVICE_STATE_MAX_SIZE];
+     BYTE buttons[128];
+-    BOOL reset_state;
+     DWORD time;
+     DWORD seq;
+ };
+@@ -1158,9 +1157,6 @@ static BOOL check_device_state_button( struct hid_joystick *impl, struct hid_val
+ 
+     value = params->buttons[instance->wUsage - 1];
+     old_value = params->old_state[instance->dwOfs];
+-
+-    if (params->reset_state) value = 0;
+-
+     impl->base.device_state[instance->dwOfs] = value;
+     if (old_value != value)
+         queue_event( iface, instance->dwType, value, params->time, params->seq );
+@@ -1243,16 +1239,6 @@ static BOOL read_device_state_value( struct hid_joystick *impl, struct hid_value
+     if (instance->dwType & DIDFT_AXIS) value = scale_axis_value( logical_value, properties );
+     else value = scale_value( logical_value, properties );
+ 
+-    if (params->reset_state)
+-    {
+-        if (instance->dwType & DIDFT_POV) value = -1;
+-        else if (instance->dwType & DIDFT_AXIS)
+-        {
+-            if (!properties->range_min) value = properties->range_max / 2;
+-            else value = round( (properties->range_min + properties->range_max) / 2.0 );
+-        }
+-    }
+-
+     old_value = *(LONG *)(params->old_state + instance->dwOfs);
+     *(LONG *)(impl->base.device_state + instance->dwOfs) = value;
+     if (old_value != value)
+@@ -1283,12 +1269,6 @@ static HRESULT hid_joystick_read( IDirectInputDevice8W *iface )
+ 
+     ret = GetOverlappedResult( impl->device, &impl->read_ovl, &count, FALSE );
+ 
+-    if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0 || /* steam overlay is enabled */
+-        WaitForSingleObject(steam_keyboard_event, 0) == WAIT_OBJECT_0) /* steam keyboard is enabled */
+-        params.reset_state = TRUE;
+-    else
+-        params.reset_state = FALSE;
+-
+     EnterCriticalSection( &impl->base.crit );
+     while (ret)
+     {
+diff --git a/dlls/hidclass.sys/device.c b/dlls/hidclass.sys/device.c
+index 2092054d8ca..ac201afeddf 100644
+--- a/dlls/hidclass.sys/device.c
++++ b/dlls/hidclass.sys/device.c
+@@ -223,7 +223,6 @@ static void hid_device_queue_input( DEVICE_OBJECT *device, HID_XFER_PACKET *pack
+     const BOOL polled = ext->u.pdo.information.Polled;
+     ULONG size, report_len = polled ? packet->reportBufferLen : desc->InputLength;
+     struct hid_report *last_report, *report;
+-    BOOL steam_overlay_open = FALSE;
+     struct hid_queue *queue;
+     LIST_ENTRY completed, *entry;
+     RAWINPUT *rawinput;
+@@ -232,11 +231,7 @@ static void hid_device_queue_input( DEVICE_OBJECT *device, HID_XFER_PACKET *pack
+ 
+     TRACE("device %p, packet %p\n", device, packet);
+ 
+-    if (WaitForSingleObject(ext->steam_overlay_event, 0) == WAIT_OBJECT_0 || /* steam overlay is open */
+-        WaitForSingleObject(ext->steam_keyboard_event, 0) == WAIT_OBJECT_0) /* steam keyboard is open */
+-        steam_overlay_open = TRUE;
+-
+-    if (IsEqualGUID( ext->class_guid, &GUID_DEVINTERFACE_HID ) && !steam_overlay_open)
++    if (IsEqualGUID( ext->class_guid, &GUID_DEVINTERFACE_HID ))
+     {
+         size = offsetof( RAWINPUT, data.hid.bRawData[report_len] );
+         if (!(rawinput = malloc( size ))) ERR( "Failed to allocate rawinput data!\n" );
+diff --git a/dlls/hidclass.sys/hid.h b/dlls/hidclass.sys/hid.h
+index c14f8d7a942..b8cec55fb7c 100644
+--- a/dlls/hidclass.sys/hid.h
++++ b/dlls/hidclass.sys/hid.h
+@@ -84,9 +84,6 @@ typedef struct _BASE_DEVICE_EXTENSION
+     WCHAR container_id[MAX_GUID_STRING_LEN];
+     const GUID *class_guid;
+ 
+-    HANDLE steam_overlay_event;
+-    HANDLE steam_keyboard_event;
+-
+     BOOL is_fdo;
+ } BASE_DEVICE_EXTENSION;
+ 
+@@ -118,9 +115,6 @@ typedef struct _minidriver
+ 
+     PDRIVER_ADD_DEVICE AddDevice;
+     PDRIVER_DISPATCH PNPDispatch;
+-
+-    HANDLE steam_overlay_event;
+-    HANDLE steam_keyboard_event;
+ } minidriver;
+ 
+ void call_minidriver( ULONG code, DEVICE_OBJECT *device, void *in_buff, ULONG in_size,
+diff --git a/dlls/hidclass.sys/pnp.c b/dlls/hidclass.sys/pnp.c
+index ca367ec3a7c..c0e2a874788 100644
+--- a/dlls/hidclass.sys/pnp.c
++++ b/dlls/hidclass.sys/pnp.c
+@@ -178,9 +178,6 @@ static NTSTATUS WINAPI driver_add_device(DRIVER_OBJECT *driver, DEVICE_OBJECT *b
+     if (get_device_id(bus_pdo, BusQueryContainerID, ext->container_id))
+         ext->container_id[0] = 0;
+ 
+-    ext->steam_overlay_event = minidriver->steam_overlay_event;
+-    ext->steam_keyboard_event = minidriver->steam_keyboard_event;
+-
+     is_xinput_class = !wcsncmp(device_id, L"WINEXINPUT\\", 7) && wcsstr(device_id, L"&XI_") != NULL;
+     if (is_xinput_class) ext->class_guid = &GUID_DEVINTERFACE_WINEXINPUT;
+     else ext->class_guid = &GUID_DEVINTERFACE_HID;
+@@ -245,9 +242,6 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
+     pdo_ext->u.pdo.information.VersionNumber = attr.VersionNumber;
+     pdo_ext->u.pdo.information.Polled = minidriver->minidriver.DevicesArePolled;
+ 
+-    pdo_ext->steam_overlay_event = minidriver->steam_overlay_event;
+-    pdo_ext->steam_keyboard_event = minidriver->steam_keyboard_event;
+-
+     call_minidriver( IOCTL_HID_GET_DEVICE_DESCRIPTOR, fdo, NULL, 0, &descriptor, sizeof(descriptor), &io );
+     if (io.Status != STATUS_SUCCESS)
+     {
+@@ -597,9 +591,6 @@ static void WINAPI driver_unload(DRIVER_OBJECT *driver)
+         if (md->DriverUnload)
+             md->DriverUnload(md->minidriver.DriverObject);
+         list_remove(&md->entry);
+-
+-        CloseHandle(md->steam_overlay_event);
+-        CloseHandle(md->steam_keyboard_event);
+         free(md);
+     }
+ }
+@@ -615,9 +606,6 @@ NTSTATUS WINAPI HidRegisterMinidriver(HID_MINIDRIVER_REGISTRATION *registration)
+     if (!(driver = calloc(1, sizeof(*driver))))
+         return STATUS_NO_MEMORY;
+ 
+-    driver->steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
+-    driver->steam_keyboard_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_KeyboardActivated");
+-
+     driver->DriverUnload = registration->DriverObject->DriverUnload;
+     registration->DriverObject->DriverUnload = driver_unload;
+ 
+diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
+index 54f9435bc16..ac30af8156e 100644
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -1223,21 +1223,6 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenProcess( DWORD access, BOOL inherit, DWORD i
+     attr.SecurityDescriptor = NULL;
+     attr.SecurityQualityOfService = NULL;
+ 
+-    /* PROTON HACK:
+-     * On Windows, the Steam client puts its process ID into the registry
+-     * at:
+-     *
+-     *   [HKCU\Software\Valve\Steam\ActiveProcess]
+-     *   PID=dword:00000008
+-     *
+-     * Games get that pid from the registry and then query it with
+-     * OpenProcess to ensure Steam is running. Since we aren't running the
+-     * Windows Steam in Wine, instead we hack this magic number into the
+-     * registry and then substitute the game's process itself in its place
+-     * so it can query a valid process.
+-     */
+-    if (id == 0xfffe) id = GetCurrentProcessId();
+-
+     cid.UniqueProcess = ULongToHandle(id);
+     cid.UniqueThread  = 0;
+ 
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 9bd07a9bec7..a827e4e47c1 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -86,7 +86,7 @@ const WCHAR windows_dir[] = L"C:\\windows";
+ const WCHAR system_dir[] = L"C:\\windows\\system32\\";
+ 
+ /* system search path */
+-static const WCHAR system_path[] = L"C:\\windows\\system32;C:\\windows\\system;C:\\windows;C:\\Program Files (x86)\\Steam";
++static const WCHAR system_path[] = L"C:\\windows\\system32;C:\\windows\\system;C:\\windows";
+ 
+ static BOOL is_prefix_bootstrap;  /* are we bootstrapping the prefix? */
+ static BOOL imports_fixup_done = FALSE;  /* set once the imports have been fixed up, before attaching them */
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 9c5aa5122a3..1a1b656c325 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -773,42 +773,11 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_i
+     WORD machine = pe_info->machine;
+     ULONGLONG res_start = pe_info->base;
+     ULONGLONG res_end = pe_info->base + pe_info->map_size;
+-    const char *ld_preload = getenv( "LD_PRELOAD" );
+     char preloader_reserve[64], socket_env[64];
+ 
+     if (pe_info->image_flags & IMAGE_FLAGS_WineFakeDll) res_start = res_end = 0;
+     if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady) machine = native_machine;
+ 
+-    /* HACK: Unset LD_PRELOAD before executing explorer.exe to disable buggy gameoverlayrenderer.so */
+-    if (ld_preload && argv[2] && !strcmp( argv[2], "C:\\windows\\system32\\explorer.exe" ) &&
+-        argv[3] && !strcmp( argv[3], "/desktop" ))
+-    {
+-        static char const gorso[] = "gameoverlayrenderer.so";
+-        static int gorso_len = sizeof(gorso) - 1;
+-        int len = strlen( ld_preload );
+-        char *next, *tmp, *env = malloc( sizeof("LD_PRELOAD=") + len );
+-
+-        if (!env) return STATUS_NO_MEMORY;
+-        strcpy( env, "LD_PRELOAD=" );
+-        strcat( env, ld_preload );
+-
+-        tmp = env + 11;
+-        do
+-        {
+-            if (!(next = strchr( tmp, ':' ))) next = tmp + strlen( tmp );
+-            if (next - tmp >= gorso_len && strncmp( next - gorso_len, gorso, gorso_len ) == 0)
+-            {
+-                if (*next) memmove( tmp, next + 1, strlen(next) );
+-                else *tmp = 0;
+-                next = tmp;
+-            }
+-            else tmp = next + 1;
+-        }
+-        while (*next);
+-
+-        putenv( env );
+-    }
+-
+     signal( SIGPIPE, SIG_DFL );
+ 
+     sprintf( socket_env, "WINESERVERSOCKET=%u", socketfd );
+@@ -2140,22 +2109,8 @@ void *steamclient_handle_fault( LPCVOID addr, DWORD err )
+     return NULL;
+ }
+ 
+-static void steamclient_write_jump(void *src_addr, void *tgt_addr)
+-{
+-#ifdef _WIN64
+-    static const char mov[] = {0x48, 0xb8};
+-#else
+-    static const char mov[] = {0xb8};
+-#endif
+-    static const char jmp[] = {0xff, 0xe0};
+-    memcpy(src_addr, mov, sizeof(mov));
+-    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
+-    memcpy((char *)src_addr + sizeof(mov) + sizeof(tgt_addr), jmp, sizeof(jmp));
+-}
+-
+ static NTSTATUS steamclient_setup_trampolines( void *args )
+ {
+-    static int noexec_cached = -1;
+     struct steamclient_setup_trampolines_params *params = args;
+     HMODULE src_mod = params->src_mod, tgt_mod = params->tgt_mod;
+     SYSTEM_BASIC_INFORMATION info;
+@@ -2166,13 +2121,10 @@ static NTSTATUS steamclient_setup_trampolines( void *args )
+     const DWORD *names;
+     SIZE_T size;
+     void *addr, *src_addr, *tgt_addr;
+-    char *name, *wsne;
++    char *name;
+     UINT_PTR page_mask;
+     int i;
+ 
+-    if (noexec_cached == -1)
+-        noexec_cached = (wsne = getenv("WINESTEAMNOEXEC")) && atoi(wsne);
+-
+     virtual_get_system_info( &info, !!NtCurrentTeb()->WowTebOffset );
+     page_mask = info.PageSize - 1;
+ 
+@@ -2181,8 +2133,7 @@ static NTSTATUS steamclient_setup_trampolines( void *args )
+         if (memcmp(src_sec[i].Name, ".text", 5)) continue;
+         addr = (void *)(((UINT_PTR)src_mod + src_sec[i].VirtualAddress) & ~page_mask);
+         size = (src_sec[i].Misc.VirtualSize + page_mask) & ~page_mask;
+-        if (noexec_cached) mprotect(addr, size, PROT_READ);
+-        else mprotect(addr, size, PROT_READ|PROT_WRITE|PROT_EXEC);
++        mprotect(addr, size, PROT_READ);
+     }
+ 
+     src_exp = get_module_data_dir( src_mod, IMAGE_FILE_EXPORT_DIRECTORY, NULL );
+@@ -2196,8 +2147,7 @@ static NTSTATUS steamclient_setup_trampolines( void *args )
+         assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
+         steamclient_srcs[steamclient_count] = src_addr;
+         steamclient_tgts[steamclient_count] = tgt_addr;
+-        if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
+-        else steamclient_count++;
++        steamclient_count++;
+     }
+ 
+     src_addr = (void *)((UINT_PTR)src_mod + src_nt->OptionalHeader.AddressOfEntryPoint);
+@@ -2205,8 +2155,7 @@ static NTSTATUS steamclient_setup_trampolines( void *args )
+     assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
+     steamclient_srcs[steamclient_count] = src_addr;
+     steamclient_tgts[steamclient_count] = tgt_addr;
+-    if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
+-    else steamclient_count++;
++    steamclient_count++;
+ 
+     return STATUS_SUCCESS;
+ }
+diff --git a/dlls/secur32/secur32.c b/dlls/secur32/secur32.c
+index bf94b1a594e..d703757bae7 100644
+--- a/dlls/secur32/secur32.c
++++ b/dlls/secur32/secur32.c
+@@ -1135,22 +1135,9 @@ BOOLEAN WINAPI GetUserNameExW(
+             return FALSE;
+         }
+ 
+-    case NameDisplay:
+-        {
+-            static const WCHAR wineusernameW[] = {'W','I','N','E','U','S','E','R','N','A','M','E',0};
+-
+-            DWORD needed = GetEnvironmentVariableW(wineusernameW, NULL, 0);
+-            if (*nSize < needed) {
+-                *nSize = needed;
+-                SetLastError(ERROR_MORE_DATA);
+-                return FALSE;
+-            }
+-            *nSize = GetEnvironmentVariableW(wineusernameW, lpNameBuffer, *nSize);
+-            return TRUE;
+-        }
+-
+     case NameUnknown:
+     case NameFullyQualifiedDN:
++    case NameDisplay:
+     case NameUniqueId:
+     case NameCanonical:
+     case NameUserPrincipal:
+diff --git a/dlls/winebus.sys/bus_sdl.c b/dlls/winebus.sys/bus_sdl.c
+index f4414ae1f50..4ed55ce9c01 100644
+--- a/dlls/winebus.sys/bus_sdl.c
++++ b/dlls/winebus.sys/bus_sdl.c
+@@ -965,7 +965,7 @@ static void sdl_add_device(unsigned int index)
+     SDL_JoystickID id;
+     SDL_JoystickType joystick_type;
+     SDL_GameController *controller = NULL;
+-    const char *product, *sdl_serial, *str;
++    const char *product, *sdl_serial;
+     char guid_str[33], buffer[ARRAY_SIZE(desc.product)];
+     int axis_count, axis_offset;
+ 
+@@ -1021,10 +1021,6 @@ static void sdl_add_device(unsigned int index)
+         desc.pid = 0x028e;
+     }
+ 
+-    /* CW-Bug-Id: #20528 Check steam virtual controller indexes to keep them ordered */
+-    if ((str = pSDL_JoystickName(joystick)) && sscanf(str, "Microsoft X-Box 360 pad %u", &desc.input) == 1) desc.input++;
+-    else desc.input = -1;
+-
+     if (pSDL_JoystickGetSerial && (sdl_serial = pSDL_JoystickGetSerial(joystick)))
+     {
+         ntdll_umbstowcs(sdl_serial, strlen(sdl_serial) + 1, desc.serialnumber, ARRAY_SIZE(desc.serialnumber));
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index 30af723210a..f342a233f1c 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -1054,19 +1054,8 @@ static void set_initial_wm_hints( Display *display, Window window )
+     /* class hints */
+     if ((class_hints = XAllocClassHint()))
+     {
+-        static char steam_proton[] = "steam_proton";
+-        const char *app_id = getenv("SteamAppId");
+-        char proton_app_class[128];
+-
+-        if(app_id && *app_id){
+-            snprintf(proton_app_class, sizeof(proton_app_class), "steam_app_%s", app_id);
+-            class_hints->res_name = proton_app_class;
+-            class_hints->res_class = proton_app_class;
+-        }else{
+-            class_hints->res_name = steam_proton;
+-            class_hints->res_class = steam_proton;
+-        }
+-
++        class_hints->res_name = process_name;
++        class_hints->res_class = process_name;
+         XSetClassHint( display, window, class_hints );
+         XFree( class_hints );
+     }
+diff --git a/dlls/xinput1_3/main.c b/dlls/xinput1_3/main.c
+index 192d75413fa..2abf33a8d45 100644
+--- a/dlls/xinput1_3/main.c
++++ b/dlls/xinput1_3/main.c
+@@ -124,8 +124,19 @@ static HANDLE start_event;
+ static HANDLE stop_event;
+ static HANDLE done_event;
+ static HANDLE update_event;
+-static HANDLE steam_overlay_event;
+-static HANDLE steam_keyboard_event;
++
++static BOOL find_opened_device(const WCHAR *device_path, int *free_slot)
++{
++    int i;
++
++    *free_slot = XUSER_MAX_COUNT;
++    for (i = XUSER_MAX_COUNT; i > 0; i--)
++    {
++        if (!controllers[i - 1].device) *free_slot = i - 1;
++        else if (!wcsicmp(device_path, controllers[i - 1].device_path)) return TRUE;
++    }
++    return FALSE;
++}
+ 
+ static void check_value_caps(struct xinput_controller *controller, USHORT usage, HIDP_VALUE_CAPS *caps)
+ {
+@@ -328,40 +339,7 @@ static DWORD HID_set_state(struct xinput_controller *controller, XINPUT_VIBRATIO
+     return ERROR_SUCCESS;
+ }
+ 
+-static void controller_disable(struct xinput_controller *controller)
+-{
+-    XINPUT_VIBRATION state = {0};
+-
+-    if (!controller->enabled) return;
+-    if (controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED) HID_set_state(controller, &state);
+-    controller->enabled = FALSE;
+-
+-    CancelIoEx(controller->device, &controller->hid.read_ovl);
+-    WaitForSingleObject(controller->hid.read_ovl.hEvent, INFINITE);
+-    SetEvent(update_event);
+-}
+-
+-static void controller_destroy(struct xinput_controller *controller, BOOL already_removed)
+-{
+-    EnterCriticalSection(&controller->crit);
+-
+-    if (controller->device)
+-    {
+-        TRACE("removing device %s from index %Iu\n", debugstr_w(controller->device_path), controller - controllers);
+-
+-        if (!already_removed) controller_disable(controller);
+-        CloseHandle(controller->device);
+-        controller->device = NULL;
+-
+-        free(controller->hid.input_report_buf);
+-        free(controller->hid.output_report_buf);
+-        free(controller->hid.feature_report_buf);
+-        HidD_FreePreparsedData(controller->hid.preparsed);
+-        memset(&controller->hid, 0, sizeof(controller->hid));
+-    }
+-
+-    LeaveCriticalSection(&controller->crit);
+-}
++static void controller_destroy(struct xinput_controller *controller, BOOL already_removed);
+ 
+ static void controller_enable(struct xinput_controller *controller)
+ {
+@@ -381,6 +359,19 @@ static void controller_enable(struct xinput_controller *controller)
+     else SetEvent(update_event);
+ }
+ 
++static void controller_disable(struct xinput_controller *controller)
++{
++    XINPUT_VIBRATION state = {0};
++
++    if (!controller->enabled) return;
++    if (controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED) HID_set_state(controller, &state);
++    controller->enabled = FALSE;
++
++    CancelIoEx(controller->device, &controller->hid.read_ovl);
++    WaitForSingleObject(controller->hid.read_ovl.hEvent, INFINITE);
++    SetEvent(update_event);
++}
++
+ static BOOL controller_init(struct xinput_controller *controller, PHIDP_PREPARSED_DATA preparsed,
+                             HIDP_CAPS *caps, HANDLE device, const WCHAR *device_path)
+ {
+@@ -464,17 +455,21 @@ static BOOL device_is_overridden(HANDLE device)
+     return disable;
+ }
+ 
+-static void open_device_at_index(const WCHAR *device_path, int index)
++static BOOL try_add_device(const WCHAR *device_path)
+ {
+     SP_DEVICE_INTERFACE_DATA iface = {sizeof(iface)};
+     PHIDP_PREPARSED_DATA preparsed;
+     HIDP_CAPS caps;
+     NTSTATUS status;
+     HANDLE device;
++    int i;
++
++    if (find_opened_device(device_path, &i)) return TRUE; /* already opened */
++    if (i == XUSER_MAX_COUNT) return FALSE; /* no more slots */
+ 
+     device = CreateFileW(device_path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                          NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING, NULL);
+-    if (device == INVALID_HANDLE_VALUE) return;
++    if (device == INVALID_HANDLE_VALUE) return TRUE;
+ 
+     preparsed = NULL;
+     if (!HidD_GetPreparsedData(device, &preparsed))
+@@ -488,50 +483,13 @@ static void open_device_at_index(const WCHAR *device_path, int index)
+         WARN("ignoring HID device, unsupported usage %04x:%04x\n", caps.UsagePage, caps.Usage);
+     else if (device_is_overridden(device))
+         WARN("ignoring HID device, overridden for dinput\n");
+-    else if (!controller_init(&controllers[index], preparsed, &caps, device, device_path))
++    else if (!controller_init(&controllers[i], preparsed, &caps, device, device_path))
+         WARN("ignoring HID device, failed to initialize\n");
+     else
+-    {
+-        TRACE("opened device %s at index %u\n", debugstr_w(device_path), index);
+-        return;
+-    }
++        return TRUE;
+ 
+     CloseHandle(device);
+     HidD_FreePreparsedData(preparsed);
+-}
+-
+-static BOOL find_opened_device(const WCHAR *device_path, int *free_slot)
+-{
+-    int i;
+-
+-    *free_slot = XUSER_MAX_COUNT;
+-    for (i = XUSER_MAX_COUNT; i > 0; i--)
+-    {
+-        if (!controllers[i - 1].device) *free_slot = i - 1;
+-        else if (!wcsicmp(device_path, controllers[i - 1].device_path)) return TRUE;
+-    }
+-
+-    /* CW-Bug-Id: #20528 Keep steam virtual controller ordered, swap existing controllers out of the slot */
+-    if ((swscanf(device_path, L"\\\\?\\hid#vid_045e&pid_028e&xi_%02x#", &i) == 1 ||
+-         swscanf(device_path, L"\\\\?\\HID#VID_045E&PID_028E&XI_%02X#", &i) == 1) &&
+-        i > 0 && i <= XUSER_MAX_COUNT && *free_slot != i - 1)
+-    {
+-        controller_destroy(&controllers[i - 1], TRUE);
+-        if (*free_slot != XUSER_MAX_COUNT) open_device_at_index(controllers[i - 1].device_path, *free_slot);
+-        *free_slot = i - 1;
+-    }
+-
+-    return FALSE;
+-}
+-
+-static BOOL try_add_device(const WCHAR *device_path)
+-{
+-    SP_DEVICE_INTERFACE_DATA iface = {sizeof(iface)};
+-    int i;
+-
+-    if (find_opened_device(device_path, &i)) return TRUE; /* already opened */
+-    if (i == XUSER_MAX_COUNT) return FALSE; /* no more slots */
+-    open_device_at_index(device_path, i);
+     return TRUE;
+ }
+ 
+@@ -569,6 +527,26 @@ static void update_controller_list(void)
+     SetupDiDestroyDeviceInfoList(set);
+ }
+ 
++static void controller_destroy(struct xinput_controller *controller, BOOL already_removed)
++{
++    EnterCriticalSection(&controller->crit);
++
++    if (controller->device)
++    {
++        if (!already_removed) controller_disable(controller);
++        CloseHandle(controller->device);
++        controller->device = NULL;
++
++        free(controller->hid.input_report_buf);
++        free(controller->hid.output_report_buf);
++        free(controller->hid.feature_report_buf);
++        HidD_FreePreparsedData(controller->hid.preparsed);
++        memset(&controller->hid, 0, sizeof(controller->hid));
++    }
++
++    LeaveCriticalSection(&controller->crit);
++}
++
+ static void stop_update_thread(void)
+ {
+     int i;
+@@ -580,8 +558,6 @@ static void stop_update_thread(void)
+     CloseHandle(stop_event);
+     CloseHandle(done_event);
+     CloseHandle(update_event);
+-    CloseHandle(steam_overlay_event);
+-    CloseHandle(steam_keyboard_event);
+ 
+     for (i = 0; i < XUSER_MAX_COUNT; i++) controller_destroy(&controllers[i], FALSE);
+ }
+@@ -779,9 +755,6 @@ static BOOL WINAPI start_update_thread_once( INIT_ONCE *once, void *param, void
+ {
+     HANDLE thread;
+ 
+-    steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
+-    steam_keyboard_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_KeyboardActivated");
+-
+     start_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+     if (!start_event) ERR("failed to create start event, error %lu\n", GetLastError());
+ 
+@@ -878,9 +851,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputSetState(DWORD index, XINPUT_VIBRATION *vib
+     if (index >= XUSER_MAX_COUNT) return ERROR_BAD_ARGUMENTS;
+     if (!controller_lock(&controllers[index])) return ERROR_DEVICE_NOT_CONNECTED;
+ 
+-    if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0) ret = ERROR_SUCCESS;
+-    else if (WaitForSingleObject(steam_keyboard_event, 0) == WAIT_OBJECT_0) ret = ERROR_SUCCESS;
+-    else ret = HID_set_state(&controllers[index], vibration);
++    ret = HID_set_state(&controllers[index], vibration);
+ 
+     controller_unlock(&controllers[index]);
+ 
+@@ -898,10 +869,7 @@ static DWORD xinput_get_state(DWORD index, XINPUT_STATE *state)
+     if (index >= XUSER_MAX_COUNT) return ERROR_BAD_ARGUMENTS;
+     if (!controller_lock(&controllers[index])) return ERROR_DEVICE_NOT_CONNECTED;
+ 
+-    if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0) memset(state, 0, sizeof(*state));
+-    else if (WaitForSingleObject(steam_keyboard_event, 0) == WAIT_OBJECT_0) memset(state, 0, sizeof(*state));
+-    else *state = controllers[index].state;
+-
++    *state = controllers[index].state;
+     controller_unlock(&controllers[index]);
+ 
+     return ERROR_SUCCESS;
+diff --git a/loader/wine.inf.in b/loader/wine.inf.in
+index c61e81ac645..9fd647eda0a 100644
+--- a/loader/wine.inf.in
++++ b/loader/wine.inf.in
+@@ -335,7 +335,6 @@ HKCR,ftp\shell\open\command,,2,"""%11%\winebrowser.exe"" ""%1"""
+ HKCR,http\shell\open\command,,2,"""%11%\winebrowser.exe"" ""%1"""
+ HKCR,https\shell\open\command,,2,"""%11%\winebrowser.exe"" ""%1"""
+ HKCR,mailto\shell\open\command,,2,"""%11%\winebrowser.exe"" ""%1"""
+-HKCR,steam\shell\open\command,,,"""%16426%\Steam\Steam.exe"" -- ""%1"""
+ 
+ [ContentIndex]
+ HKLM,System\CurrentControlSet\Control\ContentIndex\Language\Neutral,"WBreakerClass",,"{369647e0-17b0-11ce-9950-00aa004bbb1f}"
+diff --git a/programs/winedbg/debugger.h b/programs/winedbg/debugger.h
+index 570ed52143f..0fed24fd7e7 100644
+--- a/programs/winedbg/debugger.h
++++ b/programs/winedbg/debugger.h
+@@ -312,7 +312,6 @@ extern	DWORD	                dbg_curr_tid;
+ extern  dbg_ctx_t               dbg_context;
+ extern  BOOL                    dbg_interactiveP;
+ extern  HANDLE                  dbg_houtput;
+-extern  HANDLE                  dbg_crash_report_file;
+ extern  BOOL                    dbg_use_wine_dbg_output;
+ 
+ struct dbg_internal_var
+diff --git a/programs/winedbg/tgt_active.c b/programs/winedbg/tgt_active.c
+index 069d0a39c23..6d40506c671 100644
+--- a/programs/winedbg/tgt_active.c
++++ b/programs/winedbg/tgt_active.c
+@@ -22,8 +22,6 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <stdarg.h>
+-#include <time.h>
+-#include <sys/stat.h>
+ 
+ #include "debugger.h"
+ #include "psapi.h"
+@@ -798,48 +796,6 @@ static HANDLE create_temp_file(void)
+                         NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, 0 );
+ }
+ 
+-static HANDLE create_crash_report_file(void)
+-{
+-    const char *dir = getenv("WINE_CRASH_REPORT_DIR");
+-    const char *sgi;
+-    char timestr[32];
+-    char name[MAX_PATH], *c;
+-    time_t t;
+-    struct tm lt;
+-
+-    if(!dir || dir[0] == 0)
+-        return INVALID_HANDLE_VALUE;
+-
+-    strcpy(name, dir);
+-
+-    for(c = name + 1; *c; ++c){
+-        if(*c == '/'){
+-            *c = 0;
+-            CreateDirectoryA(name, NULL);
+-            *c = '/';
+-        }
+-    }
+-    CreateDirectoryA(name, NULL);
+-
+-    sgi = getenv("SteamGameId");
+-
+-    t = time(NULL);
+-    lt = *localtime(&t);
+-    strftime(timestr, ARRAY_SIZE(timestr), "%Y-%m-%d_%H:%M:%S", &lt);
+-
+-    /* /path/to/crash/reports/2021-05-18_13:21:15_appid-976310_crash.log */
+-    snprintf(name, ARRAY_SIZE(name),
+-            "%s%s/%s_appid-%s_crash.log",
+-            dir[0] == '/' ? "Z:/" : "",
+-            dir,
+-            timestr,
+-            sgi ? sgi : "0"
+-            );
+-
+-    return CreateFileA( name, GENERIC_WRITE, FILE_SHARE_READ,
+-                        NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0 );
+-}
+-
+ static const struct
+ {
+     int type;
+@@ -1023,7 +979,6 @@ enum dbg_start dbg_active_auto(int argc, char* argv[])
+         break;
+     case TRUE:
+         dbg_use_wine_dbg_output = TRUE;
+-        dbg_crash_report_file = create_crash_report_file();
+         break;
+     }
+ 
+diff --git a/programs/winedbg/winedbg.c b/programs/winedbg/winedbg.c
+index 8cccf30fa09..048e6c2c2a7 100644
+--- a/programs/winedbg/winedbg.c
++++ b/programs/winedbg/winedbg.c
+@@ -82,7 +82,6 @@ DWORD	                dbg_curr_pid = 0;
+ dbg_ctx_t               dbg_context;
+ BOOL    	        dbg_interactiveP = FALSE;
+ HANDLE                  dbg_houtput = 0;
+-HANDLE                  dbg_crash_report_file = INVALID_HANDLE_VALUE;
+ BOOL                    dbg_use_wine_dbg_output = FALSE;
+ 
+ static struct list      dbg_process_list = LIST_INIT(dbg_process_list);
+@@ -97,7 +96,10 @@ static void dbg_outputA(const char* buffer, int len)
+     DWORD w, i;
+ 
+     if (dbg_use_wine_dbg_output)
++    {
+         __wine_dbg_output(buffer);
++        return;
++    }
+ 
+     while (len > 0)
+     {
+@@ -112,10 +114,7 @@ static void dbg_outputA(const char* buffer, int len)
+             if (len > 0) i = line_pos;  /* buffer is full, flush anyway */
+             else break;
+         }
+-        if (!dbg_use_wine_dbg_output)
+-            WriteFile(dbg_houtput, line_buff, i, &w, NULL);
+-        if (dbg_crash_report_file != INVALID_HANDLE_VALUE)
+-            WriteFile(dbg_crash_report_file, line_buff, i, &w, NULL);
++        WriteFile(dbg_houtput, line_buff, i, &w, NULL);
+         memmove( line_buff, line_buff + i, line_pos - i );
+         line_pos -= i;
+     }
+diff --git a/server/main.c b/server/main.c
+index 898e9af202d..afbe59351e8 100644
+--- a/server/main.c
++++ b/server/main.c
+@@ -41,7 +41,7 @@
+ /* command-line options */
+ int debug_level = 0;
+ int foreground = 0;
+-timeout_t master_socket_timeout = 0; /* master socket timeout, default is 3 seconds */
++timeout_t master_socket_timeout = 3 * -TICKS_PER_SEC;  /* master socket timeout, default is 3 seconds */
+ const char *server_argv0;
+ 
+ /* parse-line args */
+-- 
+2.40.1
+
