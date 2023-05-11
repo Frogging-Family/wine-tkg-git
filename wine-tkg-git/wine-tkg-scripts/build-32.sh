@@ -23,6 +23,10 @@ _exports_32() {
     # Workaround for Fedora freetype2 libs not being detected now that it's been moved to a subdir
     CFLAGS+=" -I/usr/include/freetype2"
     CROSSCFLAGS+=" -I/usr/include/freetype2"
+    if [[ "$_plain_version" = *_8.0 ]]; then
+      CFLAGS+=" -I/usr/lib/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib/gstreamer-1.0/include"
+      CROSSCFLAGS+=" -I/usr/lib/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib/gstreamer-1.0/include"
+    fi
   fi
 }
 
