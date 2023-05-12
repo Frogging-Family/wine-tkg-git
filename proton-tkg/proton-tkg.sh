@@ -441,7 +441,7 @@ function build_mediaconverter {
 
 function build_steamhelper {
   export CFLAGS="-Wno-attributes -O2 -g"
-  export CXXFLAGS="-Wno-attributes -O2 -g"
+  export CXXFLAGS="-Wno-attributes -O2 -g -fpermissive"
   # disable openvr support for now since we don't support it
   if [[ "$_proton_branch" = *6.3 ]]; then
     _cxx_addon="-std=c++17"
