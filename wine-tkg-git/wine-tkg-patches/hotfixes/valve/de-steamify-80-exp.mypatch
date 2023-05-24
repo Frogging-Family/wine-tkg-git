@@ -1,14 +1,11 @@
-From 376d942ddb8a213528eddd45f9452e6ff2598cd6 Mon Sep 17 00:00:00 2001
+From e016bbba7d61acee00402a8f16761f8e61fc165d Mon Sep 17 00:00:00 2001
 From: kotarac <stipe@kotarac.net>
-Date: Fri, 28 Apr 2023 23:26:04 +0200
+Date: Wed, 24 May 2023 08:35:13 +0200
 Subject: [PATCH] de-steamify
 
 ---
  dlls/advapi32/advapi.c        |  34 ++++----
  dlls/dbghelp/dwarf.c          |   5 --
- dlls/dinput/dinput_main.c     |   7 --
- dlls/dinput/dinput_private.h  |   2 -
- dlls/dinput/joystick_hid.c    |  20 -----
  dlls/hidclass.sys/device.c    |   7 +-
  dlls/hidclass.sys/hid.h       |   6 --
  dlls/hidclass.sys/pnp.c       |  12 ---
@@ -23,8 +20,7 @@ Subject: [PATCH] de-steamify
  programs/winedbg/debugger.h   |   1 -
  programs/winedbg/tgt_active.c |  45 -----------
  programs/winedbg/winedbg.c    |   9 +--
- server/main.c                 |   2 +-
- 20 files changed, 88 insertions(+), 321 deletions(-)
+ 16 files changed, 87 insertions(+), 291 deletions(-)
 
 diff --git a/dlls/advapi32/advapi.c b/dlls/advapi32/advapi.c
 index a22e896c88a..6b3ffe2ea25 100644
@@ -94,102 +90,6 @@ index a2d57173587..9ed63463513 100644
      if (!dwarf2_init_section(&eh_frame,                fmap, ".eh_frame",     NULL,             &eh_frame_sect))
          /* lld produces .eh_fram to avoid generating a long name */
          dwarf2_init_section(&eh_frame,                fmap, ".eh_fram",      NULL,             &eh_frame_sect);
-diff --git a/dlls/dinput/dinput_main.c b/dlls/dinput/dinput_main.c
-index 33f98eda120..0d502821966 100644
---- a/dlls/dinput/dinput_main.c
-+++ b/dlls/dinput/dinput_main.c
-@@ -480,9 +480,6 @@ void check_dinput_events(void)
-     MsgWaitForMultipleObjectsEx(0, NULL, 0, QS_ALLINPUT, 0);
- }
- 
--HANDLE steam_overlay_event;
--HANDLE steam_keyboard_event;
--
- BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, void *reserved )
- {
-     TRACE( "inst %p, reason %lu, reserved %p.\n", inst, reason, reserved );
-@@ -491,16 +488,12 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, void *reserved )
-     {
-       case DLL_PROCESS_ATTACH:
-         DisableThreadLibraryCalls(inst);
--        steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
--        steam_keyboard_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_KeyboardActivated");
-         DINPUT_instance = inst;
-         register_di_em_win_class();
-         break;
-       case DLL_PROCESS_DETACH:
-         if (reserved) break;
-         unregister_di_em_win_class();
--        CloseHandle(steam_overlay_event);
--        CloseHandle(steam_keyboard_event);
-         break;
-     }
-     return TRUE;
-diff --git a/dlls/dinput/dinput_private.h b/dlls/dinput/dinput_private.h
-index b12936e750f..944d12b860f 100644
---- a/dlls/dinput/dinput_private.h
-+++ b/dlls/dinput/dinput_private.h
-@@ -46,8 +46,6 @@ struct dinput
- 
- extern const IDirectInput7AVtbl dinput7_a_vtbl DECLSPEC_HIDDEN;
- extern const IDirectInput8AVtbl dinput8_a_vtbl DECLSPEC_HIDDEN;
--extern HANDLE steam_overlay_event DECLSPEC_HIDDEN;
--extern HANDLE steam_keyboard_event DECLSPEC_HIDDEN;
- 
- extern void dinput_internal_addref( struct dinput *dinput );
- extern void dinput_internal_release( struct dinput *dinput );
-diff --git a/dlls/dinput/joystick_hid.c b/dlls/dinput/joystick_hid.c
-index e4fe64c0e81..5fbe3d1dff8 100644
---- a/dlls/dinput/joystick_hid.c
-+++ b/dlls/dinput/joystick_hid.c
-@@ -1142,7 +1142,6 @@ struct parse_device_state_params
- {
-     BYTE old_state[DEVICE_STATE_MAX_SIZE];
-     BYTE buttons[128];
--    BOOL reset_state;
-     DWORD time;
-     DWORD seq;
- };
-@@ -1158,9 +1157,6 @@ static BOOL check_device_state_button( struct hid_joystick *impl, struct hid_val
- 
-     value = params->buttons[instance->wUsage - 1];
-     old_value = params->old_state[instance->dwOfs];
--
--    if (params->reset_state) value = 0;
--
-     impl->base.device_state[instance->dwOfs] = value;
-     if (old_value != value)
-         queue_event( iface, instance->dwType, value, params->time, params->seq );
-@@ -1243,16 +1239,6 @@ static BOOL read_device_state_value( struct hid_joystick *impl, struct hid_value
-     if (instance->dwType & DIDFT_AXIS) value = scale_axis_value( logical_value, properties );
-     else value = scale_value( logical_value, properties );
- 
--    if (params->reset_state)
--    {
--        if (instance->dwType & DIDFT_POV) value = -1;
--        else if (instance->dwType & DIDFT_AXIS)
--        {
--            if (!properties->range_min) value = properties->range_max / 2;
--            else value = round( (properties->range_min + properties->range_max) / 2.0 );
--        }
--    }
--
-     old_value = *(LONG *)(params->old_state + instance->dwOfs);
-     *(LONG *)(impl->base.device_state + instance->dwOfs) = value;
-     if (old_value != value)
-@@ -1283,12 +1269,6 @@ static HRESULT hid_joystick_read( IDirectInputDevice8W *iface )
- 
-     ret = GetOverlappedResult( impl->device, &impl->read_ovl, &count, FALSE );
- 
--    if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0 || /* steam overlay is enabled */
--        WaitForSingleObject(steam_keyboard_event, 0) == WAIT_OBJECT_0) /* steam keyboard is enabled */
--        params.reset_state = TRUE;
--    else
--        params.reset_state = FALSE;
--
-     EnterCriticalSection( &impl->base.crit );
-     while (ret)
-     {
 diff --git a/dlls/hidclass.sys/device.c b/dlls/hidclass.sys/device.c
 index 2092054d8ca..ac201afeddf 100644
 --- a/dlls/hidclass.sys/device.c
@@ -284,7 +184,7 @@ index ca367ec3a7c..c0e2a874788 100644
      registration->DriverObject->DriverUnload = driver_unload;
  
 diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
-index 54f9435bc16..ac30af8156e 100644
+index 0c5f5498df4..c869a5c9aa9 100644
 --- a/dlls/kernelbase/process.c
 +++ b/dlls/kernelbase/process.c
 @@ -1223,21 +1223,6 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenProcess( DWORD access, BOOL inherit, DWORD i
@@ -323,7 +223,7 @@ index 9bd07a9bec7..a827e4e47c1 100644
  static BOOL is_prefix_bootstrap;  /* are we bootstrapping the prefix? */
  static BOOL imports_fixup_done = FALSE;  /* set once the imports have been fixed up, before attaching them */
 diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index 9c5aa5122a3..1a1b656c325 100644
+index e0e5006f498..f5e8a211ee6 100644
 --- a/dlls/ntdll/unix/loader.c
 +++ b/dlls/ntdll/unix/loader.c
 @@ -773,42 +773,11 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_i
@@ -490,10 +390,10 @@ index f4414ae1f50..4ed55ce9c01 100644
      {
          ntdll_umbstowcs(sdl_serial, strlen(sdl_serial) + 1, desc.serialnumber, ARRAY_SIZE(desc.serialnumber));
 diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
-index 30af723210a..f342a233f1c 100644
+index 116342f45c0..64bdf34552d 100644
 --- a/dlls/winex11.drv/window.c
 +++ b/dlls/winex11.drv/window.c
-@@ -1054,19 +1054,8 @@ static void set_initial_wm_hints( Display *display, Window window )
+@@ -1055,19 +1055,8 @@ static void set_initial_wm_hints( Display *display, Window window )
      /* class hints */
      if ((class_hints = XAllocClassHint()))
      {
@@ -878,19 +778,6 @@ index 8cccf30fa09..048e6c2c2a7 100644
          memmove( line_buff, line_buff + i, line_pos - i );
          line_pos -= i;
      }
-diff --git a/server/main.c b/server/main.c
-index 898e9af202d..afbe59351e8 100644
---- a/server/main.c
-+++ b/server/main.c
-@@ -41,7 +41,7 @@
- /* command-line options */
- int debug_level = 0;
- int foreground = 0;
--timeout_t master_socket_timeout = 0; /* master socket timeout, default is 3 seconds */
-+timeout_t master_socket_timeout = 3 * -TICKS_PER_SEC;  /* master socket timeout, default is 3 seconds */
- const char *server_argv0;
- 
- /* parse-line args */
 -- 
 2.40.1
 
