@@ -462,7 +462,7 @@ function build_steamhelper {
     fi
   fi
 
-  if [ "$_processinfoclass" = "true" ]; then
+  if [[ "$_proton_branch" = *6.* ]] || [[ "$_proton_branch" = *7.* ]] && [ "$_processinfoclass" = "true" ]; then
     ( cd Proton && patch -Np1 < "$_nowhere/proton_template/steamhelper_PROCESSINFOCLASS.patch" ) || exit 1
   fi
 
