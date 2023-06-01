@@ -13,7 +13,7 @@ index 7ea8b1c0ceb..03533857085 100755
 @@ -7982,6 +7982,12 @@ if test "x$ac_cv_header_linux_filter_h" = xyes
  then :
    printf "%s\n" "#define HAVE_LINUX_FILTER_H 1" >>confdefs.h
- 
+
 +fi
 +ac_fn_c_check_header_compile "$LINENO" "linux/futex.h" "ac_cv_header_linux_futex_h" "$ac_includes_default"
 +if test "x$ac_cv_header_linux_futex_h" = xyes
@@ -40,7 +40,7 @@ index 3b97bfd62ad..0c6c5b8553b 100644
 --- a/dlls/ntdll/unix/esync.c
 +++ b/dlls/ntdll/unix/esync.c
 @@ -953,6 +953,8 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
- 
+
                      if (event->signaled)
                      {
 +                        if (ac_odyssey && alertable)
@@ -49,7 +49,7 @@ index 3b97bfd62ad..0c6c5b8553b 100644
                          {
                              TRACE("Woken up by handle %p [%d].\n", handles[i], i);
 @@ -968,6 +970,12 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
- 
+
                      if (event->signaled)
                      {
 +                        if (ac_odyssey && alertable)
@@ -62,7 +62,7 @@ index 3b97bfd62ad..0c6c5b8553b 100644
                          return i;
                      }
 @@ -996,6 +1004,9 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
- 
+
          while (1)
          {
 +            if (ac_odyssey && alertable)
@@ -78,7 +78,7 @@ index d0f8be6c309..f9f6e252b6c 100644
 @@ -5363,6 +5363,230 @@ static NTSTATUS set_pending_write( HANDLE device )
      return status;
  }
- 
+
 +static pthread_mutex_t async_file_read_mutex = PTHREAD_MUTEX_INITIALIZER;
 +static pthread_cond_t async_file_read_cond = PTHREAD_COND_INITIALIZER;
 +
@@ -104,7 +104,7 @@ index d0f8be6c309..f9f6e252b6c 100644
 +
 +static void async_file_complete_io( struct async_file_read_job *job, NTSTATUS status, ULONG total )
 +{
-+    job->io->Status = status;
++    job->io->u.Status = status;
 +    job->io->Information = total;
 +
 +    if (job->event) NtSetEvent( job->event, NULL );
@@ -303,13 +303,13 @@ index d0f8be6c309..f9f6e252b6c 100644
 +    pthread_mutex_unlock( &async_file_read_mutex );
 +    return count ? STATUS_SUCCESS : STATUS_NOT_FOUND;
 +}
- 
+
  /******************************************************************************
   *              NtReadFile   (NTDLL.@)
 @@ -5404,6 +5628,13 @@ NTSTATUS WINAPI NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, vo
              goto done;
          }
- 
+
 +        if (ac_odyssey && async_read && length && event && !apc)
 +        {
 +            status = queue_async_file_read( handle, unix_handle, needs_close, event, io, buffer, length, offset );
@@ -321,21 +321,21 @@ index d0f8be6c309..f9f6e252b6c 100644
          {
              /* async I/O doesn't make sense on regular files */
 @@ -6823,6 +7054,9 @@ NTSTATUS WINAPI NtCancelIoFile( HANDLE handle, IO_STATUS_BLOCK *io_status )
- 
+
      TRACE( "%p %p\n", handle, io_status );
- 
+
 +    if (ac_odyssey && !cancel_async_file_read( handle, NULL ))
-+        return (io_status->Status = STATUS_SUCCESS);
++        return (io_status->u.Status = STATUS_SUCCESS);
 +
      SERVER_START_REQ( cancel_async )
      {
          req->handle      = wine_server_obj_handle( handle );
 @@ -6848,6 +7082,9 @@ NTSTATUS WINAPI NtCancelIoFileEx( HANDLE handle, IO_STATUS_BLOCK *io, IO_STATUS_
- 
+
      TRACE( "%p %p %p\n", handle, io, io_status );
- 
+
 +    if (ac_odyssey && !cancel_async_file_read( handle, io ))
-+        return (io_status->Status = STATUS_SUCCESS);
++        return (io_status->u.Status = STATUS_SUCCESS);
 +
      SERVER_START_REQ( cancel_async )
      {
@@ -359,12 +359,12 @@ index f5ae0a821b0..284e2fcce01 100644
  #endif
  #include <unistd.h>
 +#include <stdint.h>
- 
+
  #include "ntstatus.h"
  #define WIN32_NO_STATUS
 @@ -54,43 +58,82 @@
  WINE_DEFAULT_DEBUG_CHANNEL(fsync);
- 
+
  #include "pshpack4.h"
 -struct futex_wait_block
 -{
@@ -393,7 +393,7 @@ index f5ae0a821b0..284e2fcce01 100644
 +#endif
 +
 +#define u64_to_ptr(x) (void *)(uintptr_t)(x)
- 
+
 -static inline void small_pause(void)
 +struct timespec64
  {
@@ -416,7 +416,7 @@ index f5ae0a821b0..284e2fcce01 100644
 +    if (timeleft < 0) timeleft = 0;
 +    return timeleft;
  }
- 
+
 -static inline int futex_wait_multiple( const struct futex_wait_block *futexes,
 -        int count, const struct timespec *timeout )
 +static inline void futex_vector_set( struct futex_waitv *waitv, int *addr, int val )
@@ -427,7 +427,7 @@ index f5ae0a821b0..284e2fcce01 100644
 +    waitv->flags = FUTEX_32;
 +    waitv->__reserved = 0;
  }
- 
+
 -static inline int futex_wake( int *addr, int val )
 +static void simulate_sched_quantum(void)
  {
@@ -438,7 +438,7 @@ index f5ae0a821b0..284e2fcce01 100644
 +     * Windows due to the waiting threads having some minimal delay to wake up. */
 +    usleep(0);
  }
- 
+
 -static inline int futex_wait( int *addr, int val, struct timespec *timeout )
 +static inline int futex_wait_multiple( const struct futex_waitv *futexes,
 +        int count, const ULONGLONG *end )
@@ -458,17 +458,17 @@ index f5ae0a821b0..284e2fcce01 100644
 +        return syscall( __NR_futex_waitv, futexes, count, 0, NULL, 0 );
 +   }
  }
- 
+
 -static unsigned int spincount = 100;
 +static inline int futex_wake( int *addr, int val )
 +{
 +    return syscall( __NR_futex, addr, 1, val, NULL, 0, 0 );
 +}
- 
+
  int do_fsync(void)
  {
 @@ -99,11 +142,16 @@ int do_fsync(void)
- 
+
      if (do_fsync_cached == -1)
      {
 -        static const struct timespec zero;
@@ -486,12 +486,12 @@ index f5ae0a821b0..284e2fcce01 100644
 -        if (getenv("WINEFSYNC_SPINCOUNT"))
 -            spincount = atoi(getenv("WINEFSYNC_SPINCOUNT"));
      }
- 
+
      return do_fsync_cached;
 @@ -646,64 +694,30 @@ NTSTATUS fsync_query_mutex( HANDLE handle, void *info, ULONG *ret_len )
      return STATUS_SUCCESS;
  }
- 
+
 -static LONGLONG update_timeout( ULONGLONG end )
 -{
 -    LARGE_INTEGER now;
@@ -507,17 +507,17 @@ index f5ae0a821b0..284e2fcce01 100644
  {
 +    struct futex_waitv futexes[2];
      int ret;
- 
+
 +    futex_vector_set( &futexes[0], addr, val );
 +
      if (alertable)
      {
          int *apc_futex = ntdll_get_thread_data()->fsync_apc_futex;
 -        struct futex_wait_block futexes[2];
- 
+
          if (__atomic_load_n( apc_futex, __ATOMIC_SEQ_CST ))
              return STATUS_USER_APC;
- 
+
 -        futexes[0].addr = addr;
 -        futexes[0].val = val;
 -        futexes[1].addr = apc_futex;
@@ -527,7 +527,7 @@ index f5ae0a821b0..284e2fcce01 100644
 -#endif
 -        futexes[0].bitset = futexes[1].bitset = ~0;
 +        futex_vector_set( &futexes[1], apc_futex, 0 );
- 
+
 -        if (end)
 -        {
 -            LONGLONG timeleft = update_timeout( *end );
@@ -539,7 +539,7 @@ index f5ae0a821b0..284e2fcce01 100644
 -        else
 -            ret = futex_wait_multiple( futexes, 2, NULL );
 +        ret = futex_wait_multiple( futexes, 2, end );
- 
+
          if (__atomic_load_n( apc_futex, __ATOMIC_SEQ_CST ))
              return STATUS_USER_APC;
      }
@@ -557,12 +557,12 @@ index f5ae0a821b0..284e2fcce01 100644
 -            ret = futex_wait( addr, val, NULL );
 +        ret = futex_wait_multiple( futexes, 1, end );
      }
- 
+
      if (!ret)
 @@ -719,12 +733,11 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
  {
      static const LARGE_INTEGER zero = {0};
- 
+
 -    struct futex_wait_block futexes[MAXIMUM_WAIT_OBJECTS + 1];
 +    struct futex_waitv futexes[MAXIMUM_WAIT_OBJECTS + 1];
      struct fsync *objs[MAXIMUM_WAIT_OBJECTS];
@@ -577,7 +577,7 @@ index f5ae0a821b0..284e2fcce01 100644
 @@ -834,23 +847,15 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                          struct semaphore *semaphore = obj->shm;
                          int current;
- 
+
 -                        /* It would be a little clearer (and less error-prone)
 -                         * to use a dedicated interlocked_dec_if_nonzero()
 -                         * helper, but nesting loops like that is probably not
@@ -597,7 +597,7 @@ index f5ae0a821b0..284e2fcce01 100644
 +                            if (waited) simulate_sched_quantum();
 +                            return i;
                          }
- 
+
 -                        futexes[i].addr = &semaphore->count;
 -                        futexes[i].val = 0;
 +                        futex_vector_set( &futexes[i], &semaphore->count, 0 );
@@ -611,7 +611,7 @@ index f5ae0a821b0..284e2fcce01 100644
 +                            if (waited) simulate_sched_quantum();
                              return i;
                          }
- 
+
 -                        for (spin = 0; spin <= spincount; ++spin)
 +                        if (!(tid = __sync_val_compare_and_swap( &mutex->tid, 0, GetCurrentThreadId() )))
                          {
@@ -639,7 +639,7 @@ index f5ae0a821b0..284e2fcce01 100644
 +                            mutex->count = 1;
 +                            return STATUS_ABANDONED_WAIT_0 + i;
                          }
- 
+
 -                        futexes[i].addr = &mutex->tid;
 -                        futexes[i].val  = tid;
 +                        futex_vector_set( &futexes[i], &mutex->tid, tid );
@@ -649,7 +649,7 @@ index f5ae0a821b0..284e2fcce01 100644
 @@ -891,18 +893,17 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                      {
                          struct event *event = obj->shm;
- 
+
 -                        for (spin = 0; spin <= spincount; ++spin)
 +                        if (__sync_val_compare_and_swap( &event->signaled, 1, 0 ))
                          {
@@ -666,7 +666,7 @@ index f5ae0a821b0..284e2fcce01 100644
 +                            if (waited) simulate_sched_quantum();
 +                            return i;
                          }
- 
+
 -                        futexes[i].addr = &event->signaled;
 -                        futexes[i].val = 0;
 +                        futex_vector_set( &futexes[i], &event->signaled, 0 );
@@ -676,7 +676,7 @@ index f5ae0a821b0..284e2fcce01 100644
 @@ -911,18 +912,17 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                      {
                          struct event *event = obj->shm;
- 
+
 -                        for (spin = 0; spin <= spincount; ++spin)
 +                        if (__atomic_load_n( &event->signaled, __ATOMIC_SEQ_CST ))
                          {
@@ -693,7 +693,7 @@ index f5ae0a821b0..284e2fcce01 100644
 +                            if (waited) simulate_sched_quantum();
 +                            return i;
                          }
- 
+
 -                        futexes[i].addr = &event->signaled;
 -                        futexes[i].val = 0;
 +                        futex_vector_set( &futexes[i], &event->signaled, 0 );
@@ -714,7 +714,7 @@ index f5ae0a821b0..284e2fcce01 100644
 -#endif
 -                futexes[i].bitset = ~0;
              }
- 
+
              if (alertable)
              {
                  /* We already checked if it was signaled; don't bother doing it again. */
@@ -728,9 +728,9 @@ index f5ae0a821b0..284e2fcce01 100644
 +                futex_vector_set( &futexes[i++], ntdll_get_thread_data()->fsync_apc_futex, 0 );
              }
              waitcount = i;
- 
+
              /* Looks like everything is contended, so wait. */
- 
+
 +            if (ac_odyssey && alertable)
 +                usleep( 0 );
 +
@@ -747,13 +747,13 @@ index f5ae0a821b0..284e2fcce01 100644
 -                struct timespec tmo_p;
 -                tmo_p.tv_sec = timeleft / (ULONGLONG)TICKSPERSEC;
 -                tmo_p.tv_nsec = (timeleft % TICKSPERSEC) * 100;
- 
+
 -                ret = futex_wait_multiple( futexes, waitcount, &tmo_p );
 -            }
 -            else
 -                ret = futex_wait_multiple( futexes, waitcount, NULL );
 +            ret = futex_wait_multiple( futexes, waitcount, timeout ? &end : NULL );
- 
+
              /* FUTEX_WAIT_MULTIPLE can succeed or return -EINTR, -EAGAIN,
               * -EFAULT/-EACCES, -ETIMEDOUT. In the first three cases we need to
 @@ -986,6 +968,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
@@ -828,7 +828,7 @@ index 0360bc64b00..f30d900a07b 100644
 +    if (env_str && !strcmp(env_str, "50130"))
 +        setenv("WINESTEAMNOEXEC", "1", 0);
 +}
- 
+
  /***********************************************************************
   *           start_main_thread
 @@ -2041,6 +2041,7 @@ static void start_main_thread(void)
@@ -846,7 +846,7 @@ index dbd3e645976..683c2a4f1c2 100644
 @@ -146,6 +146,9 @@ extern BOOL is_wow64 DECLSPEC_HIDDEN;
  extern struct ldt_copy __wine_ldt_copy DECLSPEC_HIDDEN;
  #endif
- 
+
 +extern BOOL ac_odyssey DECLSPEC_HIDDEN;
 +extern BOOL fsync_simulate_sched_quantum DECLSPEC_HIDDEN;
 +
@@ -860,20 +860,20 @@ index 8f9b9737b24..4670e4bc881 100644
 @@ -188,6 +188,9 @@
  /* Define to 1 if you have the <linux/filter.h> header file. */
  #undef HAVE_LINUX_FILTER_H
- 
+
 +/* Define to 1 if you have the <linux/futex.h> header file. */
 +#undef HAVE_LINUX_FUTEX_H
 +
  /* Define if Linux-style gethostbyname_r and gethostbyaddr_r are available */
  #undef HAVE_LINUX_GETHOSTBYNAME_R_6
- 
+
 diff --git a/server/fsync.c b/server/fsync.c
 index af1c68f2a90..2b8c5e4bc15 100644
 --- a/server/fsync.c
 +++ b/server/fsync.c
 @@ -44,21 +44,11 @@
  #include "fsync.h"
- 
+
  #include "pshpack4.h"
 -struct futex_wait_block
 -{
@@ -884,7 +884,7 @@ index af1c68f2a90..2b8c5e4bc15 100644
 -    int val;
 -};
  #include "poppack.h"
- 
+
 -static inline int futex_wait_multiple( const struct futex_wait_block *futexes,
 -        int count, const struct timespec *timeout )
 -{
@@ -893,11 +893,11 @@ index af1c68f2a90..2b8c5e4bc15 100644
 +#ifndef __NR_futex_waitv
 +#define __NR_futex_waitv 449
 +#endif
- 
+
  int do_fsync(void)
  {
 @@ -67,8 +57,16 @@ int do_fsync(void)
- 
+
      if (do_fsync_cached == -1)
      {
 -        static const struct timespec zero;
@@ -914,4 +914,4 @@ index af1c68f2a90..2b8c5e4bc15 100644
 +        syscall( __NR_futex_waitv, 0, 0, 0, 0, 0);
          do_fsync_cached = getenv("WINEFSYNC") && atoi(getenv("WINEFSYNC")) && errno != ENOSYS;
      }
- 
+
