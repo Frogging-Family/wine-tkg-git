@@ -6,6 +6,7 @@ _exports_32() {
 	fi
 	if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
 		export CROSSCC="ccache i686-w64-mingw32-gcc" && echo "CROSSCC32 = ${CROSSCC}" >>"$_LAST_BUILD_CONFIG"
+		export i386_CC="${CROSSCC}"
 	fi
   fi
   # build wine 32-bit
