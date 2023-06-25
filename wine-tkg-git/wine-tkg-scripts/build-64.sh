@@ -25,7 +25,7 @@ _configure_64() {
   cd  "${srcdir}"/"${pkgname}"-64-build
   if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW3" =~ [yY] ]]; then
     chmod +x ../"${_winesrcdir}"/configure
-    if [ "$_NOLIB32" != "true" ]; then
+    if [ "$_NOLIB32" != "wow64" ]; then
       ../"${_winesrcdir}"/configure \
 	    --prefix="$_prefix" \
 		--enable-win64 \

@@ -125,7 +125,7 @@ _build_serial() {
     _configure_64
     _build_64
   fi
-  if [ "$_NOLIB32" != "true" ]; then
+  if [ "$_NOLIB32" != "true" ] && [ "$_NOLIB32" != "wow64" ]; then
     # build wine 32-bit
     # nomakepkg
     if [ "$_nomakepkg_midbuild_prompt" = "true" ]; then
