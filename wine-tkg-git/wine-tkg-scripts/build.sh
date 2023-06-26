@@ -209,7 +209,7 @@ _package_nomakepkg() {
 	  fi
 	fi
 
-	if [ "$_NOLIB32" != "true" ]; then
+	if [ "$_NOLIB32" = "false" ]; then
 	  # package wine 32-bit
 	  # (according to the wine wiki, this reverse 32-bit/64-bit packaging order is important)
 	  msg2 'Packaging Wine-32...'
@@ -351,7 +351,7 @@ _package_makepkg() {
 	  fi
 	fi
 
-	if [ "$_NOLIB32" != "true" ]; then
+	if [ "$_NOLIB32" = "false" ]; then
 	  # package wine 32-bit
 	  # (according to the wine wiki, this reverse 32-bit/64-bit packaging order is important)
 	  msg2 'Packaging Wine-32...'
