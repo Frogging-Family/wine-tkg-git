@@ -19,6 +19,10 @@ _exports_32() {
     fi
   elif [ -d '/usr/lib/i386-linux-gnu/pkgconfig' ]; then # Ubuntu 18.04/19.04 path
     export PKG_CONFIG_PATH='/usr/lib/i386-linux-gnu/pkgconfig'
+    if [[ "$_plain_version" = *_8.0 ]]; then
+      CFLAGS+=" -I/usr/lib/i386-linux-gnu/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib/i386-linux-gnu/gstreamer-1.0/include"
+      CROSSCFLAGS+=" -I/usr/lib/i386-linux-gnu/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib/i386-linux-gnu/gstreamer-1.0/include"
+    fi
   else
     export PKG_CONFIG_PATH='/usr/lib/pkgconfig' # Pretty common path, possibly helpful for OpenSuse & Fedora
     # Workaround for Fedora freetype2 libs not being detected now that it's been moved to a subdir
