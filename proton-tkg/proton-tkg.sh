@@ -723,8 +723,9 @@ function download_dxvk_version {
         echo "#######################################################"
         echo ""
         echo "$_dxvk_version_response" \
-        | grep "browser_download_url.*tar.gz" \
-        | cut -d : -f 2,3 \
+        | jq .assets[].browser_download_url \
+        | grep -v "dxvk-native" \
+        | head -1 \
         | tr -d \" \
         | wget -qi -
         break
