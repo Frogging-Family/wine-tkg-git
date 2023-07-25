@@ -238,6 +238,12 @@ _package_nomakepkg() {
 	cp -v "$_where"/wine-tkg-scripts/wine64-tkg "$_prefix"/bin/wine64-tkg
 	cp -v "$_where"/wine-tkg-scripts/wine-tkg-interactive "$_prefix"/bin/wine-tkg-interactive
 
+	# Fixes compatibility with installation scripts (like winetricks) that use
+	# the wine64 binary, which is not present in WoW64 builds.
+	if [ "$_NOLIB32" = "wow64" ]; then
+	    ln -s "$_prefix"/bin/wine "${pkgdir}$_prefix"/bin/wine64
+	fi
+
 	# strip
 	if [ "$_EXTERNAL_INSTALL" != "proton" ]; then
 	  if [ "$_protonify" = "true" ] && ( cd "${srcdir}"/"${_winesrcdir}" && ! git merge-base --is-ancestor 2e5e5ade82b5e3b1d70ebe6b1a824bdfdedfd04e HEAD ); then
@@ -403,6 +409,12 @@ _package_makepkg() {
 	cp "$_where"/wine-tkg-scripts/wine-tkg "${pkgdir}$_prefix"/bin/wine-tkg
 	cp "$_where"/wine-tkg-scripts/wine64-tkg "${pkgdir}$_prefix"/bin/wine64-tkg
 	cp "$_where"/wine-tkg-scripts/wine-tkg-interactive "${pkgdir}$_prefix"/bin/wine-tkg-interactive
+
+	# Fixes compatibility with installation scripts (like winetricks) that use
+	# the wine64 binary, which is not present in WoW64 builds.
+	if [ "$_NOLIB32" = "wow64" ]; then
+	    ln -s "$_prefix"/bin/wine "${pkgdir}$_prefix"/bin/wine64
+	fi
 
 	# strip
 	if [ "$_EXTERNAL_INSTALL" != "proton" ]; then
