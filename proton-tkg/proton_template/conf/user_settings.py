@@ -37,7 +37,7 @@ user_settings = {
     "PROTON_NVAPI_DISABLE": "1",
 
     #Pass "--use-gl=osmesa" to the command line. Fixes various launchers showing up with a black window (Star Citizen, Warframe, etc..). Might give poor perf on native opengl games, so disable in case of issues.
-    "PROTON_GL_OSMESA": "1",
+#    "PROTON_GL_OSMESA": "1",
 
     #Set a wine override to disable libglesv2. Fixes various launchers showing up with a black window (Star Citizen, Warframe, etc..). Alternative to running an app with `--use-gl=osmesa`, but more extreme.
     #Known to break at least the Rockstar Games Launcher, so only use if the PROTON_GL_OSMESA option above doesn't fix your issue.
