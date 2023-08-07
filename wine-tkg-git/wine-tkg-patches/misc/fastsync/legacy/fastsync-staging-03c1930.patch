@@ -107,7 +107,7 @@ index 6933195e72d..dd16787c63c 100644
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
 +    no_get_fast_sync,          /* get_fast_sync */
-     completion_close,          /* close_handle */
+     no_close_handle,           /* close_handle */
      completion_destroy         /* destroy */
  };
 diff --git a/server/console.c b/server/console.c
@@ -454,7 +454,7 @@ index 3e6cf09d4f2..dec4f95c6c3 100644
      pipe_server_open_file,        /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
 +    no_get_fast_sync,             /* get_fast_sync */
-     async_close_obj_handle,       /* close_handle */
+     no_close_handle,              /* close_handle */
      pipe_server_destroy           /* destroy */
  };
 @@ -223,6 +225,7 @@ static const struct object_ops pipe_client_ops =
@@ -462,7 +462,7 @@ index 3e6cf09d4f2..dec4f95c6c3 100644
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
 +    no_get_fast_sync,             /* get_fast_sync */
-     async_close_obj_handle,       /* close_handle */
+     no_close_handle,              /* close_handle */
      pipe_end_destroy              /* destroy */
  };
 @@ -270,6 +273,7 @@ static const struct object_ops named_pipe_device_ops =
@@ -808,9 +808,9 @@ index 6cbc0a61be1..98b7746c726 100644
  	linux/types.h \
  	linux/ucdrom.h \
 +	linux/winesync.h \
- 	linux/wireless.h \
  	lwp.h \
  	mach-o/loader.h \
+ 	mach/mach.h \
 diff --git a/server/Makefile.in b/server/Makefile.in
 index 739d0517339..919e652eceb 100644
 --- a/server/Makefile.in
@@ -1624,16 +1624,15 @@ diff --git a/server/completion.c b/server/completion.c
 index dd16787c63c..5ec6d209d13 100644
 --- a/server/completion.c
 +++ b/server/completion.c
-@@ -61,11 +61,13 @@ struct completion
+@@ -61,10 +61,12 @@ struct completion
+     struct object  obj;
      struct list    queue;
      unsigned int   depth;
-     int            abandoned;
 +    struct fast_sync *fast_sync;
  };
  
  static void completion_dump( struct object*, int );
  static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
- static int completion_close( struct object *obj, struct process *process, obj_handle_t handle );
 +static struct fast_sync *completion_get_fast_sync( struct object *obj );
  static void completion_destroy( struct object * );
  
@@ -1644,7 +1643,7 @@ index dd16787c63c..5ec6d209d13 100644
      no_kernel_obj_list,        /* get_kernel_obj_list */
 -    no_get_fast_sync,          /* get_fast_sync */
 +    completion_get_fast_sync,  /* get_fast_sync */
-     completion_close,          /* close_handle */
+     no_close_handle,           /* close_handle */
      completion_destroy         /* destroy */
  };
 @@ -110,6 +112,7 @@ static void completion_destroy( struct object *obj)
@@ -2329,9 +2328,9 @@ index 4d146dd79fc..b29fb2bc983 100644
      process_destroy              /* destroy */
  };
 @@ -683,6 +684,7 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
+     memset( &process->image_info, 0, sizeof(process->image_info) );
      process->esync_fd        = -1;
      process->fsync_idx       = 0;
-     process->cpu_override.cpu_count = 0;
 +    process->fast_sync       = NULL;
      list_init( &process->kernel_object );
      list_init( &process->thread_list );
@@ -2375,9 +2374,9 @@ index 632faf9c4bf..5b8bebd31be 100644
 --- a/server/process.h
 +++ b/server/process.h
 @@ -90,6 +90,7 @@ struct process
+     pe_image_info_t      image_info;      /* main exe image info */
      int                  esync_fd;        /* esync file descriptor (signaled on exit) */
      unsigned int         fsync_idx;
-     struct cpu_topology_override cpu_override; /* Overridden CPUs to host CPUs mapping. */
 +    struct fast_sync    *fast_sync;       /* fast synchronization object */
  };
  
@@ -2982,7 +2981,7 @@ index dec4f95c6c3..44d3de4cadd 100644
      no_kernel_obj_list,           /* get_kernel_obj_list */
 -    no_get_fast_sync,             /* get_fast_sync */
 +    default_fd_get_fast_sync,     /* get_fast_sync */
-     async_close_obj_handle,       /* close_handle */
+     no_close_handle,              /* close_handle */
      pipe_server_destroy           /* destroy */
  };
 @@ -225,7 +225,7 @@ static const struct object_ops pipe_client_ops =
@@ -2991,7 +2990,7 @@ index dec4f95c6c3..44d3de4cadd 100644
      no_kernel_obj_list,           /* get_kernel_obj_list */
 -    no_get_fast_sync,             /* get_fast_sync */
 +    default_fd_get_fast_sync,     /* get_fast_sync */
-     async_close_obj_handle,       /* close_handle */
+     no_close_handle,              /* close_handle */
      pipe_end_destroy              /* destroy */
  };
 @@ -305,7 +305,7 @@ static const struct object_ops named_pipe_device_file_ops =
