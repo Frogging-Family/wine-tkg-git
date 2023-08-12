@@ -413,7 +413,7 @@ _package_makepkg() {
 	# Fixes compatibility with installation scripts (like winetricks) that use
 	# the wine64 binary, which is not present in WoW64 builds.
 	if [ "$_NOLIB32" = "wow64" ]; then
-	    ln -s "$_prefix"/bin/wine "${pkgdir}$_prefix"/bin/wine64
+	    ( cd "${pkgdir}$_prefix/bin" && ln -s wine wine64 )
 	fi
 
 	# strip
