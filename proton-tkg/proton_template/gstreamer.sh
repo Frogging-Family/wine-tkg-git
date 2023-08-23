@@ -373,6 +373,8 @@
     -D gst-plugins-good:rpicamsrc=disabled
 	-D gst-plugins-good:aalib=disabled
 	-D gst-plugins-good:alpha=disabled
+	-D gst-plugins-good:amrnb=disabled
+	-D gst-plugins-good:amrwbdec=disabled
 	-D gst-plugins-good:apetag=disabled
 	-D gst-plugins-good:audiofx=disabled
 	-D gst-plugins-good:auparse=disabled
@@ -493,8 +495,6 @@
 	-D gst-plugins-bad:bs2b=disabled
 	-D gst-plugins-bad:timecode=disabled
     -D gst-plugins-ugly:gobject-cast-checks=disabled
-    -D gst-plugins-ugly:amrnb=disabled
-    -D gst-plugins-ugly:amrwbdec=disabled
     -D gst-plugins-ugly:cdio=disabled
     -D gst-plugins-ugly:dvdread=disabled
     -D gst-rtsp-server:gobject-cast-checks=disabled
