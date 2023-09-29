@@ -192,12 +192,18 @@ function build_vrclient {
   fi
 
   cp -a "${_nowhere}"/Proton/vrclient_x64/* build/vrclient.win64
-  cp -a "${_nowhere}"/Proton/vrclient_x64/* build/vrclient.win32 && mv build/vrclient.win32/vrclient_x64 build/vrclient.win32/vrclient && mv build/vrclient.win32/vrclient/vrclient_x64.spec build/vrclient.win32/vrclient/vrclient.spec
+  cp -a "${_nowhere}"/Proton/vrclient_x64/* build/vrclient.win32
+  mv build/vrclient.win32/vrclient_x64 build/vrclient.win32/vrclient
+  if [ -e build/vrclient.win32/vrclient/vrclient_x64.spec ]; then
+    mv build/vrclient.win32/vrclient/vrclient_x64.spec build/vrclient.win32/vrclient/vrclient.spec
+    _vrclient_longpath64="/vrclient_x64"
+    _vrclient_longpath32="/vrclient"
+  fi
 
   cd build/vrclient.win64
   winemaker $WINEMAKERFLAGS -L"$_nowhere/proton_dist_tmp/$_lib64name/" -L"$_nowhere/proton_dist_tmp/$_lib64name/wine/" -I"$_nowhere/openvr/build/vrclient.win64/vrclient_x64/" -I"$_nowhere/openvr/build/vrclient.win64/" vrclient_x64
   make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/openvr/build/vrclient.win64/vrclient_x64" -j$(nproc) && strip --strip-debug vrclient_x64/vrclient_x64.dll.so || exit 1
-  winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win64/vrclient_x64/vrclient_x64.spec" -o vrclient_x64.dll.fake || exit 1
+  winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win64$_vrclient_longpath64/vrclient_x64.spec" -o vrclient_x64.dll.fake || exit 1
   cd ../..
 
   cd build/vrclient.win32
@@ -205,7 +211,7 @@ function build_vrclient {
     winemaker $WINEMAKERFLAGS --wine32 -L"$_nowhere/proton_dist_tmp/$_lib32name/" -L"$_nowhere/proton_dist_tmp/$_lib32name/wine/" -I"$_nowhere/openvr/build/vrclient.win32/vrclient/" -I"$_nowhere/openvr/build/vrclient.win32/" vrclient
     make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/openvr/build/vrclient.win32/vrclient" -j$(nproc) && strip --strip-debug vrclient/vrclient.dll.so || exit 1
   fi
-  winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win32/vrclient/vrclient.spec" -o vrclient.dll.fake || exit 1
+  winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win32$_vrclient_longpath32/vrclient.spec" -o vrclient.dll.fake || exit 1
   cd "$_nowhere"
 
   mkdir -p proton_dist_tmp/lib/wine/dxvk
@@ -933,6 +939,11 @@ else
       proton_patcher
     else
       cd Proton
+    fi
+
+    # Tooling compilation needs an update for latest BE - Use slightly older tooling for now
+    if [ -n "$_bleeding_tag" ]; then
+      git checkout f5e9c76903e4e18e0416e719a6d42d0cb00998aa
     fi
 
     # Embed fake data to spoof desired fonts
