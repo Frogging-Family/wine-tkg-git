@@ -235,6 +235,7 @@
 	-D gst-plugins-bad:voamrwbenc=disabled
 	-D gst-plugins-bad:x265=disabled
 	-D gst-plugins-bad:openexr=disabled
+	-D gst-plugins-bad:lc3=disabled
     -D gst-plugins-ugly:gobject-cast-checks=disabled
     -D gst-rtsp-server:gobject-cast-checks=disabled
     -D gst-editing-services:validate=disabled
@@ -476,6 +477,7 @@
 	-D gst-plugins-bad:soundtouch=disabled
 	-D gst-plugins-bad:svtav1=disabled
 	-D gst-plugins-bad:ladspa=disabled
+	-D gst-plugins-bad:lc3=disabled
 	-D gst-plugins-bad:ldac=disabled
 	-D gst-plugins-bad:openaptx=disabled
 	-D gst-plugins-bad:microdns=disabled
