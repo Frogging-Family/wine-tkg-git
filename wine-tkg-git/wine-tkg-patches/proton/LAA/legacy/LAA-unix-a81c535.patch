@@ -65,11 +65,14 @@ diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
 index 7236f0acb83..e34abd88093 100644
 --- a/dlls/ntdll/unix/server.c
 +++ b/dlls/ntdll/unix/server.c
-@@ -1471,6 +1471,7 @@ void server_init_process_done(void)
+@@ -1471,8 +1471,8 @@ void server_init_process_done(void)
  #ifdef __APPLE__
      send_server_task_port();
  #endif
-+    if (__wine_needs_override_large_address_aware()) virtual_set_large_address_space();
+-    if (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)
+-        virtual_set_large_address_space();
++    if (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE
++            || __wine_needs_override_large_address_aware()) virtual_set_large_address_space();
  
      /* Install signal handlers; this cannot be done earlier, since we cannot
       * send exceptions to the debugger before the create process event that
@@ -149,8 +152,8 @@ index 133f6bacd89..6d1a078266f 100644
 +++ b/dlls/ntdll/loader.c
 @@ -3475,6 +3475,15 @@ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
  }
- 
- 
+
+
 +/***********************************************************************
 + *           __wine_needs_override_large_address_aware
 + */
@@ -169,11 +172,11 @@ index e07806f8b0b..5a1bfcee3d7 100644
 +++ b/dlls/ntdll/ntdll.spec
 @@ -1714,7 +1714,7 @@
  @ cdecl -norelay __wine_dbg_strdup(str)
- 
+
  # Virtual memory
 -@ cdecl -syscall __wine_needs_override_large_address_aware()
 +@ cdecl __wine_needs_override_large_address_aware()
- 
+
  # Version
  @ cdecl wine_get_version()
 diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
@@ -202,7 +205,7 @@ index 44336a43e8c..125e154f31e 100644
 +++ b/dlls/ntdll/unix/unix_private.h
 @@ -322,6 +322,7 @@ extern void set_async_direct_result( HANDLE *async_handle, NTSTATUS status, ULON
  extern struct cpu_topology_override *get_cpu_topology_override(void) DECLSPEC_HIDDEN;
- 
+
  extern NTSTATUS unixcall_wine_dbg_write( void *args ) DECLSPEC_HIDDEN;
 +extern NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args ) DECLSPEC_HIDDEN;
  extern NTSTATUS unixcall_wine_server_call( void *args ) DECLSPEC_HIDDEN;
@@ -215,13 +218,13 @@ index 9fb1fc8c688..c10f2468d48 100644
 @@ -3508,6 +3508,11 @@ BOOL CDECL __wine_needs_override_large_address_aware(void)
      return needs_override;
  }
- 
+
 +NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args )
 +{
 +    return __wine_needs_override_large_address_aware();
 +}
 +
- 
+
  /***********************************************************************
   *           virtual_map_hypervisor_shared_data
 diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
@@ -236,5 +239,5 @@ index 22e5663990d..522d9b99978 100644
      unix_wine_server_call,
      unix_wine_server_fd_to_handle,
      unix_wine_server_handle_to_fd,
--- 
+--
 2.39.2
