@@ -107,7 +107,7 @@ index 6933195e72d..dd16787c63c 100644
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
 +    no_get_fast_sync,          /* get_fast_sync */
-     completion_close,          /* close_handle */
+     no_close_handle,           /* close_handle */
      completion_destroy         /* destroy */
  };
 diff --git a/server/console.c b/server/console.c
@@ -1624,16 +1624,15 @@ diff --git a/server/completion.c b/server/completion.c
 index dd16787c63c..5ec6d209d13 100644
 --- a/server/completion.c
 +++ b/server/completion.c
-@@ -61,11 +61,13 @@ struct completion
+@@ -61,10 +61,12 @@ struct completion
+     struct object  obj;
      struct list    queue;
      unsigned int   depth;
-     int            abandoned;
 +    struct fast_sync *fast_sync;
  };
  
  static void completion_dump( struct object*, int );
  static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
- static int completion_close( struct object *obj, struct process *process, obj_handle_t handle );
 +static struct fast_sync *completion_get_fast_sync( struct object *obj );
  static void completion_destroy( struct object * );
  
@@ -1644,7 +1643,7 @@ index dd16787c63c..5ec6d209d13 100644
      no_kernel_obj_list,        /* get_kernel_obj_list */
 -    no_get_fast_sync,          /* get_fast_sync */
 +    completion_get_fast_sync,  /* get_fast_sync */
-     completion_close,          /* close_handle */
+     no_close_handle,           /* close_handle */
      completion_destroy         /* destroy */
  };
 @@ -110,6 +112,7 @@ static void completion_destroy( struct object *obj)
@@ -2329,9 +2328,9 @@ index 4d146dd79fc..b29fb2bc983 100644
      process_destroy              /* destroy */
  };
 @@ -683,6 +684,7 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
+     memset( &process->image_info, 0, sizeof(process->image_info) );
      process->esync_fd        = -1;
      process->fsync_idx       = 0;
-     process->cpu_override.cpu_count = 0;
 +    process->fast_sync       = NULL;
      list_init( &process->kernel_object );
      list_init( &process->thread_list );
@@ -2375,9 +2374,9 @@ index 632faf9c4bf..5b8bebd31be 100644
 --- a/server/process.h
 +++ b/server/process.h
 @@ -90,6 +90,7 @@ struct process
+     pe_image_info_t      image_info;      /* main exe image info */
      int                  esync_fd;        /* esync file descriptor (signaled on exit) */
      unsigned int         fsync_idx;
-     struct cpu_topology_override cpu_override; /* Overridden CPUs to host CPUs mapping. */
 +    struct fast_sync    *fast_sync;       /* fast synchronization object */
  };
  
@@ -3477,13 +3476,13 @@ index 795fc148479..adcca4f4f1f 100644
 --- a/dlls/ntdll/unix/unix_private.h
 +++ b/dlls/ntdll/unix/unix_private.h
 @@ -164,6 +164,8 @@ extern unsigned int server_select( const select_op_t *select_op, data_size_t siz
-                                    timeout_t abs_timeout, context_t *context, user_apc_t *user_apc );
+                                    timeout_t abs_timeout, context_t *context, user_apc_t *user_apc ) DECLSPEC_HIDDEN;
  extern unsigned int server_wait( const select_op_t *select_op, data_size_t size, UINT flags,
-                                  const LARGE_INTEGER *timeout );
+                                  const LARGE_INTEGER *timeout ) DECLSPEC_HIDDEN;
 +extern unsigned int server_wait_for_object( HANDLE handle, BOOL alertable,
-+                                            const LARGE_INTEGER *timeout );
++                                            const LARGE_INTEGER *timeout ) DECLSPEC_HIDDEN;
  extern unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call,
-                                               apc_result_t *result );
+                                               apc_result_t *result ) DECLSPEC_HIDDEN;
  extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
 @@ -344,7 +346,7 @@ static inline async_data_t server_async( HANDLE handle, struct async_fileio *use
  
@@ -5040,23 +5039,23 @@ index 9158a4736ad..42943d6a84a 100644
 --- a/dlls/ntdll/unix/unix_private.h
 +++ b/dlls/ntdll/unix/unix_private.h
 @@ -158,6 +158,8 @@ extern NTSTATUS load_main_exe( const WCHAR *name, const char *unix_name, const W
- extern NTSTATUS load_start_exe( WCHAR **image, void **module );
- extern void start_server( BOOL debug );
+ extern NTSTATUS load_start_exe( WCHAR **image, void **module ) DECLSPEC_HIDDEN;
+ extern void start_server( BOOL debug ) DECLSPEC_HIDDEN;
  
-+extern pthread_mutex_t fd_cache_mutex;
++extern pthread_mutex_t fd_cache_mutex DECLSPEC_HIDDEN;
 +
- extern unsigned int server_call_unlocked( void *req_ptr );
- extern void server_enter_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
- extern void server_leave_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
+ extern unsigned int server_call_unlocked( void *req_ptr ) DECLSPEC_HIDDEN;
+ extern void server_enter_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset ) DECLSPEC_HIDDEN;
+ extern void server_leave_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset ) DECLSPEC_HIDDEN;
 @@ -281,6 +283,8 @@ extern void set_async_direct_result( HANDLE *optional_handle, NTSTATUS status, U
  
- extern void dbg_init(void);
+ extern void dbg_init(void) DECLSPEC_HIDDEN;
  
-+extern void close_fast_sync_obj( HANDLE handle );
++extern void close_fast_sync_obj( HANDLE handle ) DECLSPEC_HIDDEN;
 +
  extern NTSTATUS call_user_apc_dispatcher( CONTEXT *context_ptr, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3,
-                                           PNTAPCFUNC func, NTSTATUS status );
- extern NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context );
+                                           PNTAPCFUNC func, NTSTATUS status ) DECLSPEC_HIDDEN;
+ extern NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context ) DECLSPEC_HIDDEN;
 -- 
 2.35.3
 
