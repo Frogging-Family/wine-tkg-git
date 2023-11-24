@@ -1087,6 +1087,9 @@ _polish() {
 
 	echo -e "\nRunning make_vulkan" >> "$_where"/prepare.log && dlls/winevulkan/make_vulkan >> "$_where"/prepare.log 2>&1
 	tools/make_requests
+	if [ -e tools/make_specfiles ]; then
+	  tools/make_specfiles
+	fi
 	autoreconf -fiv
 
 	# wine late user patches - Applied after make_vulkan/make_requests/autoreconf
