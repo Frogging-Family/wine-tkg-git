@@ -615,14 +615,14 @@ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
 index 537b8d12704..2703322c981 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
-@@ -637,6 +637,7 @@ extern void sync_gl_drawable( HWND hwnd, BOOL known_child ) DECLSPEC_HIDDEN;
- extern void set_gl_drawable_parent( HWND hwnd, HWND parent ) DECLSPEC_HIDDEN;
- extern void destroy_gl_drawable( HWND hwnd ) DECLSPEC_HIDDEN;
- extern void wine_vk_surface_destroy( HWND hwnd ) DECLSPEC_HIDDEN;
-+extern void sync_vk_surface( HWND hwnd, BOOL known_child ) DECLSPEC_HIDDEN;
- extern void vulkan_thread_detach(void) DECLSPEC_HIDDEN;
+@@ -637,6 +637,7 @@ extern void sync_gl_drawable( HWND hwnd, BOOL known_child );
+ extern void set_gl_drawable_parent( HWND hwnd, HWND parent );
+ extern void destroy_gl_drawable( HWND hwnd );
+ extern void wine_vk_surface_destroy( HWND hwnd );
++extern void sync_vk_surface( HWND hwnd, BOOL known_child );
+ extern void vulkan_thread_detach(void);
  
- extern void wait_for_withdrawn_state( HWND hwnd, BOOL set ) DECLSPEC_HIDDEN;
+ extern void wait_for_withdrawn_state( HWND hwnd, BOOL set );
 -- 
 2.37.1
 
@@ -834,21 +834,21 @@ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
 index 890770c5248..830bf11ae4c 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
-@@ -426,6 +426,7 @@ extern BOOL show_systray DECLSPEC_HIDDEN;
- extern BOOL grab_pointer DECLSPEC_HIDDEN;
- extern BOOL grab_fullscreen DECLSPEC_HIDDEN;
- extern BOOL usexcomposite DECLSPEC_HIDDEN;
-+extern BOOL use_xfixes DECLSPEC_HIDDEN;
- extern BOOL managed_mode DECLSPEC_HIDDEN;
- extern BOOL decorated_mode DECLSPEC_HIDDEN;
- extern BOOL private_color_map DECLSPEC_HIDDEN;
-@@ -433,6 +434,7 @@ extern int primary_monitor DECLSPEC_HIDDEN;
- extern int copy_default_colors DECLSPEC_HIDDEN;
- extern int alloc_system_colors DECLSPEC_HIDDEN;
- extern int xrender_error_base DECLSPEC_HIDDEN;
-+extern int xfixes_event_base DECLSPEC_HIDDEN;
- extern char *process_name DECLSPEC_HIDDEN;
- extern Display *clipboard_display DECLSPEC_HIDDEN;
+@@ -426,6 +426,7 @@ extern BOOL show_systray;
+ extern BOOL grab_pointer;
+ extern BOOL grab_fullscreen;
+ extern BOOL usexcomposite;
++extern BOOL use_xfixes;
+ extern BOOL managed_mode;
+ extern BOOL decorated_mode;
+ extern BOOL private_color_map;
+@@ -433,6 +434,7 @@ extern int primary_monitor;
+ extern int copy_default_colors;
+ extern int alloc_system_colors;
+ extern int xrender_error_base;
++extern int xfixes_event_base;
+ extern char *process_name;
+ extern Display *clipboard_display;
  extern WNDPROC client_foreign_window_proc;
 diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
 index 20e07679635..461a9d6fe6e 100644
@@ -986,7 +986,7 @@ index 00000000000..3ab31201d3d
 +
 +#ifdef SONAME_LIBXFIXES
 +#include <X11/extensions/Xfixes.h>
-+#define MAKE_FUNCPTR(f) extern typeof(f) * p##f DECLSPEC_HIDDEN;
++#define MAKE_FUNCPTR(f) extern typeof(f) * p##f;
 +MAKE_FUNCPTR(XFixesQueryExtension)
 +MAKE_FUNCPTR(XFixesQueryVersion)
 +MAKE_FUNCPTR(XFixesSelectSelectionInput)
@@ -1144,14 +1144,14 @@ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
 index 830bf11ae4c..eb38909a47d 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
-@@ -427,6 +427,7 @@ extern BOOL grab_pointer DECLSPEC_HIDDEN;
- extern BOOL grab_fullscreen DECLSPEC_HIDDEN;
- extern BOOL usexcomposite DECLSPEC_HIDDEN;
- extern BOOL use_xfixes DECLSPEC_HIDDEN;
-+extern BOOL use_xpresent DECLSPEC_HIDDEN;
- extern BOOL managed_mode DECLSPEC_HIDDEN;
- extern BOOL decorated_mode DECLSPEC_HIDDEN;
- extern BOOL private_color_map DECLSPEC_HIDDEN;
+@@ -427,6 +427,7 @@ extern BOOL grab_pointer;
+ extern BOOL grab_fullscreen;
+ extern BOOL usexcomposite;
+ extern BOOL use_xfixes;
++extern BOOL use_xpresent;
+ extern BOOL managed_mode;
+ extern BOOL decorated_mode;
+ extern BOOL private_color_map;
 diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
 index 461a9d6fe6e..92897c16238 100644
 --- a/dlls/winex11.drv/x11drv_main.c
@@ -1261,7 +1261,7 @@ index 3ab31201d3d..80f8cca04e4 100644
 --- a/dlls/winex11.drv/xfixes.h
 +++ b/dlls/winex11.drv/xfixes.h
 @@ -29,6 +29,9 @@
- #define MAKE_FUNCPTR(f) extern typeof(f) * p##f DECLSPEC_HIDDEN;
+ #define MAKE_FUNCPTR(f) extern typeof(f) * p##f;
  MAKE_FUNCPTR(XFixesQueryExtension)
  MAKE_FUNCPTR(XFixesQueryVersion)
 +MAKE_FUNCPTR(XFixesCreateRegion)
@@ -1304,7 +1304,7 @@ index 00000000000..6fd813a930e
 +
 +#ifdef SONAME_LIBXPRESENT
 +#include <X11/extensions/Xpresent.h>
-+#define MAKE_FUNCPTR(f) extern typeof(f) * p##f DECLSPEC_HIDDEN;
++#define MAKE_FUNCPTR(f) extern typeof(f) * p##f;
 +MAKE_FUNCPTR(XPresentQueryExtension)
 +MAKE_FUNCPTR(XPresentQueryVersion)
 +MAKE_FUNCPTR(XPresentPixmap)
@@ -1456,14 +1456,14 @@ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
 index eb38909a47d..5beaf0d10fc 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
-@@ -630,7 +630,7 @@ extern Window get_dummy_parent(void) DECLSPEC_HIDDEN;
- extern void sync_gl_drawable( HWND hwnd, BOOL known_child ) DECLSPEC_HIDDEN;
- extern void set_gl_drawable_parent( HWND hwnd, HWND parent ) DECLSPEC_HIDDEN;
- extern void destroy_gl_drawable( HWND hwnd ) DECLSPEC_HIDDEN;
--extern void wine_vk_surface_destroy( HWND hwnd ) DECLSPEC_HIDDEN;
-+extern void destroy_vk_surface( HWND hwnd ) DECLSPEC_HIDDEN;
- extern void sync_vk_surface( HWND hwnd, BOOL known_child ) DECLSPEC_HIDDEN;
- extern void vulkan_thread_detach(void) DECLSPEC_HIDDEN;
+@@ -630,7 +630,7 @@ extern Window get_dummy_parent(void);
+ extern void sync_gl_drawable( HWND hwnd, BOOL known_child );
+ extern void set_gl_drawable_parent( HWND hwnd, HWND parent );
+ extern void destroy_gl_drawable( HWND hwnd );
+-extern void wine_vk_surface_destroy( HWND hwnd );
++extern void destroy_vk_surface( HWND hwnd );
+ extern void sync_vk_surface( HWND hwnd, BOOL known_child );
+ extern void vulkan_thread_detach(void);
  
 -- 
 2.37.1
@@ -1521,14 +1521,14 @@ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
 index 5beaf0d10fc..801ec79559a 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
-@@ -632,6 +632,7 @@ extern void set_gl_drawable_parent( HWND hwnd, HWND parent ) DECLSPEC_HIDDEN;
- extern void destroy_gl_drawable( HWND hwnd ) DECLSPEC_HIDDEN;
- extern void destroy_vk_surface( HWND hwnd ) DECLSPEC_HIDDEN;
- extern void sync_vk_surface( HWND hwnd, BOOL known_child ) DECLSPEC_HIDDEN;
-+extern void resize_vk_surfaces( HWND hwnd, Window active, int mask, XWindowChanges *changes ) DECLSPEC_HIDDEN;
- extern void vulkan_thread_detach(void) DECLSPEC_HIDDEN;
+@@ -632,6 +632,7 @@ extern void set_gl_drawable_parent( HWND hwnd, HWND parent );
+ extern void destroy_gl_drawable( HWND hwnd );
+ extern void destroy_vk_surface( HWND hwnd );
+ extern void sync_vk_surface( HWND hwnd, BOOL known_child );
++extern void resize_vk_surfaces( HWND hwnd, Window active, int mask, XWindowChanges *changes );
+ extern void vulkan_thread_detach(void);
  
- extern void wait_for_withdrawn_state( HWND hwnd, BOOL set ) DECLSPEC_HIDDEN;
+ extern void wait_for_withdrawn_state( HWND hwnd, BOOL set );
 -- 
 2.37.1
 
@@ -1628,22 +1628,22 @@ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
 index 801ec79559a..c13bc0bdb16 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
-@@ -633,6 +633,7 @@ extern void destroy_gl_drawable( HWND hwnd ) DECLSPEC_HIDDEN;
- extern void destroy_vk_surface( HWND hwnd ) DECLSPEC_HIDDEN;
- extern void sync_vk_surface( HWND hwnd, BOOL known_child ) DECLSPEC_HIDDEN;
- extern void resize_vk_surfaces( HWND hwnd, Window active, int mask, XWindowChanges *changes ) DECLSPEC_HIDDEN;
-+extern Window wine_vk_active_surface( HWND hwnd ) DECLSPEC_HIDDEN;
- extern void vulkan_thread_detach(void) DECLSPEC_HIDDEN;
+@@ -633,6 +633,7 @@ extern void destroy_gl_drawable( HWND hwnd );
+ extern void destroy_vk_surface( HWND hwnd );
+ extern void sync_vk_surface( HWND hwnd, BOOL known_child );
+ extern void resize_vk_surfaces( HWND hwnd, Window active, int mask, XWindowChanges *changes );
++extern Window wine_vk_active_surface( HWND hwnd );
+ extern void vulkan_thread_detach(void);
  
- extern void wait_for_withdrawn_state( HWND hwnd, BOOL set ) DECLSPEC_HIDDEN;
-@@ -643,6 +644,7 @@ extern void update_net_wm_states( struct x11drv_win_data *data ) DECLSPEC_HIDDEN
- extern void make_window_embedded( struct x11drv_win_data *data ) DECLSPEC_HIDDEN;
- extern Window create_dummy_client_window(void) DECLSPEC_HIDDEN;
- extern Window create_client_window( HWND hwnd, const XVisualInfo *visual ) DECLSPEC_HIDDEN;
-+extern void update_client_window( HWND hwnd ) DECLSPEC_HIDDEN;
- extern void set_window_visual( struct x11drv_win_data *data, const XVisualInfo *vis, BOOL use_alpha ) DECLSPEC_HIDDEN;
- extern void change_systray_owner( Display *display, Window systray_window ) DECLSPEC_HIDDEN;
- extern HWND create_foreign_window( Display *display, Window window ) DECLSPEC_HIDDEN;
+ extern void wait_for_withdrawn_state( HWND hwnd, BOOL set );
+@@ -643,6 +644,7 @@ extern void update_net_wm_states( struct x11drv_win_data *data )
+ extern void make_window_embedded( struct x11drv_win_data *data );
+ extern Window create_dummy_client_window(void);
+ extern Window create_client_window( HWND hwnd, const XVisualInfo *visual );
++extern void update_client_window( HWND hwnd );
+ extern void set_window_visual( struct x11drv_win_data *data, const XVisualInfo *vis, BOOL use_alpha );
+ extern void change_systray_owner( Display *display, Window systray_window );
+ extern HWND create_foreign_window( Display *display, Window window );
 -- 
 2.37.1
 
