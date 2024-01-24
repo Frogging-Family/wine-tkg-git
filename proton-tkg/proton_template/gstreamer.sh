@@ -63,6 +63,7 @@
 
   if [ "$_build_ffmpeg" = "true" ]; then
 	mkdir -p "$_nowhere"/Proton/build/FFmpeg64 && cd "$_nowhere"/Proton/build/FFmpeg64
+	( cd "$_nowhere"/external-resources/FFmpeg && patch -Np1 < "$_nowhere"/proton_template/ffmpeg_binutils.patch )
 
 	"$_nowhere"/Proton/FFmpeg/configure \
 		--prefix="$_nowhere/gst" \
