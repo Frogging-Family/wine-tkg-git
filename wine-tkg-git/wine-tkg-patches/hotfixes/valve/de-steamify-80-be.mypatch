@@ -373,22 +373,35 @@ diff --git a/dlls/winebus.sys/bus_sdl.c b/dlls/winebus.sys/bus_sdl.c
 index f4414ae1f50..4ed55ce9c01 100644
 --- a/dlls/winebus.sys/bus_sdl.c
 +++ b/dlls/winebus.sys/bus_sdl.c
-@@ -965,7 +965,7 @@ static void sdl_add_device(unsigned int index)
+@@ -965,8 +965,7 @@ static void sdl_add_device(unsigned int index)
      SDL_JoystickID id;
      SDL_JoystickType joystick_type;
      SDL_GameController *controller = NULL;
--    const char *product, *sdl_serial, *str;
+-    const char *product, *sdl_serial, *str, *env;
 +    const char *product, *sdl_serial;
+-    BOOL expose_steam_controller = (env = getenv("PROTON_EXPOSE_STEAM_CONTROLLER")) && atoi(env) == 1;
      char guid_str[33], buffer[ARRAY_SIZE(desc.product)];
      int axis_count, axis_offset;
  
-@@ -1021,10 +1021,6 @@ static void sdl_add_device(unsigned int index)
+@@ -1021,21 +1021,13 @@ static void sdl_add_device(unsigned int index)
+         return;
+     }
+
+-    if (desc.vid == 0x28de && desc.pid == 0x11ff && !expose_steam_controller)
++    if (desc.vid == 0x28de && desc.pid == 0x11ff)
+     {
+         TRACE("Steam virtual controller, pretending it's an Xbox 360 controller\n");
+         desc.vid = 0x045e;
          desc.pid = 0x028e;
      }
  
 -    /* CW-Bug-Id: #20528 Check steam virtual controller indexes to keep them ordered */
--    if ((str = pSDL_JoystickName(joystick)) && sscanf(str, "Microsoft X-Box 360 pad %u", &desc.input) == 1) desc.input++;
--    else desc.input = -1;
+-    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
+-    if ((str = pSDL_JoystickName(joystick)) && sscanf(str, "Microsoft X-Box 360 pad %u", &desc.input) == 1)
+-    {
+-        if (!expose_steam_controller) desc.input++;
+-        desc.version = 0; /* keep version fixed as 0 so we can hardcode it in ntdll rawinput pipe redirection */
+-    }
 -
      if (pSDL_JoystickGetSerial && (sdl_serial = pSDL_JoystickGetSerial(joystick)))
      {
@@ -531,7 +544,7 @@ index 192d75413fa..2abf33a8d45 100644
  
      preparsed = NULL;
      if (!HidD_GetPreparsedData(device, &preparsed))
-@@ -488,50 +483,13 @@ static void open_device_at_index(const WCHAR *device_path, int index)
+@@ -488,60 +483,13 @@ static void open_device_at_index(const WCHAR *device_path, int index)
          WARN("ignoring HID device, unsupported usage %04x:%04x\n", caps.UsagePage, caps.Usage);
      else if (device_is_overridden(device))
          WARN("ignoring HID device, overridden for dinput\n");
@@ -568,6 +581,16 @@ index 192d75413fa..2abf33a8d45 100644
 -        controller_destroy(&controllers[i - 1], TRUE);
 -        if (*free_slot != XUSER_MAX_COUNT) open_device_at_index(controllers[i - 1].device_path, *free_slot);
 -        *free_slot = i - 1;
+-    }
+-
+-    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
+-    if ((swscanf(device_path, L"\\\\?\\hid#vid_28de&pid_11ff&xi_%02u#", &i) == 1 ||
+-         swscanf(device_path, L"\\\\?\\HID#VID_28DE&PID_11FF&XI_%02u#", &i) == 1) &&
+-        i < XUSER_MAX_COUNT && *free_slot != i)
+-    {
+-        controller_destroy(&controllers[i], TRUE);
+-        if (*free_slot != XUSER_MAX_COUNT) open_device_at_index(controllers[i].device_path, *free_slot);
+-        *free_slot = i;
 -    }
 -
 -    return FALSE;
