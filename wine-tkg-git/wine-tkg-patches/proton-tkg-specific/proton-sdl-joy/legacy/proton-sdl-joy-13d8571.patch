@@ -1,3 +1,26 @@
+From 10543c51d9fb259ccc061f49d09ec6e74603e25c Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Tue, 6 Aug 2019 13:27:25 -0500
+Subject: [PATCH] winebus.sys: Disable UDEV lnxev devices by default.
+
+Based on a patch from Simon McVittie <smcv@collabora.com>.
+---
+ dlls/winebus.sys/main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/winebus.sys/main.c b/dlls/winebus.sys/main.c
+index 111953c3bae..2a583871f1a 100644
+--- a/dlls/winebus.sys/main.c
++++ b/dlls/winebus.sys/main.c
+@@ -742,7 +742,7 @@ static NTSTATUS udev_driver_init(void)
+
+     bus_options.disable_hidraw = check_bus_option(L"DisableHidraw", 0);
+     if (bus_options.disable_hidraw) TRACE("UDEV hidraw devices disabled in registry\n");
+-    bus_options.disable_input = check_bus_option(L"DisableInput", 0);
++    bus_options.disable_input = check_bus_option(L"DisableInput", 1);
+     if (bus_options.disable_input) TRACE("UDEV input devices disabled in registry\n");
+     bus_options.disable_udevd = check_bus_option(L"DisableUdevd", 0);
+     if (bus_options.disable_udevd) TRACE("UDEV udevd use disabled in registry\n");
 From 22d2f82678b9babe0a315df4f311221e999e7fbc Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Thu, 30 Sep 2021 15:07:25 +0200
@@ -74,9 +97,9 @@ index 2a583871f1a..1af7b5070f6 100644
  }
 
 @@ -574,7 +587,20 @@ static DWORD CALLBACK bus_main_thread(void *args)
-                 break;
-             }
-
+             IoInvalidateDeviceRelations(bus_pdo, BusRelations);
+             break;
+         case BUS_EVENT_TYPE_DEVICE_CREATED:
 -            device = bus_create_hid_device(&event->device_created.desc, event->device);
 +            RtlEnterCriticalSection(&device_list_cs);
 +            if (!wcscmp(bus.name, L"SDL"))
@@ -95,6 +118,21 @@ index 2a583871f1a..1af7b5070f6 100644
              if (device) IoInvalidateDeviceRelations(bus_pdo, BusRelations);
              else
              {
+@@ -778,11 +804,9 @@ static NTSTATUS fdo_pnp_dispatch(DEVICE_OBJECT *device, IRP *irp)
+         mouse_device_create();
+         keyboard_device_create();
+
+-        if (!check_bus_option(L"Enable SDL", 1) || sdl_driver_init())
+-        {
+-            udev_driver_init();
+-            iohid_driver_init();
+-        }
++        udev_driver_init();
++        iohid_driver_init();
++        sdl_driver_init();
+
+         irp->IoStatus.Status = STATUS_SUCCESS;
+         break;
 From f33bc009edb3349d6b3302cbe9de994926a3a4c3 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Tue, 6 Aug 2019 13:37:38 -0500
@@ -129,7 +167,8 @@ Subject: [PATCH] HACK: winebus.sys: Don't use hidraw for Steam controllers.
 
 ---
  dlls/winebus.sys/bus_udev.c     |  7 +++++++
- dlls/winebus.sys/unixlib.h      | 13 +++++++++++++
+ dlls/winebus.sys/unix_private.h |  1 +
+ dlls/winebus.sys/unixlib.c      | 13 +++++++++++++
  3 files changed, 21 insertions(+)
 
 diff --git a/dlls/winebus.sys/bus_udev.c b/dlls/winebus.sys/bus_udev.c
@@ -150,15 +189,27 @@ index 334373f82e6..4d1124f5cc4 100644
      if (is_xbox_gamepad(desc.vid, desc.pid))
      {
          /* SDL handles xbox (and steam) controllers */
-diff --git a/dlls/winebus.sys/unixlib.h b/dlls/winebus.sys/unixlib.h
-index 1269ae05c2b..e88d2181446 100644
---- a/dlls/winebus.sys/unixlib.h
-+++ b/dlls/winebus.sys/unixlib.h
-@@ -151,6 +151,19 @@
-                             desc->vid, desc->pid, desc->version, desc->input, desc->uid, desc->is_gamepad, desc->is_hidraw);
- }
+diff --git a/dlls/winebus.sys/unix_private.h b/dlls/winebus.sys/unix_private.h
+index efecf6cdbe3..6441f987a95 100644
+--- a/dlls/winebus.sys/unix_private.h
++++ b/dlls/winebus.sys/unix_private.h
+@@ -264,6 +264,7 @@ extern void hid_device_drop_report(struct unix_device *iface);
 
-+static inline BOOL is_steam_controller(WORD vid, WORD pid)
+ extern void hid_device_set_effect_state(struct unix_device *iface, BYTE index, BYTE flags);
+
++BOOL is_steam_controller(WORD vid, WORD pid);
+ BOOL is_xbox_gamepad(WORD vid, WORD pid);
+ BOOL is_dualshock4_gamepad(WORD vid, WORD pid);
+
+diff --git a/dlls/winebus.sys/unixlib.c b/dlls/winebus.sys/unixlib.c
+index 1269ae05c2b..e88d2181446 100644
+--- a/dlls/winebus.sys/unixlib.c
++++ b/dlls/winebus.sys/unixlib.c
+@@ -38,6 +38,19 @@
+
+ #include "unix_private.h"
+
++BOOL is_steam_controller(WORD vid, WORD pid)
 +{
 +    if (vid != 0x28de) return FALSE;
 +    if (pid == 0x1101) return TRUE; /* Valve Legacy Steam Controller */
@@ -171,7 +222,7 @@ index 1269ae05c2b..e88d2181446 100644
 +    return FALSE;
 +}
 +
- static inline BOOL is_xbox_gamepad(WORD vid, WORD pid)
+ BOOL is_xbox_gamepad(WORD vid, WORD pid)
  {
      if (vid != 0x045e) return FALSE;
 From 1cf8f159e76931d5e4c975e1a659bf8867fa8034 Mon Sep 17 00:00:00 2001
@@ -183,7 +234,8 @@ Subject: [PATCH] HACK: winebus.sys: Ignore blacklisted SDL controllers and
 ---
  dlls/winebus.sys/bus_sdl.c      | 27 +++++++++++++++++----------
  dlls/winebus.sys/bus_udev.c     |  7 +++++++
- dlls/winebus.sys/unixlib.h      | 18 ++++++++++++++++++
+ dlls/winebus.sys/unix_private.h |  1 +
+ dlls/winebus.sys/unixlib.c      | 18 ++++++++++++++++++
  4 files changed, 43 insertions(+), 10 deletions(-)
 
 diff --git a/dlls/winebus.sys/bus_sdl.c b/dlls/winebus.sys/bus_sdl.c
@@ -250,16 +302,28 @@ index 4d1124f5cc4..3a525b235c6 100644
      if (is_steam_controller(desc.vid, desc.pid))
      {
          /* this device is being used as a virtual Steam controller */
-diff --git a/dlls/winebus.sys/unixlib.h b/dlls/winebus.sys/unixlib.h
-index 1269ae05c2b..e88d2181446 100644
---- a/dlls/winebus.sys/unixlib.h
-+++ b/dlls/winebus.sys/unixlib.h
-@@ -151,6 +151,24 @@
-                             desc->vid, desc->pid, desc->version, desc->input, desc->uid, desc->is_gamepad, desc->is_hidraw);
- }
+diff --git a/dlls/winebus.sys/unix_private.h b/dlls/winebus.sys/unix_private.h
+index 6441f987a95..02c9ff947c4 100644
+--- a/dlls/winebus.sys/unix_private.h
++++ b/dlls/winebus.sys/unix_private.h
+@@ -264,6 +264,7 @@ extern void hid_device_drop_report(struct unix_device *iface);
+
+ extern void hid_device_set_effect_state(struct unix_device *iface, BYTE index, BYTE flags);
+
++BOOL is_sdl_blacklisted(DWORD vid, DWORD pid);
+ BOOL is_steam_controller(WORD vid, WORD pid);
+ BOOL is_xbox_gamepad(WORD vid, WORD pid);
+ BOOL is_dualshock4_gamepad(WORD vid, WORD pid);
+diff --git a/dlls/winebus.sys/unixlib.c b/dlls/winebus.sys/unixlib.c
+index e88d2181446..8cff984ac20 100644
+--- a/dlls/winebus.sys/unixlib.c
++++ b/dlls/winebus.sys/unixlib.c
+@@ -38,6 +38,24 @@
+
+ #include "unix_private.h"
 
 +/* logic from SDL2's SDL_ShouldIgnoreGameController */
-+static inline BOOL is_sdl_blacklisted(DWORD vid, DWORD pid)
++BOOL is_sdl_blacklisted(DWORD vid, DWORD pid)
 +{
 +    const char *allow_virtual = getenv("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD");
 +    const char *whitelist = getenv("SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT");
@@ -276,10 +340,9 @@ index 1269ae05c2b..e88d2181446 100644
 +    return FALSE;
 +}
 +
- static inline BOOL is_steam_controller(WORD vid, WORD pid)
+ BOOL is_steam_controller(WORD vid, WORD pid)
  {
      if (vid != 0x28de) return FALSE;
-
 From 7ea1cc2581b35b6d630d0399a0e230b3f57a2014 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Fri, 30 Aug 2019 10:20:16 -0500
@@ -342,23 +405,31 @@ index 079a615333e..84c8721270c 100644
      if (desc.vid == 0x28de && desc.pid == 0x11ff)
      {
          TRACE("Steam virtual controller, pretending it's an Xbox 360 controller\n");
-diff --git a/dlls/winebus.sys/unixlib.h b/dlls/winebus.sys/unixlib.h
-index 8cff984ac20..ae742b0cba4 100644
---- a/dlls/winebus.sys/unixlib.h
-+++ b/dlls/winebus.sys/unixlib.h
-@@ -28,6 +28,7 @@
+diff --git a/dlls/winebus.sys/unix_private.h b/dlls/winebus.sys/unix_private.h
+index 02c9ff947c4..a204eacb3bf 100644
+--- a/dlls/winebus.sys/unix_private.h
++++ b/dlls/winebus.sys/unix_private.h
+@@ -265,6 +265,7 @@ extern void hid_device_drop_report(struct unix_device *iface);
+ extern void hid_device_set_effect_state(struct unix_device *iface, BYTE index, BYTE flags);
 
+ BOOL is_sdl_blacklisted(DWORD vid, DWORD pid);
++BOOL is_wine_blacklisted(DWORD vid, DWORD pid);
+ BOOL is_steam_controller(WORD vid, WORD pid);
+ BOOL is_xbox_gamepad(WORD vid, WORD pid);
+ BOOL is_dualshock4_gamepad(WORD vid, WORD pid);
+diff --git a/dlls/winebus.sys/unixlib.c b/dlls/winebus.sys/unixlib.c
+index 8cff984ac20..ae742b0cba4 100644
+--- a/dlls/winebus.sys/unixlib.c
++++ b/dlls/winebus.sys/unixlib.c
+@@ -35,9 +35,23 @@
  #include "wine/debug.h"
  #include "wine/list.h"
+ #include "wine/unixlib.h"
 +#include "wine/js_blacklist.h" /* for wine_js_blacklist */
 
- #include "wine/debug.h"
- #include "wine/list.h"
-@@ -151,6 +151,19 @@
-                             desc->vid, desc->pid, desc->version, desc->input, desc->uid, desc->is_gamepad, desc->is_hidraw);
- }
+ #include "unix_private.h"
 
-+static inline BOOL is_wine_blacklisted(DWORD vid, DWORD pid)
++BOOL is_wine_blacklisted(DWORD vid, DWORD pid)
 +{
 +    int i;
 +
