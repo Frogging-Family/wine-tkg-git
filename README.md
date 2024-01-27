@@ -33,7 +33,7 @@
 **5.** Locate the build directory:
 
     ```cd wine-rbx-tkg-git/wine-tkg-git/non-makepkg-builds/```
-
+    
 **6.** Copy the build path:
 
 ```
@@ -45,7 +45,9 @@ realpath *
 Open your Vinegar configuration file (usually ~/.config/vinegar/config.toml).
 Add the following line at the beginning, replacing insert path here with the copied build path:
 
-    ```wineroot = "insert path here"```
+    ```
+    wineroot = "insert path here"
+    ```
 
 
 **8.** Launch Roblox games:
