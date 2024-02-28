@@ -13,13 +13,13 @@ _exports_32() {
   if [ -d '/usr/lib32/pkgconfig' ]; then # Typical Arch path
     export PKG_CONFIG_PATH='/usr/lib32/pkgconfig'
     # glib/gstreamer detection workaround for proton 8.0 trees
-    if [[ "$_plain_version" = *_8.0 ]]; then
+    if [[ "$_plain_version" = *_8.0 ]] || [[ "$_plain_version" = *_9.0 ]]; then
       CFLAGS+=" -I/usr/lib32/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib32/gstreamer-1.0/include"
       CROSSCFLAGS+=" -I/usr/lib32/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib32/gstreamer-1.0/include"
     fi
   elif [ -d '/usr/lib/i386-linux-gnu/pkgconfig' ]; then # Ubuntu 18.04/19.04 path
     export PKG_CONFIG_PATH='/usr/lib/i386-linux-gnu/pkgconfig'
-    if [[ "$_plain_version" = *_8.0 ]]; then
+    if [[ "$_plain_version" = *_8.0 ]] || [[ "$_plain_version" = *_9.0 ]]; then
       CFLAGS+=" -I/usr/lib/i386-linux-gnu/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib/i386-linux-gnu/gstreamer-1.0/include"
       CROSSCFLAGS+=" -I/usr/lib/i386-linux-gnu/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib/i386-linux-gnu/gstreamer-1.0/include"
     fi
@@ -28,7 +28,7 @@ _exports_32() {
     # Workaround for Fedora freetype2 libs not being detected now that it's been moved to a subdir
     CFLAGS+=" -I/usr/include/freetype2"
     CROSSCFLAGS+=" -I/usr/include/freetype2"
-    if [[ "$_plain_version" = *_8.0 ]]; then
+    if [[ "$_plain_version" = *_8.0 ]] || [[ "$_plain_version" = *_9.0 ]]; then
       CFLAGS+=" -I/usr/lib/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib/gstreamer-1.0/include"
       CROSSCFLAGS+=" -I/usr/lib/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/include/gstreamer-1.0 -I/usr/lib/gstreamer-1.0/include"
     fi
