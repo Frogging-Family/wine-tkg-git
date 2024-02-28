@@ -68,13 +68,13 @@ index 22d50cf91d6..19b46014021 100644
  
      if (fence != orig_fence) pvkDestroyFence(device, fence, NULL);
 @@ -532,7 +531,6 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
-     x11_surface->known_child = FALSE;
      x11_surface->swapchain_count = 0;
-     x11_surface->hwnd = create_info->hwnd;
--    x11_surface->hdc = NtUserGetDCEx(x11_surface->hwnd, 0, DCX_USESTYLE);
-     x11_surface->window = create_client_window( create_info->hwnd, &default_visual );
-     x11_surface->hwnd_thread_id = NtUserGetWindowThread( x11_surface->hwnd, NULL );
-
+     if (x11_surface->hwnd)
+     {
+-        x11_surface->hdc = NtUserGetDCEx(x11_surface->hwnd, 0, DCX_USESTYLE);
+         x11_surface->window = create_client_window(create_info->hwnd, &default_visual);
+         x11_surface->hwnd_thread_id = NtUserGetWindowThread(x11_surface->hwnd, NULL);
+     }
 From 191b54b79d1a31c69e7d425f94c4da519f583775 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Fri, 20 May 2022 18:45:15 -0500
@@ -442,51 +442,51 @@ index 423a89c0298..090e7091335 100644
  
      TRACE("%p %p %p %p\n", instance, create_info, allocator, surface);
  
-@@ -576,8 +576,43 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
-     x11_surface->known_child = FALSE;
+@@ -576,8 +610,43 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
      x11_surface->swapchain_count = 0;
-     x11_surface->hwnd = create_info->hwnd;
--    x11_surface->window = create_client_window( create_info->hwnd, &default_visual );
--    x11_surface->hwnd_thread_id = NtUserGetWindowThread( x11_surface->hwnd, NULL );
-+    x11_surface->hwnd_thread_id = NtUserGetWindowThread( x11_surface->hwnd, &hwnd_pid );
-+    if (x11_surface->hwnd_thread_id && hwnd_pid != GetCurrentProcessId())
-+    {
-+        XSetWindowAttributes attr;
-+
-+        WARN("Other process window %p.\n", x11_surface->hwnd);
-+        NtUserGetClientRect( x11_surface->hwnd, &rect );
-+        x11_surface->width = max( rect.right - rect.left, 1 );
-+        x11_surface->height = max( rect.bottom - rect.top, 1 );
-+        x11_surface->client_colormap = XCreateColormap( gdi_display, get_dummy_parent(), default_visual.visual,
-+                (default_visual.class == PseudoColor || default_visual.class == GrayScale
-+                || default_visual.class == DirectColor) ? AllocAll : AllocNone );
-+        attr.colormap = x11_surface->client_colormap;
-+        attr.bit_gravity = NorthWestGravity;
-+        attr.win_gravity = NorthWestGravity;
-+        attr.backing_store = NotUseful;
-+        attr.border_pixel = 0;
-+        x11_surface->window = XCreateWindow( gdi_display,
-+                                             get_dummy_parent(),
-+                                             0, 0, x11_surface->width, x11_surface->height, 0,
-+                                             default_visual.depth, InputOutput,
-+                                             default_visual.visual, CWBitGravity | CWWinGravity |
-+                                             CWBackingStore | CWColormap | CWBorderPixel, &attr );
-+        if (x11_surface->window)
+     if (x11_surface->hwnd)
+     {
+-        x11_surface->window = create_client_window(create_info->hwnd, &default_visual);
+-        x11_surface->hwnd_thread_id = NtUserGetWindowThread(x11_surface->hwnd, NULL);
++        x11_surface->hwnd_thread_id = NtUserGetWindowThread(x11_surface->hwnd, &hwnd_pid);
++        if (x11_surface->hwnd_thread_id && hwnd_pid != GetCurrentProcessId())
 +        {
-+            XMapWindow( gdi_display, x11_surface->window );
-+            XSync( gdi_display, False );
-+            x11_surface->gdi_blit_source = TRUE;
-+            x11_surface->other_process = TRUE;
-+            x11_surface->draw_dc = NtGdiOpenDCW( NULL, NULL, NULL, 0, TRUE, NULL, NULL, NULL );
-+            set_dc_drawable( x11_surface->draw_dc, x11_surface->window, &rect );
++            XSetWindowAttributes attr;
++
++            WARN("Other process window %p.\n", x11_surface->hwnd);
++            NtUserGetClientRect( x11_surface->hwnd, &rect );
++            x11_surface->width = max( rect.right - rect.left, 1 );
++            x11_surface->height = max( rect.bottom - rect.top, 1 );
++            x11_surface->client_colormap = XCreateColormap( gdi_display, get_dummy_parent(), default_visual.visual,
++                    (default_visual.class == PseudoColor || default_visual.class == GrayScale
++                    || default_visual.class == DirectColor) ? AllocAll : AllocNone );
++            attr.colormap = x11_surface->client_colormap;
++            attr.bit_gravity = NorthWestGravity;
++            attr.win_gravity = NorthWestGravity;
++            attr.backing_store = NotUseful;
++            attr.border_pixel = 0;
++            x11_surface->window = XCreateWindow( gdi_display,
++                                                 get_dummy_parent(),
++                                                 0, 0, x11_surface->width, x11_surface->height, 0,
++                                                 default_visual.depth, InputOutput,
++                                                 default_visual.visual, CWBitGravity | CWWinGravity |
++                                                 CWBackingStore | CWColormap | CWBorderPixel, &attr );
++            if (x11_surface->window)
++            {
++                XMapWindow( gdi_display, x11_surface->window );
++                XSync( gdi_display, False );
++                x11_surface->gdi_blit_source = TRUE;
++                x11_surface->other_process = TRUE;
++                x11_surface->draw_dc = NtGdiOpenDCW( NULL, NULL, NULL, 0, TRUE, NULL, NULL, NULL );
++                set_dc_drawable( x11_surface->draw_dc, x11_surface->window, &rect );
++            }
 +        }
-+    }
-+    else
-+    {
-+        x11_surface->window = create_client_window(create_info->hwnd, &default_visual);
-+    }
-
-     if (!x11_surface->window)
++        else
++        {
++            x11_surface->window = create_client_window(create_info->hwnd, &default_visual);
++        }
+     }
+     else
      {
 @@ -593,7 +662,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
          goto err;
@@ -547,17 +547,17 @@ index 090e7091335..2cb9ad949ae 100644
          const VkWin32SurfaceCreateInfoKHR *create_info,
          const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface)
 @@ -616,6 +628,14 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
-         XSetWindowAttributes attr;
-
-         WARN("Other process window %p.\n", x11_surface->hwnd);
+             XSetWindowAttributes attr;
+ 
+             WARN("Other process window %p.\n", x11_surface->hwnd);
 +
-+        if (disable_opwr() && x11_surface->hwnd != NtUserGetDesktopWindow())
-+        {
-+            ERR("HACK: Failing surface creation for other process window %p.\n", create_info->hwnd);
-+            res = VK_ERROR_OUT_OF_HOST_MEMORY;
-+            goto err;
-+        }
++            if (disable_opwr() && x11_surface->hwnd != NtUserGetDesktopWindow())
++            {
++                ERR("HACK: Failing surface creation for other process window %p.\n", create_info->hwnd);
++                res = VK_ERROR_OUT_OF_HOST_MEMORY;
++                goto err;
++            }
 +
-         NtUserGetClientRect( x11_surface->hwnd, &rect );
-         x11_surface->width = max( rect.right - rect.left, 1 );
-         x11_surface->height = max( rect.bottom - rect.top, 1 );
+             NtUserGetClientRect( x11_surface->hwnd, &rect );
+             x11_surface->width = max( rect.right - rect.left, 1 );
+             x11_surface->height = max( rect.bottom - rect.top, 1 );

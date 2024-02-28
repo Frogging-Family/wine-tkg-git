@@ -371,12 +371,13 @@ diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
 index e124ca57bad..537b8d12704 100644
 --- a/dlls/winex11.drv/x11drv.h
 +++ b/dlls/winex11.drv/x11drv.h
-@@ -333,6 +333,6 @@ enum x11drv_escape_codes
+@@ -333,7 +333,7 @@ enum x11drv_escape_codes
      X11DRV_GET_DRAWABLE,     /* get current drawable for a DC */
      X11DRV_START_EXPOSURES,  /* start graphics exposures */
      X11DRV_END_EXPOSURES,    /* end graphics exposures */
--    X11DRV_FLUSH_GL_DRAWABLE /* flush changes made to the gl drawable */
-+    X11DRV_PRESENT_DRAWABLE /* present the drawable on screen */
+-    X11DRV_FLUSH_GL_DRAWABLE, /* flush changes made to the gl drawable */
++    X11DRV_PRESENT_DRAWABLE, /* present the drawable on screen */
+     X11DRV_FLUSH_GDI_DISPLAY /* flush the gdi display */
  };
  
 @@ -352,10 +352,10 @@ struct x11drv_escape_get_drawable
@@ -527,7 +528,7 @@ index 71ab92297d2..210c7989b3c 100644
          FIXME("Support for allocation callbacks not implemented yet\n");
  
 -    /* TODO: support child window rendering. */
--    if (NtUserGetAncestor( create_info->hwnd, GA_PARENT ) != NtUserGetDesktopWindow())
+-    if (create_info->hwnd && NtUserGetAncestor(create_info->hwnd, GA_PARENT) != NtUserGetDesktopWindow())
 -    {
 -        FIXME("Application requires child window rendering, which is not implemented yet!\n");
 -        return VK_ERROR_INCOMPATIBLE_DRIVER;
@@ -536,14 +537,14 @@ index 71ab92297d2..210c7989b3c 100644
      x11_surface = calloc(1, sizeof(*x11_surface));
      if (!x11_surface)
          return VK_ERROR_OUT_OF_HOST_MEMORY;
-@@ -356,6 +414,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
-
-     x11_surface->ref = 1;
+@@ -358,6 +416,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
      x11_surface->hwnd = create_info->hwnd;
-+    x11_surface->hdc = NtUserGetDCEx(x11_surface->hwnd, 0, DCX_USESTYLE);
-     x11_surface->window = create_client_window( create_info->hwnd, &default_visual );
-     x11_surface->hwnd_thread_id = NtUserGetWindowThread( x11_surface->hwnd, NULL );
-
+     if (x11_surface->hwnd)
+     {
++        x11_surface->hdc = NtUserGetDCEx(x11_surface->hwnd, 0, DCX_USESTYLE);
+         x11_surface->window = create_client_window(create_info->hwnd, &default_visual);
+         x11_surface->hwnd_thread_id = NtUserGetWindowThread(x11_surface->hwnd, NULL);
+     }
 @@ -375,6 +434,16 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
          goto err;
      }
@@ -665,10 +666,10 @@ index 210c7989b3c..34b1be5c61b 100644
  
  static void *X11DRV_get_vk_device_proc_addr(const char *name);
  static void *X11DRV_get_vk_instance_proc_addr(VkInstance instance, const char *name);
-@@ -142,6 +146,9 @@ static void wine_vk_init(void)
-     LOAD_FUNCPTR(vkGetPhysicalDeviceXlibPresentationSupportKHR);
-     LOAD_FUNCPTR(vkGetSwapchainImagesKHR);
+@@ -144,6 +148,9 @@ static void wine_vk_init(void)
      LOAD_FUNCPTR(vkQueuePresentKHR);
+     LOAD_OPTIONAL_FUNCPTR(vkGetDeviceGroupSurfacePresentModesKHR);
+     LOAD_OPTIONAL_FUNCPTR(vkGetPhysicalDevicePresentRectanglesKHR);
 +    LOAD_FUNCPTR(vkWaitForFences);
 +    LOAD_FUNCPTR(vkCreateFence);
 +    LOAD_FUNCPTR(vkDestroyFence);
@@ -1426,13 +1427,15 @@ index 7b1e25163c7..d3e554090c2 100644
          if (!wine_vk_surface_set_offscreen(x11_surface, TRUE))
          {
              res = VK_ERROR_INCOMPATIBLE_DRIVER;
-@@ -496,9 +502,6 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
+@@ -496,11 +502,6 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
      }
  
      pthread_mutex_lock(&vulkan_mutex);
--    wine_vk_surface_destroy( x11_surface->hwnd );
--    XSaveContext( gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context,
--                  (char *)wine_vk_surface_grab( x11_surface ) );
+-    if (x11_surface->hwnd)
+-    {
+-        wine_vk_surface_destroy( x11_surface->hwnd );
+-        XSaveContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char *)wine_vk_surface_grab(x11_surface));
+-    }
      list_add_tail(&surface_list, &x11_surface->entry);
      pthread_mutex_unlock(&vulkan_mutex);
  
@@ -1726,14 +1729,14 @@ index 2770123deba..77fd1b5ef66 100644
  
      TRACE("%p %p %p %p\n", instance, create_info, allocator, surface);
  
-@@ -482,6 +500,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
-         return VK_ERROR_OUT_OF_HOST_MEMORY;
+@@ -487,6 +505,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
  
      x11_surface->ref = 1;
-+    x11_surface->known_child = FALSE;
      x11_surface->hwnd = create_info->hwnd;
-     x11_surface->hdc = NtUserGetDCEx(x11_surface->hwnd, 0, DCX_USESTYLE);
-     x11_surface->window = create_client_window( create_info->hwnd, &default_visual );
++    x11_surface->known_child = FALSE;
+     if (x11_surface->hwnd)
+     {
+         x11_surface->hdc = NtUserGetDCEx(x11_surface->hwnd, 0, DCX_USESTYLE);
 @@ -510,6 +529,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
      if (create_info->hwnd && (NtUserGetWindowRelative(create_info->hwnd, GW_CHILD) ||
                                NtUserGetAncestor(create_info->hwnd, GA_PARENT) != NtUserGetDesktopWindow()))
@@ -1920,14 +1923,14 @@ index 77fd1b5ef66..1275bc18aa0 100644
  
      TRACE("%p %p %p %p\n", instance, create_info, allocator, surface);
  
-@@ -505,6 +515,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
-
+@@ -506,6 +516,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
      x11_surface->ref = 1;
+     x11_surface->hwnd = create_info->hwnd;
      x11_surface->known_child = FALSE;
 +    x11_surface->swapchain_count = 0;
-     x11_surface->hwnd = create_info->hwnd;
-     x11_surface->hdc = NtUserGetDCEx(x11_surface->hwnd, 0, DCX_USESTYLE);
-     x11_surface->window = create_client_window( create_info->hwnd, &default_visual );
+     if (x11_surface->hwnd)
+     {
+         x11_surface->hdc = NtUserGetDCEx(x11_surface->hwnd, 0, DCX_USESTYLE);
 @@ -552,13 +563,6 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
      }
  
