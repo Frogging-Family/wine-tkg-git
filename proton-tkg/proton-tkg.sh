@@ -102,6 +102,14 @@ function new_lib_path_check {
     _i386_unix_path="$_nowhere/proton_dist_tmp/$_lib32name/wine/i386-unix/"
     _i386_windows_path="$_nowhere/proton_dist_tmp/$_lib32name/wine/"
     _i386_windows_tail="/$_lib32name/wine"
+  # wow64
+  elif [ ! -d "$_nowhere/proton_dist_tmp/$_lib32name/wine/i386-unix" ] && [ -d "$_nowhere/proton_dist_tmp/$_lib64name/wine/i386-windows" ]; then
+    _new_lib_paths="true"
+    _new_lib_paths_69="true"
+    _wow64_paths="true"
+    _i386_unix_path=
+    _i386_windows_path="$_nowhere/proton_dist_tmp/$_lib64name/wine/i386-windows/"
+    _i386_windows_tail="/$_lib64name/wine/i386-windows"
   elif [ ! -d "$_nowhere/proton_dist_tmp/$_lib32name/wine/i386-unix" ] && [ -d "$_nowhere/proton_dist_tmp/$_lib32name/wine/i386-windows" ] && [ ! -e "$_nowhere"/proton_dist_tmp/$_lib32name/libwine.* ]; then
     _new_lib_paths="true"
     _new_lib_paths_69="false"
@@ -221,7 +229,11 @@ function build_vrclient {
   cp -v "${_nowhere}"/openvr/bin/win32/openvr_api.dll proton_dist_tmp/lib/wine/dxvk/openvr_api_dxvk.dll
   cp -v "${_nowhere}"/openvr/bin/win64/openvr_api.dll proton_dist_tmp/lib64/wine/dxvk/openvr_api_dxvk.dll
 
-  if [ "$_new_lib_paths" = "true" ]; then
+  if [ "$_wow64_paths" = "true" ]; then
+    cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/$_lib64name/wine/x86_64-unix/
+    cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/$_lib64name/wine/x86_64-windows/vrclient_x64.dll
+    cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/$_lib64name/wine/i386-windows/vrclient.dll
+  elif [ "$_new_lib_paths" = "true" ]; then
     if [ "$_new_lib_paths_69" = "true" ] && [ -d proton_dist_tmp/$_lib32name/wine/i386-windows ] && [ -d proton_dist_tmp/$_lib64name/wine/x86_64-windows ]; then
       cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/$_lib64name/wine/x86_64-unix/ && cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/$_lib64name/wine/x86_64-windows/vrclient_x64.dll
       if [ "$_NOLIB32" != "true" ]; then
@@ -289,7 +301,11 @@ function build_lsteamclient {
   cd "$_nowhere"
 
   # Inject lsteamclient libs in our wine-tkg-git build
-  if [ "$_new_lib_paths" = "true" ]; then
+  if [ "$_wow64_paths" = "true" ]; then
+    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/$_lib64name/wine/x86_64-unix/
+    cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.fake proton_dist_tmp/$_lib64name/wine/x86_64-windows/lsteamclient.dll
+    cp -v Proton/build/lsteamclient.win32/lsteamclient.dll.fake proton_dist_tmp/$_lib64name/wine/i386-windows/lsteamclient.dll
+  elif [ "$_new_lib_paths" = "true" ]; then
     if [ "$_new_lib_paths_69" = "true" ]; then
       cp -v Proton/build/lsteamclient.win64/lsteamclient.dll.so proton_dist_tmp/$_lib64name/wine/x86_64-unix/
       if [ "$_NOLIB32" != "true" ]; then
@@ -524,7 +540,12 @@ function build_steamhelper {
 
     cd "$_nowhere"
 
-    if [ "$_new_lib_paths" = "true" ]; then
+    if [ "$_wow64_paths" = "true" ]; then
+      cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/$_lib64name/wine/i386-windows/steam.exe
+      cp -v Proton/build/steam.win64/steam.exe.fake proton_dist_tmp/$_lib64name/wine/x86_64-windows/steam.exe
+      cp -v Proton/build/steam.win64/steam.exe.so proton_dist_tmp/$_lib64name/wine/x86_64-unix/
+      cp -v Proton/build/steam.win64/64/libsteam_api.so proton_dist_tmp/$_lib64name/
+    elif [ "$_new_lib_paths" = "true" ]; then
       # .exe 32 - always there
       cp -v Proton/build/steam.win32/steam.exe.fake proton_dist_tmp/$_lib32name/wine/i386-windows/steam.exe
       # .exe 64
@@ -1171,7 +1192,11 @@ else
 
     if [ "$_new_lib_paths" = "true" ]; then
       cd "$_nowhere/proton_tkg_$_protontkg_version"
-      _patchname="new_lib_paths.patch"
+      if [ "$_wow64_paths" = "true" ]; then
+        _patchname="wow64_paths.patch"
+      else
+        _patchname="new_lib_paths.patch"
+      fi
       echo -e "\nApplying $_patchname"
       patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
       cd "$_nowhere"

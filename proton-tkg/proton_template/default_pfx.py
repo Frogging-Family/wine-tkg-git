@@ -61,10 +61,11 @@ def setup_dll_symlinks(default_pfx_dir, dist_dir):
                 if bitness == 32:
                     libdir = os.path.join(dist_dir, 'lib/wine')
                     newlibdir = os.path.join(dist_dir, 'lib/wine/i386-windows')
+                    wow64libdir = os.path.join(dist_dir, 'lib64/wine/i386-windows')
                 elif bitness == 64:
                     libdir = os.path.join(dist_dir, 'lib64/wine')
                     newlibdir = os.path.join(dist_dir, 'lib64/wine/x86_64-windows')
-                    wow64libdir = os.path.join(dist_dir, 'lib/wine/x86_64-windows')
+                    wow64libdir = os.path.join(dist_dir, 'lib64/wine/x86_64-windows')
                 else:
                     continue
                 if os.path.exists(os.path.join(libdir, file_)):
@@ -91,7 +92,7 @@ def fixup_drive_links(default_pfx_dir):
 def make_default_pfx(default_pfx_dir, dist_dir, runtime):
     local_env = dict(os.environ)
 
-    ld_path = dist_dir + "/lib64:" + dist_dir + "/lib:" + dist_dir + "/lib64/x86_64-unix:" + dist_dir + "/lib/i386-unix"
+    ld_path = dist_dir + "/lib64:" + dist_dir + "/lib:" + dist_dir + "/lib64/x86_64-unix:" + dist_dir + "/lib/i386-unix:" + dist_dir + "/lib64/i386-unix"
 
     if runtime is None:
         local_env["LD_LIBRARY_PATH"] = ld_path
