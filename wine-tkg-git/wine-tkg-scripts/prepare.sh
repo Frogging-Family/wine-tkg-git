@@ -257,7 +257,7 @@ msg2 ''
     if [ -z "$_LOCAL_PRESET" ]; then
       msg2 "No _LOCAL_PRESET set in .cfg. Please select your desired base:"
       warning "With Valve trees, most wine-specific customization options will be ignored such as game-specific patches, esync/fsync/fastsync or Proton-specific features support. Those patches and features are for the most part already in, but some bits deemed useful such as FSR support for Proton's fshack are made available through community patches. Staging and GE patches are available through regular .cfg options."
-      read -p "    What kind of Proton base do you want?`echo $'\n    > 1.Valve Proton Experimental Bleeding Edge (Recommended for gaming on the edge)\n      2.Valve Proton Experimental\n      3.Valve Proton\n      4.Wine upstream Proton (The most experimental)\n    choice[1-4?]: '`" CONDITION;
+      read -p "    What kind of Proton base do you want?`echo $'\n    > 1.Valve Proton Experimental Bleeding Edge (Recommended for gaming on the edge)\n      2.Valve Proton Experimental\n      3.Valve Proton\n      4.Wine upstream Proton (Expect breakage)\n    choice[1-4?]: '`" CONDITION;
       if [ "$CONDITION" = "2" ]; then
         _LOCAL_PRESET="valve-exp"
       elif [ "$CONDITION" = "3" ]; then
