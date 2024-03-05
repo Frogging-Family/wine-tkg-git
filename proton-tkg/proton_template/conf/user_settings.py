@@ -67,7 +67,7 @@ user_settings = {
 #    "PROTON_NO_WRITE_WATCH": "1",
 
     #Spoof d3d12 feature level supported by vkd3d. Needed for some d3d12 games to work.
-    "VKD3D_FEATURE_LEVEL": "12_0",
+    "VKD3D_FEATURE_LEVEL": "12_2",
 
     #Use OpenGL-based wined3d for d3d11/d3d10/d3d9 instead of Vulkan-based DXVK & D9VK
 #    "PROTON_USE_WINED3D": "1",
