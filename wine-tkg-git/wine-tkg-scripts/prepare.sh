@@ -279,16 +279,11 @@ msg2 ''
     _EXTERNAL_INSTALL="proton"
     _EXTERNAL_NOVER="false"
     _nomakepkg_nover="true"
-    if [[ "$_LOCAL_PRESET" = valve* ]]; then
+    if [ "$_NOLIB32" = "true" ]; then
+      warning '_NOLIB32="true" is not compatible with Proton builds and was set to "false" as a fallback'
       _NOLIB32="false"
-      _NOLIB64="false"
-    else
-      if [ "$_NOLIB32" = "true" ]; then
-        warning '_NOLIB32="true" is not compatible with Proton builds and was set to "false" as a fallback'
-        _NOLIB32="false"
-      fi
-      _NOLIB64="false"
     fi
+    _NOLIB64="false"
     _esync_version=""
     _use_faudio="true"
     _highcorecount_fix="true"
