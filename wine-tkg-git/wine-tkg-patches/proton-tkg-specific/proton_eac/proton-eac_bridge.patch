@@ -1,4 +1,4 @@
-From b39cb3bfe9dafd6affe74f7657cd7fe41b52137f Mon Sep 17 00:00:00 2001
+From 156462ac21f0adca4b9811439f1076f2ff07002f Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Mon, 6 Dec 2021 15:13:40 +0100
 Subject: [PATCH] ntdll: Load EAC bridge files from PROTON_EAC_RUNTIME path.
@@ -8,10 +8,10 @@ Subject: [PATCH] ntdll: Load EAC bridge files from PROTON_EAC_RUNTIME path.
  1 file changed, 22 insertions(+), 1 deletion(-)
 
 diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index 711b7224bfc..1d4160727e4 100644
+index c6ff35935f9..ea2ad0d584c 100644
 --- a/dlls/ntdll/unix/loader.c
 +++ b/dlls/ntdll/unix/loader.c
-@@ -526,7 +526,7 @@ static const char *get_pe_dir( WORD machine )
+@@ -340,7 +340,7 @@ static const char *get_pe_dir( WORD machine )
 
  static void set_dll_path(void)
  {
@@ -20,7 +20,7 @@ index 711b7224bfc..1d4160727e4 100644
      int i, count = 0;
 
      if (path) for (p = path, count = 1; *p; p++) if (*p == ':') count++;
-@@ -534,6 +534,9 @@ static void set_dll_path(void)
+@@ -348,6 +348,9 @@ static void set_dll_path(void)
      if (be_runtime)
          count += 2;
 
@@ -30,7 +30,7 @@ index 711b7224bfc..1d4160727e4 100644
      dll_paths = malloc( (count + 2) * sizeof(*dll_paths) );
      count = 0;
 
-@@ -564,6 +567,24 @@ static void set_dll_path(void)
+@@ -378,6 +381,24 @@ static void set_dll_path(void)
          dll_paths[count++] = p;
      }
 
@@ -55,7 +55,9 @@ index 711b7224bfc..1d4160727e4 100644
      for (i = 0; i < count; i++) dll_path_maxlen = max( dll_path_maxlen, strlen(dll_paths[i]) );
      dll_paths[count] = NULL;
  }
-From 240b2813a7a5e0fe1cda611961f78b2a9b0c99be Mon Sep 17 00:00:00 2001
+
+
+From 5a19653cc9487a083bb32f47329717132c0051dc Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Tue, 18 Jan 2022 17:16:15 -0500
 Subject: [PATCH] ntdll: Only load EAC bridge when Linux library is present.
@@ -65,7 +67,7 @@ Subject: [PATCH] ntdll: Only load EAC bridge when Linux library is present.
  1 file changed, 39 insertions(+)
 
 diff --git a/dlls/ntdll/unix/loadorder.c b/dlls/ntdll/unix/loadorder.c
-index aa987a80186..be25b2213d9 100644
+index aa987a80186..3d9575d83f2 100644
 --- a/dlls/ntdll/unix/loadorder.c
 +++ b/dlls/ntdll/unix/loadorder.c
 @@ -378,6 +378,10 @@ void set_load_order_app_name( const WCHAR *app_name )
@@ -112,7 +114,7 @@ index aa987a80186..be25b2213d9 100644
 +        else
 +        {
 +            ret = LO_NATIVE;
-+            TRACE( "got hardcoded %s for %s, as the eac unix library (%s) is not present. status %x\n", debugstr_loadorder(ret), debugstr_w(path), debugstr_w(eac_unix_name.Buffer), status );
++            TRACE( "got hardcoded %s for %s, as the eac unix library (%s) is not present. status %x\n", debugstr_loadorder(ret), debugstr_w(path), debugstr_w(eac_unix_name.Buffer), (int)status );
 +            free(eac_unix_name.Buffer);
 +            return ret;
 +        }
@@ -121,61 +123,229 @@ index aa987a80186..be25b2213d9 100644
      /* Strip path information if the module resides in the system directory
       */
      if (!wcsnicmp( system_dir + 4, path, wcslen(system_dir) - 4 ))
-
-From 9dce79072ef483dda3674345eaf2274fd06dac89 Mon Sep 17 00:00:00 2001
+From 3671dc59a189a81cafaf4c645f115db9603780cd Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
-Date: Fri, 21 Jan 2022 14:42:12 -0500
-Subject: [PATCH] kernelbase: Add stub for GetConsoleSelectionInfo.
+Date: Wed, 16 Feb 2022 14:24:41 -0500
+Subject: [PATCH] kernelbase: Don't load EAC bridge in the EAC Launcher
+ process.
 
 Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
 ---
- dlls/kernel32/kernel32.spec     | 2 +-
- dlls/kernelbase/console.c       | 8 ++++++++
- dlls/kernelbase/kernelbase.spec | 1 +
- 3 files changed, 10 insertions(+), 1 deletion(-)
+ dlls/kernelbase/process.c   | 64 ++++++++++++++++++++++++++++---------
+ dlls/ntdll/unix/loadorder.c | 21 ++++++++++++
+ 2 files changed, 70 insertions(+), 15 deletions(-)
 
-diff --git a/dlls/kernel32/kernel32.spec b/dlls/kernel32/kernel32.spec
-index 1d89c7f3cc0..37f419116ad 100644
---- a/dlls/kernel32/kernel32.spec
-+++ b/dlls/kernel32/kernel32.spec
-@@ -616,7 +616,7 @@
- @ stdcall -import GetConsoleProcessList(ptr long)
- @ stdcall -import GetConsoleScreenBufferInfo(long ptr)
- @ stdcall -import GetConsoleScreenBufferInfoEx(long ptr)
--# @ stub GetConsoleSelectionInfo
-+@ stdcall -import GetConsoleSelectionInfo(ptr)
- @ stdcall -import GetConsoleTitleA(ptr long)
- @ stdcall -import GetConsoleTitleW(ptr long)
- @ stdcall -import GetConsoleWindow()
-diff --git a/dlls/kernelbase/console.c b/dlls/kernelbase/console.c
-index a7eeb439232..98f2483011b 100644
---- a/dlls/kernelbase/console.c
-+++ b/dlls/kernelbase/console.c
-@@ -742,6 +742,14 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetConsoleScreenBufferInfoEx( HANDLE handle,
+diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
+index 109fa6c7fec..d9754f10ed0 100644
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -506,39 +506,35 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalA( HANDLE token, const char *
+     return ret;
  }
 
+-static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_name, DWORD new_name_len, WCHAR **cmd_line)
++/* Returns TRUE if the product name of the app matches the parameter */
++static BOOL product_name_matches(const WCHAR *app_name, const char *match)
+ {
+-    static const WCHAR belauncherW[] = L"c:\\windows\\system32\\belauncher.exe";
+-
+     WCHAR full_path[MAX_PATH];
+-    WCHAR *p;
+-    UINT size;
+-    void *block;
+     DWORD *translation;
+-    char buf[100];
+     char *product_name;
+-    WCHAR *new_cmd_line;
++    char buf[100];
++    void *block;
++    UINT size;
 
-+BOOL WINAPI DECLSPEC_HOTPATCH GetConsoleSelectionInfo(CONSOLE_SELECTION_INFO *info)
-+{
-+    FIXME("stub (%p)\n", info);
-+    info->dwFlags = CONSOLE_NO_SELECTION;
+     if (!GetLongPathNameW( app_name, full_path, MAX_PATH )) lstrcpynW( full_path, app_name, MAX_PATH );
+     if (!GetFullPathNameW( full_path, MAX_PATH, full_path, NULL )) lstrcpynW( full_path, app_name, MAX_PATH );
+
+-    /* We detect the BattlEye launcher executable through the product name property, as the executable name varies */
+     size = GetFileVersionInfoSizeExW(0, full_path, NULL);
+     if (!size)
+-        return 0;
++        return FALSE;
+
+     block = HeapAlloc( GetProcessHeap(), 0, size );
+
+     if (!GetFileVersionInfoExW(0, full_path, 0, size, block))
+     {
+         HeapFree( GetProcessHeap(), 0, block );
+-        return 0;
++        return FALSE;
+     }
+
+     if (!VerQueryValueA(block, "\\VarFileInfo\\Translation", (void **) &translation, &size) || size != 4)
+     {
+         HeapFree( GetProcessHeap(), 0, block );
+-        return 0;
++        return FALSE;
+     }
+
+     sprintf(buf, "\\StringFileInfo\\%08lx\\ProductName", MAKELONG(HIWORD(*translation), LOWORD(*translation)));
+@@ -546,16 +542,28 @@ static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_nam
+     if (!VerQueryValueA(block, buf, (void **) &product_name, &size))
+     {
+         HeapFree( GetProcessHeap(), 0, block );
+-        return 0;
++        return FALSE;
+     }
+
+-    if (strcmp(product_name, "BattlEye Launcher"))
++    if (strcmp(product_name, match))
+     {
+         HeapFree( GetProcessHeap(), 0, block);
+-        return 0;
++        return FALSE;
+     }
+
+     HeapFree( GetProcessHeap(), 0, block );
 +    return TRUE;
 +}
 +
++static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_name, DWORD new_name_len, WCHAR **cmd_line)
++{
++    static const WCHAR belauncherW[] = L"c:\\windows\\system32\\belauncher.exe";
++    WCHAR *new_cmd_line;
++    WCHAR *p;
 +
- /******************************************************************************
-  *	GetConsoleTitleW   (kernelbase.@)
-  */
-diff --git a/dlls/kernelbase/kernelbase.spec b/dlls/kernelbase/kernelbase.spec
-index abbb137ef7f..b61c83e5ed9 100644
---- a/dlls/kernelbase/kernelbase.spec
-+++ b/dlls/kernelbase/kernelbase.spec
-@@ -449,6 +449,7 @@
- @ stdcall GetConsoleProcessList(ptr long)
- @ stdcall GetConsoleScreenBufferInfo(long ptr)
- @ stdcall GetConsoleScreenBufferInfoEx(long ptr)
-+@ stdcall GetConsoleSelectionInfo(ptr)
- @ stdcall GetConsoleTitleA(ptr long)
- @ stdcall GetConsoleTitleW(ptr long)
- @ stdcall GetConsoleWindow()
++    /* We detect the BattlEye launcher executable through the product name property, as the executable name varies */
++    if (!product_name_matches(app_name, "BattlEye Launcher"))
++        return 0;
 
+     TRACE("Detected launch of a BattlEye Launcher, redirecting to Proton version.\n");
+
+@@ -724,6 +732,32 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR
+         goto done;
+     }
+
++    /* Set PROTON_EAC_LAUNCHER_PROCESS when launching the EAC launcher to let ntdll know to load the native EAC client library.
++      - We don't do this check in ntdll itself because it's harder to get the product name there
++      - we don't overwrite WINEDLLOVERRIDES because it's fetched from the unix environment */
++    {
++        UNICODE_STRING is_eac_launcher_us;
++        UNICODE_STRING one_us;
++
++        WCHAR *new_env = RtlAllocateHeap( GetProcessHeap(), 0, params->EnvironmentSize );
++        memcpy(new_env, params->Environment, params->EnvironmentSize);
++
++        RtlDestroyProcessParameters( params );
++
++        RtlInitUnicodeString( &is_eac_launcher_us, L"PROTON_EAC_LAUNCHER_PROCESS" );
++        RtlInitUnicodeString( &one_us, L"1" );
++        RtlSetEnvironmentVariable( &new_env, &is_eac_launcher_us, product_name_matches(app_name, "EasyAntiCheat Launcher") ? &one_us : NULL );
++
++        params = create_process_params( app_name, tidy_cmdline, cur_dir, new_env, flags | CREATE_UNICODE_ENVIRONMENT, startup_info );
++
++        RtlFreeHeap(GetProcessHeap(), 0, new_env);
++        if (!params)
++        {
++            status = STATUS_NO_MEMORY;
++            goto done;
++        }
++    }
++
+     if (flags & (DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS))
+     {
+         if ((status = DbgUiConnectToDbg())) goto done;
+diff --git a/dlls/ntdll/unix/loadorder.c b/dlls/ntdll/unix/loadorder.c
+index 3d9575d83f2..a13d54ec263 100644
+--- a/dlls/ntdll/unix/loadorder.c
++++ b/dlls/ntdll/unix/loadorder.c
+@@ -59,6 +59,7 @@ static HANDLE std_key;
+ static HANDLE app_key;
+ static BOOL init_done;
+ static BOOL main_exe_loaded;
++static BOOL eac_launcher_process;
+
+
+ /***************************************************************************
+@@ -362,11 +363,24 @@ static enum loadorder get_load_order_value( HANDLE std_key, HANDLE app_key, WCHA
+  */
+ void set_load_order_app_name( const WCHAR *app_name )
+ {
++    static const WCHAR eac_launcherW[] = {'P','R','O','T','O','N','_','E','A','C','_','L','A','U','N','C','H','E','R','_','P','R','O','C','E','S','S',0};
+     const WCHAR *p;
+
+     if ((p = wcsrchr( app_name, '\\' ))) app_name = p + 1;
+     app_key = open_app_key( app_name );
+     main_exe_loaded = TRUE;
++
++    p = NtCurrentTeb()->Peb->ProcessParameters->Environment;
++    while(*p)
++    {
++        if (!wcsncmp( p, eac_launcherW, ARRAY_SIZE(eac_launcherW) - 1 ))
++        {
++            eac_launcher_process = TRUE;
++            break;
++        }
++
++        p += wcslen(p) + 1;
++    }
+ }
+
+
+@@ -404,6 +418,13 @@ enum loadorder get_load_order( const UNICODE_STRING *nt_name )
+         char *unix_path = NULL;
+         NTSTATUS status;
+
++        if (eac_launcher_process)
++        {
++            ret = LO_NATIVE;
++            TRACE("got hardcoded %s for %s, as this is the EAC launcher process\n", debugstr_loadorder(ret), debugstr_w(path) );
++            return ret;
++        }
++
+         len = wcslen(nt_name->Buffer);
+         eac_unix_name.Buffer = malloc( (len + 1) * sizeof(WCHAR) );
+         wcscpy(eac_unix_name.Buffer, nt_name->Buffer);
+From 227bf8ad3a4c679a233561400297674cdb68f015 Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 16 Feb 2022 14:26:51 -0500
+Subject: [PATCH] ntdll: Decide load order of easyanticheat.dll based off
+ bridge detection logic.
+
+Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
+---
+ dlls/ntdll/unix/loadorder.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/unix/loadorder.c b/dlls/ntdll/unix/loadorder.c
+index a13d54ec263..bbe50928880 100644
+--- a/dlls/ntdll/unix/loadorder.c
++++ b/dlls/ntdll/unix/loadorder.c
+@@ -394,6 +394,7 @@ enum loadorder get_load_order( const UNICODE_STRING *nt_name )
+ {
+     static const WCHAR easyanticheat_x86W[] = {'e','a','s','y','a','n','t','i','c','h','e','a','t','_','x','8','6','.','d','l','l',0};
+     static const WCHAR easyanticheat_x64W[] = {'e','a','s','y','a','n','t','i','c','h','e','a','t','_','x','6','4','.','d','l','l',0};
++    static const WCHAR easyanticheatW[] = {'e','a','s','y','a','n','t','i','c','h','e','a','t','.','d','l','l',0};
+     static const WCHAR soW[] = {'s','o',0};
+
+     static const WCHAR prefixW[] = {'\\','?','?','\\'};
+@@ -411,7 +412,7 @@ enum loadorder get_load_order( const UNICODE_STRING *nt_name )
+
+     /* HACK: special logic for easyanticheat bridge: only load the bridge (builtin) if there exists a native version of the library next to the windows version */
+     basename = get_basename((WCHAR *)path);
+-    if (!wcsicmp(basename, easyanticheat_x86W) || !wcsicmp(basename, easyanticheat_x64W))
++    if (!wcsicmp(basename, easyanticheat_x86W) || !wcsicmp(basename, easyanticheat_x64W) || !wcsicmp(basename, easyanticheatW))
+     {
+         UNICODE_STRING eac_unix_name;
+         OBJECT_ATTRIBUTES attr;
+@@ -426,10 +427,12 @@ enum loadorder get_load_order( const UNICODE_STRING *nt_name )
+         }
+
+         len = wcslen(nt_name->Buffer);
+-        eac_unix_name.Buffer = malloc( (len + 1) * sizeof(WCHAR) );
++        eac_unix_name.Buffer = malloc( (len + 5) * sizeof(WCHAR) );
+         wcscpy(eac_unix_name.Buffer, nt_name->Buffer);
+
+         basename = get_basename(eac_unix_name.Buffer);
++        if (!wcsicmp(basename, easyanticheatW))
++            wcscpy(basename, easyanticheat_x64W);
+         wcscpy(&basename[18], soW);
+         eac_unix_name.Length = eac_unix_name.MaximumLength = wcslen(eac_unix_name.Buffer) * sizeof(WCHAR);
+         InitializeObjectAttributes(&attr, &eac_unix_name, 0, NULL, NULL);

@@ -1,62 +1,60 @@
-From f7b8a83d06870a54430481c85c764401d96e143c Mon Sep 17 00:00:00 2001
+From eafe176e9b9cd6dfb33494363e993500c7c9f002 Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
-Date: Fri, 26 Mar 2021 10:48:14 -0400
-Subject: [PATCH] ntdll: Try to load builtin DLLs from Battleye Runtime
- directory.
+Date: Fri, 21 Jan 2022 14:42:12 -0500
+Subject: [PATCH] kernelbase: Add stub for GetConsoleSelectionInfo.
 
 Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
-
-CW-Bug-Id: #16650
 ---
- dlls/ntdll/unix/loader.c | 23 ++++++++++++++++++++++-
- 1 file changed, 22 insertions(+), 1 deletion(-)
+ dlls/kernel32/kernel32.spec     | 2 +-
+ dlls/kernelbase/console.c       | 8 ++++++++
+ dlls/kernelbase/kernelbase.spec | 1 +
+ 3 files changed, 10 insertions(+), 1 deletion(-)
 
-diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index 0a05fb3f10b..711b7224bfc 100644
---- a/dlls/ntdll/unix/loader.c
-+++ b/dlls/ntdll/unix/loader.c
-@@ -526,11 +526,14 @@ static const char *get_pe_dir( WORD machine )
-
- static void set_dll_path(void)
- {
--    char *p, *path = getenv( "WINEDLLPATH" );
-+    char *p, *path = getenv( "WINEDLLPATH" ), *be_runtime = getenv( "PROTON_BATTLEYE_RUNTIME" );
-     int i, count = 0;
-
-     if (path) for (p = path, count = 1; *p; p++) if (*p == ':') count++;
-
-+    if (be_runtime)
-+        count += 2;
-+
-     dll_paths = malloc( (count + 2) * sizeof(*dll_paths) );
-     count = 0;
-
-@@ -543,6 +546,24 @@ static void set_dll_path(void)
-         free( path );
-     }
-
-+    if (be_runtime)
-+    {
-+        const char lib32[] = "/v1/lib/wine/";
-+        const char lib64[] = "/v1/lib64/wine/";
-+
-+        p = malloc( strlen(be_runtime) + strlen(lib32) + 1 );
-+        strcpy(p, be_runtime);
-+        strcat(p, lib32);
-+
-+        dll_paths[count++] = p;
-+
-+        p = malloc( strlen(be_runtime) + strlen(lib64) + 1 );
-+        strcpy(p, be_runtime);
-+        strcat(p, lib64);
-+
-+        dll_paths[count++] = p;
-+    }
-+
-     for (i = 0; i < count; i++) dll_path_maxlen = max( dll_path_maxlen, strlen(dll_paths[i]) );
-     dll_paths[count] = NULL;
+diff --git a/dlls/kernel32/kernel32.spec b/dlls/kernel32/kernel32.spec
+index 35d7d1eb9c4..fb4e21adc30 100644
+--- a/dlls/kernel32/kernel32.spec
++++ b/dlls/kernel32/kernel32.spec
+@@ -620,7 +620,7 @@
+ @ stdcall -import GetConsoleProcessList(ptr long)
+ @ stdcall -import GetConsoleScreenBufferInfo(long ptr)
+ @ stdcall -import GetConsoleScreenBufferInfoEx(long ptr)
+-# @ stub GetConsoleSelectionInfo
++@ stdcall -import GetConsoleSelectionInfo(ptr)
+ @ stdcall -import GetConsoleTitleA(ptr long)
+ @ stdcall -import GetConsoleTitleW(ptr long)
+ @ stdcall -import GetConsoleWindow()
+diff --git a/dlls/kernelbase/console.c b/dlls/kernelbase/console.c
+index 4209d2e6991..0f349f9939b 100644
+--- a/dlls/kernelbase/console.c
++++ b/dlls/kernelbase/console.c
+@@ -1065,6 +1065,14 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetConsoleScreenBufferInfoEx( HANDLE handle,
  }
-From 1e89f3ebc36d9a867b71b0f8f9aab516a6be90a1 Mon Sep 17 00:00:00 2001
+
+
++BOOL WINAPI DECLSPEC_HOTPATCH GetConsoleSelectionInfo(CONSOLE_SELECTION_INFO *info)
++{
++    FIXME("stub (%p)\n", info);
++    info->dwFlags = CONSOLE_NO_SELECTION;
++    return TRUE;
++}
++
++
+ /******************************************************************************
+  *	GetConsoleTitleA   (kernelbase.@)
+  */
+diff --git a/dlls/kernelbase/kernelbase.spec b/dlls/kernelbase/kernelbase.spec
+index 4e8b741d1b5..62b3b4d0488 100644
+--- a/dlls/kernelbase/kernelbase.spec
++++ b/dlls/kernelbase/kernelbase.spec
+@@ -472,6 +472,7 @@
+ @ stdcall GetConsoleProcessList(ptr long)
+ @ stdcall GetConsoleScreenBufferInfo(long ptr)
+ @ stdcall GetConsoleScreenBufferInfoEx(long ptr)
++@ stdcall GetConsoleSelectionInfo(ptr)
+ @ stdcall GetConsoleTitleA(ptr long)
+ @ stdcall GetConsoleTitleW(ptr long)
+ @ stdcall GetConsoleWindow()
+From acafbd0224e9148a80678cb31952e55f258c2b5e Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Tue, 30 Mar 2021 21:45:05 -0400
 Subject: [PATCH] kernelbase: Redirect BattlEye Launcher process creation to
@@ -70,10 +68,10 @@ CW-Bug-Id: #16650
  1 file changed, 200 insertions(+)
 
 diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
-index 08dad9cb646..b2a49a16177 100644
+index 1dd627d258d..ffb95471f9b 100644
 --- a/dlls/kernelbase/process.c
 +++ b/dlls/kernelbase/process.c
-@@ -28,6 +28,7 @@
+@@ -26,6 +26,7 @@
  #include "windef.h"
  #include "winbase.h"
  #include "winnls.h"
@@ -81,7 +79,7 @@ index 08dad9cb646..b2a49a16177 100644
  #include "wincontypes.h"
  #include "winternl.h"
 
-@@ -486,6 +487,197 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalA( HANDLE token, const char *
+@@ -505,6 +506,197 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalA( HANDLE token, const char *
      return ret;
  }
 
@@ -89,7 +87,7 @@ index 08dad9cb646..b2a49a16177 100644
 +{
 +    WCHAR full_path[MAX_PATH], config_path[MAX_PATH];
 +    WCHAR *p;
-+    DWORD size;
++    UINT size;
 +    void *block;
 +    DWORD *translation;
 +    char buf[100];
@@ -123,7 +121,7 @@ index 08dad9cb646..b2a49a16177 100644
 +        return 0;
 +    }
 +
-+    sprintf(buf, "\\StringFileInfo\\%08x\\ProductName", MAKELONG(HIWORD(*translation), LOWORD(*translation)));
++    sprintf(buf, "\\StringFileInfo\\%08lx\\ProductName", MAKELONG(HIWORD(*translation), LOWORD(*translation)));
 +
 +    if (!VerQueryValueA(block, buf, (void **) &product_name, &size))
 +    {
@@ -168,7 +166,7 @@ index 08dad9cb646..b2a49a16177 100644
 +
 +    configs = HeapAlloc( GetProcessHeap(), 0, launcher_cfg_size.u.LowPart);
 +
-+    if (!ReadFile(launcher_cfg, configs, launcher_cfg_size.u.LowPart, &size, NULL) || size != launcher_cfg_size.u.LowPart)
++    if (!ReadFile(launcher_cfg, configs, launcher_cfg_size.u.LowPart, (DWORD *)&size, NULL) || size != launcher_cfg_size.u.LowPart)
 +    {
 +        CloseHandle(launcher_cfg);
 +        HeapFree( GetProcessHeap(), 0, configs );
@@ -279,7 +277,7 @@ index 08dad9cb646..b2a49a16177 100644
  /**********************************************************************
   *           CreateProcessInternalW   (kernelbase.@)
   */
-@@ -550,6 +742,14 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR
+@@ -603,6 +795,14 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR
          app_name = name;
      }
 
@@ -294,114 +292,41 @@ index 08dad9cb646..b2a49a16177 100644
      /* Warn if unsupported features are used */
 
      if (flags & (IDLE_PRIORITY_CLASS | HIGH_PRIORITY_CLASS | REALTIME_PRIORITY_CLASS |
-From 66e87df57525a8421caa75aad573663f90534fb9 Mon Sep 17 00:00:00 2001
-From: Derek Lesho <dlesho@codeweavers.com>
-Date: Thu, 30 Sep 2021 14:38:33 +0200
-Subject: [PATCH] sechost: Fake presence of BEService service for ARK: Survival
- Evolved.
-
-The game uses the presence and status of BEService to determine whether or not the game is running in BattlEye. Since with the Proton Bridge we don't have a dedicated background service, we can just pretend the service is always running.
-
-CW-Bug-Id: #16650
----
- dlls/sechost/service.c | 30 ++++++++++++++++++++++++++++++
- 1 file changed, 30 insertions(+)
-
-diff --git a/dlls/sechost/service.c b/dlls/sechost/service.c
-index e6f4eb75db0..d005b64ed19 100644
---- a/dlls/sechost/service.c
-+++ b/dlls/sechost/service.c
-@@ -314,6 +314,8 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenServiceW( SC_HANDLE manager, const WCHAR
-     SC_RPC_HANDLE handle = NULL;
-     DWORD err;
-
-+    char str[64];
-+
-     TRACE( "%p %s %#lx\n", manager, debugstr_w(name), access );
-
-     if (!manager)
-@@ -322,6 +324,14 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenServiceW( SC_HANDLE manager, const WCHAR
-         return NULL;
-     }
-
-+    /* HACK for ARK: Survivial Evolved checking the status of BEService to determine whether BE is enabled. */
-+    if(GetEnvironmentVariableA("SteamGameId", str, sizeof(str)) && !strcmp(str, "346110") &&
-+        !wcscmp(name, L"BEService"))
-+    {
-+        WARN("HACK: returning fake service handle for BEService.\n");
-+        return (void *)0xdeadbeef;
-+    }
-+
-     __TRY
-     {
-         err = svcctl_OpenServiceW( manager, name, access, &handle );
-@@ -1106,6 +1116,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH QueryServiceStatusEx( SC_HANDLE service, SC_STATUS
- {
-     DWORD err;
-
-+    char str[64];
-+
-     TRACE( "%p %d %p %ld %p\n", service, level, buffer, size, ret_size );
-
-     if (level != SC_STATUS_PROCESS_INFO) return set_error( ERROR_INVALID_LEVEL );
-@@ -1116,6 +1128,24 @@ BOOL WINAPI DECLSPEC_HOTPATCH QueryServiceStatusEx( SC_HANDLE service, SC_STATUS
-         return set_error( ERROR_INSUFFICIENT_BUFFER );
-     }
-
-+    /* HACK for ARK: Survivial Evolved checking the status of BEService to determine whether BE is enabled. */
-+    if(GetEnvironmentVariableA("SteamGameId", str, sizeof(str)) && !strcmp(str, "346110") &&
-+        service == (void *)0xdeadbeef)
-+    {
-+        SERVICE_STATUS_PROCESS *status = (SERVICE_STATUS_PROCESS *)buffer;
-+        WARN("HACK: returning fake data for BEService.\n");
-+        status->dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-+        status->dwCurrentState = SERVICE_RUNNING;
-+        status->dwControlsAccepted = SERVICE_ACCEPT_SHUTDOWN | SERVICE_ACCEPT_STOP;
-+        status->dwWin32ExitCode = NO_ERROR;
-+        status->dwServiceSpecificExitCode = 0;
-+        status->dwCheckPoint = 0;
-+        status->dwWaitHint = 0;
-+        status->dwProcessId = 0xdeadbee0;
-+        status->dwServiceFlags = 0;
-+        return TRUE;
-+    }
-+
-     __TRY
-     {
-         err = svcctl_QueryServiceStatusEx( service, level, buffer, size, ret_size );
-From c1d58f41052ae7ca24a83983bc9dd8ce4a395c72 Mon Sep 17 00:00:00 2001
+From 0d4a7e67b913c48d340ee35e62350c4e6dc2f0d6 Mon Sep 17 00:00:00 2001
 From: Derek Lesho <dlesho@codeweavers.com>
 Date: Fri, 21 Jan 2022 14:40:43 -0500
 Subject: [PATCH] battleye: Add launcher process instead of redirecting
  CreateProcess call.
 
-Fixes Arma 3 Launcher CW-Bug-Id: #18934
+Fixes Arma 3 Launcher
+
+CW-Bug-Id: #18934
 ---
  configure.ac                    |   1 +
  dlls/kernelbase/process.c       | 134 ++++----------------------------
  programs/belauncher/Makefile.in |   7 ++
- programs/belauncher/main.c      | 116 +++++++++++++++++++++++++++
- 4 files changed, 139 insertions(+), 119 deletions(-)
+ programs/belauncher/main.c      | 118 ++++++++++++++++++++++++++++
+ 4 files changed, 141 insertions(+), 119 deletions(-)
  create mode 100644 programs/belauncher/Makefile.in
  create mode 100644 programs/belauncher/main.c
 
 diff --git a/configure.ac b/configure.ac
-index 8e4462b1d4c..bc4f47d9889 100644
+index 18682f36d8b..3f7ce9aed9a 100644
 --- a/configure.ac
 +++ b/configure.ac
-@@ -3579,6 +3579,7 @@ WINE_CONFIG_MAKEFILE(po)
+@@ -3462,6 +3462,7 @@ WINE_CONFIG_MAKEFILE(po)
  WINE_CONFIG_MAKEFILE(programs/arp)
  WINE_CONFIG_MAKEFILE(programs/aspnet_regiis)
  WINE_CONFIG_MAKEFILE(programs/attrib)
 +WINE_CONFIG_MAKEFILE(programs/belauncher)
  WINE_CONFIG_MAKEFILE(programs/cabarc)
  WINE_CONFIG_MAKEFILE(programs/cacls)
- WINE_CONFIG_MAKEFILE(programs/chcp.com)
+ WINE_CONFIG_MAKEFILE(programs/certutil)
 diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
-index 22f9115011e..01f4ae08721 100644
+index ffb95471f9b..109fa6c7fec 100644
 --- a/dlls/kernelbase/process.c
 +++ b/dlls/kernelbase/process.c
-@@ -489,18 +489,15 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalA( HANDLE token, const char *
+@@ -508,18 +508,15 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalA( HANDLE token, const char *
 
  static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_name, DWORD new_name_len, WCHAR **cmd_line)
  {
@@ -410,7 +335,7 @@ index 22f9115011e..01f4ae08721 100644
 +
 +    WCHAR full_path[MAX_PATH];
      WCHAR *p;
-     DWORD size;
+     UINT size;
      void *block;
      DWORD *translation;
      char buf[100];
@@ -423,7 +348,7 @@ index 22f9115011e..01f4ae08721 100644
      WCHAR *new_cmd_line;
 
      if (!GetLongPathNameW( app_name, full_path, MAX_PATH )) lstrcpynW( full_path, app_name, MAX_PATH );
-@@ -541,96 +538,15 @@ static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_nam
+@@ -560,96 +557,15 @@ static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_nam
 
      HeapFree( GetProcessHeap(), 0, block );
 
@@ -456,7 +381,7 @@ index 22f9115011e..01f4ae08721 100644
 -
 -    configs = HeapAlloc( GetProcessHeap(), 0, launcher_cfg_size.u.LowPart);
 -
--    if (!ReadFile(launcher_cfg, configs, launcher_cfg_size.u.LowPart, &size, NULL) || size != launcher_cfg_size.u.LowPart)
+-    if (!ReadFile(launcher_cfg, configs, launcher_cfg_size.u.LowPart, (DWORD *)&size, NULL) || size != launcher_cfg_size.u.LowPart)
 -    {
 -        CloseHandle(launcher_cfg);
 -        HeapFree( GetProcessHeap(), 0, configs );
@@ -523,7 +448,7 @@ index 22f9115011e..01f4ae08721 100644
 
      /* find and replace executable name in command line, and add BE argument */
      p = *cmd_line;
-@@ -638,43 +554,23 @@ static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_nam
+@@ -657,43 +573,23 @@ static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_nam
          p++;
 
      if (!wcsncmp(p, app_name, wcslen(app_name)))
@@ -578,7 +503,7 @@ index 22f9115011e..01f4ae08721 100644
 
 diff --git a/programs/belauncher/Makefile.in b/programs/belauncher/Makefile.in
 new file mode 100644
-index 00000000000..f2dc59b07ce
+index 00000000000..9800c0b45ba
 --- /dev/null
 +++ b/programs/belauncher/Makefile.in
 @@ -0,0 +1,7 @@
@@ -591,12 +516,13 @@ index 00000000000..f2dc59b07ce
 +        main.c \
 diff --git a/programs/belauncher/main.c b/programs/belauncher/main.c
 new file mode 100644
-index 00000000000..0f727f3ca7d
+index 00000000000..004a7d1a711
 --- /dev/null
 +++ b/programs/belauncher/main.c
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,118 @@
 +#define WIN32_LEAN_AND_MEAN
 +#include <windows.h>
++#include <io.h>
 +
 +#include "wine/debug.h"
 +
@@ -670,7 +596,8 @@ index 00000000000..0f727f3ca7d
 +        *(strchr(game_exe, '\n')) = 0;
 +    game_exe_len = MultiByteToWideChar(CP_ACP, 0, game_exe, -1, NULL, 0) - 1;
 +
-+    if (be_arg)
++    if (!be_arg) arg_len = 0;
++    else
 +    {
 +        if (strchr(be_arg, '\r'))
 +            *(strchr(be_arg, '\r')) = 0;
@@ -711,27 +638,442 @@ index 00000000000..0f727f3ca7d
 +    _write(1, &battleye_status, 1);
 +    return 0;
 +}
-From 0de1a4cb50828f0867253d2fb3d6d679d4b8a39d Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
-Date: Tue, 15 Feb 2022 10:56:31 +0100
-Subject: [PATCH] fixup! battleye: Add launcher process instead of redirecting
- CreateProcess call.
+From 82437b6ebdbe615efba6b75952486fa64cd164ff Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Fri, 26 Mar 2021 10:48:14 -0400
+Subject: [PATCH] ntdll: Try to load builtin DLLs from Battleye Runtime
+ directory.
 
+Signed-off-by: Derek Lesho <dlesho@codeweavers.com>
+
+CW-Bug-Id: #16650
 ---
- programs/belauncher/main.c | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
+ dlls/ntdll/unix/loader.c | 23 ++++++++++++++++++++++-
+ 1 file changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index af3055bc93b..c6ff35935f9 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -340,11 +340,14 @@ static const char *get_pe_dir( WORD machine )
+
+ static void set_dll_path(void)
+ {
+-    char *p, *path = getenv( "WINEDLLPATH" );
++    char *p, *path = getenv( "WINEDLLPATH" ), *be_runtime = getenv( "PROTON_BATTLEYE_RUNTIME" );
+     int i, count = 0;
+
+     if (path) for (p = path, count = 1; *p; p++) if (*p == ':') count++;
+
++    if (be_runtime)
++        count += 2;
++
+     dll_paths = malloc( (count + 2) * sizeof(*dll_paths) );
+     count = 0;
+
+@@ -357,6 +360,24 @@ static void set_dll_path(void)
+         free( path );
+     }
+
++    if (be_runtime)
++    {
++        const char lib32[] = "/v1/lib/wine/";
++        const char lib64[] = "/v1/lib64/wine/";
++
++        p = malloc( strlen(be_runtime) + strlen(lib32) + 1 );
++        strcpy(p, be_runtime);
++        strcat(p, lib32);
++
++        dll_paths[count++] = p;
++
++        p = malloc( strlen(be_runtime) + strlen(lib64) + 1 );
++        strcpy(p, be_runtime);
++        strcat(p, lib64);
++
++        dll_paths[count++] = p;
++    }
++
+     for (i = 0; i < count; i++) dll_path_maxlen = max( dll_path_maxlen, strlen(dll_paths[i]) );
+     dll_paths[count] = NULL;
+ }
+From 41513c2e36b38549eb9af3ac7e298d3a42a2c102 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 12 Apr 2023 19:42:00 -0600
+Subject: [PATCH] belauncher: Use original launcher .exe path to find
+ BELauncher.ini and executable.
+
+CW-Bug-Id: #22133
+---
+ programs/belauncher/Makefile.in |  2 +-
+ programs/belauncher/main.c      | 54 ++++++++++++++++++++++++++-------
+ 2 files changed, 44 insertions(+), 12 deletions(-)
+
+diff --git a/programs/belauncher/Makefile.in b/programs/belauncher/Makefile.in
+index 9800c0b45ba..882d914bc03 100644
+--- a/programs/belauncher/Makefile.in
++++ b/programs/belauncher/Makefile.in
+@@ -1,5 +1,5 @@
+ MODULE    = belauncher.exe
+-IMPORTS   =
++IMPORTS   = shlwapi
+
+ EXTRADLLFLAGS = -mwindows -municode
 
 diff --git a/programs/belauncher/main.c b/programs/belauncher/main.c
-index 0f727f3ca7d..86ec46ecee4 100644
+index 004a7d1a711..a40e7cf8853 100644
 --- a/programs/belauncher/main.c
 +++ b/programs/belauncher/main.c
-@@ -73,7 +73,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
-         *(strchr(game_exe, '\n')) = 0;
-     game_exe_len = MultiByteToWideChar(CP_ACP, 0, game_exe, -1, NULL, 0) - 1;
+@@ -1,6 +1,7 @@
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+ #include <io.h>
++#include <shlwapi.h>
 
--    if (be_arg)
-+    if (!be_arg) arg_len = 0;
-+    else
+ #include "wine/debug.h"
+
+@@ -9,9 +10,10 @@ WINE_DEFAULT_DEBUG_CHANNEL(belauncher);
+ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cmdshow)
+ {
+     char *configs, *config, *arch_32_exe = NULL, *arch_64_exe = NULL, *game_exe, *be_arg = NULL;
++    WCHAR path[MAX_PATH], *p, config_path[MAX_PATH];
+     LARGE_INTEGER launcher_cfg_size;
+     unsigned char battleye_status;
+-    int game_exe_len, arg_len;
++    int game_exe_len, arg_len, path_len;
+     PROCESS_INFORMATION pi;
+     HANDLE launcher_cfg;
+     LPWSTR launch_cmd;
+@@ -22,9 +24,31 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
+     battleye_status = 0x3; /* Starting */
+     _write(1, &battleye_status, 1);
+
+-    launcher_cfg = CreateFileW(L"Battleye\\BELauncher.ini", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
++    *path = 0;
++    if ((size = GetEnvironmentVariableW(L"PROTON_ORIG_LAUNCHER_NAME", path, ARRAY_SIZE(path))) && size <= ARRAY_SIZE(path))
++    {
++        WINE_TRACE("PROTON_ORIG_LAUNCHER_NAME %s.\n", wine_dbgstr_w(path));
++
++        for (p = path + wcslen(path); p != path; --p)
++            if (*p == '\\') break;
++        if (*p == '\\')
++            ++p;
++        *p = 0;
++    }
++
++    wcscpy(config_path, path);
++    wcscat(config_path, L"Battleye\\BELauncher.ini");
++    launcher_cfg = CreateFileW(config_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
++    if (launcher_cfg == INVALID_HANDLE_VALUE)
++    {
++        *path = 0;
++        launcher_cfg = CreateFileW(L"Battleye\\BELauncher.ini", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
++    }
+     if (launcher_cfg == INVALID_HANDLE_VALUE)
++    {
++        WINE_ERR("BELauncher.ini not found.\n");
+         goto start_failed;
++    }
+
+     if(!GetFileSizeEx(launcher_cfg, &launcher_cfg_size) || launcher_cfg_size.u.HighPart)
      {
-         if (strchr(be_arg, '\r'))
-             *(strchr(be_arg, '\r')) = 0;
+@@ -64,7 +88,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
+     else
+     {
+         HeapFree( GetProcessHeap(), 0, configs );
+-        WINE_WARN("Failed to find game executable name from BattlEye config.\n");
++        WINE_ERR("Failed to find game executable name from BattlEye config.\n");
+         goto start_failed;
+     }
+
+@@ -88,21 +112,28 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
+     battleye_status = 0x9; /* Launching Game */
+     _write(1, &battleye_status, 1);
+
+-    launch_cmd = HeapAlloc(GetProcessHeap(), 0, (game_exe_len + 1 + wcslen(cmdline) + 1 + arg_len + 1) * sizeof(WCHAR));
+-    MultiByteToWideChar(CP_ACP, 0, game_exe, -1, launch_cmd, game_exe_len + 1);
+-    launch_cmd[game_exe_len] = ' ';
++    if (PathIsRelativeA(game_exe))
++        path_len = wcslen(path);
++    else
++        path_len = 0;
++
++    launch_cmd = HeapAlloc(GetProcessHeap(), 0, (path_len + game_exe_len + 1 + wcslen(cmdline) + 1 + arg_len + 1) * sizeof(WCHAR));
+
+-    wcscpy(launch_cmd + game_exe_len + 1, cmdline);
+-    launch_cmd[game_exe_len + 1 + wcslen(cmdline)] = ' ';
++    memcpy(launch_cmd, path, path_len * sizeof(*path));
+
+-    MultiByteToWideChar(CP_ACP, 0, be_arg, -1, launch_cmd + game_exe_len + 1 + wcslen(cmdline) + 1, arg_len + 1);
++    MultiByteToWideChar(CP_ACP, 0, game_exe, -1, launch_cmd + path_len, game_exe_len + 1);
++    launch_cmd[path_len + game_exe_len] = ' ';
++
++    wcscpy(launch_cmd + path_len + game_exe_len + 1, cmdline);
++    launch_cmd[path_len + game_exe_len + 1 + wcslen(cmdline)] = ' ';
++
++    MultiByteToWideChar(CP_ACP, 0, be_arg, -1, launch_cmd + path_len + game_exe_len + 1 + wcslen(cmdline) + 1, arg_len + 1);
+
+     if (!CreateProcessW(NULL, launch_cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi))
+     {
++        WINE_ERR("CreateProcessW failed.\n");
+         battleye_status = 0xA; /* Launch Failed */
+         _write(1, &battleye_status, 1);
+-
+-        HeapFree( GetProcessHeap(), 0, launch_cmd );
+         return GetLastError();
+     }
+     HeapFree( GetProcessHeap(), 0, launch_cmd );
+@@ -112,6 +143,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
+     return 0;
+
+ start_failed:
++    WINE_ERR("Failed.\n");
+     battleye_status = 0x4; /* Start Failed */
+     _write(1, &battleye_status, 1);
+     return 0;
+From 004aa52dae12e74aeabbbf93d6b1a739b1cdf1bd Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 19 Apr 2023 15:32:38 -0600
+Subject: [PATCH] belauncher: Null terminate launch_cmd if be_arg is empty.
+
+CW-Bug-Id: #22146
+---
+ programs/belauncher/main.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/programs/belauncher/main.c b/programs/belauncher/main.c
+index a40e7cf8853..c8b8ccbf532 100644
+--- a/programs/belauncher/main.c
++++ b/programs/belauncher/main.c
+@@ -127,7 +127,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
+     wcscpy(launch_cmd + path_len + game_exe_len + 1, cmdline);
+     launch_cmd[path_len + game_exe_len + 1 + wcslen(cmdline)] = ' ';
+
+-    MultiByteToWideChar(CP_ACP, 0, be_arg, -1, launch_cmd + path_len + game_exe_len + 1 + wcslen(cmdline) + 1, arg_len + 1);
++
++    if (!MultiByteToWideChar(CP_ACP, 0, be_arg, -1, launch_cmd + path_len + game_exe_len + 1 + wcslen(cmdline) + 1, arg_len + 1))
++        launch_cmd[path_len + game_exe_len + 1 + wcslen(cmdline)] = 0;
++
++    WINE_TRACE("game_exe %s, cmdline %s.\n", wine_dbgstr_a(game_exe), wine_dbgstr_w(cmdline));
++    WINE_TRACE("path %s, be_arg %s.\n", wine_dbgstr_w(path), wine_dbgstr_a(be_arg));
++    WINE_TRACE("launch_cmd %s.\n", wine_dbgstr_w(launch_cmd));
+
+     if (!CreateProcessW(NULL, launch_cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi))
+     {
+From 018519c984b45e86794fa77ffcab965f1cbc08fe Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 19 Apr 2023 17:00:49 -0600
+Subject: [PATCH] belauncher: Support --exe command line option.
+
+CW-Bug-Id: #22146
+---
+ programs/belauncher/Makefile.in |  2 +-
+ programs/belauncher/main.c      | 64 +++++++++++++++++++++++----------
+ 2 files changed, 46 insertions(+), 20 deletions(-)
+
+diff --git a/programs/belauncher/Makefile.in b/programs/belauncher/Makefile.in
+index 882d914bc03..927983f7423 100644
+--- a/programs/belauncher/Makefile.in
++++ b/programs/belauncher/Makefile.in
+@@ -1,5 +1,5 @@
+ MODULE    = belauncher.exe
+-IMPORTS   = shlwapi
++IMPORTS   = shlwapi shcore
+
+ EXTRADLLFLAGS = -mwindows -municode
+
+diff --git a/programs/belauncher/main.c b/programs/belauncher/main.c
+index c8b8ccbf532..213378fd108 100644
+--- a/programs/belauncher/main.c
++++ b/programs/belauncher/main.c
+@@ -2,6 +2,7 @@
+ #include <windows.h>
+ #include <io.h>
+ #include <shlwapi.h>
++#include <shellapi.h>
+
+ #include "wine/debug.h"
+
+@@ -9,8 +10,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(belauncher);
+
+ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cmdshow)
+ {
+-    char *configs, *config, *arch_32_exe = NULL, *arch_64_exe = NULL, *game_exe, *be_arg = NULL;
+-    WCHAR path[MAX_PATH], *p, config_path[MAX_PATH];
++    char *configs, *config, *arch_32_exe = NULL, *arch_64_exe = NULL, *game_exe = NULL, *be_arg = NULL;
++    WCHAR path[MAX_PATH], *p, config_path[MAX_PATH], game_exeW[MAX_PATH], **argvW;
+     LARGE_INTEGER launcher_cfg_size;
+     unsigned char battleye_status;
+     int game_exe_len, arg_len, path_len;
+@@ -18,6 +19,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
+     HANDLE launcher_cfg;
+     LPWSTR launch_cmd;
+     STARTUPINFOW si = {0};
++    int i, argc;
+     DWORD size;
+     BOOL wow64;
+
+@@ -81,22 +83,47 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
+     }
+     while ((config = strchr(config, '\n')) && *(config++));
+
+-    if (arch_64_exe && (sizeof(void *) == 8 || (IsWow64Process(GetCurrentProcess(), &wow64) && wow64)))
+-        game_exe = arch_64_exe;
+-    else if (arch_32_exe)
+-        game_exe = arch_32_exe;
+-    else
++    *game_exeW = 0;
++    game_exe_len = 0;
++
++    if ((argvW = CommandLineToArgvW(cmdline, &argc)))
+     {
+-        HeapFree( GetProcessHeap(), 0, configs );
+-        WINE_ERR("Failed to find game executable name from BattlEye config.\n");
+-        goto start_failed;
++        for (i = 0; i < argc; ++i)
++        {
++            if (!wcscmp(argvW[i], L"-exe") && i < argc - 1)
++            {
++                wcscpy(game_exeW, argvW[i + 1]);
++                game_exe_len = wcslen(game_exeW);
++                break;
++            }
++        }
+     }
+
+-    if (strchr(game_exe, '\r'))
+-        *(strchr(game_exe, '\r')) = 0;
+-    if (strchr(game_exe, '\n'))
+-        *(strchr(game_exe, '\n')) = 0;
+-    game_exe_len = MultiByteToWideChar(CP_ACP, 0, game_exe, -1, NULL, 0) - 1;
++    if (!*game_exeW)
++    {
++        if (arch_64_exe && (sizeof(void *) == 8 || (IsWow64Process(GetCurrentProcess(), &wow64) && wow64)))
++            game_exe = arch_64_exe;
++        else if (arch_32_exe)
++            game_exe = arch_32_exe;
++        else
++        {
++            HeapFree( GetProcessHeap(), 0, configs );
++            WINE_ERR("Failed to find game executable name from BattlEye config.\n");
++            goto start_failed;
++        }
++
++        if (strchr(game_exe, '\r'))
++            *(strchr(game_exe, '\r')) = 0;
++        if (strchr(game_exe, '\n'))
++            *(strchr(game_exe, '\n')) = 0;
++        game_exe_len = MultiByteToWideChar(CP_ACP, 0, game_exe, -1, game_exeW, ARRAY_SIZE(game_exeW));
++        if (!game_exe_len)
++        {
++            WINE_ERR("Failed to convert game_exe %s.\n", wine_dbgstr_a(game_exe));
++            goto start_failed;
++        }
++        --game_exe_len;
++    }
+
+     if (!be_arg) arg_len = 0;
+     else
+@@ -112,7 +139,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
+     battleye_status = 0x9; /* Launching Game */
+     _write(1, &battleye_status, 1);
+
+-    if (PathIsRelativeA(game_exe))
++    if (PathIsRelativeW(game_exeW))
+         path_len = wcslen(path);
+     else
+         path_len = 0;
+@@ -121,17 +148,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
+
+     memcpy(launch_cmd, path, path_len * sizeof(*path));
+
+-    MultiByteToWideChar(CP_ACP, 0, game_exe, -1, launch_cmd + path_len, game_exe_len + 1);
++    memcpy(launch_cmd + path_len, game_exeW, game_exe_len * sizeof(*launch_cmd));
+     launch_cmd[path_len + game_exe_len] = ' ';
+
+     wcscpy(launch_cmd + path_len + game_exe_len + 1, cmdline);
+     launch_cmd[path_len + game_exe_len + 1 + wcslen(cmdline)] = ' ';
+
+-
+     if (!MultiByteToWideChar(CP_ACP, 0, be_arg, -1, launch_cmd + path_len + game_exe_len + 1 + wcslen(cmdline) + 1, arg_len + 1))
+         launch_cmd[path_len + game_exe_len + 1 + wcslen(cmdline)] = 0;
+
+-    WINE_TRACE("game_exe %s, cmdline %s.\n", wine_dbgstr_a(game_exe), wine_dbgstr_w(cmdline));
++    WINE_TRACE("game_exe %s, cmdline %s.\n", wine_dbgstr_w(game_exeW), wine_dbgstr_w(cmdline));
+     WINE_TRACE("path %s, be_arg %s.\n", wine_dbgstr_w(path), wine_dbgstr_a(be_arg));
+     WINE_TRACE("launch_cmd %s.\n", wine_dbgstr_w(launch_cmd));
+
+From fabf4c267281ac0bc0baa534a50c103524289e4e Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Thu, 30 Sep 2021 14:38:33 +0200
+Subject: [PATCH] sechost: Fake presence of BEService service for ARK: Survival
+ Evolved.
+
+The game uses the presence and status of BEService to determine whether or not the game is running in BattlEye. Since with the Proton Bridge we don't have a dedicated background service, we can just pretend the service is always running.
+
+CW-Bug-Id: #16650
+---
+ dlls/sechost/service.c | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/dlls/sechost/service.c b/dlls/sechost/service.c
+index 240e048a4a5..c5834f9f618 100644
+--- a/dlls/sechost/service.c
++++ b/dlls/sechost/service.c
+@@ -313,6 +313,8 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenServiceW( SC_HANDLE manager, const WCHAR
+     SC_RPC_HANDLE handle = NULL;
+     DWORD err;
+
++    char str[64];
++
+     TRACE( "%p %s %#lx\n", manager, debugstr_w(name), access );
+
+     if (!manager)
+@@ -321,6 +323,14 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenServiceW( SC_HANDLE manager, const WCHAR
+         return NULL;
+     }
+
++    /* HACK for ARK: Survivial Evolved checking the status of BEService to determine whether BE is enabled. */
++    if(GetEnvironmentVariableA("SteamGameId", str, sizeof(str)) && !strcmp(str, "346110") &&
++        !wcscmp(name, L"BEService"))
++    {
++        WARN("HACK: returning fake service handle for BEService.\n");
++        return (void *)0xdeadbeef;
++    }
++
+     __TRY
+     {
+         err = svcctl_OpenServiceW( manager, name, access, &handle );
+@@ -1105,6 +1115,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH QueryServiceStatusEx( SC_HANDLE service, SC_STATUS
+ {
+     DWORD err;
+
++    char str[64];
++
+     TRACE( "%p %d %p %ld %p\n", service, level, buffer, size, ret_size );
+
+     if (level != SC_STATUS_PROCESS_INFO) return set_error( ERROR_INVALID_LEVEL );
+@@ -1115,6 +1127,24 @@ BOOL WINAPI DECLSPEC_HOTPATCH QueryServiceStatusEx( SC_HANDLE service, SC_STATUS
+         return set_error( ERROR_INSUFFICIENT_BUFFER );
+     }
+
++    /* HACK for ARK: Survivial Evolved checking the status of BEService to determine whether BE is enabled. */
++    if(GetEnvironmentVariableA("SteamGameId", str, sizeof(str)) && !strcmp(str, "346110") &&
++        service == (void *)0xdeadbeef)
++    {
++        SERVICE_STATUS_PROCESS *status = (SERVICE_STATUS_PROCESS *)buffer;
++        WARN("HACK: returning fake data for BEService.\n");
++        status->dwServiceType = SERVICE_WIN32_OWN_PROCESS;
++        status->dwCurrentState = SERVICE_RUNNING;
++        status->dwControlsAccepted = SERVICE_ACCEPT_SHUTDOWN | SERVICE_ACCEPT_STOP;
++        status->dwWin32ExitCode = NO_ERROR;
++        status->dwServiceSpecificExitCode = 0;
++        status->dwCheckPoint = 0;
++        status->dwWaitHint = 0;
++        status->dwProcessId = 0xdeadbee0;
++        status->dwServiceFlags = 0;
++        return TRUE;
++    }
++
+     __TRY
+     {
+         err = svcctl_QueryServiceStatusEx( service, level, buffer, size, ret_size );
