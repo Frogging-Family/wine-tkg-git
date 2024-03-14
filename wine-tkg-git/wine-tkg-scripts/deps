@@ -141,30 +141,43 @@ _install_pkg() {
     _confirm="${2}"
   fi
   if _is_installed "${PKG}"; then
+    warning "Package: ${PKG} is already installed."
     return 0
   fi
   _os=$(_os_name)
   case "${_os}" in
     "debian" | "ubuntu" | "linuxmint")
       _confirm=$([[ "${_confirm}" == "true" ]] && echo "-y " || echo " ")
-      msg2 "Installing package ${PKG} using apt..."
+      msg2 "Installing package: ${PKG} | Using apt..."
       eval "$(_auto_su)apt ${_confirm}install \"${PKG}\""
-      return $?
+      if [ $? -ne 0 ]; then
+        error "Failed to install package: ${PKG}"
+        return 1
+      fi
+      return 0
       ;;
     "fedora")
       _confirm=$([[ "${_confirm}" == "true" ]] && echo "-y " || echo "")
-      msg2 "Installing package ${PKG} using dnf..."
+      msg2 "Installing package: ${PKG} | Using dnf..."
       eval "$(_auto_su)dnf ${_confirm}install \"${PKG}\""
-      return $?
+      if [ $? -ne 0 ]; then
+        error "Failed to install package: ${PKG}"
+        return 1
+      fi
+      return 0
       ;;
     "arch")
       _confirm=$([[ "${_confirm}" == "true" ]] && echo "y" || echo "")
-      msg2 "Installing package ${PKG} using pacman..."
+      msg2 "Installing package: ${PKG} | Using pacman..."
       eval "$(_auto_su)pacman -S${_confirm} --needed \"${PKG}\""
-      return $?
+      if [ $? -ne 0 ]; then
+        error "Failed to install package: ${PKG}"
+        return 1
+      fi
+      return 0
       ;;
     "unknown")
-      warning "Unknown distro, cannot install package: ${PKG}"
+      error "Unknown distro, cannot install package: ${PKG}"
       return 1
       ;;
   esac
@@ -184,30 +197,43 @@ _remove_pkg() {
     _confirm="${1}"
   fi
   if ! _is_installed "${PKG}"; then
+    warning "Package: ${PKG} is already installed."
     return 0
   fi
   _os=$(_os_name)
   case "${_os}" in
     "debian" | "ubuntu" | "linuxmint")
       _confirm=$([[ "${_confirm}" == "true" ]] && echo -ne "-y " || echo -ne " ")
-      msg2 "Removing package ${PKG} using apt..."
+      msg2 "Removing package: ${PKG} | Using apt..."
       eval "$(_auto_su)apt ${_confirm}remove \"${PKG}\""
-      return $?
+      if [ $? -ne 0 ]; then
+        error "Failed to remove package: ${PKG}"
+        return 1
+      fi
+      return 0
       ;;
     "fedora")
-      msg2 "Removing package ${PKG} using dnf..."
+      msg2 "Removing package: ${PKG} | Using dnf..."
       _confirm=$([[ "${_confirm}" == "true" ]] && echo -ne "-y " || echo -ne "")
       eval "$(_auto_su)dnf ${_confirm}remove \"${PKG}\""
-      return $?
+      if [ $? -ne 0 ]; then
+        error "Failed to remove package: ${PKG}"
+        return 1
+      fi
+      return 0
       ;;
     "arch")
-      msg2 "Removing package ${PKG} using pacman..."
+      msg2 "Removing package: ${PKG} | Using pacman..."
       _confirm=$([[ "${_confirm}" == "true" ]] && echo -ne "y" || echo -ne "")
       eval "$(_auto_su)pacman -R${_confirm} \"${PKG}\""
-      return $?
+      if [ $? -ne 0 ]; then
+        error "Failed to remove package: ${PKG}"
+        return 1
+      fi
+      return 0
       ;;
     "unknown")
-      warning "Unknown distro, cannot remove package: ${PKG}"
+      error "Unknown distro, cannot remove package: ${PKG}"
       return 1
       ;;
   esac
@@ -267,7 +293,7 @@ _install_post_ubuntu() {
     ${_as_root}update-alternatives --set i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix || ${_as_root}update-alternatives --config i686-w64-mingw32-gcc
     ${_as_root}update-alternatives --set i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix || ${_as_root}update-alternatives --config i686-w64-mingw32-g++
   else
-    msg2 "No post-installation action for 32-bit on Ubuntu"
+    warning "No post-installation action for 32-bit on Ubuntu"
   fi
 }
 
@@ -291,7 +317,7 @@ _install_post_debian() {
     ${_as_root}update-alternatives --set i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix || ${_as_root}update-alternatives --config i686-w64-mingw32-gcc
     ${_as_root}update-alternatives --set i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix || ${_as_root}update-alternatives --config i686-w64-mingw32-g++
   else
-    msg2 "No post-installation action for 32-bit on Debian Linux"
+    warning "No post-installation action for 32-bit on Debian Linux"
   fi
 }
 
@@ -309,9 +335,9 @@ _install_post_fedora() {
   local _as_root
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
-    msg2 "No post-installation actions for 64-bit on Fedora"
+    warning "No post-installation actions for 64-bit on Fedora"
   else
-    msg2 "No post-installation actions for 32-bit on Fedora"
+    warning "No post-installation actions for 32-bit on Fedora"
   fi
 }
 
@@ -329,9 +355,9 @@ _install_post_arch() {
   local _as_root
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
-    msg2 "No post-installation actions for 64-bit on Arch Linux"
+    warning "No post-installation actions for 64-bit on Arch Linux"
   else
-    msg2 "No post-installation actions for 32-bit on Arch Linux"
+    warning "No post-installation actions for 32-bit on Arch Linux"
   fi
 }
 
@@ -350,9 +376,9 @@ _install_post_unknown() {
   local _as_root
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
-    msg2 "No post-installation actions for 64-bit on unknown distro"
+    warning "No post-installation actions for 64-bit on unknown distro"
   else
-    msg2 "No post-installation actions for 32-bit on unknown distro"
+    warning "No post-installation actions for 32-bit on unknown distro"
   fi
 }
 
@@ -379,7 +405,7 @@ _remove_post_ubuntu() {
     ${_as_root}update-alternatives --remove i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix
     ${_as_root}update-alternatives --remove i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix
   else
-    msg2 "No post-removal action for 32-bit on Ubuntu"
+    warning "No post-removal action for 32-bit on Ubuntu"
   fi
 }
 
@@ -403,7 +429,7 @@ _remove_post_debian() {
     ${_as_root}update-alternatives --remove i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix
     ${_as_root}update-alternatives --remove i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix
   else
-    msg2 "No post-removal action for 32-bit on Debian Linux"
+    warning "No post-removal action for 32-bit on Debian Linux"
   fi
 }
 
@@ -421,9 +447,9 @@ _remove_post_fedora() {
   local _as_root
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
-    msg2 "No post-removal actions for 64-bit on Fedora"
+    warning "No post-removal actions for 64-bit on Fedora"
   else
-    msg2 "No post-removal actions for 32-bit on Fedora"
+    warning "No post-removal actions for 32-bit on Fedora"
   fi
 }
 
@@ -441,9 +467,9 @@ _remove_post_arch() {
   local _as_root
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
-    msg2 "No post-removal actions for 64-bit on Arch Linux"
+    warning "No post-removal actions for 64-bit on Arch Linux"
   else
-    msg2 "No post-removal actions for 32-bit on Arch Linux"
+    warning "No post-removal actions for 32-bit on Arch Linux"
   fi
 }
 
@@ -462,9 +488,9 @@ _remove_post_unknown() {
   local _as_root
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
-    msg2 "No post-removal actions for 64-bit on unknown distro"
+    warning "No post-removal actions for 64-bit on unknown distro"
   else
-    msg2 "No post-removal actions for 32-bit on unknown distro"
+    warning "No post-removal actions for 32-bit on unknown distro"
   fi
 }
 
