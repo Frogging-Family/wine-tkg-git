@@ -81,16 +81,16 @@ pkgver() {
         warning "PLEASE MAKE SURE TO READ https://github.com/Frogging-Family/wine-tkg-git/issues/773 BEFORE ATTEMPTING TO USE \"debuntu\" dependency resolution"
         read -rp "Either press enter to continue, or ctrl+c to leave."
       fi
-      _debuntu_64
+      _debuntu_64 "${_ci_build}"
     elif [ "$_nomakepkg_dep_resolution_distro" = "fedora" ]; then
-      _fedora_64
+      _fedora_64 "${_ci_build}"
       if [ "$_NOLIB32" != "true" ]; then
-        _fedora_32
+        _fedora_32 "${_ci_build}"
       fi
     elif [ "$_nomakepkg_dep_resolution_distro" = "archlinux" ]; then
-      _archlinux_64
+      _archlinux_64 "${_ci_build}"
       if [ "$_NOLIB32" != "true" ]; then
-        _archlinux_32
+        _archlinux_32 "${_ci_build}"
       fi
     fi
   fi
