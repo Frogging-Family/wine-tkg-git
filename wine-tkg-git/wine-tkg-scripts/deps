@@ -147,22 +147,25 @@ _install_pkg() {
   case "${_os}" in
     "debian" | "ubuntu" | "linuxmint")
       _confirm=$([[ "${_confirm}" == "true" ]] && echo "-y " || echo " ")
+      msg2 "Installing package ${PKG} using apt..."
       eval "$(_auto_su)apt ${_confirm}install \"${PKG}\""
       return $?
       ;;
     "fedora")
       _confirm=$([[ "${_confirm}" == "true" ]] && echo "-y " || echo "")
+      msg2 "Installing package ${PKG} using dnf..."
       eval "$(_auto_su)dnf ${_confirm}install \"${PKG}\""
       return $?
       ;;
     "arch")
       _confirm=$([[ "${_confirm}" == "true" ]] && echo "y" || echo "")
+      msg2 "Installing package ${PKG} using pacman..."
       eval "$(_auto_su)pacman -S${_confirm} --needed \"${PKG}\""
       return $?
       ;;
     "unknown")
-      # NOP
-      return
+      warning "Unknown distro, cannot install package: ${PKG}"
+      return 1
       ;;
   esac
 }
@@ -187,21 +190,24 @@ _remove_pkg() {
   case "${_os}" in
     "debian" | "ubuntu" | "linuxmint")
       _confirm=$([[ "${_confirm}" == "true" ]] && echo -ne "-y " || echo -ne " ")
+      msg2 "Removing package ${PKG} using apt..."
       eval "$(_auto_su)apt ${_confirm}remove \"${PKG}\""
       return $?
       ;;
     "fedora")
+      msg2 "Removing package ${PKG} using dnf..."
       _confirm=$([[ "${_confirm}" == "true" ]] && echo -ne "-y " || echo -ne "")
       eval "$(_auto_su)dnf ${_confirm}remove \"${PKG}\""
       return $?
       ;;
     "arch")
+      msg2 "Removing package ${PKG} using pacman..."
       _confirm=$([[ "${_confirm}" == "true" ]] && echo -ne "y" || echo -ne "")
       eval "$(_auto_su)pacman -R${_confirm} \"${PKG}\""
       return $?
       ;;
     "unknown")
-      # NOP
+      warning "Unknown distro, cannot remove package: ${PKG}"
       return 1
       ;;
   esac
@@ -216,7 +222,7 @@ _install_pkgs() {
     shift 1
   fi
   local PKGS
-  PKGS=("${*}")
+  PKGS=( ${*} )
   for PKG in "${PKGS[@]}"; do
     _install_pkg "${PKG}" "${_confirm}"
   done
@@ -231,7 +237,7 @@ _remove_pkgs() {
     shift 1
   fi
   local PKGS
-  PKGS=("${*}")
+  PKGS=( ${*} )
   for PKG in "${PKGS[@]}"; do
     _remove_pkg "${PKG}" "${_confirm}"
   done
@@ -490,7 +496,8 @@ install_deps() {
   _os=$(_os_name)
   msg2 ""
   msg2 "Installing ${_arch}-bit dependencies for ${_os}"
-  _install_pkgs "${_confirm}" ${${_os}_pkgs_${_arch}[@]}
+  local _var="${_os}_pkgs_${_arch}[@]"
+  _install_pkgs "${_confirm}" "${!_var}"
   _install_post_${_os} "${_arch}"
 }
 
@@ -518,6 +525,7 @@ remove_deps() {
   _os=$(_os_name)
   msg2 ""
   msg2 "Removing ${_arch}-bit dependencies for ${_os}"
-  _remove_pkgs "${_confirm}" ${${_os}_pkgs_${_arch}[@]}
+  local _var="${_os}_pkgs_${_arch}[@]"
+  _remove_pkgs "${_confirm}" "${!_var}"
   _remove_post_${_os} "${_arch}"
 }
