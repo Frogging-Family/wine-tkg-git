@@ -121,6 +121,9 @@ _build_serial() {
   if [ "$_NOLIB64" != "true" ]; then
     # build wine 64-bit
     # (according to the wine wiki, this 64-bit/32-bit building order is mandatory)
+    if [[ "$_nomakepkg_dependency_autoresolver" == "true" ]]; then
+      install_deps "64" "${_ci_build}"
+    fi
     _exports_64
     _configure_64
     _build_64
@@ -128,20 +131,20 @@ _build_serial() {
   if [ "$_NOLIB32" != "true" ] && [ "$_NOLIB32" != "wow64" ]; then
     # build wine 32-bit
     # nomakepkg
-    if [ "$_nomakepkg_midbuild_prompt" = "true" ]; then
+    if [[ "$_nomakepkg_midbuild_prompt" == "true" ]]; then
       msg2 '64-bit side has been built, 32-bit will follow.'
       msg2 'This is the time to install the 32-bit devel packages you might need.'
       read -rp "    When ready, press enter to continue.."
     fi
-    if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ]; then
-      _debuntu_32
+    if [[ "$_nomakepkg_dependency_autoresolver" == "true" ]]; then
+      install_deps "32" "${_ci_build}"
     fi
-    # /nomakepkg
+	# /nomakepkg
     _exports_32
     _configure_32
     _build_32
-    if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
-      _debuntu_64
+    if [ "$_nomakepkg_dependency_autoresolver" = "true" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
+      install_deps "64" "${_ci_build}"
     fi
   fi
 }
@@ -149,10 +152,6 @@ _build_serial() {
 _build() {
   if [ "$_SINGLE_MAKE" = 'true' ] && [ "$_NOLIB32" != "true" ]; then
     warning "Using experimental single-make mode!"
-    if [ "$_nomakepkg_dep_resolution_distro" = "debuntu" ]; then
-      error "_SINGLE_MAKE is incompatible with debian/ubuntu"
-      return 1
-    fi
     if [ "$_nomakepkg_midbuild_prompt" = "true" ]; then
       error "_SINGLE_MAKE is incompatible with _nomakepkg_midbuild_prompt"
       return 1
@@ -165,7 +164,6 @@ _build() {
 
 _generate_debian_package() {
 	_prefix="$1"
-
 	msg2 'Generating a Debian package'
 	"$_where"/wine-tkg-scripts/package-debian.sh "${pkgdir}" "${_prefix}" "${_where}" "${pkgname}-${pkgver}.deb" "${pkgver}" "${pkgname}"
 }
