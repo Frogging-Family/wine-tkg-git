@@ -121,7 +121,7 @@ _build_serial() {
   if [ "$_NOLIB64" != "true" ]; then
     # build wine 64-bit
     # (according to the wine wiki, this 64-bit/32-bit building order is mandatory)
-    if [[ "$_nomakepkg_dependency_autoresolver" == "true" ]]; then
+    if [ "$_nomakepkg_dependency_autoresolver" = "true" ]; then
       install_deps "64" "${_ci_build}"
     fi
     _exports_64
@@ -131,19 +131,19 @@ _build_serial() {
   if [ "$_NOLIB32" != "true" ] && [ "$_NOLIB32" != "wow64" ]; then
     # build wine 32-bit
     # nomakepkg
-    if [[ "$_nomakepkg_midbuild_prompt" == "true" ]]; then
+    if [ "$_nomakepkg_midbuild_prompt" == "true" ]; then
       msg2 '64-bit side has been built, 32-bit will follow.'
       msg2 'This is the time to install the 32-bit devel packages you might need.'
       read -rp "    When ready, press enter to continue.."
     fi
-    if [[ "$_nomakepkg_dependency_autoresolver" == "true" ]]; then
+    if [ "$_nomakepkg_dependency_autoresolver" == "true" ]; then
       install_deps "32" "${_ci_build}"
     fi
 	# /nomakepkg
     _exports_32
     _configure_32
     _build_32
-    if [ "$_nomakepkg_dependency_autoresolver" = "true" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
+    if [ "$_nomakepkg_dependency_autoresolver" == "true" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
       install_deps "64" "${_ci_build}"
     fi
   fi
@@ -169,7 +169,7 @@ _generate_debian_package() {
 }
 
 _package_nomakepkg() {
-	if [ "$_nomakepkg_nover" = "true" ] ; then
+	if [ "$_nomakepkg_nover" = "true" ]; then
 	  _nomakepkg_pkgname="${pkgname}"
 	else
 	  _nomakepkg_pkgname="${pkgname}-${pkgver}"
@@ -180,7 +180,7 @@ _package_nomakepkg() {
 	  local _prefix="${_nomakepkg_prefix_path}/${_nomakepkg_pkgname}"
 	fi
 
-	if [ "$_NOLIB32" = "true" ]; then
+	if [[ "$_NOLIB32" == "true" ]]; then
 	  local _lib32name="lib"
 	  local _lib64name="lib"
 	elif [ -e /lib ] && [ -e /lib64 ] && [ -d /usr/lib ] && [ -d /usr/lib32 ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
