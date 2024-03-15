@@ -122,7 +122,10 @@ _build_serial() {
     # build wine 64-bit
     # (according to the wine wiki, this 64-bit/32-bit building order is mandatory)
     if [ "$_nomakepkg_dependency_autoresolver" = "true" ]; then
-      install_deps "64" "${_ci_build}"
+      install_deps "64" "${_ci_build}" || {
+		error "64-bit deps installation failed, aborting."
+		return 1
+	  }
     fi
     _exports_64
     _configure_64
@@ -137,14 +140,20 @@ _build_serial() {
       read -rp "    When ready, press enter to continue.."
     fi
     if [ "$_nomakepkg_dependency_autoresolver" = "true" ]; then
-      install_deps "32" "${_ci_build}"
+      install_deps "32" "${_ci_build}" || {
+		error "32-bit deps installation failed, aborting."
+		return 1
+	  }
     fi
 	# /nomakepkg
     _exports_32
     _configure_32
     _build_32
     if [ "$_nomakepkg_dependency_autoresolver" = "true" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
-      install_deps "64" "${_ci_build}"
+      install_deps "64" "${_ci_build}" || {
+		error "64-bit deps installation failed, aborting."
+		return 1
+	  }
     fi
   fi
 }

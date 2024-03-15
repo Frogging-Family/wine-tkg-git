@@ -61,6 +61,15 @@ _os_name() {
   echo -ne "${_os}"
 }
 
+_country_code() {
+  local _lang
+  _lang=$(echo -ne "${LANGUAGE}\n${LANG}\n${LC_ALL}" | grep -oP "(?<=_)[A-Z]{2}(?=(\.[a-zA-Z0-9\-]+)?$)" | head -n 1)
+  if [ -z "${_lang}" ]; then
+    _lang="US"
+  fi
+  echo -ne "${_lang}"
+}
+
 _cmd_exists() {
   local CMD="${1}"
   if [ -z "${CMD}" ]; then
@@ -97,7 +106,7 @@ _is_installed() {
   local _os
   _os=$(_os_name)
   case "${_os}" in
-    "debian" | "ubuntu" | "linuxmint")
+    "debian" | "ubuntu")
       if eval "$(_auto_su)dpkg -l | grep -q \"${PKG}\""; then
         return 0
       else
@@ -126,71 +135,181 @@ _is_installed() {
 
 #### PACKAGE MANAGEMENT ####
 
-# These functions are used to install and remove packages
+# These functions are used to install and remove packages in an unattended way
+
+_attempt_str() {
+  local _try
+  if [ -z "${1}" ]; then
+    _try=1
+  else
+    _try=$(($1))
+  fi
+  if [[ $_try -gt 1 ]]; then
+    echo -ne "| Attempt: ${_try}/3"
+  fi
+  echo -ne ""
+}
+
+_update_pkgman_mirror() {
+  local _try
+  if [ -z "${1}" ]; then
+    _try=1
+  else
+    _try=$(($1))
+  fi
+  local _os
+  _os=$(_os_name)
+  local _auto_su
+  _auto_su=$(_auto_su)
+  local _country_code
+  _country_code=$(_country_code)
+  local _failed
+  _failed="false"
+  local _attempt_str
+  _attempt_str=$(_attempt_str $_try)
+  case "${_os}" in
+    "debian" | "ubuntu")
+      if ! _cmd_exists "apt-smart"; then
+        msg2 "Installing apt-smart | Using pip${_attempt_str}"
+        pip install apt-smart || {
+          warning "Failed to install apt-smart, cannot update mirror."
+          _failed="true"
+        }
+      fi
+      [ "$_failed" = "false" ] && {
+        msg2 "Updating mirror | Using apt-smart${_attempt_str}"
+        apt-smart --auto-change-mirror || {
+          warning "Failed to update mirror | Using apt-smart"
+          _failed="true"
+        }
+      }
+      [ "$_failed" = "false" ] && {
+        msg2 "Updating package list | Using apt${_attempt_str}"
+        ${_auto_su}apt update -y || {
+          warning "Failed to update package list | Using apt"
+          _failed="true"
+        }
+      }
+      ;;
+    "fedora")
+      # TODO: implement fedora mirror update
+      msg2 "Updating package list | Using dnf${_attempt_str}"
+      ${_auto_su}dnf update -y || {
+        warning "Failed to update package list | Using dnf"
+        _failed="true"
+      }
+      ;;
+    "arch")
+      # TODO: implement arch mirror update
+      msg2 "Updating package list | Using pacman${_attempt_str}"
+      ${_auto_su}pacman -Sy --noconfirm || {
+        warning "Failed to update package list | Using pacman"
+        _failed="true"
+      }
+      ;;
+    "unknown")
+      error "Unknown distro, cannot update mirror."
+      return 1
+      ;;
+  esac
+  if [[ "${_failed}" == "true" ]] && [[ "${_try}" -lt 3 ]]; then
+    _try=$(( $_try + 1 ))
+    _update_pkgman_mirror $_try
+  elif [[ "${_failed}" == "true" ]] && [[ "${_try}" -ge 3 ]]; then
+    error "Failed to update mirror after 3 attempts."
+    return 1
+  elif [[ "${_failed}" == "false" ]]; then
+    return 0
+  fi
+}
 
 _install_pkg() {
   local PKG="${1}"
-  local _os
-  local _confirm
   if [ -z "${PKG}" ]; then
     return 1
   fi
-  if [ -z "${2}" ]; then
+  shift 1
+  local _confirm
+  if [ -z "${1}" ]; then
     _confirm="false"
   else
-    _confirm="${2}"
+    _confirm="${1}"
   fi
   if _is_installed "${PKG}"; then
     warning "Package: ${PKG} is already installed."
     return 0
   fi
+  shift 1
+  local _try
+  if [ -z "${1}" ]; then
+    _try=1
+  else
+    _try=$(($1))
+  fi
+  local _os
   _os=$(_os_name)
+  local _failed
+  _failed="false"
+  local _confirm_str
+  local _attempt_str
+  _attempt_str=$(_attempt_str $_try)
   case "${_os}" in
     "debian" | "ubuntu" | "linuxmint")
-      _confirm=$([[ "${_confirm}" == "true" ]] && echo "-y " || echo " ")
-      msg2 "Installing package: ${PKG} | Using apt..."
-      eval "$(_auto_su)apt ${_confirm}install \"${PKG}\""
-      if [ $? -ne 0 ]; then
-        error "Failed to install package: ${PKG}"
-        return 1
+      _confirm_str=$([[ "${_confirm}" == "true" ]] && echo "-y " || echo " ")
+      if [ $_try -gt 1 ]; then
+        _update_pkgman_mirror || {
+          _failed="true"
+        }
       fi
-      return 0
+      msg2 "Installing package: ${PKG} | Using apt${_attempt_str}"
+      if ! eval "$(_auto_su)apt ${_confirm_str}install \"${PKG}\""; then
+        warning "Failed to install package: ${PKG}"
+        _failed="true"
+      else
+        return 0
+      fi
       ;;
     "fedora")
-      _confirm=$([[ "${_confirm}" == "true" ]] && echo "-y " || echo "")
-      msg2 "Installing package: ${PKG} | Using dnf..."
-      eval "$(_auto_su)dnf ${_confirm}install \"${PKG}\""
-      if [ $? -ne 0 ]; then
-        error "Failed to install package: ${PKG}"
-        return 1
+      _confirm_str=$([[ "${_confirm}" == "true" ]] && echo "-y " || echo "")
+      msg2 "Installing package: ${PKG} | Using dnf${_attempt_str}"
+      if ! eval "$(_auto_su)dnf ${_confirm_str}install \"${PKG}\""; then
+        warning "Failed to install package: ${PKG}"
+        _failed="true"
+      else
+        return 0
       fi
-      return 0
       ;;
     "arch")
-      _confirm=$([[ "${_confirm}" == "true" ]] && echo "y" || echo "")
-      msg2 "Installing package: ${PKG} | Using pacman..."
-      eval "$(_auto_su)pacman -S${_confirm} --needed \"${PKG}\""
-      if [ $? -ne 0 ]; then
-        error "Failed to install package: ${PKG}"
-        return 1
+      _confirm_str=$([[ "${_confirm}" == "true" ]] && echo "y" || echo "")
+      msg2 "Installing package: ${PKG} | Using pacman${_attempt_str}"
+      if ! eval "$(_auto_su)pacman -S${_confirm_str} --needed \"${PKG}\""; then
+        warning "Failed to install package: ${PKG}"
+        _failed="true"
+      else
+        return 0
       fi
-      return 0
       ;;
     "unknown")
       error "Unknown distro, cannot install package: ${PKG}"
       return 1
       ;;
   esac
+  if [[ "${_failed}" == "true" ]] && [[ "${_try}" -lt 3 ]]; then
+    _try=$(( $_try + 1 ))
+    _install_pkg "${PKG}" "${_confirm}" $_try
+  elif [[ "${_failed}" == "true" ]] && [[ "${_try}" -ge 3 ]]; then
+    error "Failed to install package: ${PKG} after 3 attempts."
+    return 1
+  fi
 }
 
 _remove_pkg() {
   local PKG="${1}"
-  local _os
-  local _confirm
   if [ -z "${PKG}" ]; then
     return 1
   fi
   shift 1
+  local _confirm
   if [ -z "${1}" ]; then
     _confirm="false"
   else
@@ -200,43 +319,63 @@ _remove_pkg() {
     warning "Package: ${PKG} is already installed."
     return 0
   fi
+  shift 1
+  local _try
+  if [ -z "${1}" ]; then
+    _try=1
+  else
+    _try=$(($1))
+  fi
+  local _os
   _os=$(_os_name)
+  local _failed
+  _failed="false"
+  local _confirm_str
+  local _attempt_str
+  _attempt_str=$(_attempt_str $_try)
   case "${_os}" in
     "debian" | "ubuntu" | "linuxmint")
-      _confirm=$([[ "${_confirm}" == "true" ]] && echo -ne "-y " || echo -ne " ")
-      msg2 "Removing package: ${PKG} | Using apt..."
-      eval "$(_auto_su)apt ${_confirm}remove \"${PKG}\""
-      if [ $? -ne 0 ]; then
-        error "Failed to remove package: ${PKG}"
-        return 1
+      _confirm_str=$([[ "${_confirm}" == "true" ]] && echo -ne "-y " || echo -ne " ")
+      msg2 "Removing package: ${PKG} | Using apt${_attempt_str}"
+      if ! eval "$(_auto_su)apt ${_confirm_str}remove \"${PKG}\""; then
+        warning "Failed to remove package: ${PKG}"
+        _failed="true"
+      else
+        return 0
       fi
-      return 0
       ;;
     "fedora")
-      msg2 "Removing package: ${PKG} | Using dnf..."
-      _confirm=$([[ "${_confirm}" == "true" ]] && echo -ne "-y " || echo -ne "")
-      eval "$(_auto_su)dnf ${_confirm}remove \"${PKG}\""
-      if [ $? -ne 0 ]; then
-        error "Failed to remove package: ${PKG}"
-        return 1
+      _confirm_str=$([[ "${_confirm}" == "true" ]] && echo -ne "-y " || echo -ne "")
+      msg2 "Removing package: ${PKG} | Using dnf${_attempt_str}"
+      if eval "$(_auto_su)dnf ${_confirm_str}remove \"${PKG}\""; then
+        warning "Failed to remove package: ${PKG}"
+        _failed="true"
+      else
+        return 0
       fi
-      return 0
       ;;
     "arch")
-      msg2 "Removing package: ${PKG} | Using pacman..."
-      _confirm=$([[ "${_confirm}" == "true" ]] && echo -ne "y" || echo -ne "")
-      eval "$(_auto_su)pacman -R${_confirm} \"${PKG}\""
-      if [ $? -ne 0 ]; then
-        error "Failed to remove package: ${PKG}"
-        return 1
+      _confirm_str=$([[ "${_confirm}" == "true" ]] && echo -ne "y" || echo -ne "")
+      msg2 "Removing package: ${PKG} | Using pacman${_attempt_str}"
+      if ! eval "$(_auto_su)pacman -R${_confirm_str} \"${PKG}\""; then
+        warning "Failed to remove package: ${PKG}"
+        _failed="true"
+      else
+        return 0
       fi
-      return 0
       ;;
     "unknown")
       error "Unknown distro, cannot remove package: ${PKG}"
       return 1
       ;;
   esac
+  if [[ "${_failed}" == "true" ]] && [[ "${_try}" -lt 3 ]]; then
+    _try=$(( $_try + 1 ))
+    _remove_pkg "${PKG}" "${_confirm}" $_try
+  elif [[ "${_failed}" == "true" ]] && [[ "${_try}" -ge 3 ]]; then
+    error "Failed to remove package: ${PKG} after 3 attempts."
+    return 1
+  fi
 }
 
 _install_pkgs() {
@@ -250,8 +389,9 @@ _install_pkgs() {
   local PKGS
   PKGS=( ${*} )
   for PKG in "${PKGS[@]}"; do
-    _install_pkg "${PKG}" "${_confirm}"
+    _install_pkg "${PKG}" "${_confirm}" || return 1
   done
+  return 0
 }
 
 _remove_pkgs() {
@@ -265,8 +405,9 @@ _remove_pkgs() {
   local PKGS
   PKGS=( ${*} )
   for PKG in "${PKGS[@]}"; do
-    _remove_pkg "${PKG}" "${_confirm}"
+    _remove_pkg "${PKG}" "${_confirm}" || return 1
   done
+  return 0
 }
 
 #### POST INSTALLATION ACTIONS ####

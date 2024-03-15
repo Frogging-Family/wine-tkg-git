@@ -79,10 +79,16 @@ if [[ "$_nomakepkg_dependency_autoresolver" == "true" ]] && [ "$_DEPSHELPER" != 
     read -rp "Either press enter to continue, or ctrl+c to leave."
   fi
   if [[ "$_NOLIB64" != "true" ]]; then
-    install_deps "64" "${_ci_build}"
+    install_deps "64" "${_ci_build}" || {
+      error "64-bit dependencies installation failed. Please check the error message and install the missing dependencies manually."
+      exit 1
+    }
   fi
   if [[ "$_NOLIB32" != "true" ]]; then
-    install_deps "32" "${_ci_build}"
+    install_deps "32" "${_ci_build}" || {
+      error "32-bit dependencies installation failed. Please check the error message and install the missing dependencies manually."
+      exit 1
+    }
   fi
 fi
 
