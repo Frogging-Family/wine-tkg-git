@@ -541,12 +541,18 @@ _remove_post_ubuntu() {
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
     msg2 "Running post-removal action for 64-bit on Ubuntu"
-    ${_as_root}update-alternatives --remove x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
-    ${_as_root}update-alternatives --remove x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
-    ${_as_root}update-alternatives --remove i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix
-    ${_as_root}update-alternatives --remove i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix
+    {
+      ${_as_root}update-alternatives --remove x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+      ${_as_root}update-alternatives --remove x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+      ${_as_root}update-alternatives --remove i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix
+      ${_as_root}update-alternatives --remove i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix
+    } || {
+      error "Failed to run post-removal actions for 64-bit on Ubuntu"
+      return 1
+    }
   else
     warning "No post-removal action for 32-bit on Ubuntu"
+    return 0
   fi
 }
 
@@ -565,10 +571,16 @@ _remove_post_debian() {
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
     msg2 "Running post-removal actions for 64-bit on Debian Linux"
-    ${_as_root}update-alternatives --remove x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
-    ${_as_root}update-alternatives --remove x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
-    ${_as_root}update-alternatives --remove i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix
-    ${_as_root}update-alternatives --remove i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix
+    {
+      ${_as_root}update-alternatives --remove x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix 
+      ${_as_root}update-alternatives --remove x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+      ${_as_root}update-alternatives --remove i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix
+      ${_as_root}update-alternatives --remove i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix
+    } || {
+      error "Failed to run post-removal actions for 64-bit on Debian Linux"
+      return 1
+    }
+    return 0
   else
     warning "No post-removal action for 32-bit on Debian Linux"
   fi
@@ -589,8 +601,10 @@ _remove_post_fedora() {
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
     warning "No post-removal actions for 64-bit on Fedora"
+    return 0
   else
     warning "No post-removal actions for 32-bit on Fedora"
+    return 0
   fi
 }
 
@@ -609,8 +623,10 @@ _remove_post_arch() {
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
     warning "No post-removal actions for 64-bit on Arch Linux"
+    return 0
   else
     warning "No post-removal actions for 32-bit on Arch Linux"
+    return 0
   fi
 }
 
@@ -630,8 +646,10 @@ _remove_post_unknown() {
   _as_root=$(_auto_su)
   if [[ "${_arch}" == "64" ]]; then
     warning "No post-removal actions for 64-bit on unknown distro"
+    return 0
   else
     warning "No post-removal actions for 32-bit on unknown distro"
+    return 0
   fi
 }
 
@@ -664,8 +682,9 @@ install_deps() {
   msg2 ""
   msg2 "Installing ${_arch}-bit dependencies for ${_os}"
   local _var="${_os}_pkgs_${_arch}[@]"
-  _install_pkgs "${_confirm}" "${!_var}"
-  _install_post_${_os} "${_arch}"
+  _install_pkgs "${_confirm}" "${!_var}" || return 1
+  _install_post_${_os} "${_arch}" || return 1
+  return 0
 }
 
 # usage: _remove_deps [arch] [confirm]
@@ -693,6 +712,7 @@ remove_deps() {
   msg2 ""
   msg2 "Removing ${_arch}-bit dependencies for ${_os}"
   local _var="${_os}_pkgs_${_arch}[@]"
-  _remove_pkgs "${_confirm}" "${!_var}"
-  _remove_post_${_os} "${_arch}"
+  _remove_pkgs "${_confirm}" "${!_var}" || return 1
+  _remove_post_${_os} "${_arch}" || return 1
+  return 0
 }
