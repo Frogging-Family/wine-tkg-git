@@ -44,19 +44,11 @@ _build_in_tmpfs="true"
 _esyncsrcdir='esync'
 _where="$PWD" # Track the base directory as different Arch-based distros are moving srcdir around
 
-# Set the srcdir, Arch Linux style
-if [ "$_build_in_tmpfs" = "true" ]; then
-  rm -rf "$_where"/src
-  mkdir -p /tmp/wine-tkg/src
-  ln -s /tmp/wine-tkg/src "$_where"
-else
-  mkdir -p "$_where"/src
-fi
-srcdir="$_where"/src
-
 # Source common functions
 source "$_where"/wine-tkg-scripts/prepare.sh
 source "$_where"/wine-tkg-scripts/build.sh
+
+srcdir=""
 
 _DEPSHELPER=${_DEPSHELPER:-0}
 ACTION="build"
@@ -182,6 +174,16 @@ _src_init() {
 _script_init() {
   msg2 "Non-makepkg build script will be used.\n"
   _init
+
+  # Set the srcdir, Arch Linux style
+  if [ "$_build_in_tmpfs" = "true" ]; then
+    rm -rf "$_where"/src
+    mkdir -p /tmp/wine-tkg/src
+    ln -s /tmp/wine-tkg/src "$_where"
+  else
+    mkdir -p "$_where"/src
+  fi
+  srcdir="$_where"/src
 
   # dependencies
   if [[ "$_nomakepkg_dependency_autoresolver" == "true" ]] && [ "$_DEPSHELPER" != "1" ]; then
@@ -329,11 +331,11 @@ _script_usage() {
     echo ""
     echo "Usage: $0 [args]"
     echo ""
-    echo "  Options:"
+    echo "  Command-Line Options:"
     echo ""
-    echo "    -d|--deps64 : Check for missing 64-bit dependencies"
-    echo "    -e|--deps32 : Check for missing 32-bit dependencies"
-    echo "    -c|--config : Use a custom config file"
+    echo "    -d|--deps64 :        Check for missing 64-bit dependencies"
+    echo "    -e|--deps32 :        Check for missing 32-bit dependencies"
+    echo "    -c|--config <path> : Use a custom config file"
     echo ""
     exit 0
 }
