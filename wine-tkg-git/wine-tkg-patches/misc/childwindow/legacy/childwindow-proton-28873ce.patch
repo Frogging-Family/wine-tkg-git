@@ -25,6 +25,15 @@ index 3e5c35ef570..743a964c44c 100644
 
  #define VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR 1000004000
 
+@@ -142,6 +143,8 @@ static void wine_vk_init(void)
+ #undef LOAD_OPTIONAL_FUNCPTR
+
+     vulkan_hwnd_context = XUniqueContext();
++    vulkan_swapchain_context = XUniqueContext();
++
+     return;
+
+ fail:
 @@ -287,6 +290,8 @@ static VkResult X11DRV_vkCreateSwapchainKHR(VkDevice device,
  {
      struct wine_vk_surface *x11_surface = surface_from_handle(create_info->surface);
@@ -71,15 +80,6 @@ index 3e5c35ef570..743a964c44c 100644
  }
 
  static VkResult X11DRV_vkEnumerateInstanceExtensionProperties(const char *layer_name,
-@@ -516,6 +516,8 @@ UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *driver_funcs )
- #undef LOAD_FUNCPTR
-
-     vulkan_hwnd_context = XUniqueContext();
-+    vulkan_swapchain_context = XUniqueContext();
-+
-     *driver_funcs = vulkan_funcs;
-     return STATUS_SUCCESS;
- }
 --
 2.37.1
 
@@ -134,6 +134,14 @@ index 743a964c44c..71ab92297d2 100644
  static VkResult (*pvkCreateInstance)(const VkInstanceCreateInfo *, const VkAllocationCallbacks *, VkInstance *);
  static VkResult (*pvkCreateSwapchainKHR)(VkDevice, const VkSwapchainCreateInfoKHR *, const VkAllocationCallbacks *, VkSwapchainKHR *);
  static VkResult (*pvkCreateXlibSurfaceKHR)(VkInstance, const VkXlibSurfaceCreateInfoKHR *, const VkAllocationCallbacks *, VkSurfaceKHR *);
+@@ -119,6 +120,7 @@ static void wine_vk_init(void)
+
+ #define LOAD_FUNCPTR(f) if (!(p##f = dlsym(vulkan_handle, #f))) goto fail
+ #define LOAD_OPTIONAL_FUNCPTR(f) p##f = dlsym(vulkan_handle, #f)
++    LOAD_FUNCPTR(vkAcquireNextImageKHR);
+     LOAD_FUNCPTR(vkCreateInstance);
+     LOAD_FUNCPTR(vkCreateSwapchainKHR);
+     LOAD_FUNCPTR(vkCreateXlibSurfaceKHR);
 @@ -284,6 +286,21 @@ static VkResult X11DRV_vkCreateInstance(const VkInstanceCreateInfo *create_info,
      return res;
  }
@@ -156,7 +164,7 @@ index 743a964c44c..71ab92297d2 100644
  static VkResult X11DRV_vkCreateSwapchainKHR(VkDevice device,
          const VkSwapchainCreateInfoKHR *create_info,
          const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain)
-@@ -483,6 +483,8 @@ static VkSurfaceKHR X11DRV_wine_get_native_surface(VkSurfaceKHR surface)
+@@ -708,6 +725,8 @@ static VkSurfaceKHR X11DRV_wine_get_native_surface(VkSurfaceKHR surface)
 
  static const struct vulkan_funcs vulkan_funcs =
  {
@@ -165,14 +173,6 @@ index 743a964c44c..71ab92297d2 100644
      X11DRV_vkCreateInstance,
      X11DRV_vkCreateSwapchainKHR,
      X11DRV_vkCreateWin32SurfaceKHR,
-@@ -502,6 +502,7 @@ UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *driver_funcs )
-     init_recursive_mutex( &vulkan_mutex );
-
- #define LOAD_FUNCPTR( f ) if (!(p##f = dlsym( vulkan_handle, #f ))) return STATUS_PROCEDURE_NOT_FOUND;
-+    LOAD_FUNCPTR( vkAcquireNextImageKHR );
-     LOAD_FUNCPTR( vkCreateInstance );
-     LOAD_FUNCPTR( vkCreateSwapchainKHR );
-     LOAD_FUNCPTR( vkCreateXlibSurfaceKHR );
 diff --git a/include/wine/vulkan_driver.h b/include/wine/vulkan_driver.h
 index f5269d554fb..39a9a361736 100644
 --- a/include/wine/vulkan_driver.h
@@ -186,28 +186,17 @@ index f5269d554fb..39a9a361736 100644
      VkResult (*p_vkCreateInstance)(const VkInstanceCreateInfo *, const VkAllocationCallbacks *, VkInstance *);
      VkResult (*p_vkCreateSwapchainKHR)(VkDevice, const VkSwapchainCreateInfoKHR *, const VkAllocationCallbacks *, VkSwapchainKHR *);
      VkResult (*p_vkCreateWin32SurfaceKHR)(VkInstance, const VkWin32SurfaceCreateInfoKHR *, const VkAllocationCallbacks *, VkSurfaceKHR *);
-diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
-index f5269d554fb..39a9a361736 100644
---- a/dlls/win32u/vulkan.c
-+++ b/dlls/win32u/vulkan.c
-@@ -50,6 +50,8 @@ static void *win32u_vkGetDeviceProcAddr( VkDevice device, const char *name )
- {
-     TRACE( "device %p, name %s\n", device, debugstr_a(name) );
+@@ -55,6 +57,10 @@ static inline void *get_vulkan_driver_device_proc_addr(
 
-+    if (!strcmp( name, "AcquireNextImage2KHR" )) return vulkan_funcs.p_vkAcquireNextImage2KHR;
-+    if (!strcmp( name, "AcquireNextImageKHR" )) return vulkan_funcs.p_vkAcquireNextImageKHR;
-     if (!strcmp( name, "vkCreateSwapchainKHR" )) return vulkan_funcs.p_vkCreateSwapchainKHR;
-     if (!strcmp( name, "vkDestroySwapchainKHR" )) return vulkan_funcs.p_vkDestroySwapchainKHR;
-     if (!strcmp( name, "vkGetDeviceProcAddr" )) return win32u_vkGetDeviceProcAddr;
-@@ -74,6 +74,8 @@ static void *win32u_vkGetInstanceProcAddr( VkInstance instance, const char *name )
-     if (!strcmp( name, "vkGetPhysicalDeviceWin32PresentationSupportKHR" )) return vulkan_funcs.p_vkGetPhysicalDeviceWin32PresentationSupportKHR;
+     name += 2;
 
-     /* vkGetInstanceProcAddr also loads any children of instance, so device functions as well. */
-+    if (!strcmp( name, "AcquireNextImage2KHR" )) return vulkan_funcs.p_vkAcquireNextImage2KHR;
-+    if (!strcmp( name, "AcquireNextImageKHR" )) return vulkan_funcs.p_vkAcquireNextImageKHR;
-     if (!strcmp( name, "vkCreateSwapchainKHR" )) return vulkan_funcs.p_vkCreateSwapchainKHR;
-     if (!strcmp( name, "vkDestroySwapchainKHR" )) return vulkan_funcs.p_vkDestroySwapchainKHR;
-     if (!strcmp( name, "vkGetDeviceProcAddr" )) return win32u_vkGetDeviceProcAddr;
++    if (!strcmp(name, "AcquireNextImage2KHR"))
++        return vulkan_funcs->p_vkAcquireNextImage2KHR;
++    if (!strcmp(name, "AcquireNextImageKHR"))
++        return vulkan_funcs->p_vkAcquireNextImageKHR;
+     if (!strcmp(name, "CreateSwapchainKHR"))
+         return vulkan_funcs->p_vkCreateSwapchainKHR;
+     if (!strcmp(name, "DestroySwapchainKHR"))
 --
 2.37.1
 
@@ -677,6 +666,16 @@ index 210c7989b3c..34b1be5c61b 100644
 
  static void *X11DRV_get_vk_device_proc_addr(const char *name);
  static void *X11DRV_get_vk_instance_proc_addr(VkInstance instance, const char *name);
+@@ -142,6 +146,9 @@ static void wine_vk_init(void)
+     LOAD_FUNCPTR(vkGetPhysicalDeviceXlibPresentationSupportKHR);
+     LOAD_FUNCPTR(vkGetSwapchainImagesKHR);
+     LOAD_FUNCPTR(vkQueuePresentKHR);
++    LOAD_FUNCPTR(vkWaitForFences);
++    LOAD_FUNCPTR(vkCreateFence);
++    LOAD_FUNCPTR(vkDestroyFence);
+ #undef LOAD_FUNCPTR
+ #undef LOAD_OPTIONAL_FUNCPTR
+
 @@ -332,9 +339,12 @@ static VkResult X11DRV_vkAcquireNextImageKHR(VkDevice device,
          VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphore semaphore,
          VkFence fence, uint32_t *image_index)
@@ -738,16 +737,6 @@ index 210c7989b3c..34b1be5c61b 100644
      result = pvkCreateSwapchainKHR(device, &create_info_host, NULL /* allocator */, swapchain);
      if (result == VK_SUCCESS)
      {
-@@ -682,6 +682,9 @@ UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *driver_funcs )
-     LOAD_FUNCPTR( vkGetPhysicalDeviceXlibPresentationSupportKHR );
-     LOAD_FUNCPTR( vkGetSwapchainImagesKHR );
-     LOAD_FUNCPTR( vkQueuePresentKHR );
-+    LOAD_FUNCPTR(vkWaitForFences);
-+    LOAD_FUNCPTR(vkCreateFence);
-+    LOAD_FUNCPTR(vkDestroyFence);
- #undef LOAD_FUNCPTR
-
-     vulkan_swapchain_context = XUniqueContext();
 --
 2.37.1
 
@@ -1353,7 +1342,15 @@ index 7b1e25163c7..d3e554090c2 100644
  static XContext vulkan_swapchain_context;
 
  #define VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR 1000004000
-@@ -176,23 +174,30 @@ static void wine_vk_surface_release(struct wine_vk_surface *surface)
+@@ -154,7 +153,6 @@ static void wine_vk_init(void)
+ #undef LOAD_FUNCPTR
+ #undef LOAD_OPTIONAL_FUNCPTR
+
+-    vulkan_hwnd_context = XUniqueContext();
+     vulkan_swapchain_context = XUniqueContext();
+
+     return;
+@@ -236,23 +234,30 @@ static void wine_vk_surface_release(struct wine_vk_surface *surface)
      free(surface);
  }
 
@@ -1395,7 +1392,7 @@ index 7b1e25163c7..d3e554090c2 100644
  }
 
  static BOOL wine_vk_surface_set_offscreen(struct wine_vk_surface *surface, BOOL offscreen)
-@@ -236,8 +241,12 @@ void sync_vk_surface(HWND hwnd, BOOL known_child)
+@@ -284,8 +289,12 @@ void sync_vk_surface(HWND hwnd, BOOL known_child)
  {
      struct wine_vk_surface *surface;
      pthread_mutex_lock(&vulkan_mutex);
@@ -1440,14 +1437,6 @@ index 7b1e25163c7..d3e554090c2 100644
      list_add_tail(&surface_list, &x11_surface->entry);
      pthread_mutex_unlock(&vulkan_mutex);
 
-@@ -856,7 +855,6 @@ static void wine_vk_init(void)
-     LOAD_FUNCPTR(vkDestroyFence);
- #undef LOAD_FUNCPTR
-
--    vulkan_hwnd_context = XUniqueContext();
-     vulkan_swapchain_context = XUniqueContext();
-
-     *driver_funcs = vulkan_funcs;
 diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
 index 6fbf938a477..8438fdb7225 100644
 --- a/dlls/winex11.drv/window.c
