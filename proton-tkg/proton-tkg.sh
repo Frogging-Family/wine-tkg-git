@@ -21,6 +21,7 @@ function resources_cleanup {
   # The symlinks switch doesn't need the recursive flag, but we'll use it temporarily
   # as a smoother transition for existing users with dirty trees
   rm -rf "${_nowhere}"/{Proton,vkd3d-proton,dxvk-tools,dxvk,liberation-fonts,mono,gecko,steam-runtime,openvr}
+  rm -rf /tmp/steam-runtime
 }
 
 trap resources_cleanup EXIT
