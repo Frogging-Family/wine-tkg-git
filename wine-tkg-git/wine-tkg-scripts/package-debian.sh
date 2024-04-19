@@ -22,7 +22,7 @@ rm -rf $tmpDir || true
 mkdir $tmpDir
 
 # Package format version number
-echo "2.0" > $tmpDir/debian-binary
+echo "2.0" >$tmpDir/debian-binary
 
 # TODO FIX: Make wine64-tkg the default as "wine64", the problem is it causes wine to complain about wine64
 # Make wine-tkg and wine64-tkg the default
@@ -49,7 +49,7 @@ rm -r "$files"/usr/lib32_
 rm -r "$files"/usr/lib64_
 
 # Files
-tar --exclude='.[^/]*' -czf $tmpDir/data.tar.gz -C "$files" ./ >> /dev/null
+tar --exclude='.[^/]*' -czf $tmpDir/data.tar.gz -C "$files" ./ >>/dev/null
 
 # Revert "Move the resulting build folders to match debian's filesystem"
 mkdir "$files"/usr/lib64_
@@ -86,13 +86,14 @@ Depends: libc6 (>= 2.17), libfontconfig1 (>= 2.11), libfreetype6 (>= 2.2.1), lib
 Installed-Size: $(du -sb ${files} | awk '{printf "%1.0f\n",$1/1024}')
 Description: This "Wine to rule them all" package is the result of wine-tkg build system found online. Some variants of it can be found in lutris runners. 🐸🐸🐸🐸🐸🐸🐸🐸
 EOL
-tar czf $tmpDir/control.tar.gz -C $tmpDir/control ./ >> /dev/null
+tar czf $tmpDir/control.tar.gz -C $tmpDir/control ./ >>/dev/null
 rm -r $tmpDir/control
 
 # Create .deb file
 prev=$PWD
 cd $tmpDir
-ar -r $name debian-binary control.tar.gz data.tar.gz &> /dev/null
+ar -r $name debian-binary control.tar.gz data.tar.gz &
+>/dev/null
 # TODO: better solution
 cp $name "$output"
 cd $prev

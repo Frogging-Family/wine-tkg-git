@@ -151,25 +151,25 @@ update_configure() {
 }
 
 _init() {
-msg2 '       .---.`               `.---.'
-msg2 '    `/syhhhyso-           -osyhhhys/`'
-msg2 '   .syNMdhNNhss/``.---.``/sshNNhdMNys.'
-msg2 '   +sdMh.`+MNsssssssssssssssNM+`.hMds+'
-msg2 '   :syNNdhNNhssssssssssssssshNNhdNNys:'
-msg2 '    /ssyhhhysssssssssssssssssyhhhyss/'
-msg2 '    .ossssssssssssssssssssssssssssso.'
-msg2 '   :sssssssssssssssssssssssssssssssss:'
-msg2 '  /sssssssssssssssssssssssssssssssssss/'
-msg2 ' :sssssssssssssoosssssssoosssssssssssss:'
-msg2 ' osssssssssssssoosssssssoossssssssssssso'
-msg2 ' osssssssssssyyyyhhhhhhhyyyyssssssssssso'
-msg2 ' /yyyyyyhhdmmmmNNNNNNNNNNNmmmmdhhyyyyyy/'
-msg2 '  smmmNNNNNNNNNNNNNNNNNNNNNNNNNNNNNmmms'
-msg2 '   /dNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNd/'
-msg2 '    `:sdNNNNNNNNNNNNNNNNNNNNNNNNNds:`'
-msg2 '       `-+shdNNNNNNNNNNNNNNNdhs+-`'
-msg2 '             `.-:///////:-.`'
-msg2 ''
+  msg2 '       .---.`               `.---.'
+  msg2 '    `/syhhhyso-           -osyhhhys/`'
+  msg2 '   .syNMdhNNhss/``.---.``/sshNNhdMNys.'
+  msg2 '   +sdMh.`+MNsssssssssssssssNM+`.hMds+'
+  msg2 '   :syNNdhNNhssssssssssssssshNNhdNNys:'
+  msg2 '    /ssyhhhysssssssssssssssssyhhhyss/'
+  msg2 '    .ossssssssssssssssssssssssssssso.'
+  msg2 '   :sssssssssssssssssssssssssssssssss:'
+  msg2 '  /sssssssssssssssssssssssssssssssssss/'
+  msg2 ' :sssssssssssssoosssssssoosssssssssssss:'
+  msg2 ' osssssssssssssoosssssssoossssssssssssso'
+  msg2 ' osssssssssssyyyyhhhhhhhyyyyssssssssssso'
+  msg2 ' /yyyyyyhhdmmmmNNNNNNNNNNNmmmmdhhyyyyyy/'
+  msg2 '  smmmNNNNNNNNNNNNNNNNNNNNNNNNNNNNNmmms'
+  msg2 '   /dNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNd/'
+  msg2 '    `:sdNNNNNNNNNNNNNNNNNNNNNNNNNds:`'
+  msg2 '       `-+shdNNNNNNNNNNNNNNNdhs+-`'
+  msg2 '             `.-:///////:-.`'
+  msg2 ''
 
   # load default configuration from files
   if [ -e "$_where"/proton_tkg_token ]; then
@@ -392,7 +392,7 @@ msg2 ''
     _use_esync="false"
     _use_fsync="false"
     _use_fastsync="false"
-#    _use_staging="false"
+    #_use_staging="false"
     _proton_fs_hack="false"
     _proton_rawinput="false"
     _large_address_aware="false"
