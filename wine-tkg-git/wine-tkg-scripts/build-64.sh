@@ -1,18 +1,20 @@
+#!/bin/bash
+
 _exports_64() {
   if [ "$_NOCCACHE" != "true" ]; then
-	if [ -e /usr/bin/ccache ]; then
-		export CC="ccache gcc" && echo "CC = ${CC}" >>"$_LAST_BUILD_CONFIG"
-		export CXX="ccache g++" && echo "CXX = ${CXX}" >>"$_LAST_BUILD_CONFIG"
-	fi
-	if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
-		export CROSSCC="ccache x86_64-w64-mingw32-gcc" && echo "CROSSCC64 = ${CROSSCC}" >>"$_LAST_BUILD_CONFIG"
-		export x86_64_CC="${CROSSCC}"
+    if [ -e /usr/bin/ccache ]; then
+      export CC="ccache gcc" && echo "CC = ${CC}" >>"$_LAST_BUILD_CONFIG"
+      export CXX="ccache g++" && echo "CXX = ${CXX}" >>"$_LAST_BUILD_CONFIG"
+    fi
+    if [ -e /usr/bin/ccache ] && [ "$_NOMINGW" != "true" ]; then
+      export CROSSCC="ccache x86_64-w64-mingw32-gcc" && echo "CROSSCC64 = ${CROSSCC}" >>"$_LAST_BUILD_CONFIG"
+      export x86_64_CC="${CROSSCC}"
 
-		# Required for new-style WoW64 builds (otherwise 32-bit portions won't be ccached)
-		if [ "${_NOLIB32}" != "false" ]; then
-			export i386_CC="ccache i686-w64-mingw32-gcc"
-		fi
-	fi
+      # Required for new-style WoW64 builds (otherwise 32-bit portions won't be ccached)
+      if [ "${_NOLIB32}" != "false" ]; then
+        export i386_CC="ccache i686-w64-mingw32-gcc"
+      fi
+    fi
   fi
   # If /usr/lib32 doesn't exist (such as on Fedora), make sure we're using /usr/lib64 for 64-bit pkgconfig path
   if [ ! -d '/usr/lib32' ]; then
@@ -22,21 +24,21 @@ _exports_64() {
 
 _configure_64() {
   msg2 'Configuring Wine-64...'
-  cd  "${srcdir}"/"${pkgname}"-64-build
+  cd "${srcdir}"/"${pkgname}"-64-build
   if [ "$_NUKR" != "debug" ] || [[ "$_DEBUGANSW3" =~ [yY] ]]; then
     chmod +x ../"${_winesrcdir}"/configure
     if [ "$_NOLIB32" != "wow64" ]; then
       ../"${_winesrcdir}"/configure \
-	    --prefix="$_prefix" \
-		--enable-win64 \
-		"${_configure_args64[@]}" \
-		"${_configure_args[@]}"
+        --prefix="$_prefix" \
+        --enable-win64 \
+        "${_configure_args64[@]}" \
+        "${_configure_args[@]}"
     else
       ../"${_winesrcdir}"/configure \
-	    --prefix="$_prefix" \
-		--enable-archs=i386,x86_64 \
-		"${_configure_args64[@]}" \
-		"${_configure_args[@]}"
+        --prefix="$_prefix" \
+        --enable-archs=i386,x86_64 \
+        "${_configure_args64[@]}" \
+        "${_configure_args[@]}"
     fi
   fi
   if [ "$_pkg_strip" != "true" ]; then
@@ -56,13 +58,13 @@ _tools_64() (
 
 _build_64() {
   msg2 'Building Wine-64...'
-  cd  "${srcdir}"/"${pkgname}"-64-build
+  cd "${srcdir}"/"${pkgname}"-64-build
   if [ "$_SINGLE_MAKE" = 'true' ]; then
     exec "$@"
   elif [ "$_LOCAL_OPTIMIZED" = 'true' ]; then
     # make using all available threads
     if [ "$_log_errors_to_file" = "true" ]; then
-      make -j$(nproc) 2> "$_where/debug.log"
+      make -j$(nproc) 2>"$_where/debug.log"
     else
       #_buildtime64=$( time ( make -j$(nproc) 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
       make -j$(nproc)
@@ -70,7 +72,7 @@ _build_64() {
   else
     # make using makepkg settings
     if [ "$_log_errors_to_file" = "true" ]; then
-      make 2> "$_where/debug.log"
+      make 2>"$_where/debug.log"
     else
       #_buildtime64=$( time ( make 2>&1 ) 3>&1 1>&2 2>&3 ) - Bash 5.2 is frogged - https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1018727
       make
