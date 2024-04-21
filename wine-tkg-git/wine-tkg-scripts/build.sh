@@ -167,6 +167,10 @@ _build_serial() {
 }
 
 _build() {
+	if [ "$_ismakepkg" = "true" ]; then
+		_nomakepkg_dependency_autoresolver="false"
+		_nomakepkg_midbuild_prompt="false"
+	fi
 	if [ "$_SINGLE_MAKE" = 'true' ] && [ "$_NOLIB32" != "true" ]; then
 		warning "Using experimental single-make mode!"
 		if [ "$_nomakepkg_midbuild_prompt" = "true" ]; then
