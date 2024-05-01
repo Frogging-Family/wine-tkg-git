@@ -936,7 +936,7 @@ _prepare() {
 	fi
 
 	# Manual staging patches application on top of proton valve trees
-	if [[ "$_custom_wine_source" = *"ValveSoftware"* ]] && [ "$_use_staging" = "true" ]; then
+	if [[ "$_custom_wine_source" = *"ValveSoftware"* ]] && [ "$_NUKR" != "debug" ] && [ "$_use_staging" = "true" ]; then
 	  _proton_staging
 	  if [ "$_use_GE_patches" = "true" ]; then
 	    _GE
