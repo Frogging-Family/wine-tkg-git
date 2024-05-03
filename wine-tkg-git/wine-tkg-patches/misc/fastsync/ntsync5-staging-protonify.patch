@@ -7739,13 +7739,13 @@ index 2ce94b4..8f603fc 100644
      thread->system_regs     = 0;
      thread->queue           = NULL;
      thread->wait            = NULL;
-@@ -253,6 +250,8 @@ static inline void init_thread_structure( struct thread *thread )
+@@ -253,6 +250,7 @@ static inline void init_thread_structure( struct thread *thread )
      thread->token           = NULL;
      thread->desc            = NULL;
      thread->desc_len        = 0;
 +    thread->fast_sync       = NULL;
 +    thread->fast_alert_event = NULL;
-     thread->exit_poll       = NULL;
+-    thread->exit_poll       = NULL;
  
      thread->creation_time = current_time;
 @@ -380,12 +379,6 @@ struct thread *create_thread( int fd, struct process *process, const struct secu
@@ -7778,8 +7778,8 @@ index 2ce94b4..8f603fc 100644
  /* cleanup everything that is no longer needed by a dead thread */
  /* used by destroy_thread and kill_thread */
  static void cleanup_thread( struct thread *thread )
-@@ -465,9 +468,8 @@ static void destroy_thread( struct object *obj )
-     if (thread->exit_poll) remove_timeout_user( thread->exit_poll );
+@@ -465,9 +468,7 @@ static void destroy_thread( struct object *obj )
+-    if (thread->exit_poll) remove_timeout_user( thread->exit_poll );
      if (thread->id) free_ptid( thread->id );
      if (thread->token) release_object( thread->token );
 -
@@ -7791,7 +7791,8 @@ index 2ce94b4..8f603fc 100644
  
  /* dump a thread on stdout for debugging purposes */
 @@ -486,13 +488,6 @@ static int thread_signaled( struct object *obj, struct wait_queue_entry *entry )
-     return mythread->state == TERMINATED && !mythread->exit_poll;
+-    return mythread->state == TERMINATED && !mythread->exit_poll;
++    return (mythread->state == TERMINATED);
  }
  
 -static int thread_get_esync_fd( struct object *obj, enum esync_type *type )
@@ -7849,16 +7850,51 @@ index 2ce94b4..8f603fc 100644
      return apc;
  }
  
-@@ -1345,8 +1338,7 @@ void kill_thread( struct thread *thread, int violent_death )
+@@ -1305,26 +1302,6 @@
+     return -1;
+ }
+
+-static void check_terminated( void *arg )
+-{
+-    struct thread *thread = arg;
+-    assert( thread->obj.ops == &thread_ops );
+-    assert( thread->state == TERMINATED );
+-
+-    /* don't wake up until the thread is really dead, to avoid race conditions */
+-    if (thread->unix_tid != -1 && !kill( thread->unix_tid, 0 ))
+-    {
+-        thread->exit_poll = add_timeout_user( -TICKS_PER_SEC / 1000, check_terminated, thread );
+-        return;
+-    }
+-
+-    /* grab reference since object can be destroyed while trying to wake up */
+-    grab_object( &thread->obj );
+-    thread->exit_poll = NULL;
+-    wake_up( &thread->obj, 0 );
+-    release_object( &thread->obj );
+-}
+-
+ /* kill a thread on the spot */
+ void kill_thread( struct thread *thread, int violent_death )
+ {
+@@ -1345,14 +1338,9 @@ void kill_thread( struct thread *thread, int violent_death )
      }
      kill_console_processes( thread, 0 );
      abandon_mutexes( thread );
 -    if (do_esync())
 -        esync_abandon_mutexes( thread );
 +    fast_set_event( thread->fast_sync );
-     if (violent_death)
-     {
-         send_thread_signal( thread, SIGQUIT );
++    wake_up( &thread->obj, 0 );
++    if (violent_death) send_thread_signal( thread, SIGQUIT );
+-    if (violent_death)
+-    {
+-        send_thread_signal( thread, SIGQUIT );
+-        check_terminated( thread );
+-    }
+-    else wake_up( &thread->obj, 0 );
+     cleanup_thread( thread );
+     remove_process_thread( thread->process, thread );
+     release_object( thread );
 @@ -2094,3 +2086,12 @@ DECL_HANDLER(get_next_thread)
      set_error( STATUS_NO_MORE_ENTRIES );
      release_object( process );
@@ -7885,10 +7921,10 @@ index 10e9e28..cb4643a 100644
      unsigned int           system_regs;   /* which system regs have been set */
      struct msg_queue      *queue;         /* message queue */
      struct thread_wait    *wait;          /* current wait condition if sleeping */
-@@ -94,6 +92,8 @@ struct thread
+@@ -94,6 +92,7 @@ struct thread
      data_size_t            desc_len;      /* thread description length in bytes */
      WCHAR                 *desc;          /* thread description string */
-     struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
+-    struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
 +    struct fast_sync      *fast_sync;     /* fast synchronization object */
 +    struct event          *fast_alert_event; /* fast synchronization alert event */
  };
