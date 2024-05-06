@@ -3740,7 +3740,151 @@ index a53870f..ba0bdbd 100644
 -
  /* Define to 1 if you have the <sys/event.h> header file. */
  #undef HAVE_SYS_EVENT_H
- 
+
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index 34655d1..1f8e10a 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -5634,6 +5634,88 @@ struct get_next_thread_reply
+ };
+
+
++enum fast_sync_type
++{
++    FAST_SYNC_SEMAPHORE = 1,
++    FAST_SYNC_MUTEX,
++    FAST_SYNC_AUTO_EVENT,
++    FAST_SYNC_MANUAL_EVENT,
++    FAST_SYNC_AUTO_SERVER,
++    FAST_SYNC_MANUAL_SERVER,
++    FAST_SYNC_QUEUE,
++};
++
++
++
++struct get_linux_sync_device_request
++{
++    struct request_header __header;
++    char __pad_12[4];
++};
++struct get_linux_sync_device_reply
++{
++    struct reply_header __header;
++    obj_handle_t handle;
++    char __pad_12[4];
++};
++
++
++
++struct get_linux_sync_obj_request
++{
++    struct request_header __header;
++    obj_handle_t handle;
++};
++struct get_linux_sync_obj_reply
++{
++    struct reply_header __header;
++    obj_handle_t handle;
++    int          type;
++    unsigned int access;
++    char __pad_20[4];
++};
++
++
++
++struct fast_select_queue_request
++{
++    struct request_header __header;
++    obj_handle_t handle;
++};
++struct fast_select_queue_reply
++{
++    struct reply_header __header;
++};
++
++
++
++struct fast_unselect_queue_request
++{
++    struct request_header __header;
++    obj_handle_t handle;
++    int          signaled;
++    char __pad_20[4];
++};
++struct fast_unselect_queue_reply
++{
++    struct reply_header __header;
++};
++
++
++
++struct get_fast_alert_event_request
++{
++    struct request_header __header;
++    char __pad_12[4];
++};
++struct get_fast_alert_event_reply
++{
++    struct reply_header __header;
++    obj_handle_t handle;
++    char __pad_12[4];
++};
++
++
+ enum request
+ {
+     REQ_new_process,
+@@ -5921,11 +6003,11 @@ enum request
+     REQ_suspend_process,
+     REQ_resume_process,
+     REQ_get_next_thread,
+-    REQ_create_esync,
+-    REQ_open_esync,
+-    REQ_get_esync_fd,
+-    REQ_esync_msgwait,
+-    REQ_get_esync_apc_fd,
++    REQ_get_linux_sync_device,
++    REQ_get_linux_sync_obj,
++    REQ_fast_select_queue,
++    REQ_fast_unselect_queue,
++    REQ_get_fast_alert_event,
+     REQ_NB_REQUESTS
+ };
+
+@@ -6213,11 +6300,11 @@ union generic_request
+     struct suspend_process_request suspend_process_request;
+     struct resume_process_request resume_process_request;
+     struct get_next_thread_request get_next_thread_request;
+-    struct create_esync_request create_esync_request;
+-    struct open_esync_request open_esync_request;
+-    struct get_esync_fd_request get_esync_fd_request;
+-    struct esync_msgwait_request esync_msgwait_request;
+-    struct get_esync_apc_fd_request get_esync_apc_fd_request;
++    struct get_linux_sync_device_request get_linux_sync_device_request;
++    struct get_linux_sync_obj_request get_linux_sync_obj_request;
++    struct fast_select_queue_request fast_select_queue_request;
++    struct fast_unselect_queue_request fast_unselect_queue_request;
++    struct get_fast_alert_event_request get_fast_alert_event_request;
+ };
+ union generic_reply
+ {
+@@ -6503,11 +6595,11 @@ union generic_reply
+     struct suspend_process_reply suspend_process_reply;
+     struct resume_process_reply resume_process_reply;
+     struct get_next_thread_reply get_next_thread_reply;
+-    struct create_esync_reply create_esync_reply;
+-    struct open_esync_reply open_esync_reply;
+-    struct get_esync_fd_reply get_esync_fd_reply;
+-    struct esync_msgwait_reply esync_msgwait_reply;
+-    struct get_esync_apc_fd_reply get_esync_apc_fd_reply;
++    struct get_linux_sync_device_reply get_linux_sync_device_reply;
++    struct get_linux_sync_obj_reply get_linux_sync_obj_reply;
++    struct fast_select_queue_reply fast_select_queue_reply;
++    struct fast_unselect_queue_reply fast_unselect_queue_reply;
++    struct get_fast_alert_event_reply get_fast_alert_event_reply;
+ };
+
+ /* ### protocol_version begin ### */
 diff --git a/server/Makefile.in b/server/Makefile.in
 index b164193..b30df66 100644
 --- a/server/Makefile.in
@@ -7583,13 +7727,13 @@ index 2ce94b4..8f603fc 100644
      thread->system_regs     = 0;
      thread->queue           = NULL;
      thread->wait            = NULL;
-@@ -253,6 +250,8 @@ static inline void init_thread_structure( struct thread *thread )
+@@ -253,6 +250,7 @@ static inline void init_thread_structure( struct thread *thread )
      thread->token           = NULL;
      thread->desc            = NULL;
      thread->desc_len        = 0;
 +    thread->fast_sync       = NULL;
 +    thread->fast_alert_event = NULL;
-     thread->exit_poll       = NULL;
+-    thread->exit_poll       = NULL;
  
      thread->creation_time = current_time;
 @@ -380,12 +379,6 @@ struct thread *create_thread( int fd, struct process *process, const struct secu
@@ -7622,8 +7766,8 @@ index 2ce94b4..8f603fc 100644
  /* cleanup everything that is no longer needed by a dead thread */
  /* used by destroy_thread and kill_thread */
  static void cleanup_thread( struct thread *thread )
-@@ -465,9 +468,8 @@ static void destroy_thread( struct object *obj )
-     if (thread->exit_poll) remove_timeout_user( thread->exit_poll );
+@@ -465,9 +468,7 @@ static void destroy_thread( struct object *obj )
+-    if (thread->exit_poll) remove_timeout_user( thread->exit_poll );
      if (thread->id) free_ptid( thread->id );
      if (thread->token) release_object( thread->token );
 -
@@ -7635,7 +7779,8 @@ index 2ce94b4..8f603fc 100644
  
  /* dump a thread on stdout for debugging purposes */
 @@ -486,13 +488,6 @@ static int thread_signaled( struct object *obj, struct wait_queue_entry *entry )
-     return mythread->state == TERMINATED && !mythread->exit_poll;
+-    return mythread->state == TERMINATED && !mythread->exit_poll;
++    return (mythread->state == TERMINATED);
  }
  
 -static int thread_get_esync_fd( struct object *obj, enum esync_type *type )
@@ -7693,16 +7838,51 @@ index 2ce94b4..8f603fc 100644
      return apc;
  }
  
-@@ -1345,8 +1338,7 @@ void kill_thread( struct thread *thread, int violent_death )
+@@ -1305,26 +1302,6 @@
+     return -1;
+ }
+
+-static void check_terminated( void *arg )
+-{
+-    struct thread *thread = arg;
+-    assert( thread->obj.ops == &thread_ops );
+-    assert( thread->state == TERMINATED );
+-
+-    /* don't wake up until the thread is really dead, to avoid race conditions */
+-    if (thread->unix_tid != -1 && !kill( thread->unix_tid, 0 ))
+-    {
+-        thread->exit_poll = add_timeout_user( -TICKS_PER_SEC / 1000, check_terminated, thread );
+-        return;
+-    }
+-
+-    /* grab reference since object can be destroyed while trying to wake up */
+-    grab_object( &thread->obj );
+-    thread->exit_poll = NULL;
+-    wake_up( &thread->obj, 0 );
+-    release_object( &thread->obj );
+-}
+-
+ /* kill a thread on the spot */
+ void kill_thread( struct thread *thread, int violent_death )
+ {
+@@ -1345,14 +1338,9 @@ void kill_thread( struct thread *thread, int violent_death )
      }
      kill_console_processes( thread, 0 );
      abandon_mutexes( thread );
 -    if (do_esync())
 -        esync_abandon_mutexes( thread );
 +    fast_set_event( thread->fast_sync );
-     if (violent_death)
-     {
-         send_thread_signal( thread, SIGQUIT );
++    wake_up( &thread->obj, 0 );
++    if (violent_death) send_thread_signal( thread, SIGQUIT );
+-    if (violent_death)
+-    {
+-        send_thread_signal( thread, SIGQUIT );
+-        check_terminated( thread );
+-    }
+-    else wake_up( &thread->obj, 0 );
+     cleanup_thread( thread );
+     remove_process_thread( thread->process, thread );
+     release_object( thread );
 @@ -2094,3 +2086,12 @@ DECL_HANDLER(get_next_thread)
      set_error( STATUS_NO_MORE_ENTRIES );
      release_object( process );
@@ -7729,10 +7909,10 @@ index 10e9e28..cb4643a 100644
      unsigned int           system_regs;   /* which system regs have been set */
      struct msg_queue      *queue;         /* message queue */
      struct thread_wait    *wait;          /* current wait condition if sleeping */
-@@ -94,6 +92,8 @@ struct thread
+@@ -94,6 +92,7 @@ struct thread
      data_size_t            desc_len;      /* thread description length in bytes */
      WCHAR                 *desc;          /* thread description string */
-     struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
+-    struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
 +    struct fast_sync      *fast_sync;     /* fast synchronization object */
 +    struct event          *fast_alert_event; /* fast synchronization alert event */
  };
