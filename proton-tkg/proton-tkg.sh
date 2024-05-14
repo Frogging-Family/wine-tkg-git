@@ -176,7 +176,7 @@ function build_vrclient {
   #cd ..
 
   export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --dll -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_nowhere/proton_dist_tmp/include/wine/"
-  export CFLAGS="-O2 -g -Wno-error=implicit-function-declaration -Wno-error=-Wincompatible-pointer-types"
+  export CFLAGS="-O2 -g -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types"
   export CXXFLAGS="-Wno-attributes -std=c++0x -O2 -g"
   PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
   if [[ "$_proton_branch" != *3.* ]] && [[ "$_proton_branch" != *4.* ]]; then
