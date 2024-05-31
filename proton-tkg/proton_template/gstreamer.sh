@@ -47,9 +47,9 @@
 
   rm -rf "$_nowhere"/Proton/build/gst*
 
-  unset CFLAGS
+  export CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types"
   unset CPPFLAGS
-  unset CXXFLAGS
+  export CXXFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types"
   unset LDFLAGS
 
   ##### 64
