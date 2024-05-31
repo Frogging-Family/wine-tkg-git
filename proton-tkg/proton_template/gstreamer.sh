@@ -28,7 +28,7 @@
   git reset --hard HEAD
   git clean -xdf
   git pull origin master
-  #git checkout a77521c
+  git checkout c947731
   cd ..
 
   if [ "$_build_faudio" = "true" ]; then
@@ -47,9 +47,9 @@
 
   rm -rf "$_nowhere"/Proton/build/gst*
 
-  unset CFLAGS
+  export CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types"
   unset CPPFLAGS
-  unset CXXFLAGS
+  export CXXFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types"
   unset LDFLAGS
 
   ##### 64
