@@ -28,7 +28,7 @@
   git reset --hard HEAD
   git clean -xdf
   git pull origin master
-  #git checkout a77521c
+  git checkout c947731
   cd ..
 
   if [ "$_build_faudio" = "true" ]; then
