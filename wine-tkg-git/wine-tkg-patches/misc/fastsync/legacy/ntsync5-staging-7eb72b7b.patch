@@ -755,7 +755,7 @@ deleted file mode 100644
 index edfeb03..0000000
 --- a/dlls/ntdll/unix/esync.c
 +++ /dev/null
-@@ -1,1335 +0,0 @@
+@@ -1,1323 +0,0 @@
 -/*
 - * eventfd-based synchronization objects
 - *
@@ -1906,22 +1906,10 @@ index edfeb03..0000000
 -                        {
 -                            /* We were too slow. Put everything back. */
 -                            value = 1;
--                            for (j = i - 1; j >= 0; j--)
+-                            for (j = i; j >= 0; j--)
 -                            {
--                                struct esync *obj = objs[j];
--
--                                if (obj->type == ESYNC_MUTEX)
--                                {
--                                    struct mutex *mutex = obj->shm;
--
--                                    if (mutex->tid == GetCurrentThreadId())
--                                        continue;
--                                }
--                                if (write( fds[j].fd, &value, sizeof(value) ) == -1)
--                                {
--                                    ERR("write failed.\n");
+-                                if (write( obj->fd, &value, sizeof(value) ) == -1)
 -                                    return errno_to_status( errno );
--                                }
 -                            }
 -
 -                            goto tryagain;  /* break out of two loops and a switch */
@@ -3846,7 +3834,7 @@ index 34655d1..1f8e10a 100644
  enum request
  {
      REQ_new_process,
-@@ -5921,12 +6003,12 @@ enum request
+@@ -5921,11 +6003,11 @@ enum request
      REQ_suspend_process,
      REQ_resume_process,
      REQ_get_next_thread,
@@ -3854,17 +3842,16 @@ index 34655d1..1f8e10a 100644
 -    REQ_open_esync,
 -    REQ_get_esync_fd,
 -    REQ_esync_msgwait,
+-    REQ_get_esync_apc_fd,
 +    REQ_get_linux_sync_device,
 +    REQ_get_linux_sync_obj,
 +    REQ_fast_select_queue,
 +    REQ_fast_unselect_queue,
-     REQ_set_keyboard_repeat,
--    REQ_get_esync_apc_fd,
 +    REQ_get_fast_alert_event,
      REQ_NB_REQUESTS
  };
 
-@@ -6213,12 +6300,12 @@ union generic_request
+@@ -6213,11 +6300,11 @@ union generic_request
      struct suspend_process_request suspend_process_request;
      struct resume_process_request resume_process_request;
      struct get_next_thread_request get_next_thread_request;
@@ -3872,17 +3859,16 @@ index 34655d1..1f8e10a 100644
 -    struct open_esync_request open_esync_request;
 -    struct get_esync_fd_request get_esync_fd_request;
 -    struct esync_msgwait_request esync_msgwait_request;
+-    struct get_esync_apc_fd_request get_esync_apc_fd_request;
 +    struct get_linux_sync_device_request get_linux_sync_device_request;
 +    struct get_linux_sync_obj_request get_linux_sync_obj_request;
 +    struct fast_select_queue_request fast_select_queue_request;
 +    struct fast_unselect_queue_request fast_unselect_queue_request;
-     struct set_keyboard_repeat_request set_keyboard_repeat_request;
--    struct get_esync_apc_fd_request get_esync_apc_fd_request;
 +    struct get_fast_alert_event_request get_fast_alert_event_request;
  };
  union generic_reply
  {
-@@ -6503,12 +6595,12 @@ union generic_reply
+@@ -6503,11 +6595,11 @@ union generic_reply
      struct suspend_process_reply suspend_process_reply;
      struct resume_process_reply resume_process_reply;
      struct get_next_thread_reply get_next_thread_reply;
@@ -3890,12 +3876,11 @@ index 34655d1..1f8e10a 100644
 -    struct open_esync_reply open_esync_reply;
 -    struct get_esync_fd_reply get_esync_fd_reply;
 -    struct esync_msgwait_reply esync_msgwait_reply;
+-    struct get_esync_apc_fd_reply get_esync_apc_fd_reply;
 +    struct get_linux_sync_device_reply get_linux_sync_device_reply;
 +    struct get_linux_sync_obj_reply get_linux_sync_obj_reply;
 +    struct fast_select_queue_reply fast_select_queue_reply;
 +    struct fast_unselect_queue_reply fast_unselect_queue_reply;
-     struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
--    struct get_esync_apc_fd_reply get_esync_apc_fd_reply;
 +    struct get_fast_alert_event_reply get_fast_alert_event_reply;
  };
 
@@ -6983,7 +6968,7 @@ index 4983691..7bc4208 100644
  /* Iterate thread list for process */
  @REQ(get_next_thread)
      obj_handle_t process;      /* process handle */
-@@ -3898,63 +3899,60 @@ struct handle_info
+@@ -3898,55 +3899,51 @@ struct handle_info
      obj_handle_t handle;       /* next thread handle */
  @END
  
@@ -7055,6 +7040,7 @@ index 4983691..7bc4208 100644
 +    obj_handle_t handle;          /* handle to the queue */
  @END
  
+-/* Notify the server that we are doing a message wait or done with one. */
 -@REQ(esync_msgwait)
 -    int          in_msgwait;    /* are we in a message wait? */
 +
@@ -7062,15 +7048,6 @@ index 4983691..7bc4208 100644
 +@REQ(fast_unselect_queue)
 +    obj_handle_t handle;          /* handle to the queue */
 +    int          signaled;        /* was the queue signaled? */
- @END
-
- /* Setup keyboard auto-repeat */
- @REQ(set_keyboard_repeat)
-     int enable;                /* whether to enable auto-repeat */
-     int delay;                 /* auto-repeat delay in ms */
-     int period;                /* auto-repeat period in ms */
- @REPLY
-     int enable;                /* previous state of auto-repeat enable */
  @END
  
 -/* Retrieve the fd to wait on for user APCs. */
@@ -7419,7 +7396,7 @@ diff --git a/server/request.h b/server/request.h
 index eb6b8f4..1636e98 100644
 --- a/server/request.h
 +++ b/server/request.h
-@@ -406,12 +406,12 @@ DECL_HANDLER(terminate_job);
+@@ -406,11 +406,11 @@ DECL_HANDLER(terminate_job);
  DECL_HANDLER(suspend_process);
  DECL_HANDLER(resume_process);
  DECL_HANDLER(get_next_thread);
@@ -7427,17 +7404,16 @@ index eb6b8f4..1636e98 100644
 -DECL_HANDLER(open_esync);
 -DECL_HANDLER(get_esync_fd);
 -DECL_HANDLER(esync_msgwait);
+-DECL_HANDLER(get_esync_apc_fd);
 +DECL_HANDLER(get_linux_sync_device);
 +DECL_HANDLER(get_linux_sync_obj);
 +DECL_HANDLER(fast_select_queue);
 +DECL_HANDLER(fast_unselect_queue);
- DECL_HANDLER(set_keyboard_repeat);
--DECL_HANDLER(get_esync_apc_fd);
 +DECL_HANDLER(get_fast_alert_event);
  
  #ifdef WANT_REQUEST_HANDLERS
  
-@@ -704,12 +704,12 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+@@ -704,11 +704,11 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
      (req_handler)req_suspend_process,
      (req_handler)req_resume_process,
      (req_handler)req_get_next_thread,
@@ -7445,17 +7421,16 @@ index eb6b8f4..1636e98 100644
 -    (req_handler)req_open_esync,
 -    (req_handler)req_get_esync_fd,
 -    (req_handler)req_esync_msgwait,
+-    (req_handler)req_get_esync_apc_fd,
 +    (req_handler)req_get_linux_sync_device,
 +    (req_handler)req_get_linux_sync_obj,
 +    (req_handler)req_fast_select_queue,
 +    (req_handler)req_fast_unselect_queue,
-     (req_handler)req_set_keyboard_repeat,
--    (req_handler)req_get_esync_apc_fd,
 +    (req_handler)req_get_fast_alert_event,
  };
  
  C_ASSERT( sizeof(abstime_t) == 8 );
-@@ -2363,37 +2363,28 @@ C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, flags) == 28 );
+@@ -2363,32 +2363,23 @@ C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, flags) == 28 );
  C_ASSERT( sizeof(struct get_next_thread_request) == 32 );
  C_ASSERT( FIELD_OFFSET(struct get_next_thread_reply, handle) == 8 );
  C_ASSERT( sizeof(struct get_next_thread_reply) == 16 );
@@ -7484,6 +7459,7 @@ index eb6b8f4..1636e98 100644
 -C_ASSERT( sizeof(struct get_esync_fd_reply) == 16 );
 -C_ASSERT( FIELD_OFFSET(struct esync_msgwait_request, in_msgwait) == 12 );
 -C_ASSERT( sizeof(struct esync_msgwait_request) == 16 );
+-C_ASSERT( sizeof(struct get_esync_apc_fd_request) == 16 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_request) == 16 );
 +C_ASSERT( FIELD_OFFSET(struct get_linux_sync_device_reply, handle) == 8 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_reply) == 16 );
@@ -7500,13 +7476,6 @@ index eb6b8f4..1636e98 100644
 +C_ASSERT( sizeof(struct fast_unselect_queue_request) == 24 );
 +C_ASSERT( sizeof(struct get_fast_alert_event_request) == 16 );
 +C_ASSERT( FIELD_OFFSET(struct get_fast_alert_event_reply, handle) == 8 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, enable) == 12 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, delay) == 16 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, period) == 20 );
- C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_reply, enable) == 8 );
- C_ASSERT( sizeof(struct set_keyboard_repeat_reply) == 16 );
--C_ASSERT( sizeof(struct get_esync_apc_fd_request) == 16 );
 +C_ASSERT( sizeof(struct get_fast_alert_event_reply) == 16 );
  
  #endif  /* WANT_REQUEST_HANDLERS */
@@ -8105,7 +8074,7 @@ diff --git a/server/trace.c b/server/trace.c
 index af96565..c027f4b 100644
 --- a/server/trace.c
 +++ b/server/trace.c
-@@ -4619,67 +4619,56 @@ static void dump_get_next_thread_reply( const struct get_next_thread_reply *req
+@@ -4619,56 +4619,45 @@ static void dump_get_next_thread_reply( const struct get_next_thread_reply *req
      fprintf( stderr, " handle=%04x", req->handle );
  }
  
@@ -8167,19 +8136,7 @@ index af96565..c027f4b 100644
  {
 -    fprintf( stderr, " in_msgwait=%d", req->in_msgwait );
  }
-
- static void dump_set_keyboard_repeat_request( const struct set_keyboard_repeat_request *req )
- {
-     fprintf( stderr, " enable=%d", req->enable );
-     fprintf( stderr, ", delay=%d", req->delay );
-     fprintf( stderr, ", period=%d", req->period );
- }
-
- static void dump_set_keyboard_repeat_reply( const struct set_keyboard_repeat_reply *req )
- {
-     fprintf( stderr, " enable=%d", req->enable );
- }
-
+ 
 -static void dump_get_esync_apc_fd_request( const struct get_esync_apc_fd_request *req )
 +static void dump_get_fast_alert_event_reply( const struct get_fast_alert_event_reply *req )
  {
@@ -8204,7 +8161,7 @@ index af96565..c027f4b 100644
  };
  
  static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
-@@ -5254,12 +5243,12 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
+@@ -5254,11 +5243,11 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
      NULL,
      NULL,
      (dump_func)dump_get_next_thread_reply,
@@ -8214,7 +8171,6 @@ index af96565..c027f4b 100644
 +    (dump_func)dump_get_linux_sync_device_reply,
 +    (dump_func)dump_get_linux_sync_obj_reply,
      NULL,
-     (dump_func)dump_set_keyboard_repeat_reply,
      NULL,
 +    (dump_func)dump_get_fast_alert_event_reply,
  };
@@ -8228,12 +8184,11 @@ index af96565..c027f4b 100644
 -    "open_esync",
 -    "get_esync_fd",
 -    "esync_msgwait",
+-    "get_esync_apc_fd",
 +    "get_linux_sync_device",
 +    "get_linux_sync_obj",
 +    "fast_select_queue",
 +    "fast_unselect_queue",
-     "set_keyboard_repeat",
--    "get_esync_apc_fd",
 +    "get_fast_alert_event",
  };
  
