@@ -473,7 +473,6 @@
 	-D gst-plugins-bad:msdk=disabled
 	-D gst-plugins-bad:chromaprint=disabled
 	-D gst-plugins-bad:avtp=disabled
-	-D gst-plugins-bad:kate=disabled
 	-D gst-plugins-bad:openexr=disabled
 	-D gst-plugins-bad:soundtouch=disabled
 	-D gst-plugins-bad:svtav1=disabled
