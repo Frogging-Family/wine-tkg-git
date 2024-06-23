@@ -242,7 +242,7 @@
     -D gst-editing-services:validate=disabled
   )
 
-  meson "$_nowhere"/Proton/build/gst64 --prefix="$_nowhere/gst" --libdir="lib64" --buildtype=release -Dpkg_config_path="$_nowhere/gst/lib64/pkgconfig" "${meson_options[@]}"
+  meson setup "$_nowhere"/Proton/build/gst64 --prefix="$_nowhere/gst" --libdir="lib64" --buildtype=release -Dpkg_config_path="$_nowhere/gst/lib64/pkgconfig" "${meson_options[@]}"
   meson compile -C "$_nowhere"/Proton/build/gst64
   meson install -C "$_nowhere"/Proton/build/gst64
 
@@ -508,7 +508,7 @@
       meson32_options+=(-D gst-plugins-ugly:mpeg2dec=disabled -D gst-plugins-ugly:x264=disabled)
     fi
 
-    meson "$_nowhere"/Proton/build/gst32 --prefix="$_nowhere/gst" --libdir="lib" --buildtype=release "${meson32_options[@]}"
+    meson setup "$_nowhere"/Proton/build/gst32 --prefix="$_nowhere/gst" --libdir="lib" --buildtype=release "${meson32_options[@]}"
     meson compile -C "$_nowhere"/Proton/build/gst32
     meson install -C "$_nowhere"/Proton/build/gst32
 
