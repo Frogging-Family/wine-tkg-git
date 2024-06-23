@@ -487,10 +487,13 @@
 	-D gst-plugins-bad:spandsp=disabled
 	-D gst-plugins-bad:svthevcenc=disabled
 	-D gst-plugins-bad:srtp=disabled
+	-D gst-plugins-bad:sctp=disabled
+	-D gst-plugins-bad:dtls=disabled
 	-D gst-plugins-bad:wildmidi=disabled
 	-D gst-plugins-bad:zbar=disabled
 	-D gst-plugins-bad:zxing=disabled
 	-D gst-plugins-bad:webrtc=disabled
+	-D webrtc=disabled
 	-D gst-plugins-bad:webrtcdsp=disabled
 	-D gst-plugins-bad:openmpt=disabled
 	-D gst-plugins-bad:bluez=disabled
