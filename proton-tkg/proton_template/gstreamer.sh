@@ -92,7 +92,7 @@
 		--enable-decoder=aac \
 		--enable-demuxer=xwma
 
-	make && make install
+	make -j$(nproc) && make install
   fi
 
   cd "$_nowhere"/Proton/gstreamer
@@ -257,7 +257,7 @@
         -DCMAKE_INSTALL_LIBDIR=lib64 \
         -DCMAKE_INSTALL_INCLUDEDIR=include/FAudio \
         -DGSTREAMER=ON
-    make && make install
+    make -j$(nproc) && make install
   fi
 
   strip --strip-unneeded "$_nowhere"/gst/lib64/*.so
@@ -306,7 +306,7 @@
 			--enable-decoder=aac \
 			--enable-demuxer=xwma
 
-		make && make install
+		make -j$(nproc) && make install
     fi
 
     cd "$_nowhere"/Proton/gstreamer
@@ -522,7 +522,7 @@
         -DCMAKE_INSTALL_LIBDIR=lib \
         -DCMAKE_INSTALL_INCLUDEDIR=include/FAudio \
         -DGSTREAMER=ON
-      make && make install
+      make -j$(nproc) && make install
     fi
 
     strip --strip-unneeded "$_nowhere"/gst/lib/*.so
