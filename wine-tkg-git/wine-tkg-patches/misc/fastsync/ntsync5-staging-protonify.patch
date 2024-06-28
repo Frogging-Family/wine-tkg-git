@@ -7126,7 +7126,7 @@ index fee3a8d..287a56e 100644
      no_close_handle,              /* close_handle */
      thread_input_destroy          /* destroy */
  };
-@@ -321,17 +320,14 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+@@ -321,29 +320,26 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
          queue->ignore_post_msg = 0;
@@ -7140,12 +7140,24 @@ index fee3a8d..287a56e 100644
          list_init( &queue->expired_timers );
          for (i = 0; i < NB_MSG_KINDS; i++) list_init( &queue->msg_list[i] );
  
+         if (!(queue->shared = alloc_shared_object()))
+         {
+             release_object( queue );
+             return NULL;
+         }
+ 
+         SHARED_WRITE_BEGIN( queue->shared, queue_shm_t )
+         {
+             memset( (void *)shared->hooks_count, 0, sizeof(shared->hooks_count) );
+         }
+         SHARED_WRITE_END;
+ 
 -        if (do_esync())
 -            queue->esync_fd = esync_create_fd( 0, 0 );
 -
          thread->queue = queue;
      }
-     if (new_input) release_object( new_input );
+ 
 @@ -607,7 +603,11 @@ static inline void set_queue_bits( struct msg_queue *queue, unsigned int bits )
      }
      queue->wake_bits |= bits;
@@ -7212,9 +7224,9 @@ index fee3a8d..287a56e 100644
  
  static void msg_queue_destroy( struct object *obj )
 @@ -1221,7 +1224,7 @@ static void msg_queue_destroy( struct object *obj )
-     release_object( queue->input );
      if (queue->hooks) release_object( queue->hooks );
      if (queue->fd) release_object( queue->fd );
+     if (queue->shared) free_shared_object( queue->shared );
 -    if (do_esync()) close( queue->esync_fd );
 +    if (queue->fast_sync) release_object( queue->fast_sync );
  }
