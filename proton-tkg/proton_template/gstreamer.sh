@@ -422,6 +422,7 @@
 	-D gst-plugins-good:wavenc=disabled
 	-D gst-plugins-good:ximagesrc=disabled
 	-D gst-plugins-good:y4m=disabled
+	-D gst-plugins-bad:codec2json=disabled
     -D gst-plugins-bad:dc1394=disabled
     -D gst-plugins-bad:directfb=disabled
     -D gst-plugins-bad:flite=disabled
