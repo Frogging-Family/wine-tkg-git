@@ -755,7 +755,7 @@ deleted file mode 100644
 index edfeb03..0000000
 --- a/dlls/ntdll/unix/esync.c
 +++ /dev/null
-@@ -1,1323 +0,0 @@
+@@ -1,1325 +0,0 @@
 -/*
 - * eventfd-based synchronization objects
 - *
@@ -780,7 +780,9 @@ index edfeb03..0000000
 -#pragma makedep unix
 -#endif
 -
+-#ifndef _GNU_SOURCE
 -#define _GNU_SOURCE
+-#endif
 -
 -#include "config.h"
 -
@@ -7114,7 +7116,7 @@ index fee3a8d..287a56e 100644
      no_close_handle,              /* close_handle */
      thread_input_destroy          /* destroy */
  };
-@@ -321,28 +320,25 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+@@ -321,32 +320,29 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
          queue->ignore_post_msg = 0;
@@ -7137,6 +7139,10 @@ index fee3a8d..287a56e 100644
          SHARED_WRITE_BEGIN( queue->shared, queue_shm_t )
          {
              memset( (void *)shared->hooks_count, 0, sizeof(shared->hooks_count) );
+             shared->wake_mask = 0;
+             shared->wake_bits = 0;
+             shared->changed_mask = 0;
+             shared->changed_bits = 0;
          }
          SHARED_WRITE_END;
  
@@ -7147,8 +7153,8 @@ index fee3a8d..287a56e 100644
   
 @@ -607,7 +603,11 @@ static inline void set_queue_bits( struct msg_queue *queue, unsigned int bits )
      }
-     queue->wake_bits |= bits;
-     queue->changed_bits |= bits;
+     SHARED_WRITE_END;
+ 
 -    if (is_signaled( queue )) wake_up( &queue->obj, 0 );
 +    if (is_signaled( queue ))
 +    {
@@ -7181,7 +7187,7 @@ index fee3a8d..287a56e 100644
  
      return 1;
  }
-@@ -1170,18 +1169,22 @@ static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entr
+@@ -1168,24 +1167,30 @@ static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entr
      return ret || is_signaled( queue );
  }
  
@@ -7191,8 +7197,15 @@ index fee3a8d..287a56e 100644
      struct msg_queue *queue = (struct msg_queue *)obj;
 -    *type = ESYNC_QUEUE;
 -    return queue->esync_fd;
-+    queue->wake_mask = 0;
-+    queue->changed_mask = 0;
++    const queue_shm_t *queue_shm = queue->shared;
++
++    SHARED_WRITE_BEGIN( queue_shm, queue_shm_t )
++    {
++        shared->wake_mask = 0;
++        shared->changed_mask = 0;
++    }
++    SHARED_WRITE_END;
++
 +    fast_reset_event( queue->fast_sync );
  }
  
@@ -7200,9 +7213,14 @@ index fee3a8d..287a56e 100644
 +static struct fast_sync *msg_queue_get_fast_sync( struct object *obj )
  {
      struct msg_queue *queue = (struct msg_queue *)obj;
--    queue->wake_mask = 0;
--    queue->changed_mask = 0;
-+
+     const queue_shm_t *queue_shm = queue->shared;
+ 
+-    SHARED_WRITE_BEGIN( queue_shm, queue_shm_t )
+-    {
+-        shared->wake_mask = 0;
+-        shared->changed_mask = 0;
+-    }
+-    SHARED_WRITE_END;
 +    if (!queue->fast_sync)
 +        queue->fast_sync = fast_create_event( FAST_SYNC_QUEUE, is_signaled( queue ) );
 +    if (queue->fast_sync) grab_object( queue->fast_sync );
@@ -7227,38 +7245,30 @@ index fee3a8d..287a56e 100644
  }
  
  static void thread_input_dump( struct object *obj, int verbose )
-@@ -2849,12 +2853,21 @@ DECL_HANDLER(set_queue_mask)
-         if (is_signaled( queue ))
-         {
-             /* if skip wait is set, do what would have been done in the subsequent wait */
--            if (req->skip_wait) queue->wake_mask = queue->changed_mask = 0;
--            else wake_up( &queue->obj, 0 );
-+            if (req->skip_wait)
-+            {
-+                queue->wake_mask = queue->changed_mask = 0;
+@@ -2982,11 +2982,14 @@ DECL_HANDLER(set_queue_mask)
+                     shared->changed_mask = 0;
+                 }
+                 SHARED_WRITE_END;
++
 +                fast_reset_event( queue->fast_sync );
 +            }
 +            else
 +            {
 +                wake_up( &queue->obj, 0 );
 +                fast_set_event( queue->fast_sync );
-+            }
-+        }
-+        else
-+        {
-+            fast_reset_event( queue->fast_sync );
+             }
+-            else wake_up( &queue->obj, 0 );
          }
 -
 -        if (do_esync() && !is_signaled( queue ))
 -            esync_clear( queue->esync_fd );
      }
  }
+@@ -2867,9 +2880,9 @@ DECL_HANDLER(get_queue_status)
+             shared->changed_bits &= ~req->clear_bits;
+         }
+         SHARED_WRITE_END;
  
-@@ -2868,9 +2881,8 @@ DECL_HANDLER(get_queue_status)
-         reply->wake_bits    = queue->wake_bits;
-         reply->changed_bits = queue->changed_bits;
-         queue->changed_bits &= ~req->clear_bits;
--
 -        if (do_esync() && !is_signaled( queue ))
 -            esync_clear( queue->esync_fd );
 +        if (!is_signaled( queue ))
@@ -7276,10 +7286,10 @@ index fee3a8d..287a56e 100644
      /* then check for posted messages */
      if ((filter & QS_POSTMESSAGE) &&
          get_posted_message( queue, queue->ignore_post_msg, get_win, req->get_first, req->get_last, req->flags, reply ))
-@@ -3117,11 +3132,8 @@ DECL_HANDLER(get_message)
-     if (get_win == -1 && current->process->idle_event) set_event( current->process->idle_event );
-     queue->wake_mask = req->wake_mask;
-     queue->changed_mask = req->changed_mask;
+@@ -3119,11 +3134,8 @@ DECL_HANDLER(get_message)
+     }
+     SHARED_WRITE_END;
+ 
 +    fast_reset_event( queue->fast_sync );
      set_error( STATUS_PENDING );  /* FIXME */
 -
@@ -7289,7 +7299,7 @@ index fee3a8d..287a56e 100644
      return;
  
  found_msg:
-@@ -3872,17 +3884,55 @@ DECL_HANDLER(update_rawinput_devices)
+@@ -4020,21 +4020,60 @@ DECL_HANDLER(update_rawinput_devices)
      }
  }
  
@@ -7298,15 +7308,14 @@ index fee3a8d..287a56e 100644
  {
 -    struct msg_queue *queue = get_current_queue();
 +    struct msg_queue *queue;
+     const queue_shm_t *queue_shm;
  
 -    if (!queue) return;
--    queue->esync_in_msgwait = req->in_msgwait;
 +    if (!(queue = (struct msg_queue *)get_handle_obj( current->process, req->handle,
 +                                                      SYNCHRONIZE, &msg_queue_ops )))
 +        return;
- 
--    if (current->process->idle_event && !(queue->wake_mask & QS_SMRESULT))
--        set_event( current->process->idle_event );
+     queue_shm = queue->shared;
+-    queue->esync_in_msgwait = req->in_msgwait;
 +    /* a thread can only wait on its own queue */
 +    if (current->queue != queue || queue->in_fast_wait)
 +    {
@@ -7314,29 +7323,33 @@ index fee3a8d..287a56e 100644
 +    }
 +    else
 +    {
-+        if (current->process->idle_event && !(queue->wake_mask & QS_SMRESULT))
++        if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
 +            set_event( current->process->idle_event );
++
++        if (queue->fd)
++            set_fd_events( queue->fd, POLLIN );
+ 
+-    if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
+-        set_event( current->process->idle_event );
++        queue->in_fast_wait = 1;
++    }
  
 -    /* and start/stop waiting on the driver */
 -    if (queue->fd)
 -        set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
-+        if (queue->fd)
-+            set_fd_events( queue->fd, POLLIN );
-+
-+        queue->in_fast_wait = 1;
-+    }
-+
 +    release_object( queue );
 +}
 +
 +DECL_HANDLER(fast_unselect_queue)
 +{
 +    struct msg_queue *queue;
++    const queue_shm_t *queue_shm;
 +
 +    if (!(queue = (struct msg_queue *)get_handle_obj( current->process, req->handle,
 +                                                      SYNCHRONIZE, &msg_queue_ops )))
 +        return;
 +
++    queue_shm = queue->shared;
 +    if (current->queue != queue || !queue->in_fast_wait)
 +    {
 +        set_error( STATUS_ACCESS_DENIED );
@@ -7354,6 +7367,8 @@ index fee3a8d..287a56e 100644
 +
 +    release_object( queue );
  }
+ 
+ DECL_HANDLER(set_keyboard_repeat)
 diff --git a/server/registry.c b/server/registry.c
 index 4454de3..dd5c556 100644
 --- a/server/registry.c
