@@ -3324,16 +3324,16 @@ index a78748b96ca..dccf43197cf 100644
  static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *entry )
  {
      struct msg_queue *queue = (struct msg_queue *)obj;
-@@ -2517,6 +2541,9 @@ DECL_HANDLER(get_queue_status)
-         reply->changed_bits = queue->changed_bits;
-         queue->changed_bits &= ~req->clear_bits;
- 
+@@ -3020,6 +3020,9 @@ DECL_HANDLER(get_queue_status)
+             shared->changed_bits &= ~req->clear_bits;
+         }
+         SHARED_WRITE_END;
++
 +        if (do_fsync() && !is_signaled( queue ))
 +            fsync_clear( &queue->obj );
-+
+
          if (do_esync() && !is_signaled( queue ))
              esync_clear( queue->esync_fd );
-     }
 @@ -3536,6 +3563,23 @@ DECL_HANDLER(esync_msgwait)
      if (queue->fd)
          set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
@@ -3761,8 +3761,8 @@ diff --git a/server/queue.c b/server/queue.c
 index 012795e410d..ba442324276 100644
 --- a/server/queue.c
 +++ b/server/queue.c
-@@ -2536,6 +2536,8 @@ DECL_HANDLER(set_queue_mask)
-             if (req->skip_wait) queue->wake_mask = queue->changed_mask = 0;
+@@ -3000,6 +3000,8 @@ DECL_HANDLER(set_queue_mask)
+             }
              else wake_up( &queue->obj, 0 );
          }
 +        if (do_fsync() && !is_signaled( queue ))
@@ -3770,8 +3770,8 @@ index 012795e410d..ba442324276 100644
 
          if (do_esync() && !is_signaled( queue ))
              esync_clear( queue->esync_fd );
-@@ -2807,6 +2809,9 @@ DECL_HANDLER(get_message)
-     queue->changed_mask = req->changed_mask;
+@@ -3286,6 +3286,9 @@ DECL_HANDLER(get_message)
+
      set_error( STATUS_PENDING );  /* FIXME */
 
 +    if (do_fsync() && !is_signaled( queue ))
