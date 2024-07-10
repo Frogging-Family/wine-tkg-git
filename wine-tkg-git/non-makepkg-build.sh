@@ -198,7 +198,7 @@ _script_init() {
         exit 1
       }
     fi
-    if [[ "$_NOLIB32" != "true" ]]; then
+    if [[ "$_NOLIB32" != "true" ]] && [ "$_NOLIB32" != "wow64" ]; then
       install_deps "32" "${_ci_build}" || {
         error "32-bit dependencies installation failed. Please check the error message and install the missing dependencies manually."
         exit 1
