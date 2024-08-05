@@ -1,12 +1,12 @@
-From 3e00a60d1f69eefebfe4af856735914a6c5ea56f Mon Sep 17 00:00:00 2001
-From: Stelios Tsampas <loathingkernel@gmail.com>
-Date: Mon, 25 Mar 2024 00:54:57 +0200
+From af53158335550986ad5d01020e54d0b8385b3fa1 Mon Sep 17 00:00:00 2001
+From: Federico Dossena <info@fdossena.com>
+Date: Mon, 5 Aug 2024 12:47:58 +0200
 Subject: [PATCH] De-steamify proton's wine
 
 ---
  dlls/advapi32/advapi.c          |  34 +++--
  dlls/kernelbase/process.c       |  15 ---
- dlls/ntdll/loader.c             |  38 +-----
+ dlls/ntdll/loader.c             |  64 +---------
  dlls/ntdll/unix/env.c           |   3 +-
  dlls/ntdll/unix/loader.c        | 128 +------------------
  dlls/ntdll/unix/signal_i386.c   |   7 -
@@ -21,10 +21,10 @@ Subject: [PATCH] De-steamify proton's wine
  programs/winedbg/debugger.h     |   2 -
  programs/winedbg/tgt_active.c   |  48 -------
  programs/winedbg/winedbg.c      |  10 +-
- 17 files changed, 242 insertions(+), 368 deletions(-)
+ 17 files changed, 242 insertions(+), 394 deletions(-)
 
 diff --git a/dlls/advapi32/advapi.c b/dlls/advapi32/advapi.c
-index 127cec572..2284e92b2 100644
+index 127cec57252..2284e92b263 100644
 --- a/dlls/advapi32/advapi.c
 +++ b/dlls/advapi32/advapi.c
 @@ -44,15 +44,14 @@ WINE_DEFAULT_DEBUG_CHANNEL(advapi);
@@ -76,10 +76,10 @@ index 127cec572..2284e92b2 100644
  
  /******************************************************************************
 diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
-index 7ea75b58a..526a0fdee 100644
+index abf789d6033..2edd77e273f 100644
 --- a/dlls/kernelbase/process.c
 +++ b/dlls/kernelbase/process.c
-@@ -1300,21 +1300,6 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenProcess( DWORD access, BOOL inherit, DWORD i
+@@ -1302,21 +1302,6 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenProcess( DWORD access, BOOL inherit, DWORD i
      attr.SecurityDescriptor = NULL;
      attr.SecurityQualityOfService = NULL;
  
@@ -102,7 +102,7 @@ index 7ea75b58a..526a0fdee 100644
      cid.UniqueThread  = 0;
  
 diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
-index 8dfe4e21e..073eb2cd6 100644
+index 7ad0086daf0..6a2958d1985 100644
 --- a/dlls/ntdll/loader.c
 +++ b/dlls/ntdll/loader.c
 @@ -90,7 +90,7 @@ const WCHAR windows_dir[] = L"C:\\windows";
@@ -114,7 +114,7 @@ index 8dfe4e21e..073eb2cd6 100644
  
  static BOOL is_prefix_bootstrap;  /* are we bootstrapping the prefix? */
  static BOOL imports_fixup_done = FALSE;  /* set once the imports have been fixed up, before attaching them */
-@@ -2196,19 +2196,6 @@ static NTSTATUS perform_relocations( void *module, IMAGE_NT_HEADERS *nt, SIZE_T
+@@ -2231,19 +2231,6 @@ static NTSTATUS perform_relocations( void *module, IMAGE_NT_HEADERS *nt, SIZE_T
      return STATUS_SUCCESS;
  }
  
@@ -134,7 +134,7 @@ index 8dfe4e21e..073eb2cd6 100644
  /*************************************************************************
   *		build_module
   *
-@@ -2219,16 +2206,12 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+@@ -2254,17 +2241,12 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
                                DWORD flags, BOOL system, WINE_MODREF **pwm )
  {
      static const char builtin_signature[] = "Wine builtin DLL";
@@ -148,10 +148,11 @@ index 8dfe4e21e..073eb2cd6 100644
      SIZE_T map_size;
 -    WCHAR *basename, *tmp;
 -    ULONG basename_len;
+-    BOOL is_steamclient32;
  
      if (!(nt = RtlImageNtHeader( *module ))) return STATUS_INVALID_IMAGE_FORMAT;
  
-@@ -2249,25 +2232,6 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+@@ -2285,50 +2267,6 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
  
      update_load_config( *module );
  
@@ -161,7 +162,7 @@ index 8dfe4e21e..073eb2cd6 100644
 -    basename_len = wcslen(basename);
 -    if (basename_len >= 4 && !wcscmp(basename + basename_len - 4, L".dll")) basename_len -= 4;
 -
--    if (use_lsteamclient() && (!RtlCompareUnicodeStrings(basename, basename_len, L"steamclient", 11, TRUE) ||
+-    if (use_lsteamclient() && ((is_steamclient32 = !RtlCompareUnicodeStrings(basename, basename_len, L"steamclient", 11, TRUE)) ||
 -         !RtlCompareUnicodeStrings(basename, basename_len, L"steamclient64", 13, TRUE) ||
 -         !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer", 19, TRUE) ||
 -         !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer64", 21, TRUE)) &&
@@ -172,16 +173,41 @@ index 8dfe4e21e..073eb2cd6 100644
 -        WINE_UNIX_CALL( unix_steamclient_setup_trampolines, &params );
 -        wm->ldr.Flags |= LDR_DONT_RESOLVE_REFS;
 -        flags |= DONT_RESOLVE_DLL_REFERENCES;
+-        if (is_steamclient32)
+-        {
+-            OBJECT_ATTRIBUTES attr;
+-            void *addr = *module;
+-            SIZE_T size = 0x1000;
+-            LARGE_INTEGER offset;
+-            IO_STATUS_BLOCK io;
+-            DWORD protect_old;
+-            HANDLE file;
+-
+-            NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, PAGE_READWRITE, &protect_old );
+-            memset( &attr, 0, sizeof(attr) );
+-            attr.Length = sizeof(attr);
+-            attr.Attributes = OBJ_CASE_INSENSITIVE;
+-            attr.ObjectName = (UNICODE_STRING *)nt_name;
+-            NtOpenFile( &file, GENERIC_READ | SYNCHRONIZE, &attr, &io,
+-                        FILE_SHARE_READ | FILE_SHARE_DELETE,
+-                        FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE );
+-            offset.QuadPart = (ULONG_PTR)&nt->OptionalHeader.ImageBase - (ULONG_PTR)addr;
+-            NtReadFile( file, 0, NULL, NULL, &io, &nt->OptionalHeader.ImageBase,
+-                        sizeof(nt->OptionalHeader.ImageBase), &offset, NULL );
+-            NtClose( file );
+-            TRACE( "steamclient ImageBase %#Ix.\n", nt->OptionalHeader.ImageBase );
+-            NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, protect_old, &protect_old );
+-        }
 -    }
 -
      /* fixup imports */
  
      if (!(flags & DONT_RESOLVE_DLL_REFERENCES) &&
 diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
-index c2c46dd0a..29f5aa2b1 100644
+index d068c1a7df9..f1a97dc1149 100644
 --- a/dlls/ntdll/unix/env.c
 +++ b/dlls/ntdll/unix/env.c
-@@ -2507,7 +2507,6 @@ void WINAPI RtlSetLastWin32Error( DWORD err )
+@@ -2508,7 +2508,6 @@ void WINAPI RtlSetLastWin32Error( DWORD err )
   */
  NTSTATUS WINAPI __wine_set_unix_env( const char *var, const char *val )
  {
@@ -191,7 +217,7 @@ index c2c46dd0a..29f5aa2b1 100644
      return 0;
  }
 diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index b7d1f6772..993bd61b0 100644
+index f8695a70deb..1c965027184 100644
 --- a/dlls/ntdll/unix/loader.c
 +++ b/dlls/ntdll/unix/loader.c
 @@ -592,47 +592,12 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_i
@@ -349,10 +375,10 @@ index b7d1f6772..993bd61b0 100644
      debugstr_pc,
  };
 diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
-index 5b7d46037..32dcfa6d3 100644
+index faf09c05371..1751853bd1f 100644
 --- a/dlls/ntdll/unix/signal_i386.c
 +++ b/dlls/ntdll/unix/signal_i386.c
-@@ -1928,7 +1928,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -1916,7 +1916,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
      struct xcontext xcontext;
      ucontext_t *ucontext = sigcontext;
      void *stack = setup_exception_record( sigcontext, &rec, &xcontext );
@@ -360,7 +386,7 @@ index 5b7d46037..32dcfa6d3 100644
  
      switch (TRAP_sig(ucontext))
      {
-@@ -1963,12 +1962,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -1951,12 +1950,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
          }
          break;
      case TRAP_x86_PAGEFLT:  /* Page fault */
@@ -374,10 +400,10 @@ index 5b7d46037..32dcfa6d3 100644
          rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
          rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
 diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
-index f0467def5..dcb0c465c 100644
+index be9af2c23d1..944bb0097b2 100644
 --- a/dlls/ntdll/unix/signal_x86_64.c
 +++ b/dlls/ntdll/unix/signal_x86_64.c
-@@ -2268,7 +2268,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -2276,7 +2276,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
      EXCEPTION_RECORD rec = { 0 };
      struct xcontext context;
      ucontext_t *ucontext = init_handler( sigcontext );
@@ -385,7 +411,7 @@ index f0467def5..dcb0c465c 100644
  
      rec.ExceptionAddress = (void *)RIP_sig(ucontext);
      save_context( &context, ucontext );
-@@ -2300,12 +2299,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -2308,12 +2307,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
          }
          break;
      case TRAP_x86_PAGEFLT:  /* Page fault */
@@ -399,10 +425,10 @@ index f0467def5..dcb0c465c 100644
          rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
          rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
 diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
-index cf6b9ab0c..15de3bd68 100644
+index 2b62d5c7754..3c0bf2bab95 100644
 --- a/dlls/ntdll/unix/unix_private.h
 +++ b/dlls/ntdll/unix/unix_private.h
-@@ -242,7 +242,6 @@ extern unsigned int alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, stru
+@@ -265,7 +265,6 @@ extern unsigned int alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, stru
                                               data_size_t *ret_len );
  extern NTSTATUS system_time_precise( void *args );
  
@@ -411,7 +437,7 @@ index cf6b9ab0c..15de3bd68 100644
  extern void *anon_mmap_alloc( size_t size, int prot );
  extern void virtual_init(void);
 diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
-index e0870584a..94abe3450 100644
+index e0870584a68..94abe3450b8 100644
 --- a/dlls/ntdll/unixlib.h
 +++ b/dlls/ntdll/unixlib.h
 @@ -66,12 +66,6 @@ struct unwind_builtin_dll_params
@@ -436,7 +462,7 @@ index e0870584a..94abe3450 100644
      unix_debugstr_pc,
  };
 diff --git a/dlls/shell32/shellpath.c b/dlls/shell32/shellpath.c
-index c384919fd..634fd944c 100644
+index c384919fdc2..634fd944ca0 100644
 --- a/dlls/shell32/shellpath.c
 +++ b/dlls/shell32/shellpath.c
 @@ -2639,6 +2639,183 @@ end:
@@ -715,7 +741,7 @@ index c384919fd..634fd944c 100644
  }
  
 diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
-index db51152e1..172263b92 100644
+index c4b43077d68..5b2fd40ea9b 100644
 --- a/dlls/winex11.drv/window.c
 +++ b/dlls/winex11.drv/window.c
 @@ -1060,19 +1060,8 @@ static void set_initial_wm_hints( Display *display, Window window )
@@ -741,7 +767,7 @@ index db51152e1..172263b92 100644
          XFree( class_hints );
      }
 diff --git a/loader/wine.inf.in b/loader/wine.inf.in
-index 1e5b16a53..d1e99538b 100644
+index 1f4019cc417..0dd824f9f44 100644
 --- a/loader/wine.inf.in
 +++ b/loader/wine.inf.in
 @@ -98,8 +98,7 @@ AddReg=\
@@ -782,7 +808,7 @@ index 1e5b16a53..d1e99538b 100644
  
  [ContentIndex]
  HKLM,System\CurrentControlSet\Control\ContentIndex\Language\Neutral,"WBreakerClass",,"{369647e0-17b0-11ce-9950-00aa004bbb1f}"
-@@ -464,7 +460,6 @@ HKLM,%CurrentVersionNT%\AeDebug,"Debugger",2,"winedbg --auto %ld %ld"
+@@ -466,7 +462,6 @@ HKLM,%CurrentVersionNT%\AeDebug,"Debugger",2,"winedbg --auto %ld %ld"
  HKLM,%CurrentVersionNT%\AeDebug,"Auto",2,"1"
  HKCU,Software\Wine\Debug,"RelayExclude",2,"ntdll.RtlEnterCriticalSection;ntdll.RtlTryEnterCriticalSection;ntdll.RtlLeaveCriticalSection;kernel32.48;kernel32.49;kernel32.94;kernel32.95;kernel32.96;kernel32.97;kernel32.98;kernel32.TlsGetValue;kernel32.TlsSetValue;kernel32.FlsGetValue;kernel32.FlsSetValue;kernel32.SetLastError"
  HKCU,Software\Wine\Debug,"RelayFromExclude",2,"winex11.drv;winemac.drv;user32;gdi32;advapi32;kernel32"
@@ -790,7 +816,7 @@ index 1e5b16a53..d1e99538b 100644
  
  [DirectX]
  HKLM,Software\Microsoft\DirectX,"Version",,"4.09.00.0904"
-@@ -2817,22 +2812,6 @@ InfFiles  = 17
+@@ -2820,22 +2815,6 @@ InfFiles  = 17
  NlsFiles  = 11
  SortFiles = 10,globalization\sorting
  
@@ -814,10 +840,10 @@ index 1e5b16a53..d1e99538b 100644
  HKLM,Software\NVIDIA Corporation\Global\NGXCore,"FullPath",,"C:\Windows\System32"
  
 diff --git a/programs/wineboot/wineboot.c b/programs/wineboot/wineboot.c
-index 0ea276f68..947a6eb8d 100644
+index ff6bd6cc38c..b319ad2bfd5 100644
 --- a/programs/wineboot/wineboot.c
 +++ b/programs/wineboot/wineboot.c
-@@ -1433,6 +1433,37 @@ static BOOL start_services_process(void)
+@@ -1461,6 +1461,37 @@ static BOOL start_services_process(void)
      return TRUE;
  }
  
@@ -855,7 +881,7 @@ index 0ea276f68..947a6eb8d 100644
  static HANDLE start_rundll32( const WCHAR *inf_path, const WCHAR *install, WORD machine )
  {
      WCHAR app[MAX_PATH + ARRAY_SIZE(L"\\rundll32.exe" )];
-@@ -1632,6 +1663,7 @@ static void update_wineprefix( BOOL force )
+@@ -1660,6 +1691,7 @@ static void update_wineprefix( BOOL force )
  
          if ((process = start_rundll32( inf_path, L"PreInstall", IMAGE_FILE_MACHINE_TARGET_HOST )))
          {
@@ -863,7 +889,7 @@ index 0ea276f68..947a6eb8d 100644
              for (;;)
              {
                  if (process)
-@@ -1652,6 +1684,7 @@ static void update_wineprefix( BOOL force )
+@@ -1680,6 +1712,7 @@ static void update_wineprefix( BOOL force )
                      process = start_rundll32( inf_path, L"Wow64Install", machines[count].Machine );
                  count++;
              }
@@ -872,7 +898,7 @@ index 0ea276f68..947a6eb8d 100644
          install_root_pnp_devices();
          update_user_profile();
 diff --git a/programs/winebrowser/main.c b/programs/winebrowser/main.c
-index 738930e39..244160701 100644
+index 738930e39a6..24416070152 100644
 --- a/programs/winebrowser/main.c
 +++ b/programs/winebrowser/main.c
 @@ -63,17 +63,6 @@ static char *strdup_unixcp( const WCHAR *str )
@@ -906,7 +932,7 @@ index 738930e39..244160701 100644
      {
          WCHAR **args = CommandLineToArgvW( candidates, &count );
 diff --git a/programs/winedbg/debugger.h b/programs/winedbg/debugger.h
-index 74c935f42..c65b9bfae 100644
+index 74c935f42db..c65b9bfae67 100644
 --- a/programs/winedbg/debugger.h
 +++ b/programs/winedbg/debugger.h
 @@ -311,8 +311,6 @@ extern	DWORD	                dbg_curr_tid;
@@ -919,7 +945,7 @@ index 74c935f42..c65b9bfae 100644
  struct dbg_internal_var
  {
 diff --git a/programs/winedbg/tgt_active.c b/programs/winedbg/tgt_active.c
-index 23652b777..175788571 100644
+index 23652b77726..17578857133 100644
 --- a/programs/winedbg/tgt_active.c
 +++ b/programs/winedbg/tgt_active.c
 @@ -22,8 +22,6 @@
@@ -992,7 +1018,7 @@ index 23652b777..175788571 100644
  
      input = parser_generate_command_file("echo Modules:", "info share",
 diff --git a/programs/winedbg/winedbg.c b/programs/winedbg/winedbg.c
-index 7769d2048..92fa77429 100644
+index 7769d20481d..92fa77429f6 100644
 --- a/programs/winedbg/winedbg.c
 +++ b/programs/winedbg/winedbg.c
 @@ -82,8 +82,6 @@ DWORD	                dbg_curr_pid = 0;
@@ -1026,4 +1052,6 @@ index 7769d2048..92fa77429 100644
          memmove( line_buff, line_buff + i, line_pos - i );
          line_pos -= i;
      }
+-- 
+2.46.0
 
