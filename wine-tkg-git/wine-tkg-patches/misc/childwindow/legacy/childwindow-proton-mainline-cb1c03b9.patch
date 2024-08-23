@@ -462,31 +462,29 @@ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
 index c6bf49c6ec8bc83580a42abb3eb9314189280673..3a93ed89afe11e21464bf5211dd09636a188810f 100644
 --- a/dlls/winex11.drv/window.c
 +++ b/dlls/winex11.drv/window.c
-@@ -1456,10 +1456,23 @@ 
-     int mask = 0;
-     XWindowChanges changes;
+@@ -1456,8 +1456,21 @@ static void sync_client_position( struct x11drv_win_data *data,
  
      if (!data->client_window) return;
  
--    changes.x      = data->rects.client.left - data->rects.visible.left;
--    changes.y      = data->rects.client.top - data->rects.visible.top;
+-    changes.x      = data->client_rect.left - data->whole_rect.left;
+-    changes.y      = data->client_rect.top - data->whole_rect.top;
 +    if (data->whole_window)
 +    {
-+        changes.x = data->rects.client.left - data->rects.visible.left;
-+        changes.y = data->rects.client.top - data->rects.visible.top;
++        changes.x = data->client_rect.left - data->whole_rect.left;
++        changes.y = data->client_rect.top - data->whole_rect.top;
 +    }
 +    else
 +    {
 +        HWND toplevel = NtUserGetAncestor( data->hwnd, GA_ROOT );
-+        POINT pos = {data->rects.client.left, data->rects.client.top};
++        POINT pos = {data->client_rect.left, data->client_rect.top};
 +
 +        NtUserMapWindowPoints( toplevel, toplevel, &pos, 1, 0 /* per-monitor DPI */ );
 +        changes.x = pos.x;
 +        changes.y = pos.y;
 +    }
 +
-     changes.width  = min( max( 1, data->rects.client.right - data->rects.client.left ), 65535 );
-     changes.height = min( max( 1, data->rects.client.bottom - data->rects.client.top ), 65535 );
+     changes.width  = min( max( 1, data->client_rect.right - data->client_rect.left ), 65535 );
+     changes.height = min( max( 1, data->client_rect.bottom - data->client_rect.top ), 65535 );
  
 @@ -1610,11 +1623,8 @@ void detach_client_window( struct x11drv_win_data *data, Window client_window )
  
@@ -522,18 +520,18 @@ index c6bf49c6ec8bc83580a42abb3eb9314189280673..3a93ed89afe11e21464bf5211dd09636
 +    if ((whole_window = data->whole_window))
      {
 -        client_window_events_enable( data, client_window );
--        XReparentWindow( gdi_display, client_window, data->whole_window, data->rects.client.left - data->rects.visible.left,
--                         data->rects.client.top - data->rects.visible.top );
-+        pos.x = data->rects.client.left - data->rects.visible.left;
-+        pos.y = data->rects.client.top - data->rects.visible.top;
+-        XReparentWindow( gdi_display, client_window, data->whole_window, data->client_rect.left - data->whole_rect.left,
+-                         data->client_rect.top - data->whole_rect.top );
++        pos.x = data->client_rect.left - data->whole_rect.left;
++        pos.y = data->client_rect.top - data->whole_rect.top;
      }
 +    else
 +    {
 +        HWND toplevel = NtUserGetAncestor( data->hwnd, GA_ROOT );
 +        whole_window = X11DRV_get_whole_window( toplevel );
 +
-+        pos.x = data->rects.client.left;
-+        pos.y = data->rects.client.top;
++        pos.x = data->client_rect.left;
++        pos.y = data->client_rect.top;
 +        NtUserMapWindowPoints( toplevel, toplevel, &pos, 1, 0 /* per-monitor DPI */ );
 +    }
 +    if (!whole_window) whole_window = get_dummy_parent();
@@ -571,6 +569,18 @@ index c6bf49c6ec8bc83580a42abb3eb9314189280673..3a93ed89afe11e21464bf5211dd09636
      data->whole_colormap = 0;
      data->wm_state = WithdrawnState;
      data->net_wm_state = 0;
+diff --git a/dlls/winex11.drv/bitblt.c b/dlls/winex11.drv/bitblt.c
+index 11111111111..11111111111 100644
+--- a/dlls/winex11.drv/bitblt.c
++++ b/dlls/winex11.drv/bitblt.c
+@@ -2263,7 +2263,6 @@ BOOL X11DRV_CreateWindowSurface( HWND hwnd, UINT swp_flags, const RECT *visible_
+         *surface = NULL;  /* indicate that we want to draw directly to the window */
+         if (data->embedded) goto done; /* draw directly to the window */
+         if (data->whole_window == root_window) goto done; /* draw directly to the window */
+-        if (data->client_window) goto done; /* draw directly to the window */
+         if (!client_side_graphics) goto done; /* draw directly to the window */
+     }
+ 
 diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
 index 1aaba9bf24b9dadb553d53ddb6796ce43e3e25a8..e919ad36c701aeee5bbcaf52a565db3e597ca8b1 100644
 --- a/dlls/winex11.drv/x11drv.h
