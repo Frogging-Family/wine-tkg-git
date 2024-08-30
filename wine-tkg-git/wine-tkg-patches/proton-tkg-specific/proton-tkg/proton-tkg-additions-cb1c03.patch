@@ -256,12 +256,14 @@ diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
 index 4cd2324bff2..815a6279e59 100644
 --- a/dlls/winex11.drv/window.c
 +++ b/dlls/winex11.drv/window.c
-@@ -1335,14 +1335,15 @@
+@@ -1481,16 +1481,17 @@ void X11DRV_X_to_window_rect( struct x11drv_win_data *data, RECT *rect, int x, i
   *
   * Synchronize the X window position with the Windows one
   */
--static void sync_window_position( struct x11drv_win_data *data, UINT swp_flags )
-+static HWND sync_window_position( struct x11drv_win_data *data, UINT swp_flags )
+-static void sync_window_position( struct x11drv_win_data *data,
++static HWND sync_window_position( struct x11drv_win_data *data,
+                                   UINT swp_flags, const RECT *old_window_rect,
+                                   const RECT *old_whole_rect, const RECT *old_client_rect )
  {
      DWORD style = NtUserGetWindowLongW( data->hwnd, GWL_STYLE );
      DWORD ex_style = NtUserGetWindowLongW( data->hwnd, GWL_EXSTYLE );
@@ -321,23 +323,25 @@ index 4cd2324bff2..815a6279e59 100644
  /***********************************************************************
   *     WindowPosChanged   (X11DRV.@)
   */
-@@ -2707,6 +2708,7 @@
+@@ -2745,6 +2769,7 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
      struct x11drv_win_data *data;
-     UINT new_style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
-     struct window_rects old_rects;
+     DWORD new_style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
+     RECT old_window_rect, old_whole_rect, old_client_rect;
 +    HWND prev_window = NULL;
      int event_type;
  
      if (!(data = get_win_data( hwnd ))) return;
-@@ -2766,7 +2768,7 @@
+@@ -2847,8 +2872,8 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
+ 
+     /* don't change position if we are about to minimize or maximize a managed window */
      if ((!event_type || event_type == PropertyNotify) &&
-         !(data->managed && (swp_flags & SWP_STATECHANGED) && (new_style & (WS_MINIMIZE|WS_MAXIMIZE))))
-     {
--        sync_window_position( data, swp_flags );
-+        prev_window = sync_window_position( data, swp_flags );
- #ifdef HAVE_LIBXSHAPE
-         if (IsRectEmpty( &old_rects.window ) != IsRectEmpty( &new_rects->window ))
-             sync_empty_window_shape( data, surface );
+-        !(data->managed && (swp_flags & SWP_STATECHANGED) && (new_style & (WS_MINIMIZE|WS_MAXIMIZE))))
+-        sync_window_position( data, swp_flags, &old_window_rect, &old_whole_rect, &old_client_rect );
++            !(data->managed && (swp_flags & SWP_STATECHANGED) && (new_style & (WS_MINIMIZE|WS_MAXIMIZE))))
++        prev_window = sync_window_position( data, swp_flags, &old_window_rect, &old_whole_rect, &old_client_rect );
+ 
+     if ((new_style & WS_VISIBLE) &&
+         ((new_style & WS_MINIMIZE) || is_window_rect_mapped( rectWindow )))
 @@ -2864,6 +2889,10 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
              release_win_data( data );
              if (needs_icon) fetch_icon_data( hwnd, 0, 0 );
