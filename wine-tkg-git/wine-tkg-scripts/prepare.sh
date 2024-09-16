@@ -434,15 +434,17 @@ _pkgnaming() {
       msg2 "Using staging patchset"
     fi
 
-    if [ "$_use_esync" = "true" ]; then
-      if [ "$_use_fsync" = "true" ]; then
-        pkgname+="-fsync"
-        msg2 "Using fsync patchset"
-      else
-        pkgname+="-esync"
-        msg2 "Using esync patchset"
-      fi
+    if [ "$_use_ntsync" = "true" ] && [ "$_use_fsync" != "true" ]; then
+      pkgname+="-ntsync"
+      msg2 "Using ntsync patchset"
+    elif [ "$_use_fsync" = "true" ] && [ "$_use_esync" = "true" ]; then
+      pkgname+="-fsync"
+      msg2 "Using fsync patchset"
+    elif [ "$_use_esync" = "true" ]; then
+      pkgname+="-esync"
+      msg2 "Using esync patchset"
     fi
+
     if [ "$_use_legacy_gallium_nine" = "true" ]; then
       pkgname+="-nine"
       msg2 "Using gallium nine patchset (legacy)"
