@@ -1,0 +1,541 @@
+From 00a5e4e8b55ad439d5c3d8faa876d08df8be759f Mon Sep 17 00:00:00 2001
+From: Sebastian Lackner <sebastian@fds-team.de>
+Date: Sat, 4 Oct 2014 02:35:44 +0200
+Subject: [PATCH] ntdll: Trigger write watches before passing userdata pointer
+ to wait_reply.
+
+---
+ dlls/ntdll/unix/server.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index 6af8effe9e1..6dbd9cb3ea0 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -282,9 +282,17 @@ unsigned int server_call_unlocked( void *req_ptr )
+  */
+ unsigned int CDECL wine_server_call( void *req_ptr )
+ {
++    struct __server_request_info * const req = req_ptr;
+     sigset_t old_set;
+     unsigned int ret;
+ 
++    /* trigger write watches, otherwise read() might return EFAULT */
++    if (req->u.req.request_header.reply_size &&
++        !virtual_check_buffer_for_write( req->reply_data, req->u.req.request_header.reply_size ))
++    {
++        return STATUS_ACCESS_VIOLATION;
++    }
++
+     pthread_sigmask( SIG_BLOCK, &server_block_set, &old_set );
+     ret = server_call_unlocked( req_ptr );
+     pthread_sigmask( SIG_SETMASK, &old_set, NULL );
+-- 
+2.20.1
+
+From 3d340d4f31aa1cb3ad6cd9e7a59118e84ab040f1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Aida=20Jonikien=C4=97?= <aidas957@gmail.com>
+Date: Fri, 8 Mar 2024 17:52:24 -0600
+Subject: [PATCH] ntdll: Trigger write watches on the "info" pointer in
+ SystemInterruptInformation.
+
+---
+ dlls/ntdll/unix/system.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+index 4c6c4cd23e2..9dc1ff80152 100644
+--- a/dlls/ntdll/unix/system.c
++++ b/dlls/ntdll/unix/system.c
+@@ -2943,7 +2943,7 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
+         len = peb->NumberOfProcessors * sizeof(SYSTEM_INTERRUPT_INFORMATION);
+         if (size >= len)
+         {
+-            if (!info) ret = STATUS_ACCESS_VIOLATION;
++            if (!info || !virtual_check_buffer_for_write( info, len )) ret = STATUS_ACCESS_VIOLATION;
+             else
+             {
+ #ifdef HAVE_GETRANDOM
+-- 
+2.43.0
+
+From 96831bd0bda656192510397cd18cb2c4bff5d8f4 Mon Sep 17 00:00:00 2001
+From: Elizabeth Figura <zfigura@codeweavers.com>
+Date: Thu, 22 Aug 2024 18:42:33 -0500
+Subject: [PATCH 03/10] ntdll: Install signal handlers a bit earlier.
+
+The wine-staging WRITECOPY implementation needs to be able to handle write faults while relocating builtin modules loaded during process initialization.
+
+Note that the comment about debug events isn't relevant anymore because these exceptions all happen on the Unix stack anyway.
+
+Probably there's a better solution involving simply not write-protecting these pages until we get to PE code, but that's not worth writing when this whole patch set is moribund anyway.
+---
+ dlls/ntdll/unix/loader.c      | 1 +
+ dlls/ntdll/unix/server.c      | 5 -----
+ dlls/ntdll/unix/signal_i386.c | 5 ++++-
+ 3 files changed, 5 insertions(+), 6 deletions(-)
+
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 92f2e2eb3a3..a6ea16bb7bb 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1866,6 +1866,7 @@ static void start_main_thread(void)
+     set_load_order_app_name( main_wargv[0] );
+     init_thread_stack( teb, 0, 0, 0 );
+     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
++    signal_init_process();
+     load_ntdll();
+     load_wow64_ntdll( main_image_info.Machine );
+     load_apiset_dll();
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index 27dbf1331aa..80504e3459c 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -1674,11 +1674,6 @@ void server_init_process_done(void)
+     send_server_task_port();
+ #endif
+ 
+-    /* Install signal handlers; this cannot be done earlier, since we cannot
+-     * send exceptions to the debugger before the create process event that
+-     * is sent by init_process_done */
+-    signal_init_process();
+-
+     /* always send the native TEB */
+     if (!(teb = NtCurrentTeb64())) teb = NtCurrentTeb();
+ 
+diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
+index 61d41ec3589..b838a7a8669 100644
+--- a/dlls/ntdll/unix/signal_i386.c
++++ b/dlls/ntdll/unix/signal_i386.c
+@@ -719,7 +719,10 @@ static inline void *init_handler( const ucontext_t *sigcontext )
+     {
+         struct x86_thread_data *thread_data = (struct x86_thread_data *)&teb->GdiTebBatch;
+         set_fs( thread_data->fs );
+-        set_gs( thread_data->gs );
++        /* FIXME ZF: This is a bit of a hack, but it doesn't matter,
++         * since this patch set goes in the wrong direction anyway. */
++        if (thread_data->gs)
++            set_gs( thread_data->gs );
+     }
+ #endif
+ 
+-- 
+2.45.2
+
+From 8ec23a75cf45f9b2841b76504c827d368682c126 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michael=20M=C3=BCller?= <michael@fds-team.de>
+Date: Sat, 4 Oct 2014 03:22:09 +0200
+Subject: [PATCH] ntdll: Properly handle PAGE_WRITECOPY protection. (try 5)
+
+For now, only enable it when a special environment variable is set.
+---
+ dlls/ntdll/unix/virtual.c | 46 +++++++++++++++++++++++++++++++++------
+ 1 file changed, 39 insertions(+), 7 deletions(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index b108e49ad4d..70211bbfa3d 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -506,6 +506,21 @@ static void reserve_area( void *addr, void *end )
+ #endif /* __APPLE__ */
+ }
+ 
++/* This might look like a hack, but it actually isn't - the 'experimental' version
++ * is correct, but it already has revealed a couple of additional Wine bugs, which
++ * were not triggered before, and there are probably some more.
++ * To avoid breaking Wine for everyone, the new correct implementation has to be
++ * manually enabled, until it is tested a bit more. */
++static inline BOOL experimental_WRITECOPY( void )
++{
++    static int enabled = -1;
++    if (enabled == -1)
++    {
++        const char *str = getenv("STAGING_WRITECOPY");
++        enabled = str && (atoi(str) != 0);
++    }
++    return enabled;
++}
+ 
+ static void mmap_init( const struct preload_info *preload_info )
+ {
+@@ -1136,8 +1151,19 @@ static int get_unix_prot( BYTE vprot )
+     {
+         if (vprot & VPROT_READ) prot |= PROT_READ;
+         if (vprot & VPROT_WRITE) prot |= PROT_WRITE | PROT_READ;
+-        if (vprot & VPROT_WRITECOPY) prot |= PROT_WRITE | PROT_READ;
+         if (vprot & VPROT_EXEC) prot |= PROT_EXEC | PROT_READ;
++#if defined(__i386__)
++        if (vprot & VPROT_WRITECOPY)
++        {
++            if (experimental_WRITECOPY())
++                prot = (prot & ~PROT_WRITE) | PROT_READ;
++            else
++                prot |= PROT_WRITE | PROT_READ;
++        }
++#else
++        /* FIXME: Architecture needs implementation of signal_init_early. */
++        if (vprot & VPROT_WRITECOPY) prot |= PROT_WRITE | PROT_READ;
++#endif
+         if (vprot & VPROT_WRITEWATCH) prot &= ~PROT_WRITE;
+     }
+     if (!prot) prot = PROT_NONE;
+@@ -1817,7 +1843,7 @@ static void update_write_watches( void *base, size_t size, size_t accessed_size
+ {
+     TRACE( "updating watch %p-%p-%p\n", base, (char *)base + accessed_size, (char *)base + size );
+     /* clear write watch flag on accessed pages */
+-    set_page_vprot_bits( base, accessed_size, 0, VPROT_WRITEWATCH );
++    set_page_vprot_bits( base, accessed_size, VPROT_WRITE, VPROT_WRITEWATCH | VPROT_WRITECOPY );
+     /* restore page protections on the entire range */
+     mprotect_range( base, size, 0, 0 );
+ }
+@@ -4065,12 +4091,13 @@ NTSTATUS virtual_handle_fault( EXCEPTION_RECORD *rec, void *stack )
+                 mprotect_range( page, page_size, 0, 0 );
+             }
+         }
+-        /* ignore fault if page is writable now */
+-        if (get_unix_prot( get_page_vprot( page )) & PROT_WRITE)
++        if (vprot & VPROT_WRITECOPY)
+         {
+-            if ((vprot & VPROT_WRITEWATCH) || is_write_watch_range( page, page_size ))
+-                ret = STATUS_SUCCESS;
++            set_page_vprot_bits( page, page_size, VPROT_WRITE, VPROT_WRITECOPY );
++            mprotect_range( page, page_size, 0, 0 );
+         }
++        /* ignore fault if page is writable now */
++        if (get_unix_prot( get_page_vprot( page ) ) & PROT_WRITE) ret = STATUS_SUCCESS;
+     }
+     mutex_unlock( &virtual_mutex );
+     rec->ExceptionCode = ret;
+@@ -4144,11 +4171,16 @@ static NTSTATUS check_write_access( void *base, size_t size, BOOL *has_write_wat
+     {
+         BYTE vprot = get_page_vprot( addr + i );
+         if (vprot & VPROT_WRITEWATCH) *has_write_watch = TRUE;
++        if (vprot & VPROT_WRITECOPY)
++        {
++            vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
++            *has_write_watch = TRUE;
++        }
+         if (!(get_unix_prot( vprot & ~VPROT_WRITEWATCH ) & PROT_WRITE))
+             return STATUS_INVALID_USER_BUFFER;
+     }
+     if (*has_write_watch)
+-        mprotect_range( addr, size, 0, VPROT_WRITEWATCH );  /* temporarily enable write access */
++        mprotect_range( addr, size, VPROT_WRITE, VPROT_WRITEWATCH | VPROT_WRITECOPY );  /* temporarily enable write access */
+     return STATUS_SUCCESS;
+ }
+ 
+-- 
+2.45.2
+
+From 10f273da9caa0b7c814f46b76279065a956393af Mon Sep 17 00:00:00 2001
+From: Andrew Wesie <awesie@gmail.com>
+Date: Fri, 24 Apr 2020 14:55:14 -0500
+Subject: [PATCH] ntdll: Track if a WRITECOPY page has been modified.
+
+Once a WRITECOPY page is modified, it should be mapped as if it is a normal
+read-write page.
+
+Signed-off-by: Andrew Wesie <awesie@gmail.com>
+---
+ dlls/ntdll/unix/virtual.c | 30 ++++++++++++++++++++++++------
+ 1 file changed, 24 insertions(+), 6 deletions(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 5eadabf7dca..58fd4d0edfc 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -122,6 +122,7 @@ struct file_view
+ #define VPROT_GUARD      0x10
+ #define VPROT_COMMITTED  0x20
+ #define VPROT_WRITEWATCH 0x40
++#define VPROT_WRITTEN    0x80
+ /* per-mapping protection flags */
+ #define VPROT_ARM64EC          0x0100  /* view may contain ARM64EC code */
+ #define VPROT_SYSTEM           0x0200  /* system view (underlying mmap not under our control) */
+@@ -1155,7 +1156,7 @@ static int get_unix_prot( BYTE vprot )
+ #if defined(__i386__)
+         if (vprot & VPROT_WRITECOPY)
+         {
+-            if (experimental_WRITECOPY())
++            if (experimental_WRITECOPY() && !(vprot & VPROT_WRITTEN))
+                 prot = (prot & ~PROT_WRITE) | PROT_READ;
+             else
+                 prot |= PROT_WRITE | PROT_READ;
+@@ -1672,7 +1673,11 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
+  */
+ static DWORD get_win32_prot( BYTE vprot, unsigned int map_prot )
+ {
+-    DWORD ret = VIRTUAL_Win32Flags[vprot & 0x0f];
++    DWORD ret;
++
++    if ((vprot & VPROT_WRITECOPY) && (vprot & VPROT_WRITTEN))
++        vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
++    ret = VIRTUAL_Win32Flags[vprot & 0x0f];
+     if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
+     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
+     return ret;
+@@ -1778,16 +1783,29 @@ static void mprotect_range( void *base, size_t size, BYTE set, BYTE clear )
+  */
+ static BOOL set_vprot( struct file_view *view, void *base, size_t size, BYTE vprot )
+ {
++    int unix_prot;
++
+     if (view->protect & VPROT_WRITEWATCH)
+     {
+         /* each page may need different protections depending on write watch flag */
+-        set_page_vprot_bits( base, size, vprot & ~VPROT_WRITEWATCH, ~vprot & ~VPROT_WRITEWATCH );
++        set_page_vprot_bits( base, size, vprot & ~VPROT_WRITEWATCH, ~vprot & ~(VPROT_WRITEWATCH|VPROT_WRITTEN) );
+         mprotect_range( base, size, 0, 0 );
+         return TRUE;
+     }
++
+     if (enable_write_exceptions && is_vprot_exec_write( vprot )) vprot |= VPROT_WRITEWATCH;
+-    if (mprotect_exec( base, size, get_unix_prot(vprot) )) return FALSE;
+-    set_page_vprot( base, size, vprot );
++    unix_prot = get_unix_prot(vprot);
++
++    /* check that we can map this memory with PROT_WRITE since we cannot fail later */
++    if (vprot & VPROT_WRITECOPY)
++        unix_prot |= PROT_WRITE;
++
++    if (mprotect_exec( base, size, unix_prot )) return FALSE;
++    /* each page may need different protections depending on writecopy */
++    set_page_vprot_bits( base, size, vprot, ~vprot & ~VPROT_WRITTEN );
++    if (vprot & VPROT_WRITECOPY)
++        mprotect_range( base, size, 0, 0 );
++
+     return TRUE;
+ }
+ 
+@@ -4093,7 +4111,7 @@ NTSTATUS virtual_handle_fault( EXCEPTION_RECORD *rec, void *stack )
+         }
+         if (vprot & VPROT_WRITECOPY)
+         {
+-            set_page_vprot_bits( page, page_size, VPROT_WRITE, VPROT_WRITECOPY );
++            set_page_vprot_bits( page, page_size, VPROT_WRITE | VPROT_WRITTEN, VPROT_WRITECOPY );
+             mprotect_range( page, page_size, 0, 0 );
+         }
+         /* ignore fault if page is writable now */
+-- 
+2.45.2
+
+From b083e23347c3f50112410d1c886eb17c75f34a4e Mon Sep 17 00:00:00 2001
+From: Andrew Wesie <awesie@gmail.com>
+Date: Fri, 24 Apr 2020 14:55:17 -0500
+Subject: [PATCH] ntdll: Report unmodified WRITECOPY pages as shared.
+
+We also need to clear the modified bit after we clear memory in map_image to
+match the behavior of Windows.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=48665
+Signed-off-by: Andrew Wesie <awesie@gmail.com>
+---
+ dlls/ntdll/unix/virtual.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index b3d8b2f7a95..568a0cef74c 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -2897,6 +2897,8 @@ static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filena
+                            ptr + sec->VirtualAddress + file_size,
+                            ptr + sec->VirtualAddress + end );
+             memset( ptr + sec->VirtualAddress + file_size, 0, end - file_size );
++            /* clear WRITTEN mark so QueryVirtualMemory returns correct values */
++            set_page_vprot_bits( ptr + sec->VirtualAddress + file_size, 1, 0, VPROT_WRITTEN );
+         }
+     }
+ 
+@@ -5326,7 +5328,7 @@ static void fill_working_set_info( struct fill_working_set_info_data *d, struct
+         pagemap = d->pm_buffer[page - d->buffer_start];
+ 
+         p->VirtualAttributes.Valid = !(vprot & VPROT_GUARD) && (vprot & 0x0f) && (pagemap >> 63);
+-        p->VirtualAttributes.Shared = !is_view_valloc( view ) && ((pagemap >> 61) & 1);
++        p->VirtualAttributes.Shared = (!is_view_valloc( view ) && ((pagemap >> 61) & 1)) || ((view->protect & VPROT_WRITECOPY) && !(vprot & VPROT_WRITTEN));
+         if (p->VirtualAttributes.Shared && p->VirtualAttributes.Valid)
+             p->VirtualAttributes.ShareCount = 1; /* FIXME */
+         if (p->VirtualAttributes.Valid)
+-- 
+2.43.0
+
+From 1d8b9ce07aaafd3184a118c8d986b54617571c7b Mon Sep 17 00:00:00 2001
+From: Andrew Wesie <awesie@gmail.com>
+Date: Tue, 28 Apr 2020 03:27:16 -0500
+Subject: [PATCH] ntdll: Fallback to copy pages for WRITECOPY.
+
+When a file is first mapped, whether it is mapped shared or private is
+determined by whether it is mapped with WRITECOPY. If the page protection later
+changes to include WRITECOPY, then virtual_handle_fault needs to change the page
+from shared to private. The only way to do this on Linux is to copy the page
+contents to a temporary location, map an anonymous page to the old location,
+then copy the contents to the new page.
+
+Signed-off-by: Andrew Wesie <awesie@gmail.com>
+---
+ dlls/ntdll/unix/virtual.c | 25 +++++++++++++++++++++----
+ 1 file changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 71fe33cdb0e..ba5701d7bfe 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -1796,8 +1796,9 @@ static BOOL set_vprot( struct file_view *view, void *base, size_t size, BYTE vpr
+     if (enable_write_exceptions && is_vprot_exec_write( vprot )) vprot |= VPROT_WRITEWATCH;
+     unix_prot = get_unix_prot(vprot);
+ 
+-    /* check that we can map this memory with PROT_WRITE since we cannot fail later */
+-    if (vprot & VPROT_WRITECOPY)
++    /* check that we can map this memory with PROT_WRITE since we cannot fail later,
++     * but we fallback to copying pages for read-only mappings in virtual_handle_fault */
++    if ((vprot & VPROT_WRITECOPY) && (view->protect & VPROT_WRITECOPY))
+         unix_prot |= PROT_WRITE;
+ 
+     if (mprotect_exec( base, size, unix_prot )) return FALSE;
+@@ -4111,10 +4112,26 @@ NTSTATUS virtual_handle_fault( EXCEPTION_RECORD *rec, void *stack )
+                 mprotect_range( page, page_size, 0, 0 );
+             }
+         }
+-        if (vprot & VPROT_WRITECOPY)
++        if ((vprot & VPROT_WRITECOPY) && (vprot & VPROT_COMMITTED))
+         {
++            struct file_view *view = find_view( page, 0 );
++
+             set_page_vprot_bits( page, page_size, VPROT_WRITE | VPROT_WRITTEN, VPROT_WRITECOPY );
+-            mprotect_range( page, page_size, 0, 0 );
++            if (view->protect & VPROT_WRITECOPY)
++            {
++                mprotect_range( page, page_size, 0, 0 );
++            }
++            else
++            {
++                static BYTE *temp_page = NULL;
++                if (!temp_page)
++                    temp_page = anon_mmap_alloc( page_size, PROT_READ | PROT_WRITE );
++
++                /* original mapping is shared, replace with a private page */
++                memcpy( temp_page, page, page_size );
++                anon_mmap_fixed( page, page_size, get_unix_prot( vprot | VPROT_WRITE | VPROT_WRITTEN ), 0 );
++                memcpy( page, temp_page, page_size );
++            }
+         }
+         /* ignore fault if page is writable now */
+         if (get_unix_prot( get_page_vprot( page ) ) & PROT_WRITE) ret = STATUS_SUCCESS;
+-- 
+2.45.2
+
+From ada6b6d8363f2eeac8d8ed99d50f61610b047efe Mon Sep 17 00:00:00 2001
+From: Andrew Wesie <awesie@gmail.com>
+Date: Mon, 27 Apr 2020 15:32:22 +0300
+Subject: [PATCH] kernel32/tests, psapi/tests: Update tests.
+
+---
+ dlls/kernel32/tests/virtual.c | 19 ++-----------------
+ dlls/psapi/tests/psapi_main.c |  3 +++
+ 2 files changed, 5 insertions(+), 17 deletions(-)
+
+diff --git a/dlls/kernel32/tests/virtual.c b/dlls/kernel32/tests/virtual.c
+index 365194b9065..8055e93faa0 100644
+--- a/dlls/kernel32/tests/virtual.c
++++ b/dlls/kernel32/tests/virtual.c
+@@ -3604,9 +3604,7 @@ static void test_CreateFileMapping_protection(void)
+                 SetLastError(0xdeadbeef);
+                 ret = VirtualQuery(base, &info, sizeof(info));
+                 ok(ret, "VirtualQuery failed %ld\n", GetLastError());
+-                /* FIXME: remove the condition below once Wine is fixed */
+-                todo_wine_if (td[i].prot == PAGE_WRITECOPY || td[i].prot == PAGE_EXECUTE_WRITECOPY)
+-                    ok(info.Protect == td[i].prot_after_write, "%ld: got %#lx != expected %#lx\n", i, info.Protect, td[i].prot_after_write);
++                ok(info.Protect == td[i].prot_after_write, "%ld: got %#lx != expected %#lx\n", i, info.Protect, td[i].prot_after_write);
+             }
+         }
+         else
+@@ -3620,9 +3618,7 @@ static void test_CreateFileMapping_protection(void)
+         SetLastError(0xdeadbeef);
+         ret = VirtualProtect(base, si.dwPageSize, PAGE_NOACCESS, &old_prot);
+         ok(ret, "%ld: VirtualProtect error %ld\n", i, GetLastError());
+-        /* FIXME: remove the condition below once Wine is fixed */
+-        todo_wine_if (td[i].prot == PAGE_WRITECOPY || td[i].prot == PAGE_EXECUTE_WRITECOPY)
+-            ok(old_prot == td[i].prot_after_write, "%ld: got %#lx != expected %#lx\n", i, old_prot, td[i].prot_after_write);
++        ok(old_prot == td[i].prot_after_write, "%ld: got %#lx != expected %#lx\n", i, old_prot, td[i].prot_after_write);
+ 
+         UnmapViewOfFile(base);
+     }
+@@ -3975,15 +3971,12 @@ static void test_mapping( HANDLE hfile, DWORD sec_flags, BOOL readonly )
+                         continue;
+                     }
+ 
+-                    todo_wine_if(readonly && page_prot[k] == PAGE_WRITECOPY && view[j].prot != PAGE_WRITECOPY)
+                     ok(ret, "VirtualProtect error %ld, map %#lx, view %#lx, requested prot %#lx\n", GetLastError(), page_prot[i], view[j].prot, page_prot[k]);
+-                    todo_wine_if(readonly && page_prot[k] == PAGE_WRITECOPY && view[j].prot != PAGE_WRITECOPY)
+                     ok(old_prot == prev_prot, "got %#lx, expected %#lx\n", old_prot, prev_prot);
+                     prev_prot = actual_prot;
+ 
+                     ret = VirtualQuery(base, &info, sizeof(info));
+                     ok(ret, "%ld: VirtualQuery failed %ld\n", j, GetLastError());
+-                    todo_wine_if(readonly && page_prot[k] == PAGE_WRITECOPY && view[j].prot != PAGE_WRITECOPY)
+                     ok(info.Protect == actual_prot,
+                        "VirtualProtect wrong prot, map %#lx, view %#lx, requested prot %#lx got %#lx\n",
+                        page_prot[i], view[j].prot, page_prot[k], info.Protect );
+@@ -4038,15 +4031,12 @@ static void test_mapping( HANDLE hfile, DWORD sec_flags, BOOL readonly )
+             if (!anon_mapping && is_compatible_protection(alloc_prot, PAGE_WRITECOPY))
+             {
+                 ret = VirtualProtect(base, sec_flags & SEC_IMAGE ? si.dwPageSize : 2*si.dwPageSize, PAGE_WRITECOPY, &old_prot);
+-                todo_wine_if(readonly && view[j].prot != PAGE_WRITECOPY)
+                 ok(ret, "VirtualProtect error %ld, map %#lx, view %#lx\n", GetLastError(), page_prot[i], view[j].prot);
+                 if (ret) *(DWORD*)base = 0xdeadbeef;
+                 ret = VirtualQuery(base, &info, sizeof(info));
+                 ok(ret, "%ld: VirtualQuery failed %ld\n", j, GetLastError());
+-                todo_wine
+                 ok(info.Protect == PAGE_READWRITE, "VirtualProtect wrong prot, map %#lx, view %#lx got %#lx\n",
+                    page_prot[i], view[j].prot, info.Protect );
+-                todo_wine_if (!(sec_flags & SEC_IMAGE))
+                 ok(info.RegionSize == si.dwPageSize, "wrong region size %#Ix after write, map %#lx, view %#lx got %#lx\n",
+                    info.RegionSize, page_prot[i], view[j].prot, info.Protect );
+ 
+@@ -4057,7 +4047,6 @@ static void test_mapping( HANDLE hfile, DWORD sec_flags, BOOL readonly )
+                 {
+                     ret = VirtualQuery((char*)base + si.dwPageSize, &info, sizeof(info));
+                     ok(ret, "%ld: VirtualQuery failed %ld\n", j, GetLastError());
+-                    todo_wine_if(readonly && view[j].prot != PAGE_WRITECOPY)
+                     ok(info.Protect == PAGE_WRITECOPY, "wrong prot, map %#lx, view %#lx got %#lx\n",
+                        page_prot[i], view[j].prot, info.Protect);
+                 }
+@@ -4077,14 +4066,11 @@ static void test_mapping( HANDLE hfile, DWORD sec_flags, BOOL readonly )
+                             continue;
+                         }
+ 
+-                        todo_wine_if(readonly && page_prot[k] == PAGE_WRITECOPY && view[j].prot != PAGE_WRITECOPY)
+                         ok(ret, "VirtualProtect error %ld, map %#lx, view %#lx, requested prot %#lx\n", GetLastError(), page_prot[i], view[j].prot, page_prot[k]);
+-                        todo_wine_if(readonly && page_prot[k] == PAGE_WRITECOPY && view[j].prot != PAGE_WRITECOPY)
+                         ok(old_prot == prev_prot, "got %#lx, expected %#lx\n", old_prot, prev_prot);
+ 
+                         ret = VirtualQuery(base, &info, sizeof(info));
+                         ok(ret, "%ld: VirtualQuery failed %ld\n", j, GetLastError());
+-                        todo_wine_if( map_prot_written( page_prot[k] ) != actual_prot )
+                         ok(info.Protect == map_prot_written( page_prot[k] ),
+                            "VirtualProtect wrong prot, map %#lx, view %#lx, requested prot %#lx got %#lx\n",
+                            page_prot[i], view[j].prot, page_prot[k], info.Protect );
+@@ -4125,7 +4111,6 @@ static void test_mappings(void)
+     SetFilePointer(hfile, 0, NULL, FILE_BEGIN);
+     ok(ReadFile(hfile, &data, sizeof(data), &num_bytes, NULL), "ReadFile failed\n");
+     ok(num_bytes == sizeof(data), "num_bytes = %ld\n", num_bytes);
+-    todo_wine
+     ok(!data, "data = %lx\n", data);
+ 
+     CloseHandle( hfile );
+diff --git a/dlls/psapi/tests/psapi_main.c b/dlls/psapi/tests/psapi_main.c
+index 185a4062092..1721968395d 100644
+--- a/dlls/psapi/tests/psapi_main.c
++++ b/dlls/psapi/tests/psapi_main.c
+@@ -821,6 +821,9 @@ static void test_QueryWorkingSetEx(void)
+     check_QueryWorkingSetEx(addr, "exe,readonly1", 0, 0, 1, TRUE);
+ 
+     *(volatile char *)addr;
++    check_QueryWorkingSetEx(addr, "exe,readonly2", 1, PAGE_READONLY, 1, FALSE);
++
++    ret = VirtualProtect(addr, 0x1000, PAGE_EXECUTE_READWRITE, &prot);
+     ok(ret, "VirtualProtect failed with %ld\n", GetLastError());
+     check_QueryWorkingSetEx(addr, "exe,readonly2", 1, PAGE_READONLY, 1, FALSE);
+ 
+-- 
+2.35.1
+
