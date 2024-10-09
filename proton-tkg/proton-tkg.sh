@@ -933,6 +933,16 @@ else
     cp -rv liberation-fonts-ttf*/Liberation{Sans-Regular,Sans-Bold,Serif-Regular,Mono-Regular}.ttf "$_nowhere/proton_template/share/fonts"/
     cd "$_nowhere"
 
+    # Umu-protonfixes
+    rm -rf proton_template/share/protonfixes/*
+    git clone https://github.com/Open-Wine-Components/umu-protonfixes.git || true
+    cd umu-protonfixes
+    git reset --hard HEAD
+    git clean -xdf
+    git pull origin master
+    cp -rv "$_nowhere/umu-protonfixes/"* "$_nowhere/proton_template/share/protonfixes"/
+    cd "$_nowhere"
+
     if [ "$_NUKR" != "debug" ]; then
       if [ -d Proton ] && [ ! -f Proton/proton ]; then
         ( cd Proton && find . -name . -o -prune -exec rm -rf -- {} + ) # We need to clean everything including dotfiles
@@ -1202,6 +1212,8 @@ else
       patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
       cd "$_nowhere"
     fi
+
+
 
     rm -f "$_nowhere/proton_tkg_$_protontkg_version/proton.orig"
 
