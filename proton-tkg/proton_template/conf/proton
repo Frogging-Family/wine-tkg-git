@@ -1837,6 +1837,12 @@ class Session:
                 comfile.write("Command: " + str(sys.argv[2:]) + "\n")
                 comfile.close()
 
+    def run(self):
+        if shutil.which('steam-runtime-launcher-interface-0') is not None:
+            adverb = ['steam-runtime-launcher-interface-0', 'proton']
+        else:
+            adverb = []
+
         if self.remote_debug_cmd:
             remote_debug_cmd = self.remote_debug_cmd
             if not os.path.isabs(remote_debug_cmd[0]):
@@ -1846,57 +1852,29 @@ class Session:
         else:
             remote_debug_proc = None
 
-        commandstring = str(sys.argv[2:] + self.cmdlineappend)
+        # CoD: Black Ops 3 workaround
+        if os.environ.get("SteamGameId", 0) in [
+                    "311210",   # CoD: Black Ops 3
+                    "1549250",  # Undecember
+                ]:
+            argv = [g_proton.wine_bin, "c:\\Program Files (x86)\\Steam\\steam.exe"]
+        # Don't use steam if it's not a steam game
+        # Prevent this warning for non-steam games:
+        # [S_API FAIL] SteamAPI_Init() failed; no appID found.
+        # Either launch the game from Steam, or put the file steam_appid.txt containing the correct appID in your game folder.
+        elif "UMU_ID" in os.environ:
+            log(sys.argv[2])
+            if len(sys.argv) >=  3 and sys.argv[2].startswith('/'):
+                log("Executable a unix path, launching with /unix option.")
+                argv = [g_proton.wine64_bin, "start", "/unix"]
+            else:
+                log("Executable is inside wine prefix, launching normally.")
+                argv = [g_proton.wine64_bin]
 
-        # use a string check instead of single string in case we need to check for more in the future
-        check_args = [
-            'iscriptevaluator.exe' in commandstring,
-            'link2ea' in commandstring,
-            'getcompatpath' in str(sys.argv[1]),
-            'getnativepath' in str(sys.argv[1]),
-        ]
-
-        gamebin = (os.path.basename(sys.argv[2]))
-        if any(check_args) in self.compat_config or os.environ.get("SteamGameId", 0) == "311210":
-            commandtorun=[g_proton.wine64_bin, "C:\\Program Files (x86)\\Steam\\Steam.exe"] + sys.argv[2:] + self.cmdlineappend
-        elif "standalonestart" in self.compat_config:
-            commandtorun=[g_proton.wine64_bin] + [gamebin] + self.cmdlineappend
-            os.chdir(os.path.dirname(sys.argv[2]))
         else:
-            commandtorun=[g_proton.wine64_bin, "start.exe", "/b", "C:\\Program Files (x86)\\Steam\\Steam.exe"] + sys.argv[2:] + self.cmdlineappend
+            argv = [g_proton.wine64_bin, "c:\\windows\\system32\\steam.exe"]
 
-        if "winetricks" in self.compat_config:
-            if os.path.exists(os.environ["STEAM_COMPAT_DATA_PATH"]):
-                tricksfile_path = os.environ["STEAM_COMPAT_DATA_PATH"] + "/tricks"
-                if not os.path.exists(tricksfile_path):
-                    try:
-                        import tkinter as tk
-                        from tkinter import messagebox
-                        import time
-                        root = tk.Tk()
-                        root.withdraw()
-                        if not len( os.popen( "ps -aef | grep -i 'winetricks' | grep -v 'grep' | awk '{ print $3 }'" ).read().strip().split( '\n' ) ) > 1:
-                            if "tk" == root.title():
-                                if messagebox.askyesno('Proton-tkg', 'Do you want to run winetricks?'):
-                                    root.destroy()
-                                    open(tricksfile_path, "w+").close()
-                                    commandtorun=g_proton.winetricks_bin
-                                else:
-                                    root.destroy()
-                                    open(tricksfile_path, "w+").close()
-                    except ImportError:
-                        if any(check_args) in self.compat_config:
-                            commandtorun=[g_proton.wine64_bin, "C:\\Program Files (x86)\\Steam\\Steam.exe"] + sys.argv[2:] + self.cmdlineappend
-                        elif "standalonestart" in self.compat_config:
-                            commandtorun=[g_proton.wine64_bin] + [gamebin] + self.cmdlineappend
-                            os.chdir(os.path.dirname(sys.argv[2]))
-                        else:
-                            commandtorun=[g_proton.wine64_bin, "start.exe", "/b", "C:\\Program Files (x86)\\Steam\\Steam.exe"] + sys.argv[2:] + self.cmdlineappend
-
-        if "useglosmesa" in self.compat_config and not "winetricks" in self.compat_config:
-            rc = self.run_proc(commandtorun + ["--use-gl=osmesa"])
-        else:
-            rc = self.run_proc(commandtorun)
+        rc = self.run_proc(adverb + argv + sys.argv[2:] + self.cmdlineappend)
 
         if remote_debug_proc:
             remote_debug_proc.kill()
@@ -1910,7 +1888,7 @@ class Session:
         return rc
 
 if __name__ == "__main__":
-    if not "STEAM_COMPAT_DATA_PATH" in os.environ:
+    if "STEAM_COMPAT_DATA_PATH" not in os.environ:
         log("No compat data path?")
         sys.exit(1)
 
@@ -1925,10 +1903,33 @@ if __name__ == "__main__":
 
     g_session.init_wine()
 
+    # This is needed for protonfixes
+    os.environ["PROTON_DLL_COPY"] = "*"
+
     if g_proton.missing_default_prefix():
         g_proton.make_default_prefix()
 
     g_session.init_session(sys.argv[1] != "runinprefix")
+
+    # Allow umu clients to run winetricks verbs and be the frontend for them
+    if (
+        g_session.env.get("UMU_ID")
+        and g_session.env.get("EXE", "").endswith("winetricks")
+        and g_session.env.get("PROTON_VERB") == "waitforexitandrun"
+    ):
+        wt_verbs = " ".join(sys.argv[2:][2:])
+        g_session.env["WINE"] = g_proton.wine_bin
+        g_session.env["WINELOADER"] = g_proton.wine_bin
+        g_session.env["WINESERVER"] = g_proton.wineserver_bin
+        g_session.env["WINETRICKS_LATEST_VERSION_CHECK"] = "disabled"
+        g_session.env["LD_PRELOAD"] = ""
+
+        log(f"Running winetricks verbs in prefix: {wt_verbs}")
+        rc = subprocess.run(sys.argv[2:], check=False, env=g_session.env).returncode
+
+        sys.exit(rc)
+
+    import protonfixes
 
     #determine mode
     rc = 0
