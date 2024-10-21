@@ -188,7 +188,7 @@ _script_init() {
   # dependencies
   if [[ "$_nomakepkg_dependency_autoresolver" == "true" ]] && [ "$_DEPSHELPER" != "1" ]; then
     source "$_where"/wine-tkg-scripts/deps
-    if [[ "${_ci_build}" != "true" ]]; then
+    if [[ "${_ci_build}" != "true" ]] && [ "$_os" = "ubuntu" ]; then
       warning "PLEASE MAKE SURE TO READ https://github.com/Frogging-Family/wine-tkg-git/issues/773 BEFORE ATTEMPTING TO USE \"debuntu\" dependency resolution"
       read -rp "Either press enter to continue, or ctrl+c to leave."
     fi
