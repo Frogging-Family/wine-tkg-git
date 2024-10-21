@@ -232,10 +232,8 @@ nonuser_patcher() {
     echo -e "\n${_patchname}${_fullpatchmsg}" >>"$_where"/prepare.log
     if [ -n "$_patchpath" ]; then
       if [ -f "${_patchpath%/*}"/mainline/"$_patchname" ] || [ -f "${_patchpath%/*}"/mainline/legacy/"$_patchname" ]; then
-        warning "mainline"
         _patchpath="${_patchpath%/*}/mainline/"
       elif [ -f "${_patchpath%/*}"/staging/"$_patchname" ] || [ -f "${_patchpath%/*}"/staging/legacy/"$_patchname" ]; then
-        warning "staging"
         _patchpath="${_patchpath%/*}/staging/"
       fi
       if [ -e "${_patchpath%/*}"/"$_patchname" ]; then
