@@ -1082,7 +1082,7 @@ _polish() {
 
 	echo "" >> "$_where"/last_build_config.log
 
-	_patchpathes+=( "$_where/wine-tkg-patches/misc/wine-tkg/wine-tkg" ) && _patchpathloader
+	_patchpathes=( "$_where/wine-tkg-patches/misc/wine-tkg/wine-tkg" ) && _patchpathloader
 
 	# tools/make_makefiles destroys Valve trees - disable on those
 	if [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
