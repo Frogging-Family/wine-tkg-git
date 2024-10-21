@@ -894,6 +894,7 @@ _prepare() {
 
 	# Update winevulkan
 	if [ "$_update_winevulkan" = "true" ] && ! git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && git merge-base --is-ancestor eb39d3dbcac7a8d9c17211ab358cda4b7e07708a HEAD; then
+	  _patchpath=( "$_where/wine-tkg-patches/misc/winevulkan/" )
 	  _patchname='winevulkan-1.1.103.patch' && _patchmsg="Applied winevulkan 1.1.103 patch" && nonuser_patcher
 	fi
 
@@ -913,6 +914,7 @@ _prepare() {
 
 	# Reverts c6b6935 due to https://bugs.winehq.org/show_bug.cgi?id=47752
 	if [ "$_c6b6935_revert" = "true" ] && ! git merge-base --is-ancestor cb703739e5c138e3beffab321b84edb129156000 HEAD; then
+	  _patchpath=( "$_where/wine-tkg-patches/misc/reverts/" )
 	  _patchname='revert-c6b6935.patch' && _patchmsg="Reverted c6b6935 to fix regression affecting performance negatively" && nonuser_patcher
 	fi
 
