@@ -136,7 +136,7 @@ _build_serial() {
 		fi
 		_exports_64
 		_configure_64
-		_build_64
+		_build_64 || exit 1
 	fi
 	if [ "$_NOLIB32" != "true" ] && [ "$_NOLIB32" != "wow64" ]; then
 		# build wine 32-bit
@@ -155,7 +155,7 @@ _build_serial() {
 		# /nomakepkg
 		_exports_32
 		_configure_32
-		_build_32
+		_build_32 || exit 1
 		if [ "$_nomakepkg_dependency_autoresolver" = "true" ] && [ "$_NOLIB64" != "true" ]; then # Install 64-bit deps back after 32-bit wine is built
 			install_deps "64" "${_ci_build}" || {
 				error "64-bit deps installation failed, aborting."
