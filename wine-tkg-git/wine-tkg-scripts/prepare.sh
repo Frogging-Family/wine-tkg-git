@@ -1150,11 +1150,14 @@ _polish() {
 	  else
 	    _version_tags+=(Plain)
 	  fi
-	  if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
+	  if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ] && [ "$_use_ntsync" != "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	   _version_tags+=(Esync)
 	  fi
 	  if [ "$_use_fsync" = "true" ] && [ "$_staging_esync" = "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	    _version_tags+=(Fsync)
+	  fi
+	  if [ "$_use_ntsync" = "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
+	    _version_tags+=(NTsync)
 	  fi
 	  if [ "$_use_pba" = "true" ] && [ "$_pba_version" != "none" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	    _version_tags+=(PBA)
