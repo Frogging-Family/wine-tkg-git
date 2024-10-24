@@ -1,0 +1,3518 @@
+From aa7fa7ce94bd4e49e3843a8ea398d29882518e43 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Mon, 6 Aug 2018 08:06:03 -0500
+Subject: [PATCH] server: Set default timeout to 0
+
+The Steam client will be waiting for the wineserver to exit to set up
+some environment variables, so make it wait as short as possible.
+---
+ server/main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/server/main.c b/server/main.c
+index 20d3c48c4d9..aca8738c4c0 100644
+--- a/server/main.c
++++ b/server/main.c
+@@ -42,7 +42,7 @@
+ /* command-line options */
+ int debug_level = 0;
+ int foreground = 0;
+-timeout_t master_socket_timeout = 3 * -TICKS_PER_SEC;  /* master socket timeout, default is 3 seconds */
++timeout_t master_socket_timeout = 0; /* master socket timeout, default is 3 seconds */
+ const char *server_argv0;
+ 
+ /* parse-line args */
+
+From ba15ba1c9b8ee40e13ef1bd7f018924259f36c1b Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Mon, 18 Jun 2018 07:56:35 -0500
+Subject: [PATCH] ntdll: Notice THREADNAME_INFO exceptions and set thread name
+ on Linux
+
+Patch by Zeb.
+---
+ dlls/ntdll/unix/thread.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
+index 3b451a22577..ca5dac43bb0 100644
+--- a/dlls/ntdll/unix/thread.c
++++ b/dlls/ntdll/unix/thread.c
+@@ -43,6 +43,9 @@
+ #ifdef HAVE_SYS_SYSCALL_H
+ #include <sys/syscall.h>
+ #endif
++#ifdef HAVE_PRCTL
++#include <sys/prctl.h>
++#endif
+ 
+ #define NONAMELESSUNION
+ #include "ntstatus.h"
+@@ -344,6 +347,16 @@ void wait_suspend( CONTEXT *context )
+ }
+ 
+ 
++/* "How to: Set a Thread Name in Native Code"
++ * https://msdn.microsoft.com/en-us/library/xcb2z8hs.aspx */
++typedef struct tagTHREADNAME_INFO
++{
++   DWORD   dwType;     /* Must be 0x1000 */
++   LPCSTR  szName;     /* Pointer to name - limited to 9 bytes (8 characters + terminator) */
++   DWORD   dwThreadID; /* Thread ID (-1 = caller thread) */
++   DWORD   dwFlags;    /* Reserved for future use.  Must be zero. */
++} THREADNAME_INFO;
++
+ /**********************************************************************
+  *           send_debug_event
+  *
+@@ -366,6 +379,21 @@ NTSTATUS send_debug_event( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL first_c
+     for (i = 0; i < min( rec->NumberParameters, EXCEPTION_MAXIMUM_PARAMETERS ); i++)
+         params[i] = rec->ExceptionInformation[i];
+ 
++    if (rec->ExceptionCode == 0x406d1388)
++    {
++        const THREADNAME_INFO *threadname = (const THREADNAME_INFO *)rec->ExceptionInformation;
++
++        if (threadname->dwThreadID == -1)
++        {
++#ifdef HAVE_PRCTL
++#ifndef PR_SET_NAME
++# define PR_SET_NAME 15
++#endif
++            prctl( PR_SET_NAME, threadname->szName );
++#endif
++        }
++    }
++
+     SERVER_START_REQ( queue_exception_event )
+     {
+         req->first   = first_chance;
+From 90e3616c89ef7ed38763a3e3af3e9f0cd59697da Mon Sep 17 00:00:00 2001
+From: Nikolay Sivov <nsivov@codeweavers.com>
+Date: Wed, 8 Mar 2017 20:15:40 +0300
+Subject: [PATCH] HACK: dwrite: Don't recommend outline rendering mode
+
+---
+ dlls/dwrite/font.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/dwrite/font.c b/dlls/dwrite/font.c
+index e22559912c3..41ec809b727 100644
+--- a/dlls/dwrite/font.c
++++ b/dlls/dwrite/font.c
+@@ -740,7 +740,8 @@ static HRESULT WINAPI dwritefontface_GetRecommendedRenderingMode(IDWriteFontFace
+ 
+     ppem = emSize * ppdip;
+ 
+-    if (ppem >= RECOMMENDED_OUTLINE_AA_THRESHOLD) {
++    /* HACK: disable outline rendering mode to workaround d2d issue */
++    if (0 && ppem >= RECOMMENDED_OUTLINE_AA_THRESHOLD) {
+         *mode = DWRITE_RENDERING_MODE_OUTLINE;
+         return S_OK;
+     }
+From 5c59517008697ce74becddb59a3e6702a963bb49 Mon Sep 17 00:00:00 2001
+From: Zhiyi Zhang <zzhang@codeweavers.com>
+Date: Fri, 16 Aug 2019 09:46:25 +0000
+Subject: [PATCH] msctf: Use list to keep thread managers.
+
+Thread managers were stored in thread local storage,
+which have a major flaw that they can't not be released
+by another thread.
+
+Signed-off-by: Zhiyi Zhang <zzhang@codeweavers.com>
+---
+ dlls/msctf/msctf.c          | 46 +++++++----------------
+ dlls/msctf/msctf_internal.h |  1 -
+ dlls/msctf/threadmgr.c      | 73 ++++++++++++++++++++++++++++++++-----
+ 3 files changed, 76 insertions(+), 44 deletions(-)
+
+diff --git a/dlls/msctf/msctf.c b/dlls/msctf/msctf.c
+index c6e3a2ca597..fd919295c5a 100644
+--- a/dlls/msctf/msctf.c
++++ b/dlls/msctf/msctf.c
+@@ -69,7 +69,6 @@ static UINT array_size;
+ static struct list AtsList = LIST_INIT(AtsList);
+ static UINT activated = 0;
+ 
+-DWORD tlsIndex = 0;
+ TfClientId processId = 0;
+ ITfCompartmentMgr *globalCompartmentMgr = NULL;
+ 
+@@ -397,23 +396,19 @@ HRESULT add_active_textservice(TF_LANGUAGEPROFILE *lp)
+     ActivatedTextService *actsvr;
+     ITfCategoryMgr *catmgr;
+     AtsEntry *entry;
+-    ITfThreadMgrEx *tm = TlsGetValue(tlsIndex);
++    ITfThreadMgr *tm;
+     ITfClientId *clientid;
+ 
+-    if (!tm) return E_UNEXPECTED;
++    if (FAILED(TF_GetThreadMgr(&tm))) return E_UNEXPECTED;
+ 
+     actsvr = malloc(sizeof(ActivatedTextService));
+-    if (!actsvr) return E_OUTOFMEMORY;
++    if (!actsvr) goto fail;
+ 
+-    ITfThreadMgrEx_QueryInterface(tm, &IID_ITfClientId, (void **)&clientid);
++    ITfThreadMgr_QueryInterface(tm, &IID_ITfClientId, (void **)&clientid);
+     ITfClientId_GetClientId(clientid, &lp->clsid, &actsvr->tid);
+     ITfClientId_Release(clientid);
+ 
+-    if (!actsvr->tid)
+-    {
+-        free(actsvr);
+-        return E_OUTOFMEMORY;
+-    }
++    if (!actsvr->tid) goto fail;
+ 
+     actsvr->pITfTextInputProcessor = NULL;
+     actsvr->LanguageProfile = *lp;
+@@ -440,20 +435,21 @@ HRESULT add_active_textservice(TF_LANGUAGEPROFILE *lp)
+         deactivate_remove_conflicting_ts(&actsvr->LanguageProfile.catid);
+ 
+     if (activated > 0)
+-        activate_given_ts(actsvr, tm);
++        activate_given_ts(actsvr, (ITfThreadMgrEx *)tm);
+ 
+     entry = malloc(sizeof(AtsEntry));
+-
+-    if (!entry)
+-    {
+-        free(actsvr);
+-        return E_OUTOFMEMORY;
+-    }
++    if (!entry) goto fail;
+ 
+     entry->ats = actsvr;
+     list_add_head(&AtsList, &entry->entry);
+ 
++    ITfThreadMgr_Release(tm);
+     return S_OK;
++
++fail:
++    ITfThreadMgr_Release(tm);
++    free(actsvr);
++    return E_OUTOFMEMORY;
+ }
+ 
+ BOOL get_active_textservice(REFCLSID rclsid, TF_LANGUAGEPROFILE *profile)
+@@ -560,11 +556,9 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD fdwReason, LPVOID fImpLoad)
+     switch (fdwReason)
+     {
+         case DLL_PROCESS_ATTACH:
+-            tlsIndex = TlsAlloc();
+             break;
+         case DLL_PROCESS_DETACH:
+             if (fImpLoad) break;
+-            TlsFree(tlsIndex);
+             break;
+     }
+     return TRUE;
+@@ -622,20 +616,6 @@ HRESULT WINAPI TF_CreateThreadMgr(ITfThreadMgr **pptim)
+     return ThreadMgr_Constructor(NULL,(IUnknown**)pptim);
+ }
+ 
+-/***********************************************************************
+- *              TF_GetThreadMgr (MSCTF.@)
+- */
+-HRESULT WINAPI TF_GetThreadMgr(ITfThreadMgr **pptim)
+-{
+-    TRACE("\n");
+-    *pptim = TlsGetValue(tlsIndex);
+-
+-    if (*pptim)
+-        ITfThreadMgr_AddRef(*pptim);
+-
+-    return S_OK;
+-}
+-
+ /***********************************************************************
+  *              SetInputScope(MSCTF.@)
+  */
+diff --git a/dlls/msctf/msctf_internal.h b/dlls/msctf/msctf_internal.h
+index 584bb1044ed..ace2bee23d9 100644
+--- a/dlls/msctf/msctf_internal.h
++++ b/dlls/msctf/msctf_internal.h
+@@ -35,7 +35,6 @@
+ #define COOKIE_MAGIC_UIELEMENTSINK 0x00a0
+ #define COOKIE_MAGIC_INPUTPROCESSORPROFILEACTIVATIONSINK 0x00b0
+ 
+-extern DWORD tlsIndex;
+ extern TfClientId processId;
+ extern ITfCompartmentMgr *globalCompartmentMgr;
+ 
+diff --git a/dlls/msctf/threadmgr.c b/dlls/msctf/threadmgr.c
+index 2c208fbc04f..2119ea2193b 100644
+--- a/dlls/msctf/threadmgr.c
++++ b/dlls/msctf/threadmgr.c
+@@ -37,6 +37,17 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(msctf);
+ 
++static CRITICAL_SECTION ThreadMgrCs;
++static CRITICAL_SECTION_DEBUG ThreadMgrCsDebug =
++{
++    0, 0, &ThreadMgrCs,
++    {&ThreadMgrCsDebug.ProcessLocksList,
++     &ThreadMgrCsDebug.ProcessLocksList },
++     0, 0, {(DWORD_PTR)(__FILE__ ": ThreadMgrCs")}
++};
++static CRITICAL_SECTION ThreadMgrCs = {&ThreadMgrCsDebug, -1, 0, 0, 0, 0};
++struct list ThreadMgrList = LIST_INIT(ThreadMgrList);
++
+ typedef struct tagPreservedKey
+ {
+     struct list     entry;
+@@ -98,6 +109,9 @@ typedef struct tagACLMulti {
+     struct list     ThreadMgrEventSink;
+     struct list     UIElementSink;
+     struct list     InputProcessorProfileActivationSink;
++
++    DWORD threadId;
++    struct list entry;
+ } ThreadMgr;
+ 
+ typedef struct tagEnumTfDocumentMgr {
+@@ -110,6 +124,11 @@ typedef struct tagEnumTfDocumentMgr {
+ 
+ static HRESULT EnumTfDocumentMgr_Constructor(struct list* head, IEnumTfDocumentMgrs **ppOut);
+ 
++static inline ThreadMgr *impl_from_ITfThreadMgr(ITfThreadMgr *iface)
++{
++    return CONTAINING_RECORD(iface, ThreadMgr, ITfThreadMgrEx_iface);
++}
++
+ static inline ThreadMgr *impl_from_ITfThreadMgrEx(ITfThreadMgrEx *iface)
+ {
+     return CONTAINING_RECORD(iface, ThreadMgr, ITfThreadMgrEx_iface);
+@@ -155,6 +174,35 @@ static inline EnumTfDocumentMgr *impl_from_IEnumTfDocumentMgrs(IEnumTfDocumentMg
+     return CONTAINING_RECORD(iface, EnumTfDocumentMgr, IEnumTfDocumentMgrs_iface);
+ }
+ 
++/***********************************************************************
++ *              TF_GetThreadMgr (MSCTF.@)
++ */
++HRESULT WINAPI TF_GetThreadMgr(ITfThreadMgr **pptim)
++{
++    DWORD id = GetCurrentThreadId();
++    ThreadMgr *cursor;
++
++    TRACE("%p\n", pptim);
++
++    if (!pptim)
++        return E_INVALIDARG;
++
++    EnterCriticalSection(&ThreadMgrCs);
++    LIST_FOR_EACH_ENTRY(cursor, &ThreadMgrList, ThreadMgr, entry)
++    {
++        if (cursor->threadId == id)
++        {
++            ITfThreadMgrEx_AddRef(&cursor->ITfThreadMgrEx_iface);
++            *pptim = (ITfThreadMgr *)&cursor->ITfThreadMgrEx_iface;
++            LeaveCriticalSection(&ThreadMgrCs);
++            return S_OK;
++        }
++    }
++    LeaveCriticalSection(&ThreadMgrCs);
++    *pptim = NULL;
++    return E_FAIL;
++}
++
+ static void ThreadMgr_Destructor(ThreadMgr *This)
+ {
+     struct list *cursor, *cursor2;
+@@ -163,7 +211,9 @@ static void ThreadMgr_Destructor(ThreadMgr *This)
+     if (This->focusHook)
+         NtUserUnhookWindowsHookEx(This->focusHook);
+ 
+-    TlsSetValue(tlsIndex,NULL);
++    EnterCriticalSection(&ThreadMgrCs);
++    list_remove(&This->entry);
++    LeaveCriticalSection(&ThreadMgrCs);
+     TRACE("destroying %p\n", This);
+     if (This->focus)
+         ITfDocumentMgr_Release(This->focus);
+@@ -386,17 +436,20 @@ static HRESULT WINAPI ThreadMgr_SetFocus(ITfThreadMgrEx *iface, ITfDocumentMgr *
+ 
+ static LRESULT CALLBACK ThreadFocusHookProc(int nCode, WPARAM wParam, LPARAM lParam)
+ {
++    ITfThreadMgr *ThreadMgr_iface;
+     ThreadMgr *This;
+ 
+-    This = TlsGetValue(tlsIndex);
+-    if (!This)
++    if (FAILED(TF_GetThreadMgr(&ThreadMgr_iface)))
+     {
+         ERR("Hook proc but no ThreadMgr for this thread. Serious Error\n");
+         return 0;
+     }
++
++    This = impl_from_ITfThreadMgr(ThreadMgr_iface);
+     if (!This->focusHook)
+     {
+         ERR("Hook proc but no ThreadMgr focus Hook. Serious Error\n");
++        ITfThreadMgr_Release(ThreadMgr_iface);
+         return 0;
+     }
+ 
+@@ -417,6 +470,7 @@ static LRESULT CALLBACK ThreadFocusHookProc(int nCode, WPARAM wParam, LPARAM lPa
+         }
+     }
+ 
++    ITfThreadMgr_Release(ThreadMgr_iface);
+     return CallNextHookEx(This->focusHook, nCode, wParam, lParam);
+ }
+ 
+@@ -1338,13 +1392,8 @@ HRESULT ThreadMgr_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
+         return CLASS_E_NOAGGREGATION;
+ 
+     /* Only 1 ThreadMgr is created per thread */
+-    This = TlsGetValue(tlsIndex);
+-    if (This)
+-    {
+-        ThreadMgr_AddRef(&This->ITfThreadMgrEx_iface);
+-        *ppOut = (IUnknown*)&This->ITfThreadMgrEx_iface;
++    if (SUCCEEDED(TF_GetThreadMgr((ITfThreadMgr **)ppOut)))
+         return S_OK;
+-    }
+ 
+     This = calloc(1, sizeof(ThreadMgr));
+     if (This == NULL)
+@@ -1359,7 +1408,6 @@ HRESULT ThreadMgr_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
+     This->ITfUIElementMgr_iface.lpVtbl = &ThreadMgrUIElementMgrVtbl;
+     This->ITfSourceSingle_iface.lpVtbl = &SourceSingleVtbl;
+     This->refCount = 1;
+-    TlsSetValue(tlsIndex,This);
+ 
+     CompartmentMgr_Constructor((IUnknown*)&This->ITfThreadMgrEx_iface, &IID_IUnknown, (IUnknown**)&This->CompartmentMgr);
+ 
+@@ -1376,6 +1424,11 @@ HRESULT ThreadMgr_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
+     list_init(&This->UIElementSink);
+     list_init(&This->InputProcessorProfileActivationSink);
+ 
++    This->threadId = GetCurrentThreadId();
++    EnterCriticalSection(&ThreadMgrCs);
++    list_add_tail(&ThreadMgrList, &This->entry);
++    LeaveCriticalSection(&ThreadMgrCs);
++
+     TRACE("returning %p\n", This);
+     *ppOut = (IUnknown *)&This->ITfThreadMgrEx_iface;
+     return S_OK;
+From ed04e35d3f7af02267fb4e21578b3ccb27703836 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Mon, 23 Sep 2019 13:29:16 -0500
+Subject: [PATCH] dxdiag: Dump to stdout if no filename is given
+
+---
+ programs/dxdiag/main.c   |  8 +++++++-
+ programs/dxdiag/output.c | 10 +++++++---
+ 2 files changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/programs/dxdiag/main.c b/programs/dxdiag/main.c
+index 4533236f0f5..353e9f50fb9 100644
+--- a/programs/dxdiag/main.c
++++ b/programs/dxdiag/main.c
+@@ -71,7 +71,13 @@ static BOOL process_file_name(const WCHAR *cmdline, enum output_type output_type
+         endptr = cmdline + lstrlenW(cmdline);
+ 
+     len = endptr - cmdline;
+-    if (len == 0 || len >= filename_len)
++    if (len == 0)
++    {
++        *filename = 0;
++        return TRUE;
++    }
++
++    if (len >= filename_len)
+         return FALSE;
+ 
+     memcpy(filename, cmdline, len * sizeof(WCHAR));
+diff --git a/programs/dxdiag/output.c b/programs/dxdiag/output.c
+index 50240fb2860..f0f6a6da0c3 100644
+--- a/programs/dxdiag/output.c
++++ b/programs/dxdiag/output.c
+@@ -169,8 +169,12 @@ static BOOL output_text_information(struct dxdiag_information *dxdiag_info, cons
+ 
+     fill_system_text_output_table(dxdiag_info, output_table[0].fields);
+ 
+-    hFile = CreateFileW(filename, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+-                        NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
++    if (filename && *filename)
++        hFile = CreateFileW(filename, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
++                            NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
++    else
++        hFile = GetStdHandle(STD_OUTPUT_HANDLE);
++
+     if (hFile == INVALID_HANDLE_VALUE)
+     {
+         WINE_ERR("File creation failed, last error %u\n", GetLastError());
+@@ -227,7 +231,7 @@ static HRESULT save_xml_document(IXMLDOMDocument *xmldoc, const WCHAR *filename)
+     VARIANT destVar;
+     HRESULT hr;
+ 
+-    if (!bstr)
++    if (!bstr || !filename || !*filename)
+         return E_OUTOFMEMORY;
+ 
+     V_VT(&destVar) = VT_BSTR;
+From 5cd65deffffad9073538acf4fd8e794ac07824a5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 9 Oct 2019 09:47:12 +0200
+Subject: [PATCH] makedep: Align PE sections so they can be directly mmaped.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This should help linux perf tool match the binary files on disk with the
+code regions in memory.
+
+Signed-off-by: Rémi Bernon <rbernon@codeweavers.com>
+---
+ tools/makedep.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/tools/makedep.c b/tools/makedep.c
+index 6079d1fe28b..18e7b8a913e 100644
+--- a/tools/makedep.c
++++ b/tools/makedep.c
+@@ -3245,6 +3245,7 @@ static void output_module( struct makefile *make )
+     if (debug_file) output_filename( strmake( "-Wl,--debug-file,%s", obj_dir_path( make, debug_file )));
+     output_filenames( all_libs );
+     output_filename( arch_make_variable( "LDFLAGS", link_arch ));
++    output_filename( "-Wl,--file-alignment,4096" );
+     output( "\n" );
+
+     if (*dll_ext && make->is_exe && !make->is_win16 && strendswith( make->module, ".exe" ))
+From 213905a322620eb326b655ab89fbca07316e6357 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Tue, 19 Nov 2019 09:59:17 -0600
+Subject: [PATCH] HACK: dxgi: Return empty GPU string for Crazy Machines 3
+
+If the GPU string is long enough, the game will crash trying to
+dereference part of it. Probably this is due to missing Media Foundation
+support. Try to remove this hack after the game's videos successfully
+play back.
+---
+ dlls/dxgi/adapter.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/dlls/dxgi/adapter.c b/dlls/dxgi/adapter.c
+index d2fc629c843..5a97590dbce 100644
+--- a/dlls/dxgi/adapter.c
++++ b/dlls/dxgi/adapter.c
+@@ -161,12 +161,32 @@ static HRESULT dxgi_adapter_get_desc(struct dxgi_adapter *adapter, DXGI_ADAPTER_
+     if (FAILED(hr = wined3d_get_adapter_identifier(adapter->factory->wined3d, adapter->ordinal, 0, &adapter_id)))
+         return hr;
+ 
++    {
++        /* HACK for Proton issue #3204
++         *
++         * Due to reading uninitialized memory, the game tries to dereference
++         * part of the GPU Description string if it is long enough. So return
++         * an empty string instead.
++         *
++         * See the bug report for the full description, but we may be able to
++         * remove this hack after implementing enough of Media Foundation for
++         * this game's videos to play back.
++         */
++        const char *sgi = getenv("SteamGameId");
++        if(sgi && !strcmp(sgi, "351920"))
++        {
++            desc->Description[0] = 0;
++            goto skip_description;
++        }
++    }
++
+     if (!MultiByteToWideChar(CP_ACP, 0, description, -1, desc->Description, ARRAY_SIZE(description)))
+     {
+         DWORD err = GetLastError();
+         ERR("Failed to translate description %s (%#lx).\n", debugstr_a(description), err);
+         hr = E_FAIL;
+     }
++skip_description:
+ 
+     desc->VendorId = adapter_id.vendor_id;
+     desc->DeviceId = adapter_id.device_id;
+From 4aa052e0c8ae276fc07afcd93d6e290a88214837 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Wed, 15 Jan 2020 10:17:23 -0600
+Subject: [PATCH] dsound: Initialize primary buffer with device's channel
+ layout
+
+Fixes surround sound in some games, like Borderlands GOTY and Dead
+Space.
+---
+ dlls/dsound/dsound.c         | 77 +-----------------------------------
+ dlls/dsound/dsound_private.h |  1 -
+ dlls/dsound/primary.c        | 75 ++++++++++++++++++++++++++++++++++-
+ 3 files changed, 76 insertions(+), 77 deletions(-)
+
+diff --git a/dlls/dsound/dsound.c b/dlls/dsound/dsound.c
+index 8e2b839fe89..630d8c7e16a 100644
+--- a/dlls/dsound/dsound.c
++++ b/dlls/dsound/dsound.c
+@@ -23,7 +23,6 @@
+ #include <assert.h>
+ #include <stdarg.h>
+ #include <stdio.h>
+-#include <math.h>
+ 
+ #define COBJMACROS
+ 
+@@ -138,9 +137,9 @@ static HRESULT DirectSoundDevice_Create(DirectSoundDevice ** ppDevice)
+     device->ref            = 1;
+     device->priolevel      = DSSCL_NORMAL;
+     device->stopped        = 1;
+-    device->speaker_config = DSSPEAKER_COMBINED(DSSPEAKER_STEREO, DSSPEAKER_GEOMETRY_WIDE);
+ 
+-    DSOUND_ParseSpeakerConfig(device);
++    device->speaker_config = 0;
++    device->num_speakers = 0;
+ 
+     /* 3D listener initial parameters */
+     device->ds3dl.dwSize   = sizeof(DS3DLISTENER);
+@@ -1127,75 +1126,3 @@ HRESULT WINAPI DirectSoundCreate8(
+ 
+     return hr;
+ }
+-
+-void DSOUND_ParseSpeakerConfig(DirectSoundDevice *device)
+-{
+-    switch (DSSPEAKER_CONFIG(device->speaker_config)) {
+-        case DSSPEAKER_MONO:
+-            device->speaker_angles[0] = M_PI/180.0f * 0.0f;
+-            device->speaker_num[0] = 0;
+-            device->num_speakers = 1;
+-            device->lfe_channel = -1;
+-        break;
+-
+-        case DSSPEAKER_STEREO:
+-        case DSSPEAKER_HEADPHONE:
+-            device->speaker_angles[0] = M_PI/180.0f * -90.0f;
+-            device->speaker_angles[1] = M_PI/180.0f *  90.0f;
+-            device->speaker_num[0] = 0; /* Left */
+-            device->speaker_num[1] = 1; /* Right */
+-            device->num_speakers = 2;
+-            device->lfe_channel = -1;
+-        break;
+-
+-        case DSSPEAKER_QUAD:
+-            device->speaker_angles[0] = M_PI/180.0f * -135.0f;
+-            device->speaker_angles[1] = M_PI/180.0f *  -45.0f;
+-            device->speaker_angles[2] = M_PI/180.0f *   45.0f;
+-            device->speaker_angles[3] = M_PI/180.0f *  135.0f;
+-            device->speaker_num[0] = 2; /* Rear left */
+-            device->speaker_num[1] = 0; /* Front left */
+-            device->speaker_num[2] = 1; /* Front right */
+-            device->speaker_num[3] = 3; /* Rear right */
+-            device->num_speakers = 4;
+-            device->lfe_channel = -1;
+-        break;
+-
+-        case DSSPEAKER_5POINT1_BACK:
+-            device->speaker_angles[0] = M_PI/180.0f * -135.0f;
+-            device->speaker_angles[1] = M_PI/180.0f *  -45.0f;
+-            device->speaker_angles[2] = M_PI/180.0f *    0.0f;
+-            device->speaker_angles[3] = M_PI/180.0f *   45.0f;
+-            device->speaker_angles[4] = M_PI/180.0f *  135.0f;
+-            device->speaker_angles[5] = 9999.0f;
+-            device->speaker_num[0] = 4; /* Rear left */
+-            device->speaker_num[1] = 0; /* Front left */
+-            device->speaker_num[2] = 2; /* Front centre */
+-            device->speaker_num[3] = 1; /* Front right */
+-            device->speaker_num[4] = 5; /* Rear right */
+-            device->speaker_num[5] = 3; /* LFE */
+-            device->num_speakers = 6;
+-            device->lfe_channel = 3;
+-        break;
+-
+-        case DSSPEAKER_5POINT1_SURROUND:
+-            device->speaker_angles[0] = M_PI/180.0f *  -90.0f;
+-            device->speaker_angles[1] = M_PI/180.0f *  -30.0f;
+-            device->speaker_angles[2] = M_PI/180.0f *    0.0f;
+-            device->speaker_angles[3] = M_PI/180.0f *   30.0f;
+-            device->speaker_angles[4] = M_PI/180.0f *   90.0f;
+-            device->speaker_angles[5] = 9999.0f;
+-            device->speaker_num[0] = 4; /* Rear left */
+-            device->speaker_num[1] = 0; /* Front left */
+-            device->speaker_num[2] = 2; /* Front centre */
+-            device->speaker_num[3] = 1; /* Front right */
+-            device->speaker_num[4] = 5; /* Rear right */
+-            device->speaker_num[5] = 3; /* LFE */
+-            device->num_speakers = 6;
+-            device->lfe_channel = 3;
+-        break;
+-
+-        default:
+-            WARN("unknown speaker_config %lu\n", device->speaker_config);
+-    }
+-}
+diff --git a/dlls/dsound/dsound_private.h b/dlls/dsound/dsound_private.h
+index 69c4a2f3902..1a3e88a0d29 100644
+--- a/dlls/dsound/dsound_private.h
++++ b/dlls/dsound/dsound_private.h
+@@ -202,7 +202,6 @@ HRESULT IKsPrivatePropertySetImpl_Create(REFIID riid, void **ppv) DECLSPEC_HIDDE
+ HRESULT DSOUND_Create(REFIID riid, void **ppv);
+ HRESULT DSOUND_Create8(REFIID riid, void **ppv);
+ HRESULT IDirectSoundImpl_Create(IUnknown *outer_unk, REFIID riid, void **ppv, BOOL has_ds8);
+-void DSOUND_ParseSpeakerConfig(DirectSoundDevice *device);
+ 
+ /* primary.c */
+ 
+diff --git a/dlls/dsound/primary.c b/dlls/dsound/primary.c
+index 852ec51b7ff..fdbbc00cd33 100644
+--- a/dlls/dsound/primary.c
++++ b/dlls/dsound/primary.c
+@@ -24,6 +24,7 @@
+  */
+ 
+ #include <stdarg.h>
++#include <math.h>
+ 
+ #define COBJMACROS
+ #define NONAMELESSUNION
+@@ -110,6 +111,78 @@ static DWORD DSOUND_FindSpeakerConfig(IMMDevice *mmdevice, int channels)
+     return def;
+ }
+ 
++static void DSOUND_ParseSpeakerConfig(DirectSoundDevice *device)
++{
++    switch (DSSPEAKER_CONFIG(device->speaker_config)) {
++        case DSSPEAKER_MONO:
++            device->speaker_angles[0] = M_PI/180.0f * 0.0f;
++            device->speaker_num[0] = 0;
++            device->num_speakers = 1;
++            device->lfe_channel = -1;
++        break;
++
++        case DSSPEAKER_STEREO:
++        case DSSPEAKER_HEADPHONE:
++            device->speaker_angles[0] = M_PI/180.0f * -90.0f;
++            device->speaker_angles[1] = M_PI/180.0f *  90.0f;
++            device->speaker_num[0] = 0; /* Left */
++            device->speaker_num[1] = 1; /* Right */
++            device->num_speakers = 2;
++            device->lfe_channel = -1;
++        break;
++
++        case DSSPEAKER_QUAD:
++            device->speaker_angles[0] = M_PI/180.0f * -135.0f;
++            device->speaker_angles[1] = M_PI/180.0f *  -45.0f;
++            device->speaker_angles[2] = M_PI/180.0f *   45.0f;
++            device->speaker_angles[3] = M_PI/180.0f *  135.0f;
++            device->speaker_num[0] = 2; /* Rear left */
++            device->speaker_num[1] = 0; /* Front left */
++            device->speaker_num[2] = 1; /* Front right */
++            device->speaker_num[3] = 3; /* Rear right */
++            device->num_speakers = 4;
++            device->lfe_channel = -1;
++        break;
++
++        case DSSPEAKER_5POINT1_BACK:
++            device->speaker_angles[0] = M_PI/180.0f * -135.0f;
++            device->speaker_angles[1] = M_PI/180.0f *  -45.0f;
++            device->speaker_angles[2] = M_PI/180.0f *    0.0f;
++            device->speaker_angles[3] = M_PI/180.0f *   45.0f;
++            device->speaker_angles[4] = M_PI/180.0f *  135.0f;
++            device->speaker_angles[5] = 9999.0f;
++            device->speaker_num[0] = 4; /* Rear left */
++            device->speaker_num[1] = 0; /* Front left */
++            device->speaker_num[2] = 2; /* Front centre */
++            device->speaker_num[3] = 1; /* Front right */
++            device->speaker_num[4] = 5; /* Rear right */
++            device->speaker_num[5] = 3; /* LFE */
++            device->num_speakers = 6;
++            device->lfe_channel = 3;
++        break;
++
++        case DSSPEAKER_5POINT1_SURROUND:
++            device->speaker_angles[0] = M_PI/180.0f *  -90.0f;
++            device->speaker_angles[1] = M_PI/180.0f *  -30.0f;
++            device->speaker_angles[2] = M_PI/180.0f *    0.0f;
++            device->speaker_angles[3] = M_PI/180.0f *   30.0f;
++            device->speaker_angles[4] = M_PI/180.0f *   90.0f;
++            device->speaker_angles[5] = 9999.0f;
++            device->speaker_num[0] = 4; /* Rear left */
++            device->speaker_num[1] = 0; /* Front left */
++            device->speaker_num[2] = 2; /* Front centre */
++            device->speaker_num[3] = 1; /* Front right */
++            device->speaker_num[4] = 5; /* Rear right */
++            device->speaker_num[5] = 3; /* LFE */
++            device->num_speakers = 6;
++            device->lfe_channel = 3;
++        break;
++
++        default:
++            WARN("unknown speaker_config %u\n", device->speaker_config);
++    }
++}
++
+ static HRESULT DSOUND_WaveFormat(DirectSoundDevice *device, IAudioClient *client,
+ 				 BOOL forcewave, WAVEFORMATEX **wfx)
+ {
+@@ -124,7 +197,7 @@ static HRESULT DSOUND_WaveFormat(DirectSoundDevice *device, IAudioClient *client
+         if (FAILED(hr))
+             return hr;
+ 
+-        if (mixwfe->Format.nChannels < device->num_speakers) {
++        if (device->num_speakers == 0 || mixwfe->Format.nChannels < device->num_speakers) {
+             device->speaker_config = DSOUND_FindSpeakerConfig(device->mmdevice, mixwfe->Format.nChannels);
+             DSOUND_ParseSpeakerConfig(device);
+         } else if (mixwfe->Format.nChannels > device->num_speakers) {
+From b739d48093cce805b7b4f48fdbd9d0bb62bc8013 Mon Sep 17 00:00:00 2001
+From: Brendan Shanks <bshanks@codeweavers.com>
+Date: Mon, 13 Apr 2020 16:25:47 -0700
+Subject: [PATCH] HACK: dxgi: Swap around memory sizes for GTA IV
+
+GTA IV ends up using its "Intel integrated" codepath for determining
+VRAM size (since nvapi/atiadlxx fail), but this requires that
+DedicatedVideoMemory is a very small dummy value, and SharedSystemMemory
+is the actual VRAM size.
+Swap the memory values around so this works.
+---
+ dlls/dxgi/adapter.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/dlls/dxgi/adapter.c b/dlls/dxgi/adapter.c
+index 5a97590dbce..a5563498cdd 100644
+--- a/dlls/dxgi/adapter.c
++++ b/dlls/dxgi/adapter.c
+@@ -200,6 +200,25 @@ static HRESULT dxgi_adapter_get_desc(struct dxgi_adapter *adapter, DXGI_ADAPTER_
+     desc->GraphicsPreemptionGranularity = 0; /* FIXME */
+     desc->ComputePreemptionGranularity = 0; /* FIXME */
+ 
++    {
++        /* HACK
++         *
++         * Grand Theft Auto IV first tries to get VRAM size using nvapi/atiadlxx,
++         * after that fails it falls back to the Intel integrated codepath which
++         * uses DXGI.
++         *
++         * DedicatedVideoMemory must be a dummy value less than 200 MB, then
++         * SharedSystemMemory will be used as the VRAM size.
++         * In case of failure, the game will just use 512 MB as VRAM size.
++         */
++        const char *sgi = getenv("SteamGameId");
++        if(sgi && !strcmp(sgi, "12210"))
++        {
++            desc->SharedSystemMemory = adapter_id.video_memory;
++            desc->DedicatedVideoMemory = 32 * 1024 * 1024;
++        }
++    }
++
+     return hr;
+ }
+ 
+From c619409f235cf660cdd4fd3295d5e04ec628daa1 Mon Sep 17 00:00:00 2001
+From: Alexey Prokhin <alexey@prokhin.ru>
+Date: Thu, 23 Apr 2020 12:29:55 +0300
+Subject: [PATCH] kernelbase: Set the proper error code in
+ GetQueuedCompletionStatus{Ex} when the handle is closed.
+
+Planet Zoo relies on it being ERROR_ABANDONED_WAIT_0.
+---
+ dlls/kernelbase/sync.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/dlls/kernelbase/sync.c b/dlls/kernelbase/sync.c
+index 0ae3aadde92..e95ede8aed5 100644
+--- a/dlls/kernelbase/sync.c
++++ b/dlls/kernelbase/sync.c
+@@ -960,6 +960,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetQueuedCompletionStatus( HANDLE port, LPDWORD co
+     }
+ 
+     if (status == STATUS_TIMEOUT) SetLastError( WAIT_TIMEOUT );
++    else if (status == ERROR_WAIT_NO_CHILDREN) SetLastError( ERROR_ABANDONED_WAIT_0 );
+     else SetLastError( RtlNtStatusToDosError(status) );
+     return FALSE;
+ }
+@@ -981,6 +982,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetQueuedCompletionStatusEx( HANDLE port, OVERLAPP
+     if (ret == STATUS_SUCCESS) return TRUE;
+     else if (ret == STATUS_TIMEOUT) SetLastError( WAIT_TIMEOUT );
+     else if (ret == STATUS_USER_APC) SetLastError( WAIT_IO_COMPLETION );
++    else if (ret == ERROR_WAIT_NO_CHILDREN) SetLastError( ERROR_ABANDONED_WAIT_0 );
+     else SetLastError( RtlNtStatusToDosError(ret) );
+     return FALSE;
+ }
+
+From 0255dbc3afd3ff673fa701e7802474483252fcb2 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 13 Jul 2020 10:21:49 -0500
+Subject: [PATCH] ntdll: Handle NULL object name buffer in
+ nt_to_unix_file_name_attr().
+
+---
+ dlls/ntdll/tests/file.c | 22 +++++++++++++++++++++-
+ dlls/ntdll/unix/file.c  |  8 ++++++++
+ 2 files changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 20eb6a05922..d99c6b462b2 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -3593,12 +3593,20 @@ NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret,
+     const WCHAR *name;
+     char *unix_name;
+     int name_len, unix_len;
+     NTSTATUS status;
+ 
++    if (!attr->ObjectName->Buffer && attr->ObjectName->Length)
++        return STATUS_ACCESS_VIOLATION;
++
+     if (!attr->RootDirectory)  /* without root dir fall back to normal lookup */
++    {
++        if (!attr->ObjectName->Buffer)
++            return STATUS_OBJECT_PATH_SYNTAX_BAD;
++
+         return nt_to_unix_file_name_no_root( attr->ObjectName, name_ret, disposition );
++    }
+ 
+     name     = attr->ObjectName->Buffer;
+     name_len = attr->ObjectName->Length / sizeof(WCHAR);
+ 
+     if (name_len && name[0] == '\\') return STATUS_INVALID_PARAMETER;
+From cb427c70056654bf12fb0d7d6dcb13386d193ff4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
+Date: Fri, 24 Apr 2020 14:37:58 +0300
+Subject: [PATCH] server: Try to retrieve the unix name on handles created from
+ file descriptors.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=46070
+Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
+
+Fixes Unity of Command II, and possibly other games that use
+Python38.dll.
+---
+ server/fd.c   | 39 +++++++++++++++++++++++++++++++++++++++
+ server/file.c |  1 +
+ server/file.h |  2 ++
+ 3 files changed, 42 insertions(+)
+
+diff --git a/server/fd.c b/server/fd.c
+index 904c99029ca..990a1a708a0 100644
+--- a/server/fd.c
++++ b/server/fd.c
+@@ -2079,6 +2079,45 @@ struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops, int unix_fd, s
+     return NULL;
+ }
+ 
++void set_unix_name_of_fd( struct fd *fd, const struct stat *fd_st )
++{
++#ifdef __linux__
++    static const char procfs_fmt[] = "/proc/self/fd/%d";
++
++    char path[PATH_MAX], procfs_path[sizeof(procfs_fmt) - 2 /* %d */ + 11];
++    struct stat path_st;
++    ssize_t len;
++
++    sprintf( procfs_path, procfs_fmt, fd->unix_fd );
++    len = readlink( procfs_path, path, sizeof(path) );
++    if (len == -1 || len >= sizeof(path) )
++        return;
++    path[len] = '\0';
++
++    /* Make sure it's an absolute path, has at least one hardlink, and the same inode */
++    if (path[0] != '/' || stat( path, &path_st ) || path_st.st_nlink < 1 ||
++        path_st.st_dev != fd_st->st_dev || path_st.st_ino != fd_st->st_ino)
++        return;
++
++    if (!(fd->unix_name = mem_alloc( len + 1 )))
++        return;
++    memcpy( fd->unix_name, path, len + 1 );
++
++#elif defined(F_GETPATH)
++    char path[PATH_MAX];
++    size_t size;
++
++    if (fcntl( fd->unix_fd, F_GETPATH, path ) == -1 || path[0] != '/')
++        return;
++
++    size = strlen(path) + 1;
++    if (!(fd->unix_name = mem_alloc( size )))
++        return;
++    memcpy( fd->unix_name, path, size );
++
++#endif
++}
++
+ /* retrieve the object that is using an fd */
+ void *get_fd_user( struct fd *fd )
+ {
+diff --git a/server/file.c b/server/file.c
+index e5e367478ce..e469341c746 100644
+--- a/server/file.c
++++ b/server/file.c
+@@ -147,6 +147,7 @@ struct file *create_file_for_fd( int fd, unsigned int access, unsigned int shari
+         release_object( file );
+         return NULL;
+     }
++    set_unix_name_of_fd( file->fd, &st );
+     allow_fd_caching( file->fd );
+     return file;
+ }
+diff --git a/server/file.h b/server/file.h
+index 0e43a8170df..7d614569a16 100644
+--- a/server/file.h
++++ b/server/file.h
+@@ -22,6 +22,7 @@
+ #define __WINE_SERVER_FILE_H
+ 
+ #include <sys/types.h>
++#include <sys/stat.h>
+ 
+ #include "object.h"
+ 
+@@ -82,6 +83,7 @@ extern struct fd *open_fd( struct fd *root, const char *name, int flags, mode_t
+                            unsigned int access, unsigned int sharing, unsigned int options );
+ extern struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops,
+                                        int unix_fd, struct object *user, unsigned int options );
++extern void set_unix_name_of_fd( struct fd *fd, const struct stat *fd_st );
+ extern struct fd *dup_fd_object( struct fd *orig, unsigned int access, unsigned int sharing,
+                                  unsigned int options );
+ extern struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsigned int sharing );
+
+From 514d3e11c999b11a95ab35df5b4ab454d34fe791 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 13 May 2020 13:55:55 +0300
+Subject: [PATCH] ntdll: Add WINE_DISABLE_WRITE_WATCH env var to disable write
+ watch support.
+
+Massively improves performance for corert games (Streets of Rage 4).
+Could be fixed properly with Linux kernel changes.
+---
+ dlls/ntdll/unix/virtual.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 7ea80852090..272e1c5b176 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3425,6 +3425,22 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
+     if (zero_bits > 21 && zero_bits < 32) return STATUS_INVALID_PARAMETER_3;
+     if (!is_win64 && !is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
+ 
++    if (type & MEM_WRITE_WATCH)
++    {
++        static int disable = -1;
++
++        if (disable == -1)
++        {
++            const char *env_var;
++
++            if ((disable = (env_var = getenv("WINE_DISABLE_WRITE_WATCH")) && atoi(env_var)))
++                FIXME("Disabling write watch support.\n");
++        }
++
++        if (disable)
++            return STATUS_NOT_SUPPORTED;
++    }
++
+     if (process != NtCurrentProcess())
+     {
+         apc_call_t call;
+From 912701cb515acdc8e0ff263552f656cd49f60714 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 15 May 2020 13:01:26 +0200
+Subject: [PATCH] d3d10core: Implement D3D10CoreRegisterLayers.
+
+---
+ dlls/d3d10core/d3d10core_main.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/d3d10core/d3d10core_main.c b/dlls/d3d10core/d3d10core_main.c
+index d364be90d6d..5a9a4a211c1 100644
+--- a/dlls/d3d10core/d3d10core_main.c
++++ b/dlls/d3d10core/d3d10core_main.c
+@@ -29,11 +29,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(d3d10core);
+ HRESULT WINAPI D3D11CoreCreateDevice(IDXGIFactory *factory, IDXGIAdapter *adapter, unsigned int flags,
+         const D3D_FEATURE_LEVEL *feature_levels, unsigned int level_count, ID3D11Device **device);
+ 
++HRESULT WINAPI D3D11CoreRegisterLayers(void);
++
+ HRESULT WINAPI D3D10CoreRegisterLayers(void)
+ {
+     TRACE("\n");
+ 
+-    return E_NOTIMPL;
++    return D3D11CoreRegisterLayers();
+ }
+ 
+ HRESULT WINAPI D3D10CoreCreateDevice(IDXGIFactory *factory, IDXGIAdapter *adapter,
+
+From 376a037ce1391e071835a0bf30ebf1fcec43c367 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 15 May 2020 12:59:44 +0200
+Subject: [PATCH] dxgi: Add fallback to D3D10CoreRegisterLayers.
+
+If D3D11CoreRegisterLayers is not found in module.
+---
+ dlls/dxgi/dxgi_main.c | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/dlls/dxgi/dxgi_main.c b/dlls/dxgi/dxgi_main.c
+index 83c3f3734a7..006ab370844 100644
+--- a/dlls/dxgi/dxgi_main.c
++++ b/dlls/dxgi/dxgi_main.c
+@@ -106,8 +106,8 @@ static HRESULT register_d3d10core_layers(HMODULE d3d10core)
+ 
+     if (!dxgi_main.d3d10core)
+     {
+-        HRESULT hr;
+-        HRESULT (WINAPI *d3d11core_register_layers)(void);
++        HRESULT hr = E_FAIL;
++        HRESULT (WINAPI *register_layers)(void);
+         HMODULE mod;
+         BOOL ret;
+ 
+@@ -117,8 +117,10 @@ static HRESULT register_d3d10core_layers(HMODULE d3d10core)
+             return E_FAIL;
+         }
+ 
+-        d3d11core_register_layers = (void *)GetProcAddress(mod, "D3D11CoreRegisterLayers");
+-        hr = d3d11core_register_layers();
++        if ((register_layers = (void *)GetProcAddress(mod, "D3D11CoreRegisterLayers")) ||
++            (register_layers = (void *)GetProcAddress(mod, "D3D10CoreRegisterLayers")))
++            hr = register_layers();
++
+         if (FAILED(hr))
+         {
+             ERR("Failed to register d3d11 layers, returning %#x.\n", hr);
+
+From 5b00ca69a1927e1d0df4cf26160228e460568c51 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 9 Jun 2020 14:16:22 +0300
+Subject: [PATCH] kernelbase: HACK Add an option to blacklist files.
+
+---
+ dlls/kernelbase/file.c | 76 +++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 75 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/kernelbase/file.c b/dlls/kernelbase/file.c
+index eb2ef57c7d6..c7881fe4516 100644
+--- a/dlls/kernelbase/file.c
++++ b/dlls/kernelbase/file.c
+@@ -41,6 +41,8 @@
+ #include "wine/exception.h"
+ #include "wine/debug.h"
+ 
++#include "wine/heap.h"
++
+ WINE_DEFAULT_DEBUG_CHANNEL(file);
+ 
+ /* info structure for FindFirstFile handle */
+@@ -432,6 +434,72 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileA( LPCSTR name, DWORD access, DWORD sh
+     return CreateFileW( nameW, access, sharing, sa, creation, attributes, template );
+ }
+ 
++#define MAX_BLACKLISTED_FILENAMES 32
++
++static struct
++{
++    const WCHAR *name;
++    size_t name_len;
++}
++blacklist_filenames[MAX_BLACKLISTED_FILENAMES];
++
++static unsigned int blacklist_filename_count;
++
++static BOOL CALLBACK init_file_blacklist(PINIT_ONCE init_once, PVOID parameter, PVOID *context)
++{
++    const WCHAR separators[] = L",; ";
++    WCHAR *buffer, *token;
++    DWORD size;
++
++    if (!(size = GetEnvironmentVariableW(L"WINE_BLACKLIST_FILES", NULL, 0)))
++        return TRUE;
++
++    if (!(buffer = heap_alloc(sizeof(*buffer) * size)))
++    {
++        ERR("No memory.\n");
++        return FALSE;
++    }
++
++    if (GetEnvironmentVariableW(L"WINE_BLACKLIST_FILES", buffer, size) != size - 1)
++    {
++        ERR("Error getting WINE_BLACKLIST_FILES env variable.\n");
++        return FALSE;
++    }
++
++    blacklist_filename_count = 0;
++    token = wcstok(buffer, separators);
++    while (token && blacklist_filename_count < MAX_BLACKLISTED_FILENAMES)
++    {
++        FIXME("Blacklisting %s file.\n", debugstr_w(token));
++        blacklist_filenames[blacklist_filename_count].name = token;
++        blacklist_filenames[blacklist_filename_count++].name_len = wcslen(token);
++        token = wcstok(NULL, separators);
++    }
++
++    if (token && blacklist_filename_count == MAX_BLACKLISTED_FILENAMES)
++        ERR("File black list is too long.\n");
++
++    return TRUE;
++}
++
++static BOOL is_file_blacklisted(LPCWSTR filename)
++{
++    static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
++    unsigned int i;
++    size_t len;
++
++    if (!InitOnceExecuteOnce(&init_once, init_file_blacklist, NULL, NULL))
++        return FALSE;
++
++    len = wcslen(filename);
++
++    for (i = 0; i < blacklist_filename_count; ++i)
++        if (blacklist_filenames[i].name_len <= len
++                && !wcsicmp(blacklist_filenames[i].name, filename + len - blacklist_filenames[i].name_len))
++            return TRUE;
++
++    return FALSE;
++}
+ 
+ /*************************************************************************
+  *	CreateFileW   (kernelbase.@)
+@@ -460,7 +528,6 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileW( LPCWSTR filename, DWORD access, DWO
+         FILE_OVERWRITE      /* TRUNCATE_EXISTING */
+     };
+ 
+-
+     /* sanity checks */
+ 
+     if (!filename || !filename[0])
+@@ -479,6 +546,13 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileW( LPCWSTR filename, DWORD access, DWO
+            (sharing & FILE_SHARE_DELETE) ? "FILE_SHARE_DELETE " : "",
+            creation, attributes);
+ 
++    if (is_file_blacklisted(filename))
++    {
++        FIXME("\"%s\" is blacklisted.\n", debugstr_w(filename));
++        SetLastError( ERROR_FILE_NOT_FOUND );
++        return INVALID_HANDLE_VALUE;
++    }
++
+     if ((GetVersion() & 0x80000000) && !wcsncmp( filename, L"\\\\.\\", 4 ) &&
+         !RtlIsDosDeviceName_U( filename + 4 ) &&
+         wcsnicmp( filename + 4, L"PIPE\\", 5 ) &&
+
+From 2409bd1f74be116172688a25df725290637c255a Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Wed, 10 Jun 2020 16:18:29 -0500
+Subject: [PATCH] kernelbase: Apply blacklist automatically to Origin
+ executables
+
+---
+ dlls/kernelbase/file.c | 54 ++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 44 insertions(+), 10 deletions(-)
+
+diff --git a/dlls/kernelbase/file.c b/dlls/kernelbase/file.c
+index c7881fe4516..bb4be45da5d 100644
+--- a/dlls/kernelbase/file.c
++++ b/dlls/kernelbase/file.c
+@@ -447,23 +447,57 @@ static unsigned int blacklist_filename_count;
+ 
+ static BOOL CALLBACK init_file_blacklist(PINIT_ONCE init_once, PVOID parameter, PVOID *context)
+ {
++    static WCHAR origin_blacklist[] = L"kernel32.dll;user32.dll";
++
+     const WCHAR separators[] = L",; ";
+     WCHAR *buffer, *token;
+     DWORD size;
+ 
+-    if (!(size = GetEnvironmentVariableW(L"WINE_BLACKLIST_FILES", NULL, 0)))
+-        return TRUE;
+-
+-    if (!(buffer = heap_alloc(sizeof(*buffer) * size)))
++    if ((size = GetEnvironmentVariableW(L"WINE_BLACKLIST_FILES", NULL, 0)))
+     {
+-        ERR("No memory.\n");
+-        return FALSE;
+-    }
++        if (!(buffer = heap_alloc(sizeof(*buffer) * size)))
++        {
++            ERR("No memory.\n");
++            return FALSE;
++        }
+ 
+-    if (GetEnvironmentVariableW(L"WINE_BLACKLIST_FILES", buffer, size) != size - 1)
++        if (GetEnvironmentVariableW(L"WINE_BLACKLIST_FILES", buffer, size) != size - 1)
++        {
++            ERR("Error getting WINE_BLACKLIST_FILES env variable.\n");
++            return FALSE;
++        }
++    }
++    else
+     {
+-        ERR("Error getting WINE_BLACKLIST_FILES env variable.\n");
+-        return FALSE;
++        static const WCHAR *origin_names[] = {
++            L"igoproxy64.exe",
++            L"igoproxy.exe",
++            L"origin.exe",
++            L"easteamproxy.exe"
++        };
++
++        WCHAR cur_exe[MAX_PATH];
++        DWORD cur_exe_len, i;
++
++        if (!(cur_exe_len = GetModuleFileNameW(NULL, cur_exe, ARRAY_SIZE(cur_exe))))
++            return TRUE;
++
++        buffer = NULL;
++
++        for (i = 0; i < ARRAY_SIZE(origin_names); ++i)
++        {
++            DWORD origin_name_len = wcslen(origin_names[i]);
++            if (cur_exe_len >= origin_name_len &&
++                    wcsicmp(cur_exe + cur_exe_len - origin_name_len, origin_names[i]) == 0)
++            {
++                FIXME("using origin file blacklist for %s\n", debugstr_w(cur_exe));
++                buffer = origin_blacklist;
++                break;
++            }
++        }
++
++        if (!buffer)
++            return TRUE;
+     }
+ 
+     blacklist_filename_count = 0;
+From ff790e8d99f2026af9b8569355fc1df5e6f0c639 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Sat, 5 Sep 2020 01:09:37 +0300
+Subject: [PATCH] wbemprox: HACK: Make Bloons TD6 happy so it does not exit
+ after getting string Wine from bios info.
+
+---
+ dlls/wbemprox/builtin.c | 22 +++++++++++-----------
+ 1 file changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/dlls/wbemprox/builtin.c b/dlls/wbemprox/builtin.c
+index 43268221936..f39d6f0cd7b 100644
+--- a/dlls/wbemprox/builtin.c
++++ b/dlls/wbemprox/builtin.c
+@@ -1181,7 +1181,7 @@ static WCHAR *get_bios_string( BYTE id, const char *buf, UINT len )
+ static WCHAR *get_bios_manufacturer( const char *buf, UINT len )
+ {
+     WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BIOS, 0, offsetof(struct smbios_bios, vendor), buf, len );
+-    if (!ret) return wcsdup( L"The Wine Project" );
++    if (!ret) return wcsdup( L"The Proton Project" );
+     return ret;
+ }
+ 
+@@ -1227,7 +1227,7 @@ static WCHAR *get_bios_releasedate( const char *buf, UINT len )
+ static WCHAR *get_bios_smbiosbiosversion( const char *buf, UINT len )
+ {
+     WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BIOS, 0, offsetof(struct smbios_bios, version), buf, len );
+-    if (!ret) return wcsdup( L"Wine" );
++    if (!ret) return wcsdup( L"Proton" );
+     return ret;
+ }
+ 
+@@ -1307,7 +1307,7 @@ static enum fill_status fill_bios( struct table *table, const struct expr *cond
+     rec->smbiosminorversion     = get_bios_smbiosminorversion( buf, len );
+     rec->systembiosmajorversion = get_bios_system_bios_major_release( buf, len );
+     rec->systembiosminorversion = get_bios_system_bios_minor_release( buf, len );
+-    rec->version                = L"WINE   - 1";
++    rec->version                = L"PROTON - 1";
+     if (!match_row( table, row, cond, &status )) free_row_values( table, row );
+     else row++;
+ 
+@@ -1641,14 +1641,14 @@ static WCHAR *get_compsysproduct_string( BYTE id, const char *buf, UINT len )
+ static WCHAR *get_compsysproduct_name( const char *buf, UINT len )
+ {
+     WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, product), buf, len );
+-    if (!ret) return wcsdup( L"Wine" );
++    if (!ret) return wcsdup( L"Proton" );
+     return ret;
+ }
+
+ static WCHAR *get_compsysproduct_vendor( const char *buf, UINT len )
+ {
+     WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, vendor), buf, len );
+-    if (!ret) return wcsdup( L"The Wine Project" );
++    if (!ret) return wcsdup( L"The Proton Project" );
+     return ret;
+ }
+
+@@ -2894,7 +2894,7 @@ static enum fill_status fill_networkadapter( struct table *table, const struct e
+         rec->index                = aa->u.s.IfIndex;
+         rec->interface_index      = aa->u.s.IfIndex;
+         rec->mac_address          = get_mac_address( aa->PhysicalAddress, aa->PhysicalAddressLength );
+-        rec->manufacturer         = L"The Wine Project";
++        rec->manufacturer         = L"The Proton Project";
+         rec->name                 = wcsdup( aa->FriendlyName );
+         rec->netenabled           = connection_status ? -1 : 0;
+         rec->netconnection_status = connection_status;
+@@ -3475,7 +3475,7 @@ static enum fill_status fill_operatingsystem( struct table *table, const struct
+     rec->lastbootuptime         = get_lastbootuptime();
+     rec->localdatetime          = get_localdatetime();
+     rec->locale                 = get_locale();
+-    rec->manufacturer           = L"The Wine Project";
++    rec->manufacturer           = L"The Proton Project";
+     rec->name                   = get_osname( rec->caption );
+     rec->operatingsystemsku     = get_operatingsystemsku();
+     rec->osarchitecture         = get_osarchitecture();
+@@ -3740,7 +3740,7 @@ static WCHAR *get_systemenclosure_string( BYTE id, const char *buf, UINT len )
+ static WCHAR *get_systemenclosure_manufacturer( const char *buf, UINT len )
+ {
+     WCHAR *ret = get_smbios_string( SMBIOS_TYPE_CHASSIS, 0, offsetof(struct smbios_chassis, vendor), buf, len );
+-    if (!ret) return wcsdup( L"Wine" );
++    if (!ret) return wcsdup( L"Proton" );
+     return ret;
+ }
+ 
+@@ -3955,7 +3955,7 @@ static enum fill_status fill_sounddevice( struct table *table, const struct expr
+ 
+     rec = (struct record_sounddevice *)table->data;
+     rec->deviceid = get_sounddevice_pnpdeviceid( &desc );
+-    rec->manufacturer = L"The Wine Project";
++    rec->manufacturer = L"The Proton Project";
+     rec->name = L"Wine Audio Device";
+     rec->pnpdeviceid = get_sounddevice_pnpdeviceid( &desc );
+     rec->productname = L"Wine Audio Device";
+-- 
+2.26.2
+
+From 87326687df23529255c2493d178dac1310919980 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 4 Nov 2020 18:08:21 +0300
+Subject: [PATCH] ws2_32: HACK Fail 'download-alt.easyanticheat.net' DNS name
+ resolution.
+
+This has the same effect as the following reverted ECDHE-ECDSA patch,
+but allows those ciphers to be used for other programs.
+---
+ dlls/ws2_32/protocol.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/dlls/ws2_32/protocol.c b/dlls/ws2_32/protocol.c
+index 4010a727a08..ef9a640a771 100644
+--- a/dlls/ws2_32/protocol.c
++++ b/dlls/ws2_32/protocol.c
+@@ -232,6 +232,13 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
+         return WSAHOST_NOT_FOUND;
+     }
+
++    if (node && !strcmp(node, "download-alt.easyanticheat.net"))
++    {
++        ERR("HACK: failing download-alt.easyanticheat.net resolution.\n");
++        SetLastError(WSAHOST_NOT_FOUND);
++        return WSAHOST_NOT_FOUND;
++    }
++
+     if (node)
+     {
+         if (!node[0])
+diff --git a/dlls/ws2_32/unixlib.c b/dlls/ws2_32/unixlib.c
+index 4010a727a08..ef9a640a771 100644
+--- a/dlls/ws2_32/unixlib.c
++++ b/dlls/ws2_32/unixlib.c
+@@ -869,6 +869,12 @@ static int CDECL unix_gethostbyname( const char *name, struct WS_hostent *const
+     int locerr;
+     int ret;
+
++    if (!strcmp(params->name, "download-alt.easyanticheat.net"))
++    {
++        ERR("HACK: failing download-alt.easyanticheat.net resolution.\n");
++        return HOST_NOT_FOUND;
++    }
++
+     if (!(unix_buffer = malloc( unix_size )))
+         return WSAENOBUFS;
+
+From b48ce9a2778a4ff7ee14067f0ea73693ed70c52d Mon Sep 17 00:00:00 2001
+From: Zebediah Figura <z.figura12@gmail.com>
+Date: Wed, 20 Jun 2018 15:10:08 -0500
+Subject: [PATCH] server: Don't check for a hung queue when sending low-level
+ hooks.
+
+Since user32 does this.
+
+This logic is independent of the SMTO_ABORTIFHUNG logic on Windows. In fact, IsHungAppWindow() uses yet another algorithm.
+---
+ server/queue.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/server/queue.c b/server/queue.c
+index 968f2ffe701..aa8e627211a 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -1641,7 +1641,6 @@ static int send_hook_ll_message( struct desktop *desktop, struct message *hardwa
+ 
+     if (!(hook_thread = get_first_global_hook( id ))) return 0;
+     if (!(queue = hook_thread->queue)) return 0;
+-    if (is_queue_hung( queue )) return 0;
+ 
+     if (!(msg = mem_alloc( sizeof(*msg) ))) return 0;
+ 
+From c9a5fcb0966ab0ca0722c8c07476c131844f98e1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 16 Oct 2020 23:37:09 +0200
+Subject: [PATCH] dotnetfx35.exe: Add stub program.
+
+This makes it possible to override native dotnetfx35 installer, which
+is broken in an unfixable way. Recent Windows versions also bypass its
+execution somehow.
+---
+ configure                       |  2 ++
+ configure.ac                    |  1 +
+ programs/dotnetfx35/Makefile.in |  7 +++++++
+ programs/dotnetfx35/main.c      | 32 ++++++++++++++++++++++++++++++++
+ 4 files changed, 42 insertions(+)
+ create mode 100644 programs/dotnetfx35/Makefile.in
+ create mode 100644 programs/dotnetfx35/main.c
+
+diff --git a/configure b/configure
+index 848323bb057..d676b1c82ee 100755
+--- a/configure
++++ b/configure
+@@ -1766,6 +1766,7 @@ enable_conhost
+ enable_cscript
+ enable_dism
+ enable_dllhost
++enable_dotnetfx35
+ enable_dplaysvr
+ enable_dpnsvr
+ enable_dpvsetup
+@@ -21579,6 +21580,7 @@ wine_fn_config_makefile programs/conhost enable_conhost
+ wine_fn_config_makefile programs/cscript enable_cscript
+ wine_fn_config_makefile programs/dism enable_dism
+ wine_fn_config_makefile programs/dllhost enable_dllhost
++wine_fn_config_makefile programs/dotnetfx35 enable_dotnetfx35
+ wine_fn_config_makefile programs/dplaysvr enable_dplaysvr
+ wine_fn_config_makefile programs/dpnsvr enable_dpnsvr
+ wine_fn_config_makefile programs/dpvsetup enable_dpvsetup
+diff --git a/configure.ac b/configure.ac
+index 130dbeb8530..63d26ff123c 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -3997,6 +3997,7 @@ WINE_CONFIG_MAKEFILE(programs/conhost)
+ WINE_CONFIG_MAKEFILE(programs/cscript)
+ WINE_CONFIG_MAKEFILE(programs/dism)
+ WINE_CONFIG_MAKEFILE(programs/dllhost)
++WINE_CONFIG_MAKEFILE(programs/dotnetfx35)
+ WINE_CONFIG_MAKEFILE(programs/dplaysvr)
+ WINE_CONFIG_MAKEFILE(programs/dpnsvr)
+ WINE_CONFIG_MAKEFILE(programs/dpvsetup)
+diff --git a/programs/dotnetfx35/Makefile.in b/programs/dotnetfx35/Makefile.in
+new file mode 100644
+index 00000000000..e50ed37f700
+--- /dev/null
++++ b/programs/dotnetfx35/Makefile.in
+@@ -0,0 +1,7 @@
++MODULE    = dotnetfx35.exe
++IMPORTS   =
++
++EXTRADLLFLAGS = -mwindows -mno-cygwin
++
++SOURCES = \
++	main.c
+diff --git a/programs/dotnetfx35/main.c b/programs/dotnetfx35/main.c
+new file mode 100644
+index 00000000000..cd6df5bcf41
+--- /dev/null
++++ b/programs/dotnetfx35/main.c
+@@ -0,0 +1,32 @@
++/*
++ * Fake dotnetfx35.exe installer
++ *
++ * Copyright 2020 Rémi Bernon
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#include <stdio.h>
++#include <windows.h>
++
++#include "wine/debug.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(dotnetfx);
++
++int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
++{
++    FIXME("stub!");
++    return 0;
++}
+From 8a0f4add2096d213999d9be7a04229d288f1af75 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Fri, 24 Aug 2018 14:41:44 -0500
+Subject: [PATCH] HACK: winex11: Grab mouse in fullscreen windows by default
+
+---
+ dlls/winex11.drv/x11drv_main.c | 2 +-
+ programs/winecfg/x11drvdlg.c   | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+index af2094a96f0..9c98209d43d 100644
+--- a/dlls/winex11.drv/x11drv_main.c
++++ b/dlls/winex11.drv/x11drv_main.c
+@@ -76,7 +76,7 @@ BOOL use_primary_selection = FALSE;
+ BOOL use_take_focus = TRUE;
+ BOOL use_primary_selection = FALSE;
+ BOOL use_system_cursors = TRUE;
+-BOOL grab_fullscreen = FALSE;
++BOOL grab_fullscreen = TRUE;
+ BOOL managed_mode = TRUE;
+ BOOL decorated_mode = TRUE;
+ BOOL private_color_map = FALSE;
+diff --git a/programs/winecfg/x11drvdlg.c b/programs/winecfg/x11drvdlg.c
+index fbc6716e94e..1ca8c3ed0fd 100644
+--- a/programs/winecfg/x11drvdlg.c
++++ b/programs/winecfg/x11drvdlg.c
+@@ -123,7 +123,7 @@ static void init_dialog(HWND dialog)
+     SendDlgItemMessageW(dialog, IDC_DESKTOP_WIDTH, EM_LIMITTEXT, RES_MAXLEN, 0);
+     SendDlgItemMessageW(dialog, IDC_DESKTOP_HEIGHT, EM_LIMITTEXT, RES_MAXLEN, 0);
+
+-    buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"N");
++    buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"Y");
+     if (IS_OPTION_TRUE(*buf))
+ 	CheckDlgButton(dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED);
+     else
+From 2452b57e7fed9ac5036df9bcace5c28366a8eb41 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Fri, 8 Jan 2021 13:47:39 -0600
+Subject: [PATCH] HACK: kernelbase: Add NFS EXE to Origin file blacklist hack
+
+---
+ dlls/kernelbase/file.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/kernelbase/file.c b/dlls/kernelbase/file.c
+index a33440107b6..397aa64dce2 100644
+--- a/dlls/kernelbase/file.c
++++ b/dlls/kernelbase/file.c
+@@ -741,7 +741,8 @@ static BOOL CALLBACK init_file_blacklist(PINIT_ONCE init_once, PVOID parameter,
+             L"igoproxy64.exe",
+             L"igoproxy.exe",
+             L"origin.exe",
+-            L"easteamproxy.exe"
++            L"easteamproxy.exe",
++            L"NFS11Remastered.exe"
+         };
+ 
+         WCHAR cur_exe[MAX_PATH];
+From e6c7aa8bc42fea042c3d504009ad8a0fb70a6c0c Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Thu, 21 Jan 2021 11:54:10 -0600
+Subject: [PATCH] vulkan-1: Prefer builtin
+
+Games that ship their own vulkan-1 will be broken with your VR wrappers.
+---
+ dlls/vulkan-1/Makefile.in | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/dlls/vulkan-1/Makefile.in b/dlls/vulkan-1/Makefile.in
+index a4a10bc8e93..551ef146cd7 100644
+--- a/dlls/vulkan-1/Makefile.in
++++ b/dlls/vulkan-1/Makefile.in
+@@ -2,6 +2,4 @@ MODULE    = vulkan-1.dll
+ IMPORTS   = winevulkan
+ IMPORTLIB = vulkan-1
+ 
+-EXTRADLLFLAGS = -Wb,--prefer-native
+-
+ SOURCES = \
+ 	version.rc \
+ 	vulkan.c
+From 07461415f4399934a3c03c8dd6e146167bd67dfd Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Thu, 25 Mar 2021 17:53:37 +0300
+Subject: [PATCH 07/16] wine.inf: Create package repository for VCLibs.140.
+
+---
+ loader/wine.inf.in | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/loader/wine.inf.in b/loader/wine.inf.in
+index 4df88d1f386..1506a73573b 100644
+--- a/loader/wine.inf.in
++++ b/loader/wine.inf.in
+@@ -91,10 +91,11 @@ AddReg=\
+     MCI,\
+     Misc,\
+     OLE,\
++    Packages,\
+     Printing,\
+     Services, \
+     SessionMgr,\
+     Tapi,\
+     ThemeManager,\
+     VersionInfo,\
+     LicenseInformation
+@@ -117,10 +118,11 @@  AddReg=\
+     MCI,\
+     Misc,\
+     OLE,\
++    Packages.ntamd64,\
+     Printing,\
+     Services, \
+     SessionMgr,\
+     Tapi,\
+     ThemeManager,\
+     VersionInfo.ntamd64,\
+     LicenseInformation
+@@ -142,10 +144,11 @@  AddReg=\
+     MCI,\
+     Misc,\
+     OLE,\
++    Packages.ntarm64,\
+     Printing,\
+     Services, \
+     SessionMgr,\
+     Tapi,\
+     ThemeManager,\
+     VersionInfo.ntamd64,\
+     LicenseInformation
+@@ -163,6 +166,7 @@ AddReg=\
+     MCI,\
+     Misc,\
++    Packages.wow64,\
+     Tapi,\
+     VersionInfo,\
+     LicenseInformation
+ 
+@@ -247,6 +251,7 @@ CurrentVersion="Software\Microsoft\Windows\CurrentVersion"
+ CurrentVersionNT="Software\Microsoft\Windows NT\CurrentVersion"
+ FontSubStr="Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes"
+ Control="System\CurrentControlSet\Control"
++Packages="Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\PackageRepository\Packages"
+ 
+ [Classes]
+ HKCR,.chm,,2,"chm.file"
+@@ -597,6 +602,18 @@ [OLE]
+ HKLM,"Software\Microsoft\OLE","EnableDCOM",,"Y"
+ HKLM,"Software\Microsoft\OLE","EnableRemoteConnect",,"N"
+ 
++[Packages]
++HKLM,"%Packages%\Microsoft.VCLibs.140.00_14.0.29231.0_x86__8wekyb3d8bbwe","Path",0x00020002,"%SystemRoot%\system32"
++
++[Packages.ntamd64]
++HKLM,"%Packages%\Microsoft.VCLibs.140.00_14.0.29231.0_x64__8wekyb3d8bbwe","Path",0x00020002,"%SystemRoot%\system32"
++
++[Packages.wow64]
++HKLM,"%Packages%\Microsoft.VCLibs.140.00_14.0.29231.0_x86__8wekyb3d8bbwe","Path",0x00020002,"%SystemRoot%\syswow64"
++
++[Packages.arm64]
++HKLM,"%Packages%\Microsoft.VCLibs.140.00_14.0.29231.0_arm64__8wekyb3d8bbwe","Path",0x00020002,"%SystemRoot%\system32"
++
+ [Printing]
+ HKLM,%Control%\Print\Monitors\Local Port,"Driver",2,"localspl.dll"
+ HKLM,%Control%\Print\Printers,"DefaultSpoolDirectory",2,"%11%\spool\printers"
+-- 
+2.30.2
+
+From 4a2ca2d4e87c84a57dde064296822860701fc877 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 15 Mar 2021 21:59:00 +0300
+Subject: [PATCH 08/16] kernel32: Implement GetPackagesByPackageFamily().
+
+---
+ dlls/kernel32/kernel32.spec                   |   1 +
+ dlls/kernelbase/kernelbase.spec               |   2 +-
+ dlls/kernelbase/version.c                     | 115 +++++++++++++++
+ include/appmodel.h                            |   2 +
+ 5 files changed, 250 insertions(+), 1 deletions(-)
+
+diff --git a/dlls/kernel32/kernel32.spec b/dlls/kernel32/kernel32.spec
+index bcaf2512990..59785a6de24 100644
+--- a/dlls/kernel32/kernel32.spec
++++ b/dlls/kernel32/kernel32.spec
+@@ -765,6 +765,7 @@
+ @ stdcall -import GetOverlappedResultEx(long ptr ptr long long)
+ @ stdcall -import GetUserDefaultGeoName(ptr long)
+ @ stdcall -import GetUserPreferredUILanguages(long ptr ptr ptr)
++@ stdcall -import GetPackagesByPackageFamily(wstr ptr ptr ptr ptr)
+ @ stdcall GetPackageFamilyName(long ptr ptr) kernelbase.GetPackageFamilyName
+ @ stdcall GetPackageFullName(long ptr ptr) kernelbase.GetPackageFullName
+ @ stdcall -import GetPhysicallyInstalledSystemMemory(ptr)
+diff --git a/dlls/kernelbase/kernelbase.spec b/dlls/kernelbase/kernelbase.spec
+index b42a9af8b8e..5d21680f512 100644
+--- a/dlls/kernelbase/kernelbase.spec
++++ b/dlls/kernelbase/kernelbase.spec
+@@ -614,7 +614,7 @@
+ # @ stub GetPackageStatusForUser
+ # @ stub GetPackageTargetPlatformProperty
+ # @ stub GetPackageVolumeSisPath
+-# @ stub GetPackagesByPackageFamily
++@ stdcall GetPackagesByPackageFamily(wstr ptr ptr ptr ptr)
+ @ stdcall GetPerformanceInfo(ptr long)
+ @ stdcall GetPhysicallyInstalledSystemMemory(ptr)
+ # @ stub GetPreviousFgPolicyRefreshInfoInternal
+diff --git a/dlls/kernelbase/version.c b/dlls/kernelbase/version.c
+index 66bd619e394..dca4ffb8647 100644
+--- a/dlls/kernelbase/version.c
++++ b/dlls/kernelbase/version.c
+@@ -39,10 +39,12 @@
+ #include "winnls.h"
+ #include "winternl.h"
+ #include "winerror.h"
++#include "winreg.h"
+ #include "appmodel.h"
+ 
+ #include "kernelbase.h"
+ #include "wine/debug.h"
++#include "wine/heap.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(ver);
+ 
+@@ -154,6 +156,8 @@ static const struct
+     }
+ };
+ 
++static const WCHAR packages_key_name[] = L"Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows"
++        L"\\CurrentVersion\\AppModel\\PackageRepository\\Packages";
+ 
+ /******************************************************************************
+  *  init_current_version
+@@ -1681,3 +1685,114 @@ LONG WINAPI PackageIdFromFullName(const WCHAR *full_name, UINT32 flags, UINT32 *
+ 
+     return ERROR_SUCCESS;
+ }
++
++
++/***********************************************************************
++ *         GetPackagesByPackageFamily   (kernelbase.@)
++ */
++LONG WINAPI GetPackagesByPackageFamily(const WCHAR *family_name, UINT32 *count, WCHAR **full_names,
++        UINT32 *buffer_length, WCHAR *buffer)
++{
++    UINT32 curr_count, curr_length, package_id_buf_size, size;
++    unsigned int i, name_len, publisher_id_len;
++    DWORD subkey_count, max_key_len, length;
++    const WCHAR *publisher_id;
++    WCHAR *package_name;
++    BOOL short_buffer;
++    PACKAGE_ID *id;
++    HKEY key;
++
++    TRACE("family_name %s, count %p, full_names %p, buffer_length %p, buffer %p.\n",
++            debugstr_w(family_name), count, full_names, buffer_length, buffer);
++
++    if (!buffer_length || !count || !family_name)
++        return ERROR_INVALID_PARAMETER;
++
++    if ((*buffer_length || *count) && (!full_names || !buffer))
++        return ERROR_INVALID_PARAMETER;
++
++    if (!(publisher_id = wcschr(family_name, L'_')))
++        return ERROR_INVALID_PARAMETER;
++
++    name_len = publisher_id - family_name;
++    ++publisher_id;
++    publisher_id_len = lstrlenW(publisher_id);
++
++    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, packages_key_name, 0, KEY_READ, &key))
++    {
++        ERR("Key open failed.\n");
++        *count = 0;
++        *buffer_length = 0;
++        return ERROR_SUCCESS;
++    }
++    if (RegQueryInfoKeyW(key, NULL, NULL, NULL, &subkey_count, &max_key_len, NULL, NULL, NULL, NULL, NULL, NULL))
++    {
++        ERR("Query key info failed.\n");
++        RegCloseKey(key);
++        *count = 0;
++        *buffer_length = 0;
++        return ERROR_SUCCESS;
++    }
++
++    if (!(package_name = heap_alloc((max_key_len + 1) * sizeof(*package_name))))
++    {
++        ERR("No memory.\n");
++        RegCloseKey(key);
++        return ERROR_OUTOFMEMORY;
++    }
++
++    package_id_buf_size = sizeof(*id) + (max_key_len + 1) * sizeof(WCHAR);
++    if (!(id = heap_alloc(package_id_buf_size)))
++    {
++        ERR("No memory.\n");
++        heap_free(package_name);
++        RegCloseKey(key);
++        return ERROR_OUTOFMEMORY;
++    }
++
++    curr_count = curr_length = 0;
++    for (i = 0; i < subkey_count; ++i)
++    {
++        length = max_key_len + 1;
++        if (RegEnumKeyExW(key, i, package_name, &length, NULL, NULL, NULL, NULL))
++        {
++            ERR("Error enumerating key %u.\n", i);
++            continue;
++        }
++
++        size = package_id_buf_size;
++        if (PackageIdFromFullName(package_name, 0, &size, (BYTE *)id))
++        {
++            ERR("Error getting package id from full name.\n");
++            continue;
++        }
++
++        if (lstrlenW(id->name) != name_len)
++            continue;
++        if (wcsnicmp(family_name, id->name, name_len))
++            continue;
++
++        if (lstrlenW(id->publisherId) != publisher_id_len)
++            continue;
++        if (wcsnicmp(publisher_id, id->publisherId, publisher_id_len))
++            continue;
++        if (curr_length + length < *buffer_length)
++        {
++            memcpy(buffer + curr_length, package_name, (length + 1) * sizeof(*package_name));
++            if (curr_count < *count)
++                full_names[curr_count] = buffer + curr_length;
++        }
++        curr_length += length + 1;
++        ++curr_count;
++    }
++
++    heap_free(id);
++    heap_free(package_name);
++    RegCloseKey(key);
++
++    short_buffer = curr_length > *buffer_length || curr_count > *count;
++    *count = curr_count;
++    *buffer_length = curr_length;
++
++    return short_buffer ? ERROR_INSUFFICIENT_BUFFER : ERROR_SUCCESS;
++}
+diff --git a/include/appmodel.h b/include/appmodel.h
+index e4288bbfbb0..27a0d0a8646 100644
+--- a/include/appmodel.h
++++ b/include/appmodel.h
+@@ -82,6 +82,8 @@ LONG WINAPI AppPolicyGetProcessTerminationMethod(HANDLE token, AppPolicyProcessT
+ LONG WINAPI AppPolicyGetShowDeveloperDiagnostic(HANDLE token, AppPolicyShowDeveloperDiagnostic *policy);
+ LONG WINAPI AppPolicyGetThreadInitializationType(HANDLE token, AppPolicyThreadInitializationType *policy);
+ LONG WINAPI AppPolicyGetWindowingModel(HANDLE processToken, AppPolicyWindowingModel *policy);
++LONG WINAPI GetPackagesByPackageFamily(const WCHAR *family_name, UINT32 *count, WCHAR **full_names,
++        UINT32 *buffer_length, WCHAR *buffer);
+ LONG WINAPI PackageIdFromFullName(const WCHAR *full_name, UINT32 flags, UINT32 *buffer_length, BYTE *buffer);
+ 
+ #if defined(__cplusplus)
+-- 
+2.30.2
+
+From 1bf233880b472769e5b560a3d50adbbecfeb5736 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 26 Mar 2021 01:10:08 +0300
+Subject: [PATCH 09/16] kernel32: Implement PackageFullNameFromId().
+
+---
+ dlls/kernel32/kernel32.spec                   |  1 +
+ dlls/kernelbase/kernelbase.spec               |  2 +-
+ dlls/kernelbase/version.c                     | 43 +++++++++++++++++++
+ include/appmodel.h                            |  1 +
+ 5 files changed, 67 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/kernel32/kernel32.spec b/dlls/kernel32/kernel32.spec
+index 59785a6de24..491f5ca0402 100644
+--- a/dlls/kernel32/kernel32.spec
++++ b/dlls/kernel32/kernel32.spec
+@@ -1152,6 +1152,7 @@
+ @ stdcall -import PeekConsoleInputW(ptr ptr long ptr)
+ @ stdcall -import PeekNamedPipe(long ptr long ptr ptr ptr)
+ @ stdcall -import PostQueuedCompletionStatus(long long ptr ptr)
++@ stdcall -import PackageFullNameFromId(ptr ptr ptr)
+ @ stdcall -import PackageIdFromFullName(wstr long ptr ptr)
+ @ stdcall PowerClearRequest(long long)
+ @ stdcall PowerCreateRequest(ptr)
+diff --git a/dlls/kernelbase/kernelbase.spec b/dlls/kernelbase/kernelbase.spec
+index 5d21680f512..81d88b1a33a 100644
+--- a/dlls/kernelbase/kernelbase.spec
++++ b/dlls/kernelbase/kernelbase.spec
+@@ -1012,7 +1012,7 @@
+ # @ stub PackageFamilyNameFromFullName
+ # @ stub PackageFamilyNameFromId
+ # @ stub PackageFamilyNameFromProductId
+-# @ stub PackageFullNameFromId
++@ stdcall PackageFullNameFromId(ptr ptr ptr)
+ # @ stub PackageFullNameFromProductId
+ @ stdcall PackageIdFromFullName(wstr long ptr ptr)
+ # @ stub PackageIdFromProductId
+diff --git a/dlls/kernelbase/version.c b/dlls/kernelbase/version.c
+index dca4ffb8647..560e45e965a 100644
+--- a/dlls/kernelbase/version.c
++++ b/dlls/kernelbase/version.c
+@@ -1597,6 +1597,16 @@ static UINT32 processor_arch_from_string(const WCHAR *str, unsigned int len)
+     return ~0u;
+ }
+ 
++const WCHAR *string_from_processor_arch(UINT32 code)
++{
++    unsigned int i;
++
++    for (i = 0; i < ARRAY_SIZE(arch_names); ++i)
++        if (code == arch_names[i].code)
++            return arch_names[i].name;
++    return NULL;
++}
++
+ /***********************************************************************
+  *         PackageIdFromFullName   (kernelbase.@)
+  */
+@@ -1687,6 +1697,39 @@ LONG WINAPI PackageIdFromFullName(const WCHAR *full_name, UINT32 flags, UINT32 *
+ }
+ 
+ 
++/***********************************************************************
++ *         PackageFullNameFromId   (kernelbase.@)
++ */
++LONG WINAPI PackageFullNameFromId(const PACKAGE_ID *package_id, UINT32 *length, WCHAR *full_name)
++{
++    WCHAR ver_str[5 * 4 + 3 + 1];
++    const WCHAR *arch_str;
++    UINT32 have_length;
++
++    TRACE("package_id %p, length %p, full_name %p.\n", package_id, length, full_name);
++
++    if (!package_id || !length)
++        return ERROR_INVALID_PARAMETER;
++    if (!full_name && *length)
++        return ERROR_INVALID_PARAMETER;
++    if (!package_id->name || !package_id->resourceId || !package_id->publisherId
++            || !(arch_str = string_from_processor_arch(package_id->processorArchitecture)))
++        return ERROR_INVALID_PARAMETER;
++
++    swprintf(ver_str, ARRAY_SIZE(ver_str), L"%u.%u.%u.%u", package_id->version.Major,
++            package_id->version.Minor, package_id->version.Build, package_id->version.Revision);
++    have_length = *length;
++    *length = lstrlenW(package_id->name) + 1 + lstrlenW(ver_str) + 1 + lstrlenW(arch_str) + 1
++            + lstrlenW(package_id->resourceId) + 1 + lstrlenW(package_id->publisherId) + 1;
++
++    if (have_length < *length)
++        return ERROR_INSUFFICIENT_BUFFER;
++
++    swprintf(full_name, *length, L"%s_%s_%s_%s_%s", package_id->name, ver_str, arch_str, package_id->resourceId, package_id->publisherId);
++    return ERROR_SUCCESS;
++}
++
++
+ /***********************************************************************
+  *         GetPackagesByPackageFamily   (kernelbase.@)
+  */
+diff --git a/include/appmodel.h b/include/appmodel.h
+index 27a0d0a8646..be59bc70f5f 100644
+--- a/include/appmodel.h
++++ b/include/appmodel.h
+@@ -84,6 +84,7 @@ LONG WINAPI AppPolicyGetThreadInitializationType(HANDLE token, AppPolicyThreadIn
+ LONG WINAPI AppPolicyGetWindowingModel(HANDLE processToken, AppPolicyWindowingModel *policy);
+ LONG WINAPI GetPackagesByPackageFamily(const WCHAR *family_name, UINT32 *count, WCHAR **full_names,
+         UINT32 *buffer_length, WCHAR *buffer);
++LONG WINAPI PackageFullNameFromId(const PACKAGE_ID *package_id, UINT32 *length, WCHAR *full_name);
+ LONG WINAPI PackageIdFromFullName(const WCHAR *full_name, UINT32 flags, UINT32 *buffer_length, BYTE *buffer);
+ 
+ #if defined(__cplusplus)
+-- 
+2.30.2
+
+From fb64ea93325eb2d4aa9be77c3e2b07ca20052c3d Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 15 Mar 2021 22:05:19 +0300
+Subject: [PATCH 10/16] kernel32: Implement GetPackagePath().
+
+---
+ dlls/kernel32/kernel32.spec                   |  1 +
+ dlls/kernelbase/kernelbase.spec               |  2 +-
+ dlls/kernelbase/version.c                     | 82 +++++++++++++++++++
+ include/appmodel.h                            |  1 +
+ 5 files changed, 144 insertions(+), 6 deletions(-)
+
+diff --git a/dlls/kernel32/kernel32.spec b/dlls/kernel32/kernel32.spec
+index 491f5ca0402..6b1030b00df 100644
+--- a/dlls/kernel32/kernel32.spec
++++ b/dlls/kernel32/kernel32.spec
+@@ -768,6 +768,7 @@
+ @ stdcall -import GetPackagesByPackageFamily(wstr ptr ptr ptr ptr)
+ @ stdcall GetPackageFamilyName(long ptr ptr) kernelbase.GetPackageFamilyName
+ @ stdcall GetPackageFullName(long ptr ptr) kernelbase.GetPackageFullName
++@ stdcall -import GetPackagePath(ptr long ptr ptr)
+ @ stdcall -import GetPhysicallyInstalledSystemMemory(ptr)
+ @ stdcall -import GetPriorityClass(long)
+ @ stdcall GetPrivateProfileIntA(str str long str)
+diff --git a/dlls/kernelbase/kernelbase.spec b/dlls/kernelbase/kernelbase.spec
+index 81d88b1a33a..0b374a53b60 100644
+--- a/dlls/kernelbase/kernelbase.spec
++++ b/dlls/kernelbase/kernelbase.spec
+@@ -601,7 +601,7 @@
+ # @ stub GetPackageInfo
+ # @ stub GetPackageInstallTime
+ # @ stub GetPackageOSMaxVersionTested
+-# @ stub GetPackagePath
++@ stdcall GetPackagePath(ptr long ptr ptr)
+ # @ stub GetPackagePathByFullName
+ # @ stub GetPackagePathOnVolume
+ # @ stub GetPackageProperty
+diff --git a/dlls/kernelbase/version.c b/dlls/kernelbase/version.c
+index 560e45e965a..1f16194a565 100644
+--- a/dlls/kernelbase/version.c
++++ b/dlls/kernelbase/version.c
+@@ -1839,3 +1839,85 @@ LONG WINAPI GetPackagesByPackageFamily(const WCHAR *family_name, UINT32 *count,
+ 
+     return short_buffer ? ERROR_INSUFFICIENT_BUFFER : ERROR_SUCCESS;
+ }
++
++
++/***********************************************************************
++ *         GetPackagePath   (kernelbase.@)
++ */
++LONG WINAPI GetPackagePath(const PACKAGE_ID *package_id, const UINT32 reserved, UINT32 *length, WCHAR *path)
++{
++    WCHAR *key_name = NULL, *expanded_path = NULL;
++    UINT32 required_length, have_length;
++    unsigned int offset;
++    HKEY key = NULL;
++    DWORD size;
++    LONG ret;
++
++    TRACE("package_id %p, reserved %u, length %p, path %p.\n", package_id, reserved, length, path);
++
++    if (!length)
++        return ERROR_INVALID_PARAMETER;
++    if (!path && *length)
++        return ERROR_INVALID_PARAMETER;
++
++    required_length = 0;
++    if ((ret = PackageFullNameFromId(package_id, &required_length, NULL)) != ERROR_INSUFFICIENT_BUFFER)
++        return ret;
++
++    offset = lstrlenW(packages_key_name) + 1;
++    if (!(key_name = heap_alloc((offset + required_length) * sizeof(WCHAR))))
++    {
++        ERR("No memory.");
++        return ERROR_OUTOFMEMORY;
++    }
++
++    if ((ret = PackageFullNameFromId(package_id, &required_length, key_name + offset)))
++        goto done;
++
++    memcpy(key_name, packages_key_name, (offset - 1) * sizeof(WCHAR));
++    key_name[offset - 1] = L'\\';
++
++    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, key_name, 0, KEY_READ, &key))
++    {
++        WARN("Key %s not found.\n", debugstr_w(key_name));
++        ret = ERROR_NOT_FOUND;
++        goto done;
++    }
++    if (RegGetValueW(key, NULL, L"Path", RRF_RT_REG_SZ, NULL, NULL, &size))
++    {
++        WARN("Path value not found in %s.\n", debugstr_w(key_name));
++        ret = ERROR_NOT_FOUND;
++        goto done;
++    }
++    if (!(expanded_path = heap_alloc(size)))
++    {
++        ERR("No memory.");
++        ret = ERROR_OUTOFMEMORY;
++        goto done;
++    }
++    if (RegGetValueW(key, NULL, L"Path", RRF_RT_REG_SZ, NULL, expanded_path, &size))
++    {
++        WARN("Could not get Path value from %s.\n", debugstr_w(key_name));
++        ret = ERROR_NOT_FOUND;
++        goto done;
++    }
++
++    have_length = *length;
++    *length = lstrlenW(expanded_path) + 1;
++    if (have_length >= *length)
++    {
++        memcpy(path, expanded_path, *length * sizeof(*path));
++        ret = ERROR_SUCCESS;
++    }
++    else
++    {
++        ret = ERROR_INSUFFICIENT_BUFFER;
++    }
++
++done:
++    if (key)
++        RegCloseKey(key);
++    heap_free(expanded_path);
++    heap_free(key_name);
++    return ret;
++}
+diff --git a/include/appmodel.h b/include/appmodel.h
+index be59bc70f5f..c73cb8d26ef 100644
+--- a/include/appmodel.h
++++ b/include/appmodel.h
+@@ -82,6 +82,7 @@ LONG WINAPI AppPolicyGetProcessTerminationMethod(HANDLE token, AppPolicyProcessT
+ LONG WINAPI AppPolicyGetShowDeveloperDiagnostic(HANDLE token, AppPolicyShowDeveloperDiagnostic *policy);
+ LONG WINAPI AppPolicyGetThreadInitializationType(HANDLE token, AppPolicyThreadInitializationType *policy);
+ LONG WINAPI AppPolicyGetWindowingModel(HANDLE processToken, AppPolicyWindowingModel *policy);
++LONG WINAPI GetPackagePath(const PACKAGE_ID *package_id, const UINT32 reserved, UINT32 *length, WCHAR *path);
+ LONG WINAPI GetPackagesByPackageFamily(const WCHAR *family_name, UINT32 *count, WCHAR **full_names,
+         UINT32 *buffer_length, WCHAR *buffer);
+ LONG WINAPI PackageFullNameFromId(const PACKAGE_ID *package_id, UINT32 *length, WCHAR *full_name);
+-- 
+2.30.2
+
+From 240556e2b8cb94fc9cc85949b7e043f392b1802a Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty <etaash.mathamsetty@gmail.com>
+Date: Tue, 22 Aug 2023 10:35:33 -0400
+Subject: [PATCH] kernelbase: Add GetPackagePathByFullName stub.
+
+---
+ dlls/kernel32/kernel32.spec     |  1 +
+ dlls/kernelbase/kernelbase.spec |  2 +-
+ dlls/kernelbase/version.c       | 13 +++++++++++++
+ 3 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/kernel32/kernel32.spec b/dlls/kernel32/kernel32.spec
+index eb70a8763b50..52a17bd7a8c2 100644
+--- a/dlls/kernel32/kernel32.spec
++++ b/dlls/kernel32/kernel32.spec
+@@ -775,6 +775,7 @@
+ @ stdcall GetPackageFamilyName(long ptr ptr) kernelbase.GetPackageFamilyName
+ @ stdcall GetPackageFullName(long ptr ptr) kernelbase.GetPackageFullName
+ @ stdcall -import GetPackagePath(ptr long ptr ptr)
++@ stdcall GetPackagePathByFullName(wstr ptr wstr) kernelbase.GetPackagePathByFullName
+ @ stdcall -import GetPhysicallyInstalledSystemMemory(ptr)
+ @ stdcall -import GetPriorityClass(long)
+ @ stdcall GetPrivateProfileIntA(str str long str)
+diff --git a/dlls/kernelbase/kernelbase.spec b/dlls/kernelbase/kernelbase.spec
+index 5d5256eb65fc..104dd99d619a 100644
+--- a/dlls/kernelbase/kernelbase.spec
++++ b/dlls/kernelbase/kernelbase.spec
+@@ -631,7 +631,7 @@
+ # @ stub GetPackageInstallTime
+ # @ stub GetPackageOSMaxVersionTested
+ @ stdcall GetPackagePath(ptr long ptr ptr)
+-# @ stub GetPackagePathByFullName
++@ stdcall GetPackagePathByFullName(wstr ptr wstr)
+ # @ stub GetPackagePathOnVolume
+ # @ stub GetPackageProperty
+ # @ stub GetPackagePropertyString
+diff --git a/dlls/kernelbase/version.c b/dlls/kernelbase/version.c
+index d8db79b1263a..4631ac8d0bcf 100644
+--- a/dlls/kernelbase/version.c
++++ b/dlls/kernelbase/version.c
+@@ -1618,6 +1618,19 @@ LONG WINAPI DECLSPEC_HOTPATCH GetPackagesByPackageFamily(const WCHAR *family_nam
+     return ERROR_SUCCESS;
+ }
+
++/***********************************************************************
++ *         GetPackagePathByFullName   (kernelbase.@)
++ */
++LONG WINAPI GetPackagePathByFullName(const WCHAR *name, UINT32 *len, WCHAR *path)
++{
++    if (!len || !name)
++        return ERROR_INVALID_PARAMETER;
++
++    FIXME( "(%s %p %p): stub\n", debugstr_w(name), len, path );
++
++    return APPMODEL_ERROR_NO_PACKAGE;
++}
++
+ static const struct
+ {
+     UINT32 code;
+
+
+From 47be204baf902d876fc5e5b0240b6167500ec0dd Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 29 Mar 2021 21:54:30 +0300
+Subject: [PATCH] dxgi: Use proxy IDXGISwapChain interface when importing that
+ from d3d implementation.
+
+For Origin overlay.
+
+Required for Origin overlay to work (which expects IDXGISwapChain
+implementation methods to reside in dxgi.dll).
+---
+ dlls/dxgi/factory.c   | 511 +++++++++++++++++++++++++++++++++++++++++-
+ dlls/dxgi/swapchain.c |   6 +-
+ 2 files changed, 509 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/dxgi/factory.c b/dlls/dxgi/factory.c
+index af18bdd2c32..020faa26a11 100644
+--- a/dlls/dxgi/factory.c
++++ b/dlls/dxgi/factory.c
+@@ -29,7 +29,7 @@ static inline struct dxgi_factory *impl_from_IWineDXGIFactory(IWineDXGIFactory *
+     return CONTAINING_RECORD(iface, struct dxgi_factory, IWineDXGIFactory_iface);
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_factory_QueryInterface(IWineDXGIFactory *iface, REFIID iid, void **out)
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH dxgi_factory_QueryInterface(IWineDXGIFactory *iface, REFIID iid, void **out)
+ {
+     struct dxgi_factory *factory = impl_from_IWineDXGIFactory(iface);
+ 
+@@ -58,7 +58,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_factory_QueryInterface(IWineDXGIFactory *i
+     return E_NOINTERFACE;
+ }
+ 
+-static ULONG STDMETHODCALLTYPE dxgi_factory_AddRef(IWineDXGIFactory *iface)
++static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH dxgi_factory_AddRef(IWineDXGIFactory *iface)
+ {
+     struct dxgi_factory *factory = impl_from_IWineDXGIFactory(iface);
+     ULONG refcount = InterlockedIncrement(&factory->refcount);
+@@ -68,7 +68,7 @@ static ULONG STDMETHODCALLTYPE dxgi_factory_AddRef(IWineDXGIFactory *iface)
+     return refcount;
+ }
+ 
+-static ULONG STDMETHODCALLTYPE dxgi_factory_Release(IWineDXGIFactory *iface)
++static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH dxgi_factory_Release(IWineDXGIFactory *iface)
+ {
+     struct dxgi_factory *factory = impl_from_IWineDXGIFactory(iface);
+     ULONG refcount = InterlockedDecrement(&factory->refcount);
+@@ -267,7 +267,494 @@ static BOOL STDMETHODCALLTYPE dxgi_factory_IsWindowedStereoEnabled(IWineDXGIFact
+     return FALSE;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE dxgi_factory_CreateSwapChainForHwnd(IWineDXGIFactory *iface,
++struct proxy_swapchain
++{
++    IDXGISwapChain4 IDXGISwapChain4_iface;
++    IDXGISwapChain4 *swapchain;
++};
++
++static inline struct proxy_swapchain *proxy_swapchain_from_IDXGISwapChain4(IDXGISwapChain4 *iface)
++{
++    return CONTAINING_RECORD(iface, struct proxy_swapchain, IDXGISwapChain4_iface);
++}
++
++/* IUnknown methods */
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_QueryInterface(IDXGISwapChain4 *iface, REFIID riid, void **object)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++    TRACE("iface %p, riid %s, object %p\n", iface, debugstr_guid(riid), object);
++
++    if (IsEqualGUID(riid, &IID_IUnknown)
++            || IsEqualGUID(riid, &IID_IDXGIObject)
++            || IsEqualGUID(riid, &IID_IDXGIDeviceSubObject)
++            || IsEqualGUID(riid, &IID_IDXGISwapChain)
++            || IsEqualGUID(riid, &IID_IDXGISwapChain1)
++            || IsEqualGUID(riid, &IID_IDXGISwapChain2)
++            || IsEqualGUID(riid, &IID_IDXGISwapChain3)
++            || IsEqualGUID(riid, &IID_IDXGISwapChain4))
++    {
++        IDXGISwapChain4_AddRef(swapchain->swapchain);
++        *object = iface;
++        return S_OK;
++    }
++
++    WARN("%s not implemented, returning E_NOINTERFACE\n", debugstr_guid(riid));
++
++    *object = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_AddRef(IDXGISwapChain4 *iface)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE("swapchain %p.\n", swapchain);
++
++    return IDXGISwapChain4_AddRef(swapchain->swapchain);
++}
++
++static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_Release(IDXGISwapChain4 *iface)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++    ULONG refcount = IDXGISwapChain4_Release(swapchain->swapchain);
++
++    TRACE("%p decreasing refcount to %u.\n", swapchain, refcount);
++
++    if (!refcount)
++        free(swapchain);
++
++    return refcount;
++}
++
++/* IDXGIObject methods */
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_SetPrivateData(IDXGISwapChain4 *iface,
++        REFGUID guid, UINT data_size, const void *data)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE("iface %p, guid %s, data_size %u, data %p.\n", iface, debugstr_guid(guid), data_size, data);
++
++    return IDXGISwapChain4_SetPrivateData(swapchain->swapchain, guid, data_size, data);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_SetPrivateDataInterface(IDXGISwapChain4 *iface,
++        REFGUID guid, const IUnknown *object)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE("iface %p, guid %s, object %p.\n", iface, debugstr_guid(guid), object);
++
++    return IDXGISwapChain4_SetPrivateDataInterface(swapchain->swapchain, guid, object);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetPrivateData(IDXGISwapChain4 *iface,
++        REFGUID guid, UINT *data_size, void *data)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE("iface %p, guid %s, data_size %p, data %p.\n", iface, debugstr_guid(guid), data_size, data);
++
++    return IDXGISwapChain4_GetPrivateData(swapchain->swapchain, guid, data_size, data);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetParent(IDXGISwapChain4 *iface, REFIID riid, void **parent)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE("iface %p, riid %s, parent %p.\n", iface, debugstr_guid(riid), parent);
++
++    return IDXGISwapChain4_GetParent(swapchain->swapchain, riid, parent);
++}
++
++/* IDXGIDeviceSubObject methods */
++
++static HRESULT STDMETHODCALLTYPE proxy_swapchain_GetDevice(IDXGISwapChain4 *iface, REFIID riid, void **device)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE("iface %p, riid %s, device %p.\n", iface, debugstr_guid(riid), device);
++
++    return IDXGISwapChain4_GetDevice(swapchain->swapchain, riid, device);
++}
++
++/* IDXGISwapChain methods */
++
++HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_Present(IDXGISwapChain4 *iface, UINT sync_interval, UINT flags)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE("iface %p, sync_interval %u, flags %#x.\n", iface, sync_interval, flags);
++
++    return IDXGISwapChain4_Present(swapchain->swapchain, sync_interval, flags);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetBuffer(IDXGISwapChain4 *iface,
++        UINT buffer_idx, REFIID riid, void **surface)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetBuffer(swapchain->swapchain, buffer_idx, riid, surface);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_SetFullscreenState(IDXGISwapChain4 *iface,
++        BOOL fullscreen, IDXGIOutput *target)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_SetFullscreenState(swapchain->swapchain, fullscreen, target);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetFullscreenState(IDXGISwapChain4 *iface,
++        BOOL *fullscreen, IDXGIOutput **target)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetFullscreenState(swapchain->swapchain, fullscreen, target);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetDesc(IDXGISwapChain4 *iface, DXGI_SWAP_CHAIN_DESC *desc)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetDesc(swapchain->swapchain, desc);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_ResizeBuffers(IDXGISwapChain4 *iface,
++        UINT buffer_count, UINT width, UINT height, DXGI_FORMAT format, UINT flags)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_ResizeBuffers(swapchain->swapchain, buffer_count, width, height, format, flags);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_ResizeTarget(IDXGISwapChain4 *iface,
++        const DXGI_MODE_DESC *target_mode_desc)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_ResizeTarget(swapchain->swapchain, target_mode_desc);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetContainingOutput(IDXGISwapChain4 *iface, IDXGIOutput **output)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetContainingOutput(swapchain->swapchain, output);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetFrameStatistics(IDXGISwapChain4 *iface,
++        DXGI_FRAME_STATISTICS *stats)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetFrameStatistics(swapchain->swapchain, stats);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetLastPresentCount(IDXGISwapChain4 *iface,
++        UINT *last_present_count)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetLastPresentCount(swapchain->swapchain, last_present_count);
++}
++
++/* IDXGISwapChain1 methods */
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetDesc1(IDXGISwapChain4 *iface, DXGI_SWAP_CHAIN_DESC1 *desc)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetDesc1(swapchain->swapchain, desc);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetFullscreenDesc(IDXGISwapChain4 *iface,
++        DXGI_SWAP_CHAIN_FULLSCREEN_DESC *desc)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetFullscreenDesc(swapchain->swapchain, desc);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetHwnd(IDXGISwapChain4 *iface, HWND *hwnd)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetHwnd(swapchain->swapchain, hwnd);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetCoreWindow(IDXGISwapChain4 *iface,
++        REFIID iid, void **core_window)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetCoreWindow(swapchain->swapchain, iid, core_window);
++}
++
++HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_Present1(IDXGISwapChain4 *iface,
++        UINT sync_interval, UINT flags, const DXGI_PRESENT_PARAMETERS *present_parameters)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_Present1(swapchain->swapchain, sync_interval, flags, present_parameters);
++}
++
++static BOOL STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_IsTemporaryMonoSupported(IDXGISwapChain4 *iface)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_IsTemporaryMonoSupported(swapchain->swapchain);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetRestrictToOutput(IDXGISwapChain4 *iface, IDXGIOutput **output)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetRestrictToOutput(swapchain->swapchain, output);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_SetBackgroundColor(IDXGISwapChain4 *iface, const DXGI_RGBA *color)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_SetBackgroundColor(swapchain->swapchain, color);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetBackgroundColor(IDXGISwapChain4 *iface, DXGI_RGBA *color)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetBackgroundColor(swapchain->swapchain, color);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_SetRotation(IDXGISwapChain4 *iface, DXGI_MODE_ROTATION rotation)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_SetRotation(swapchain->swapchain, rotation);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetRotation(IDXGISwapChain4 *iface, DXGI_MODE_ROTATION *rotation)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetRotation(swapchain->swapchain, rotation);
++}
++
++/* IDXGISwapChain2 methods */
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_SetSourceSize(IDXGISwapChain4 *iface, UINT width, UINT height)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_SetSourceSize(swapchain->swapchain, width, height);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetSourceSize(IDXGISwapChain4 *iface, UINT *width, UINT *height)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetSourceSize(swapchain->swapchain, width, height);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_SetMaximumFrameLatency(IDXGISwapChain4 *iface, UINT max_latency)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_SetMaximumFrameLatency(swapchain->swapchain, max_latency);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetMaximumFrameLatency(IDXGISwapChain4 *iface, UINT *max_latency)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetMaximumFrameLatency(swapchain->swapchain, max_latency);
++}
++
++static HANDLE STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetFrameLatencyWaitableObject(IDXGISwapChain4 *iface)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetFrameLatencyWaitableObject(swapchain->swapchain);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_SetMatrixTransform(IDXGISwapChain4 *iface,
++        const DXGI_MATRIX_3X2_F *matrix)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_SetMatrixTransform(swapchain->swapchain, matrix);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetMatrixTransform(IDXGISwapChain4 *iface,
++        DXGI_MATRIX_3X2_F *matrix)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetMatrixTransform(swapchain->swapchain, matrix);
++}
++
++/* IDXGISwapChain3 methods */
++
++static UINT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_GetCurrentBackBufferIndex(IDXGISwapChain4 *iface)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_GetCurrentBackBufferIndex(swapchain->swapchain);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_CheckColorSpaceSupport(IDXGISwapChain4 *iface,
++        DXGI_COLOR_SPACE_TYPE colour_space, UINT *colour_space_support)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_CheckColorSpaceSupport(swapchain->swapchain, colour_space, colour_space_support);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_SetColorSpace1(IDXGISwapChain4 *iface,
++        DXGI_COLOR_SPACE_TYPE colour_space)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_SetColorSpace1(swapchain->swapchain, colour_space);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_ResizeBuffers1(IDXGISwapChain4 *iface,
++        UINT buffer_count, UINT width, UINT height, DXGI_FORMAT format, UINT flags,
++        const UINT *node_mask, IUnknown * const *present_queue)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_ResizeBuffers1(swapchain->swapchain, buffer_count, width, height, format, flags, node_mask, present_queue);
++}
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_SetHDRMetaData(IDXGISwapChain4 *iface,
++        DXGI_HDR_METADATA_TYPE type, UINT size, void *metadata)
++{
++    struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
++
++    TRACE(".\n");
++
++    return IDXGISwapChain4_SetHDRMetaData(swapchain->swapchain, type, size, metadata);
++}
++
++static const struct IDXGISwapChain4Vtbl proxy_swapchain_vtbl =
++{
++    /* IUnknown methods */
++    proxy_swapchain_QueryInterface,
++    proxy_swapchain_AddRef,
++    proxy_swapchain_Release,
++    /* IDXGIObject methods */
++    proxy_swapchain_SetPrivateData,
++    proxy_swapchain_SetPrivateDataInterface,
++    proxy_swapchain_GetPrivateData,
++    proxy_swapchain_GetParent,
++    /* IDXGIDeviceSubObject methods */
++    proxy_swapchain_GetDevice,
++    /* IDXGISwapChain methods */
++    proxy_swapchain_Present,
++    proxy_swapchain_GetBuffer,
++    proxy_swapchain_SetFullscreenState,
++    proxy_swapchain_GetFullscreenState,
++    proxy_swapchain_GetDesc,
++    proxy_swapchain_ResizeBuffers,
++    proxy_swapchain_ResizeTarget,
++    proxy_swapchain_GetContainingOutput,
++    proxy_swapchain_GetFrameStatistics,
++    proxy_swapchain_GetLastPresentCount,
++    /* IDXGISwapChain1 methods */
++    proxy_swapchain_GetDesc1,
++    proxy_swapchain_GetFullscreenDesc,
++    proxy_swapchain_GetHwnd,
++    proxy_swapchain_GetCoreWindow,
++    proxy_swapchain_Present1,
++    proxy_swapchain_IsTemporaryMonoSupported,
++    proxy_swapchain_GetRestrictToOutput,
++    proxy_swapchain_SetBackgroundColor,
++    proxy_swapchain_GetBackgroundColor,
++    proxy_swapchain_SetRotation,
++    proxy_swapchain_GetRotation,
++    /* IDXGISwapChain2 methods */
++    proxy_swapchain_SetSourceSize,
++    proxy_swapchain_GetSourceSize,
++    proxy_swapchain_SetMaximumFrameLatency,
++    proxy_swapchain_GetMaximumFrameLatency,
++    proxy_swapchain_GetFrameLatencyWaitableObject,
++    proxy_swapchain_SetMatrixTransform,
++    proxy_swapchain_GetMatrixTransform,
++    /* IDXGISwapChain3 methods */
++    proxy_swapchain_GetCurrentBackBufferIndex,
++    proxy_swapchain_CheckColorSpaceSupport,
++    proxy_swapchain_SetColorSpace1,
++    proxy_swapchain_ResizeBuffers1,
++    /* IDXGISwapChain4 methods */
++    proxy_swapchain_SetHDRMetaData,
++};
++
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH dxgi_factory_CreateSwapChainForHwnd(IWineDXGIFactory *iface,
+         IUnknown *device, HWND window, const DXGI_SWAP_CHAIN_DESC1 *desc,
+         const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc,
+         IDXGIOutput *output, IDXGISwapChain1 **swapchain)
+@@ -299,9 +786,23 @@ static HRESULT STDMETHODCALLTYPE dxgi_factory_CreateSwapChainForHwnd(IWineDXGIFa
+ 
+     if (SUCCEEDED(IUnknown_QueryInterface(device, &IID_IWineDXGISwapChainFactory, (void **)&swapchain_factory)))
+     {
++        IDXGISwapChain4 *swapchain_impl;
+         hr = IWineDXGISwapChainFactory_create_swapchain(swapchain_factory,
+-                (IDXGIFactory *)iface, window, desc, fullscreen_desc, output, swapchain);
++                (IDXGIFactory *)iface, window, desc, fullscreen_desc, output, (IDXGISwapChain1 **)&swapchain_impl);
+         IWineDXGISwapChainFactory_Release(swapchain_factory);
++        if (SUCCEEDED(hr))
++        {
++            struct proxy_swapchain *obj;
++
++            obj = calloc(1, sizeof(*obj));
++            obj->IDXGISwapChain4_iface.lpVtbl = &proxy_swapchain_vtbl;
++            obj->swapchain = swapchain_impl;
++            *swapchain = (IDXGISwapChain1 *)&obj->IDXGISwapChain4_iface;
++        }
++        else
++        {
++            *swapchain = NULL;
++        }
+         return hr;
+     }
+ 
+diff --git a/dlls/dxgi/swapchain.c b/dlls/dxgi/swapchain.c
+index 82e5fbf811d..b1153ac4927 100644
+--- a/dlls/dxgi/swapchain.c
++++ b/dlls/dxgi/swapchain.c
+@@ -232,7 +232,7 @@ static ULONG STDMETHODCALLTYPE d3d11_swapchain_AddRef(IDXGISwapChain1 *iface)
+     return refcount;
+ }
+ 
+-static ULONG STDMETHODCALLTYPE d3d11_swapchain_Release(IDXGISwapChain4 *iface)
++static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_Release(IDXGISwapChain4 *iface)
+ {
+     struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
+     ULONG refcount = InterlockedDecrement(&swapchain->refcount);
+@@ -325,7 +325,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDevice(IDXGISwapChain1 *ifac
+ 
+ /* IDXGISwapChain1 methods */
+ 
+-static HRESULT d3d11_swapchain_present(struct d3d11_swapchain *swapchain,
++static HRESULT DECLSPEC_HOTPATCH d3d11_swapchain_present(struct d3d11_swapchain *swapchain,
+         unsigned int sync_interval, unsigned int flags)
+ {
+     if (sync_interval > 4)
+@@ -697,7 +697,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetCoreWindow(IDXGISwapChain1 *
+     return DXGI_ERROR_INVALID_CALL;
+ }
+ 
+-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_Present1(IDXGISwapChain4 *iface,
++static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_Present1(IDXGISwapChain4 *iface,
+         UINT sync_interval, UINT flags, const DXGI_PRESENT_PARAMETERS *present_parameters)
+ {
+     struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
+From 0262122fc328410e6b0b410837c35881b3aa85af Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 19 Apr 2021 15:29:39 +0300
+Subject: [PATCH] winevulkan: Don't hardcode performance frequency.
+
+For Forza Horizon 4.
+---
+ dlls/winevulkan/loader.c    | 33 +++++++++++++++++++++++++++++++++
+ dlls/winevulkan/make_vulkan |  2 +-
+ 2 files changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/winevulkan/loader.c b/dlls/winevulkan/loader.c
+index d3ac9f57763..fcb79983114 100644
+--- a/dlls/winevulkan/loader.c
++++ b/dlls/winevulkan/loader.c
+@@ -442,6 +442,39 @@ void WINAPI vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice phys_dev,
+     }
+ }
+ 
++VkResult WINAPI vkGetCalibratedTimestampsEXT(VkDevice device, uint32_t timestampCount, const VkCalibratedTimestampInfoEXT *pTimestampInfos, uint64_t *pTimestamps, uint64_t *pMaxDeviation)
++{
++    struct vkGetCalibratedTimestampsEXT_params params;
++    static LARGE_INTEGER freq;
++    VkResult res;
++    uint32_t i;
++
++    if (!freq.QuadPart)
++    {
++        LARGE_INTEGER temp;
++
++        QueryPerformanceFrequency(&temp);
++        InterlockedCompareExchange64(&freq.QuadPart, temp.QuadPart, 0);
++    }
++
++    params.device = device;
++    params.timestampCount = timestampCount;
++    params.pTimestampInfos = pTimestampInfos;
++    params.pTimestamps = pTimestamps;
++    params.pMaxDeviation = pMaxDeviation;
++    res = UNIX_CALL(vkGetCalibratedTimestampsEXT, &params);
++    if (res != VK_SUCCESS)
++        return res;
++
++    for (i = 0; i < timestampCount; i++)
++    {
++        if (pTimestampInfos[i].timeDomain != VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT) continue;
++        pTimestamps[i] *= freq.QuadPart / 10000000;
++    }
++
++    return VK_SUCCESS;
++}
++
+ VkResult WINAPI vkCreateDevice(VkPhysicalDevice phys_dev, const VkDeviceCreateInfo *create_info,
+                                const VkAllocationCallbacks *allocator, VkDevice *ret)
+ {
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index 516c817715f..a0287c1ff09 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -245,7 +245,6 @@ MANUAL_UNIX_THUNKS = {
+     "vkEnumeratePhysicalDevices",
+     "vkFreeCommandBuffers",
+     "vkFreeMemory",
+-    "vkGetCalibratedTimestampsEXT",
+     "vkGetCalibratedTimestampsKHR",
+     "vkGetDeviceProcAddr",
+     "vkGetDeviceQueue",
+@@ -285,6 +285,7 @@ MANUAL_LOADER_THUNKS = {
+     "vkEnumerateInstanceExtensionProperties",
+     "vkEnumerateInstanceVersion",
+     "vkFreeCommandBuffers",
++    "vkGetCalibratedTimestampsEXT",
+     "vkGetPhysicalDeviceProperties2",
+     "vkGetPhysicalDeviceProperties2KHR",
+ }
+From 003223a6816f3121a8e60d8ef3ec79e1768878ce Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Fri, 7 May 2021 13:44:00 -0500
+Subject: [PATCH] HACK: dxgi: Return a static factory for RE8: Village
+
+CW-Bug-Id: 18923
+---
+ dlls/dxgi/dxgi_main.c    | 15 ++++++
+ dlls/dxgi/dxgi_private.h |  2 +
+ dlls/dxgi/factory.c      | 99 +++++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 115 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/dxgi/dxgi_main.c b/dlls/dxgi/dxgi_main.c
+index 83c3f3734a7..941e23b3394 100644
+--- a/dlls/dxgi/dxgi_main.c
++++ b/dlls/dxgi/dxgi_main.c
+@@ -56,6 +56,18 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, void *reserved)
+     return TRUE;
+ }
+ 
++static BOOL is_re8(void)
++{
++    static int status = -1;
++
++    if(status < 0){
++        const char *sgi = getenv("SteamGameId");
++        status = sgi && !strcmp(sgi, "1196590");
++    }
++
++    return status != 0;
++}
++
+ HRESULT WINAPI CreateDXGIFactory2(UINT flags, REFIID iid, void **factory)
+ {
+     TRACE("flags %#x, iid %s, factory %p.\n", flags, debugstr_guid(iid), factory);
+@@ -70,6 +82,9 @@ HRESULT WINAPI CreateDXGIFactory1(REFIID iid, void **factory)
+ {
+     TRACE("iid %s, factory %p.\n", debugstr_guid(iid), factory);
+ 
++    if(is_re8())
++        return get_re8_dxgi_factory(iid, factory);
++
+     return dxgi_factory_create(iid, factory, TRUE);
+ }
+ 
+diff --git a/dlls/dxgi/dxgi_private.h b/dlls/dxgi/dxgi_private.h
+index acba3544e39..9d1b1cde342 100644
+--- a/dlls/dxgi/dxgi_private.h
++++ b/dlls/dxgi/dxgi_private.h
+@@ -209,4 +209,6 @@ struct dxgi_surface
+ HRESULT dxgi_surface_init(struct dxgi_surface *surface, IDXGIDevice *device,
+         IUnknown *outer, struct wined3d_texture *wined3d_texture);
+ 
++HRESULT get_re8_dxgi_factory(REFIID riid, void **factory);
++
+ #endif /* __WINE_DXGI_PRIVATE_H */
+diff --git a/dlls/dxgi/factory.c b/dlls/dxgi/factory.c
+index 020faa26a11..ba7d3e78905 100644
+--- a/dlls/dxgi/factory.c
++++ b/dlls/dxgi/factory.c
+@@ -1044,6 +1044,8 @@ static const struct IWineDXGIFactoryVtbl dxgi_factory_vtbl =
+     dxgi_factory_UnregisterAdaptersChangedEvent,
+ };
+ 
++static const struct IWineDXGIFactoryVtbl re8_factory_vtbl;
++
+ struct dxgi_factory *unsafe_impl_from_IDXGIFactory(IDXGIFactory *iface)
+ {
+     IWineDXGIFactory *wine_factory;
+@@ -1057,7 +1059,8 @@ struct dxgi_factory *unsafe_impl_from_IDXGIFactory(IDXGIFactory *iface)
+         ERR("Failed to get IWineDXGIFactory interface, hr %#x.\n", hr);
+         return NULL;
+     }
+-    assert(wine_factory->lpVtbl == &dxgi_factory_vtbl);
++    assert(wine_factory->lpVtbl == &dxgi_factory_vtbl ||
++            wine_factory->lpVtbl == &re8_factory_vtbl);
+     factory = CONTAINING_RECORD(wine_factory, struct dxgi_factory, IWineDXGIFactory_iface);
+     IWineDXGIFactory_Release(wine_factory);
+     return factory;
+@@ -1125,3 +1128,97 @@ HWND dxgi_factory_get_device_window(struct dxgi_factory *factory)
+ 
+     return factory->device_window;
+ }
++
++/* re8 calls DXGICreateFactory1 over and over again, which is very expensive in
++ * Wine.  instead just cache the first one we create and return that. */
++static struct dxgi_factory re8_factory;
++
++static CRITICAL_SECTION re8_factory_lock;
++static CRITICAL_SECTION_DEBUG re8_factory_lock_debug =
++{
++    0, 0, &re8_factory_lock,
++    { &re8_factory_lock_debug.ProcessLocksList, &re8_factory_lock_debug.ProcessLocksList },
++      0, 0, { (DWORD_PTR)(__FILE__ ": re8_factory_lock") }
++};
++static CRITICAL_SECTION re8_factory_lock = { &re8_factory_lock_debug, -1, 0, 0, 0, 0 };
++
++static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH re8_factory_AddRef(IWineDXGIFactory *iface)
++{
++    TRACE("%p static.\n", iface);
++    return re8_factory.refcount;
++}
++
++static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH re8_factory_Release(IWineDXGIFactory *iface)
++{
++    TRACE("%p static.\n", iface);
++    return re8_factory.refcount;
++}
++
++static const struct IWineDXGIFactoryVtbl re8_factory_vtbl =
++{
++    dxgi_factory_QueryInterface,
++    re8_factory_AddRef,
++    re8_factory_Release,
++    dxgi_factory_SetPrivateData,
++    dxgi_factory_SetPrivateDataInterface,
++    dxgi_factory_GetPrivateData,
++    dxgi_factory_GetParent,
++    dxgi_factory_EnumAdapters,
++    dxgi_factory_MakeWindowAssociation,
++    dxgi_factory_GetWindowAssociation,
++    dxgi_factory_CreateSwapChain,
++    dxgi_factory_CreateSoftwareAdapter,
++    /* IDXGIFactory1 methods */
++    dxgi_factory_EnumAdapters1,
++    dxgi_factory_IsCurrent,
++    /* IDXGIFactory2 methods */
++    dxgi_factory_IsWindowedStereoEnabled,
++    dxgi_factory_CreateSwapChainForHwnd,
++    dxgi_factory_CreateSwapChainForCoreWindow,
++    dxgi_factory_GetSharedResourceAdapterLuid,
++    dxgi_factory_RegisterStereoStatusWindow,
++    dxgi_factory_RegisterStereoStatusEvent,
++    dxgi_factory_UnregisterStereoStatus,
++    dxgi_factory_RegisterOcclusionStatusWindow,
++    dxgi_factory_RegisterOcclusionStatusEvent,
++    dxgi_factory_UnregisterOcclusionStatus,
++    dxgi_factory_CreateSwapChainForComposition,
++    /* IDXGIFactory3 methods */
++    dxgi_factory_GetCreationFlags,
++    /* IDXGIFactory4 methods */
++    dxgi_factory_EnumAdapterByLuid,
++    dxgi_factory_EnumWarpAdapter,
++    /* IDXIGFactory5 methods */
++    dxgi_factory_CheckFeatureSupport,
++    /* IDXGIFactory6 methods */
++    dxgi_factory_EnumAdapterByGpuPreference,
++    /* IDXGIFactory7 methods */
++    dxgi_factory_RegisterAdaptersChangedEvent,
++    dxgi_factory_UnregisterAdaptersChangedEvent,
++};
++
++HRESULT get_re8_dxgi_factory(REFIID riid, void **factory)
++{
++    HRESULT hr;
++
++    EnterCriticalSection(&re8_factory_lock);
++
++    if(re8_factory.refcount == 0){
++        if (FAILED(hr = dxgi_factory_init(&re8_factory, TRUE)))
++        {
++            WARN("Failed to initialize factory, hr %#x.\n", hr);
++            LeaveCriticalSection(&re8_factory_lock);
++            return hr;
++        }
++
++        re8_factory.IWineDXGIFactory_iface.lpVtbl = &re8_factory_vtbl;
++
++        TRACE("Created factory %p.\n", &re8_factory);
++    }
++
++    LeaveCriticalSection(&re8_factory_lock);
++
++    hr = IWineDXGIFactory_QueryInterface(&re8_factory.IWineDXGIFactory_iface, riid, factory);
++
++    return hr;
++}
+From 43c3113aa696898ec5758118b92f8c2a5fb61714 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 30 Jul 2021 21:01:13 +0300
+Subject: [PATCH] kernelbase: HACK: Force CEF software rendering for
+ UplayWebCore.
+
+(To be revisited once builtin d3dcompiler is added).
+---
+ dlls/kernelbase/process.c | 27 ++++++++++++++++++++++++++-
+ 1 file changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
+index 33197563cd8..9bcb377a62e 100644
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -33,6 +33,7 @@
+ #include "kernelbase.h"
+ #include "wine/debug.h"
+ #include "wine/condrv.h"
++#include "wine/heap.h"
+
+ WINE_DEFAULT_DEBUG_CHANNEL(process);
+
+@@ -517,7 +518,31 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR
+     }
+     else
+     {
+-        if (!(tidy_cmdline = get_file_name( cmd_line, name, ARRAY_SIZE(name) ))) return FALSE;
++        static const WCHAR *opt = L" --use-gl=swiftshader";
++        WCHAR *cmdline_new = NULL;
++
++        if (cmd_line && wcsstr( cmd_line, L"UplayWebCore.exe" ))
++        {
++            FIXME( "HACK: appending %s to command line %s.\n", debugstr_w(opt), debugstr_w(cmd_line) );
++
++            cmdline_new = heap_alloc( sizeof(WCHAR) * (lstrlenW(cmd_line) + lstrlenW(opt) + 1) );
++            lstrcpyW(cmdline_new, cmd_line);
++            lstrcatW(cmdline_new, opt);
++        }
++
++        tidy_cmdline = get_file_name( cmdline_new ? cmdline_new : cmd_line, name, ARRAY_SIZE(name) );
++
++        if (!tidy_cmdline)
++        {
++            heap_free( cmdline_new );
++            return FALSE;
++        }
++
++        if (cmdline_new)
++        {
++            if (cmdline_new == tidy_cmdline) cmd_line = NULL;
++            else heap_free( cmdline_new );
++        }
+         app_name = name;
+     }
+
+
+From a9ec37d83082b1623aea4bc5933f77f4c8a356cf Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 14 Sep 2021 14:16:47 +0200
+Subject: [PATCH] msvcrt: Check for ERMS support and use rep stosb for large
+ memset calls.
+
+---
+ dlls/msvcrt/math.c   | 13 +++++++++
+ dlls/msvcrt/msvcrt.h |  1 +
+ dlls/msvcrt/string.c | 64 ++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 78 insertions(+)
+
+diff --git a/dlls/msvcrt/math.c b/dlls/msvcrt/math.c
+index d6b0d9422e7..ed763f02589 100644
+--- a/dlls/msvcrt/math.c
++++ b/dlls/msvcrt/math.c
+@@ -42,6 +42,7 @@
+ #include <limits.h>
+ #include <locale.h>
+ #include <math.h>
++#include <intrin.h>
+
+ #include "msvcrt.h"
+ #include "winternl.h"
+@@ -64,6 +65,7 @@ typedef int (CDECL *MSVCRT_matherr_func)(struct _exception *);
+
+ static MSVCRT_matherr_func MSVCRT_default_matherr_func = NULL;
+
++BOOL erms_supported;
+ BOOL sse2_supported;
+ static BOOL sse2_enabled;
+
+@@ -71,6 +73,17 @@ static const struct unix_funcs *unix_funcs;
+
+ void msvcrt_init_math( void *module )
+ {
++#if defined(__i386__) || defined(__x86_64__)
++    int regs[4];
++
++    __cpuid(regs, 0);
++    if (regs[0] >= 7)
++    {
++        __cpuidex(regs, 7, 0);
++        erms_supported = ((regs[1] >> 9) & 1);
++    }
++#endif
++
+     sse2_supported = IsProcessorFeaturePresent( PF_XMMI64_INSTRUCTIONS_AVAILABLE );
+ #if _MSVCR_VER <=71
+     sse2_enabled = FALSE;
+diff --git a/dlls/msvcrt/msvcrt.h b/dlls/msvcrt/msvcrt.h
+index c84e0a0a638..69c52616e3f 100644
+--- a/dlls/msvcrt/msvcrt.h
++++ b/dlls/msvcrt/msvcrt.h
+@@ -32,6 +32,7 @@
+ #undef strncpy
+ #undef wcsncpy
+
++extern BOOL erms_supported;
+ extern BOOL sse2_supported;
+
+ #define DBL80_MAX_10_EXP 4932
+diff --git a/dlls/msvcrt/string.c b/dlls/msvcrt/string.c
+index 70cca8d18ee..3daa0d483d0 100644
+--- a/dlls/msvcrt/string.c
++++ b/dlls/msvcrt/string.c
+@@ -2722,6 +2722,13 @@ __ASM_GLOBAL_FUNC( sse2_memmove,
+         MEMMOVE_CLEANUP
+         "ret" )
+
++#undef MEMMOVE_INIT
++#undef MEMMOVE_CLEANUP
++#undef DEST_REG
++#undef SRC_REG
++#undef LEN_REG
++#undef TMP_REG
++
+ #endif
+
+ /*********************************************************************
+@@ -2845,6 +2852,56 @@ void * __cdecl memcpy(void *dst, const void *src, size_t n)
+     return memmove(dst, src, n);
+ }
+
++#if defined(__i386__) || defined(__x86_64__)
++
++#ifdef __i386__
++#define DEST_REG "%edi"
++#define LEN_REG "%ecx"
++#define VAL_REG "%eax"
++
++#define MEMSET_INIT \
++    "movl " DEST_REG ", %edx\n\t" \
++    "movl 4(%esp), " DEST_REG "\n\t" \
++    "movl 8(%esp), " VAL_REG "\n\t" \
++    "movl 12(%esp), " LEN_REG "\n\t"
++
++#define MEMSET_RET \
++    "movl %edx, " DEST_REG "\n\t" \
++    "ret"
++
++#else
++
++#define DEST_REG "%rdi"
++#define LEN_REG "%rcx"
++#define VAL_REG "%eax"
++
++#define MEMSET_INIT \
++    "movq " DEST_REG ", %r9\n\t" \
++    "movq %rcx, " DEST_REG "\n\t" \
++    "movl %edx, " VAL_REG "\n\t" \
++    "movq %r8, " LEN_REG "\n\t"
++
++#define MEMSET_RET \
++    "movq %r9, " DEST_REG "\n\t" \
++    "ret"
++
++#endif
++
++void __cdecl erms_memset_aligned_32(unsigned char *d, unsigned int c, size_t n);
++__ASM_GLOBAL_FUNC( erms_memset_aligned_32,
++        MEMSET_INIT
++        "rep\n\t"
++        "stosb\n\t"
++        MEMSET_RET )
++
++#undef MEMSET_INIT
++#undef MEMSET_RET
++#undef DEST_REG
++#undef LEN_REG
++#undef VAL_REG
++
++#endif
++
+ static inline void memset_aligned_32(unsigned char *d, uint64_t v, size_t n)
+ {
+     while (n >= 32)
+@@ -2880,6 +2937,13 @@ void *__cdecl memset(void *dst, int c, size_t n)
+         if (n <= 64) return dst;
+
+         n = (n - a) & ~0x1f;
++#if defined(__i386__) || defined(__x86_64__)
++        if (n >= 2048 && erms_supported)
++        {
++            erms_memset_aligned_32(d + a, v, n);
++            return dst;
++        }
++#endif
+         memset_aligned_32(d + a, v, n);
+         return dst;
+     }
+From 454d37da51ed35ce16d73ba162c4fad3de7f93b1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 14 Sep 2021 14:16:48 +0200
+Subject: [PATCH] msvcrt: Add an SSE2 memset_aligned_32 implementation.
+
+---
+ dlls/msvcrt/string.c | 33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/dlls/msvcrt/string.c b/dlls/msvcrt/string.c
+index 3daa0d483d0..74409a6fb76 100644
+--- a/dlls/msvcrt/string.c
++++ b/dlls/msvcrt/string.c
+@@ -2894,6 +2894,27 @@ __ASM_GLOBAL_FUNC( erms_memset_aligned_32,
+         "stosb\n\t"
+         MEMSET_RET )
+
++void __cdecl sse2_memset_aligned_32(unsigned char *d, unsigned int c, size_t n);
++__ASM_GLOBAL_FUNC( sse2_memset_aligned_32,
++        MEMSET_INIT
++        "movd " VAL_REG ", %xmm0\n\t"
++        "pshufd $0, %xmm0, %xmm0\n\t"
++        "test $0x20, " LEN_REG "\n\t"
++        "je 1f\n\t"
++        "sub $0x20, " LEN_REG "\n\t"
++        "movdqa %xmm0, 0x00(" DEST_REG ", " LEN_REG ")\n\t"
++        "movdqa %xmm0, 0x10(" DEST_REG ", " LEN_REG ")\n\t"
++        "je 2f\n\t"
++        "1:\n\t"
++        "sub $0x40, " LEN_REG "\n\t"
++        "movdqa %xmm0, 0x00(" DEST_REG ", " LEN_REG ")\n\t"
++        "movdqa %xmm0, 0x10(" DEST_REG ", " LEN_REG ")\n\t"
++        "movdqa %xmm0, 0x20(" DEST_REG ", " LEN_REG ")\n\t"
++        "movdqa %xmm0, 0x30(" DEST_REG ", " LEN_REG ")\n\t"
++        "ja 1b\n\t"
++        "2:\n\t"
++        MEMSET_RET )
++
+ #undef MEMSET_INIT
+ #undef MEMSET_RET
+ #undef DEST_REG
+@@ -2943,9 +2964,21 @@ void *__cdecl memset(void *dst, int c, size_t n)
+             erms_memset_aligned_32(d + a, v, n);
+             return dst;
+         }
++#ifdef __x86_64__
++        sse2_memset_aligned_32(d + a, v, n);
++        return dst;
++#else
++        if (sse2_supported)
++        {
++            sse2_memset_aligned_32(d + a, v, n);
++            return dst;
++        }
++#endif
+ #endif
++#ifndef __x86_64__
+         memset_aligned_32(d + a, v, n);
+         return dst;
++#endif
+     }
+     if (n >= 8)
+     {
+From 6d574d1275635d1fda1177707a8f3146249b52ce Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 13 Oct 2021 15:19:37 +0200
+Subject: [PATCH] msvcrt: Write memory forward in memset.
+
+Instead of going backward, which may break the Linux kernel page fault
+optimizations.
+---
+ dlls/msvcrt/string.c | 23 +++++++++++++----------
+ 1 file changed, 13 insertions(+), 10 deletions(-)
+
+diff --git a/dlls/msvcrt/string.c b/dlls/msvcrt/string.c
+index 74409a6fb76..63a11c27e03 100644
+--- a/dlls/msvcrt/string.c
++++ b/dlls/msvcrt/string.c
+@@ -2901,16 +2901,18 @@ __ASM_GLOBAL_FUNC( sse2_memset_aligned_32,
+         "pshufd $0, %xmm0, %xmm0\n\t"
+         "test $0x20, " LEN_REG "\n\t"
+         "je 1f\n\t"
++        "add $0x20, " DEST_REG "\n\t"
+         "sub $0x20, " LEN_REG "\n\t"
+-        "movdqa %xmm0, 0x00(" DEST_REG ", " LEN_REG ")\n\t"
+-        "movdqa %xmm0, 0x10(" DEST_REG ", " LEN_REG ")\n\t"
++        "movdqa %xmm0, -0x20(" DEST_REG ")\n\t"
++        "movdqa %xmm0, -0x10(" DEST_REG ")\n\t"
+         "je 2f\n\t"
+         "1:\n\t"
++        "add $0x40, " DEST_REG "\n\t"
+         "sub $0x40, " LEN_REG "\n\t"
+-        "movdqa %xmm0, 0x00(" DEST_REG ", " LEN_REG ")\n\t"
+-        "movdqa %xmm0, 0x10(" DEST_REG ", " LEN_REG ")\n\t"
+-        "movdqa %xmm0, 0x20(" DEST_REG ", " LEN_REG ")\n\t"
+-        "movdqa %xmm0, 0x30(" DEST_REG ", " LEN_REG ")\n\t"
++        "movdqa %xmm0, -0x40(" DEST_REG ")\n\t"
++        "movdqa %xmm0, -0x30(" DEST_REG ")\n\t"
++        "movdqa %xmm0, -0x20(" DEST_REG ")\n\t"
++        "movdqa %xmm0, -0x10(" DEST_REG ")\n\t"
+         "ja 1b\n\t"
+         "2:\n\t"
+         MEMSET_RET )
+From 1ace788f817b0175e63d02732c0c11269d19ae0a Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Thu, 16 Sep 2021 18:01:42 +0300
+Subject: [PATCH] kernelbase: Return an error from
+ InitializeProcessForWsWatch() stub.
+
+CW-Bug-ID: #19445
+
+For DeathLoop.
+---
+ dlls/kernelbase/debug.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/kernelbase/debug.c b/dlls/kernelbase/debug.c
+index cbc53e22ac1..60b03c57137 100644
+--- a/dlls/kernelbase/debug.c
++++ b/dlls/kernelbase/debug.c
+@@ -1525,7 +1525,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetWsChangesEx( HANDLE process, PSAPI_WS_WATCH_INF
+ BOOL WINAPI /* DECLSPEC_HOTPATCH */ InitializeProcessForWsWatch( HANDLE process )
+ {
+     FIXME( "(process=%p): stub\n", process );
+-    return TRUE;
++    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
++    return FALSE;
+ }
+
+
+From 3244ba9966c0e7bcd445a65b5c325801f9b77131 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 5 Jan 2022 13:31:14 +0300
+Subject: [PATCH] audioses: Add stub dll.
+
+CW-Bug-Id: #19918
+---
+ configure.ac                |  1 +
+ dlls/audioses/Makefile.in   |  1 +
+ dlls/audioses/audioses.spec | 11 +++++++++++
+ 3 files changed, 13 insertions(+)
+ create mode 100644 dlls/audioses/Makefile.in
+ create mode 100644 dlls/audioses/audioses.spec
+
+diff --git a/configure.ac b/configure.ac
+index f37f4e02324..95f9a35bf7f 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -2625,6 +2625,7 @@ WINE_CONFIG_MAKEFILE(dlls/atl90)
+ WINE_CONFIG_MAKEFILE(dlls/atlthunk)
+ WINE_CONFIG_MAKEFILE(dlls/atlthunk/tests)
+ WINE_CONFIG_MAKEFILE(dlls/atmlib)
++WINE_CONFIG_MAKEFILE(dlls/audioses)
+ WINE_CONFIG_MAKEFILE(dlls/authz)
+ WINE_CONFIG_MAKEFILE(dlls/avicap32)
+ WINE_CONFIG_MAKEFILE(dlls/avifil32)
+diff --git a/dlls/audioses/Makefile.in b/dlls/audioses/Makefile.in
+new file mode 100644
+index 00000000000..370949ea4fe
+--- /dev/null
++++ b/dlls/audioses/Makefile.in
+@@ -0,0 +1 @@
++MODULE    = audioses.dll
+diff --git a/dlls/audioses/audioses.spec b/dlls/audioses/audioses.spec
+new file mode 100644
+index 00000000000..a1884e53243
+--- /dev/null
++++ b/dlls/audioses/audioses.spec
+@@ -0,0 +1,11 @@
++# @ stub AUDIOSES_1
++# @ stub AUDIOSES_2
++# @ stub AUDIOSES_3
++# @ stub AUDIOSES_4
++# @ stub AUDIOSES_5
++# @ stub DllCanUnloadNow
++# @ stub AUDIOSES_7
++# @ stub DllGetActivationFactory
++# @ stub DllGetClassObject
++# @ stub DllRegisterServer
++# @ stub DllUnregisterServer
+From ba4e9dc41c7fb272c4354669b032b781d96e2e59 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Thu, 19 Dec 2019 09:12:17 -0600
+Subject: [PATCH] winex11.drv: Remove nvidia hack workaround
+
+This breaks things for users who legitimately have only one resolution.
+---
+ dlls/winex11.drv/xrandr.c | 13 -------------
+ 1 file changed, 13 deletions(-)
+
+diff --git a/dlls/winex11.drv/xrandr.c b/dlls/winex11.drv/xrandr.c
+index 0a080ea6be8..667013df5ac 100644
+--- a/dlls/winex11.drv/xrandr.c
++++ b/dlls/winex11.drv/xrandr.c
+@@ -28,9 +28,6 @@
+ #include "wine/debug.h"
+
+ WINE_DEFAULT_DEBUG_CHANNEL(xrandr);
+-#ifdef HAVE_XRRGETPROVIDERRESOURCES
+-WINE_DECLARE_DEBUG_CHANNEL(winediag);
+-#endif
+
+ #ifdef SONAME_LIBXRANDR
+
+@@ -378,7 +375,6 @@ static BOOL is_broken_driver(void)
+     XRRScreenResources *screen_resources;
+     XRROutputInfo *output_info;
+     XRRModeInfo *first_mode;
+-    INT major, event, error;
+     INT output_idx, i, j;
+     BOOL only_one_mode;
+
+@@ -429,15 +425,6 @@ static BOOL is_broken_driver(void)
+
+         if (!only_one_mode)
+             continue;
+-
+-        /* Check if it is NVIDIA proprietary driver */
+-        if (XQueryExtension( gdi_display, "NV-CONTROL", &major, &event, &error ))
+-        {
+-            ERR_(winediag)("Broken NVIDIA RandR detected, falling back to RandR 1.0. "
+-                           "Please consider using the Nouveau driver instead.\n");
+-            pXRRFreeScreenResources( screen_resources );
+-            return TRUE;
+-        }
+     }
+     pXRRFreeScreenResources( screen_resources );
+     return FALSE;
