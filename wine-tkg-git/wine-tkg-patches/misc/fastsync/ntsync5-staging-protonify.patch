@@ -831,29 +831,29 @@ index edfeb03..0000000
 -
 -struct esync
 -{
--    LONG type;
+-    enum esync_type type;
 -    int fd;
 -    void *shm;
 -};
 -
 -struct semaphore
 -{
--    LONG max;
--    LONG count;
+-    int max;
+-    int count;
 -};
 -C_ASSERT(sizeof(struct semaphore) == 8);
 -
 -struct mutex
 -{
--    LONG tid;
--    LONG count;    /* recursion count */
+-    DWORD tid;
+-    int count;    /* recursion count */
 -};
 -C_ASSERT(sizeof(struct mutex) == 8);
 -
 -struct event
 -{
--    LONG signaled;
--    LONG locked;
+-    int signaled;
+-    int locked;
 -};
 -C_ASSERT(sizeof(struct event) == 8);
 -
@@ -940,7 +940,7 @@ index edfeb03..0000000
 -        }
 -    }
 -
--    if (!InterlockedCompareExchange( &esync_list[entry][idx].type, type, 0 ))
+-    if (!InterlockedCompareExchange( (int *)&esync_list[entry][idx].type, type, 0 ))
 -    {
 -        esync_list[entry][idx].fd = fd;
 -        esync_list[entry][idx].shm = shm;
@@ -964,7 +964,7 @@ index edfeb03..0000000
 - * message queue, etc.) */
 -static NTSTATUS get_object( HANDLE handle, struct esync **obj )
 -{
--    int ret = STATUS_SUCCESS;
+-    NTSTATUS ret = STATUS_SUCCESS;
 -    enum esync_type type = 0;
 -    unsigned int shm_idx = 0;
 -    obj_handle_t fd_handle;
@@ -1032,7 +1032,7 @@ index edfeb03..0000000
 -
 -    if (entry < ESYNC_LIST_ENTRIES && esync_list[entry])
 -    {
--        if (InterlockedExchange(&esync_list[entry][idx].type, 0))
+-        if (InterlockedExchange((int *)&esync_list[entry][idx].type, 0))
 -        {
 -            close( esync_list[entry][idx].fd );
 -            return STATUS_SUCCESS;
@@ -1128,7 +1128,7 @@ index edfeb03..0000000
 -}
 -
 -extern NTSTATUS esync_create_semaphore(HANDLE *handle, ACCESS_MASK access,
--    const OBJECT_ATTRIBUTES *attr, int initial, int max)
+-    const OBJECT_ATTRIBUTES *attr, LONG initial, LONG max)
 -{
 -    TRACE("name %s, initial %d, max %d.\n",
 -        attr ? debugstr_us(attr->ObjectName) : "<no name>", initial, max);
@@ -1144,7 +1144,7 @@ index edfeb03..0000000
 -    return open_esync( ESYNC_SEMAPHORE, handle, access, attr );
 -}
 -
--NTSTATUS esync_release_semaphore( HANDLE handle, unsigned int count, ULONG *prev )
+-NTSTATUS esync_release_semaphore( HANDLE handle, ULONG count, ULONG *prev )
 -{
 -    struct esync *obj;
 -    struct semaphore *semaphore;
@@ -1558,7 +1558,7 @@ index edfeb03..0000000
 -
 -/* A value of STATUS_NOT_IMPLEMENTED returned from this function means that we
 - * need to delegate to server_select(). */
--static NTSTATUS __esync_wait_objects( unsigned int count, const HANDLE *handles, BOOLEAN wait_any,
+-static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
 -                             BOOLEAN alertable, const LARGE_INTEGER *timeout )
 -{
 -    static const LARGE_INTEGER zero;
@@ -2124,11 +2124,11 @@ index 59f8809..0000000
 -extern NTSTATUS esync_close( HANDLE handle );
 -
 -extern NTSTATUS esync_create_semaphore(HANDLE *handle, ACCESS_MASK access,
--    const OBJECT_ATTRIBUTES *attr, int initial, int max);
+-    const OBJECT_ATTRIBUTES *attr, LONG initial, LONG max);
 -extern NTSTATUS esync_open_semaphore( HANDLE *handle, ACCESS_MASK access,
 -    const OBJECT_ATTRIBUTES *attr );
 -extern NTSTATUS esync_query_semaphore( HANDLE handle, void *info, ULONG *ret_len );
--extern NTSTATUS esync_release_semaphore( HANDLE handle, unsigned int count, ULONG *prev );
+-extern NTSTATUS esync_release_semaphore( HANDLE handle, ULONG count, ULONG *prev );
 -
 -extern NTSTATUS esync_create_event( HANDLE *handle, ACCESS_MASK access,
 -    const OBJECT_ATTRIBUTES *attr, EVENT_TYPE type, BOOLEAN initial );
@@ -3996,19 +3996,20 @@ diff --git a/server/completion.c b/server/completion.c
 index 3d4be86..5ec6d20 100644
 --- a/server/completion.c
 +++ b/server/completion.c
-@@ -61,10 +61,12 @@ struct completion
-     struct object  obj;
-     struct list    queue;
+@@ -61,11 +61,13 @@ struct completion
+     struct list    wait_queue;
      unsigned int   depth;
+     int            closed;
 +    struct fast_sync *fast_sync;
  };
  
- static void completion_dump( struct object*, int );
- static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static void completion_wait_dump( struct object*, int );
+ static int completion_wait_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static void completion_wait_satisfied( struct object *obj, struct wait_queue_entry *entry );
 +static struct fast_sync *completion_get_fast_sync( struct object *obj );
- static void completion_destroy( struct object * );
+ static void completion_wait_destroy( struct object * );
  
- static const struct object_ops completion_ops =
+ static const struct object_ops completion_wait_ops =
 @@ -75,7 +77,6 @@ static const struct object_ops completion_ops =
      add_queue,                 /* add_queue */
      remove_queue,              /* remove_queue */
@@ -4017,12 +4018,12 @@ index 3d4be86..5ec6d20 100644
      no_satisfied,              /* satisfied */
      no_signal,                 /* signal */
      no_get_fd,                 /* get_fd */
-@@ -88,6 +89,7 @@ static const struct object_ops completion_ops =
+@@ -87,6 +88,7 @@ static const struct object_ops completion_ops =
      default_unlink_name,       /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
 +    completion_get_fast_sync,  /* get_fast_sync */
-     no_close_handle,           /* close_handle */
+     completion_close_handle,   /* close_handle */
      completion_destroy         /* destroy */
  };
 @@ -110,6 +112,7 @@ static void completion_destroy( struct object *obj)
@@ -4054,22 +4055,22 @@ index 3d4be86..5ec6d20 100644
          {
              list_init( &completion->queue );
              completion->depth = 0;
+             completion->closed = 0;
 +            completion->fast_sync = NULL;
          }
      }
- 
 @@ -166,6 +180,7 @@ void add_completion( struct completion *completion, apc_param_t ckey, apc_param_
-     list_add_tail( &completion->queue, &msg->queue_entry );
-     completion->depth++;
-     wake_up( &completion->obj, 1 );
+         if (list_empty( &completion->queue )) return;
+     }
+     if (!list_empty( &completion->queue )) wake_up( &completion->obj, 0 );
 +    fast_set_event( completion->fast_sync );
  }
  
  /* create a completion */
 @@ -232,6 +247,8 @@ DECL_HANDLER(remove_completion)
-         reply->status = msg->status;
          reply->information = msg->information;
          free( msg );
+         reply->wait_handle = 0;
 +        if (list_empty( &completion->queue ))
 +            fast_reset_event( completion->fast_sync );
      }
@@ -7895,8 +7896,8 @@ index 10e9e28..cb4643a 100644
      struct msg_queue      *queue;         /* message queue */
      struct thread_wait    *wait;          /* current wait condition if sleeping */
 @@ -94,6 +92,7 @@ struct thread
-     data_size_t            desc_len;      /* thread description length in bytes */
      WCHAR                 *desc;          /* thread description string */
+     struct completion_wait *completion_wait; /* completion port wait object the thread is associated with */
 -    struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
 +    struct fast_sync      *fast_sync;     /* fast synchronization object */
 +    struct event          *fast_alert_event; /* fast synchronization alert event */
