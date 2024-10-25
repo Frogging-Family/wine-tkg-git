@@ -3575,6 +3575,24 @@ index 1072265..a9a0a2c 100644
      if (!handle) handle = keyed_event;
      if ((ULONG_PTR)key & 1) return STATUS_INVALID_PARAMETER_1;
      if (alertable) flags |= SELECT_ALERTABLE;
+@@ -2019,7 +2019,7 @@ NTSTATUS WINAPI NtRemoveIoCompletion( HANDLE handle, ULONG_PTR *key, ULONG_PTR *
+     }
+     SERVER_END_REQ;
+     if (status != STATUS_PENDING) return status;
+-    if (!timeout || timeout->QuadPart) status = NtWaitForSingleObject( wait_handle, FALSE, timeout );
++    if (!timeout || timeout->QuadPart) status = server_wait_for_object( wait_handle, FALSE, timeout );
+     else                               status = STATUS_TIMEOUT;
+     if (status != WAIT_OBJECT_0) return status;
+ 
+@@ -2081,7 +2081,7 @@ NTSTATUS WINAPI NtRemoveIoCompletionEx( HANDLE handle, FILE_IO_COMPLETION_INFORM
+         assert( status == STATUS_USER_APC );
+         goto done;
+     }
+-    if (!timeout || timeout->QuadPart) status = NtWaitForSingleObject( wait_handle, alertable, timeout );
++    if (!timeout || timeout->QuadPart) status = server_wait_for_object( wait_handle, alertable, timeout );
+     else                               status = STATUS_TIMEOUT;
+     if (status != WAIT_OBJECT_0) goto done;
+ 
 diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
 index 7f2f1b9..3f706f4 100644
 --- a/dlls/ntdll/unix/thread.c
@@ -3996,20 +4014,49 @@ diff --git a/server/completion.c b/server/completion.c
 index 3d4be86..5ec6d20 100644
 --- a/server/completion.c
 +++ b/server/completion.c
-@@ -61,10 +61,12 @@ struct completion
-     struct object  obj;
-     struct list    queue;
+@@ -61,6 +61,7 @@ struct completion
+     struct list    wait_queue;
      unsigned int   depth;
+     int            closed;
 +    struct fast_sync *fast_sync;
  };
  
+ static void completion_wait_dump( struct object*, int );
+@@ -92,21 +92,21 @@ static const struct object_ops completion_wait_ops =
+     add_queue,                      /* add_queue */
+     remove_queue,                   /* remove_queue */
+     completion_wait_signaled,       /* signaled */
+-    NULL,                           /* get_esync_fd */
+     completion_wait_satisfied,      /* satisfied */
+     no_signal,                      /* signal */
+     no_get_fd,                      /* get_fd */
+     default_map_access,             /* map_access */
+     default_get_sd,                 /* get_sd */
+     default_set_sd,                 /* set_sd */
+     no_get_full_name,               /* get_full_name */
+     no_lookup_name,                 /* lookup_name */
+     no_link_name,                   /* link_name */
+     NULL,                           /* unlink_name */
+     no_open_file,                   /* open_file */
+     no_kernel_obj_list,             /* get_kernel_obj_list */
++    no_get_fast_sync,               /* get_fast_sync */
+     no_close_handle,                /* close_handle */
+     completion_wait_destroy         /* destroy */
+ };
+ 
+ static void completion_wait_destroy( struct object *obj )
+@@ -75,17 +77,17 @@ static const struct object_ops completion_ops =
  static void completion_dump( struct object*, int );
  static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
 +static struct fast_sync *completion_get_fast_sync( struct object *obj );
+ static int completion_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
  static void completion_destroy( struct object * );
  
  static const struct object_ops completion_ops =
-@@ -75,7 +77,6 @@ static const struct object_ops completion_ops =
+ {
+     sizeof(struct completion), /* size */
+     &completion_type,          /* type */
+     completion_dump,           /* dump */
      add_queue,                 /* add_queue */
      remove_queue,              /* remove_queue */
      completion_signaled,       /* signaled */
@@ -4017,12 +4064,12 @@ index 3d4be86..5ec6d20 100644
      no_satisfied,              /* satisfied */
      no_signal,                 /* signal */
      no_get_fd,                 /* get_fd */
-@@ -88,6 +89,7 @@ static const struct object_ops completion_ops =
+@@ -87,6 +88,7 @@ static const struct object_ops completion_ops =
      default_unlink_name,       /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
 +    completion_get_fast_sync,  /* get_fast_sync */
-     no_close_handle,           /* close_handle */
+     completion_close_handle,   /* close_handle */
      completion_destroy         /* destroy */
  };
 @@ -110,6 +112,7 @@ static void completion_destroy( struct object *obj)
@@ -4054,22 +4101,22 @@ index 3d4be86..5ec6d20 100644
          {
              list_init( &completion->queue );
              completion->depth = 0;
+             completion->closed = 0;
 +            completion->fast_sync = NULL;
          }
      }
- 
 @@ -166,6 +180,7 @@ void add_completion( struct completion *completion, apc_param_t ckey, apc_param_
-     list_add_tail( &completion->queue, &msg->queue_entry );
-     completion->depth++;
-     wake_up( &completion->obj, 1 );
+         if (list_empty( &completion->queue )) return;
+     }
+     if (!list_empty( &completion->queue )) wake_up( &completion->obj, 0 );
 +    fast_set_event( completion->fast_sync );
  }
  
  /* create a completion */
 @@ -232,6 +247,8 @@ DECL_HANDLER(remove_completion)
-         reply->status = msg->status;
          reply->information = msg->information;
          free( msg );
+         reply->wait_handle = 0;
 +        if (list_empty( &completion->queue ))
 +            fast_reset_event( completion->fast_sync );
      }
@@ -6688,6 +6735,48 @@ diff --git a/server/object.c b/server/object.c
 index 29f1ea9..33fc18c 100644
 --- a/server/object.c
 +++ b/server/object.c
+@@ -120,19 +120,19 @@ static const struct object_ops apc_reserve_ops =
+     no_add_queue,               /* add_queue */
+     NULL,                       /* remove_queue */
+     NULL,                       /* signaled */
+-    NULL,                       /* get_esync_fd */
+     no_satisfied,               /* satisfied */
+     no_signal,                  /* signal */
+     no_get_fd,                  /* get_fd */
+     default_map_access,         /* map_access */
+     default_get_sd,             /* get_sd */
+     default_set_sd,             /* set_sd */
+     default_get_full_name,      /* get_full_name */
+     no_lookup_name,             /* lookup_name */
+     directory_link_name,        /* link_name */
+     default_unlink_name,        /* unlink_name */
+     no_open_file,               /* open_file */
+     no_kernel_obj_list,         /* get_kernel_obj_list */
++    no_get_fast_sync,
+     no_close_handle,            /* close_handle */
+     no_destroy                  /* destroy */
+ };
+@@ -144,19 +145,19 @@ static const struct object_ops completion_reserve_ops =
+     no_add_queue,              /* add_queue */
+     NULL,                      /* remove_queue */
+     NULL,                      /* signaled */
+-    NULL,                      /* get_esync_fd */
+     no_satisfied,              /* satisfied */
+     no_signal,                 /* signal */
+     no_get_fd,                 /* get_fd */
+     default_map_access,        /* map_access */
+     default_get_sd,            /* get_sd */
+     default_set_sd,            /* set_sd */
+     default_get_full_name,     /* get_full_name */
+     no_lookup_name,            /* lookup_name */
+     directory_link_name,       /* link_name */
+     default_unlink_name,       /* unlink_name */
+     no_open_file,              /* open_file */
+     no_kernel_obj_list,        /* get_kernel_obj_list */
++    no_get_fast_sync,
+     no_close_handle,           /* close_handle */
+     no_destroy                 /* destroy */
+ };
 @@ -538,6 +538,12 @@ struct fd *no_get_fd( struct object *obj )
      return NULL;
  }
@@ -7895,8 +7984,8 @@ index 10e9e28..cb4643a 100644
      struct msg_queue      *queue;         /* message queue */
      struct thread_wait    *wait;          /* current wait condition if sleeping */
 @@ -94,6 +92,7 @@ struct thread
-     data_size_t            desc_len;      /* thread description length in bytes */
      WCHAR                 *desc;          /* thread description string */
+     struct completion_wait *completion_wait; /* completion port wait object the thread is associated with */
 -    struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
 +    struct fast_sync      *fast_sync;     /* fast synchronization object */
 +    struct event          *fast_alert_event; /* fast synchronization alert event */
