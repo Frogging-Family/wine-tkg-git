@@ -963,7 +963,6 @@ _prepare() {
                    "$_where/wine-tkg-patches/misc/pythonfix/pythonfix"
                    "$_where/wine-tkg-patches/misc/high-core-count-fix/high-core-count-fix"
                    "$_where/wine-tkg-patches/game-specific/ffxiv-launcher-workaround/ffxiv-launcher-workaround"
-                   "$_where/wine-tkg-patches/game-specific/leagueoflolfix/leagueoflolfix"
                    "$_where/wine-tkg-patches/game-specific/assettocorsa_hud_perf/assettocorsa_hud_perf"
                    "$_where/wine-tkg-patches/game-specific/mk11/mk11"
                    "$_where/wine-tkg-patches/misc/PBA/PBA" ) && _patchpathloader
