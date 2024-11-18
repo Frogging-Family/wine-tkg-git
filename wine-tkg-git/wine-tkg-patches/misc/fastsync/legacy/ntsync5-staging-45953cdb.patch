@@ -3624,12 +3624,12 @@ index 4e5b282..fc5b259 100644
  extern void server_enter_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
  extern void server_leave_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
 @@ -203,6 +205,7 @@ extern unsigned int server_select( const select_op_t *select_op, data_size_t siz
-                                    timeout_t abs_timeout, context_t *context, struct user_apc *user_apc );
+                                    timeout_t abs_timeout, context_t *context, user_apc_t *user_apc );
  extern unsigned int server_wait( const select_op_t *select_op, data_size_t size, UINT flags,
                                   const LARGE_INTEGER *timeout );
 +extern unsigned int server_wait_for_object( HANDLE handle, BOOL alertable, const LARGE_INTEGER *timeout );
- extern unsigned int server_queue_process_apc( HANDLE process, const union apc_call *call,
-                                               union apc_result *result );
+ extern unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call,
+                                               apc_result_t *result );
  extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
 @@ -353,6 +356,8 @@ extern NTSTATUS wow64_wine_spawnvp( void *args );
  
@@ -4033,18 +4033,7 @@ index 3d4be86..5ec6d20 100644
  };
  
  static void completion_wait_destroy( struct object *obj )
-@@ -75,24 +77,28 @@ static const struct object_ops completion_ops =
-     msg = LIST_ENTRY( msg_entry, struct comp_msg, queue_entry );
-     --wait->completion->depth;
-     list_remove( &msg->queue_entry );
-+    if (list_empty( &wait->completion->queue ))
-+    {
-+        fast_reset_event( wait->completion->fast_sync );
-+    }
-     if (wait->msg) free( wait->msg );
-     wait->msg = msg;
- }
- 
+@@ -75,17 +77,17 @@ static const struct object_ops completion_ops =
  static void completion_dump( struct object*, int );
  static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
 +static struct fast_sync *completion_get_fast_sync( struct object *obj );
@@ -7509,11 +7498,11 @@ index ca83fdb..8c50f99 100644
      no_close_handle,               /* close_handle */
      master_socket_destroy          /* destroy */
  };
-diff --git a/server/request_handlers.h b/server/request_handlers.h
+diff --git a/server/request.h b/server/request.h
 index eb6b8f4..1636e98 100644
---- a/server/request_handlers.h	2024-11-18 18:02:30.072599085 +0500
-+++ b/server/request_handlers.h	2024-11-18 18:14:42.357268807 +0500
-@@ -298,12 +298,12 @@
+--- a/server/request.h
++++ b/server/request.h
+@@ -406,12 +406,12 @@ DECL_HANDLER(terminate_job);
  DECL_HANDLER(suspend_process);
  DECL_HANDLER(resume_process);
  DECL_HANDLER(get_next_thread);
@@ -7529,9 +7518,9 @@ index eb6b8f4..1636e98 100644
 -DECL_HANDLER(get_esync_apc_fd);
 +DECL_HANDLER(get_fast_alert_event);
  
- typedef void (*req_handler)( const void *req, void *reply );
- static const req_handler req_handlers[REQ_NB_REQUESTS] =
-@@ -599,12 +599,12 @@
+ #ifdef WANT_REQUEST_HANDLERS
+ 
+@@ -704,12 +704,12 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
      (req_handler)req_suspend_process,
      (req_handler)req_resume_process,
      (req_handler)req_get_next_thread,
@@ -7549,59 +7538,62 @@ index eb6b8f4..1636e98 100644
  };
  
  C_ASSERT( sizeof(abstime_t) == 8 );
-@@ -2276,35 +2276,26 @@
+@@ -2363,37 +2363,28 @@ C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, flags) == 28 );
  C_ASSERT( sizeof(struct get_next_thread_request) == 32 );
- C_ASSERT( offsetof(struct get_next_thread_reply, handle) == 8 );
+ C_ASSERT( FIELD_OFFSET(struct get_next_thread_reply, handle) == 8 );
  C_ASSERT( sizeof(struct get_next_thread_reply) == 16 );
--C_ASSERT( offsetof(struct create_esync_request, access) == 12 );
--C_ASSERT( offsetof(struct create_esync_request, initval) == 16 );
--C_ASSERT( offsetof(struct create_esync_request, type) == 20 );
--C_ASSERT( offsetof(struct create_esync_request, max) == 24 );
+-C_ASSERT( FIELD_OFFSET(struct create_esync_request, access) == 12 );
+-C_ASSERT( FIELD_OFFSET(struct create_esync_request, initval) == 16 );
+-C_ASSERT( FIELD_OFFSET(struct create_esync_request, type) == 20 );
+-C_ASSERT( FIELD_OFFSET(struct create_esync_request, max) == 24 );
 -C_ASSERT( sizeof(struct create_esync_request) == 32 );
--C_ASSERT( offsetof(struct create_esync_reply, handle) == 8 );
--C_ASSERT( offsetof(struct create_esync_reply, type) == 12 );
--C_ASSERT( offsetof(struct create_esync_reply, shm_idx) == 16 );
+-C_ASSERT( FIELD_OFFSET(struct create_esync_reply, handle) == 8 );
+-C_ASSERT( FIELD_OFFSET(struct create_esync_reply, type) == 12 );
+-C_ASSERT( FIELD_OFFSET(struct create_esync_reply, shm_idx) == 16 );
 -C_ASSERT( sizeof(struct create_esync_reply) == 24 );
--C_ASSERT( offsetof(struct open_esync_request, access) == 12 );
--C_ASSERT( offsetof(struct open_esync_request, attributes) == 16 );
--C_ASSERT( offsetof(struct open_esync_request, rootdir) == 20 );
--C_ASSERT( offsetof(struct open_esync_request, type) == 24 );
+-C_ASSERT( FIELD_OFFSET(struct open_esync_request, access) == 12 );
+-C_ASSERT( FIELD_OFFSET(struct open_esync_request, attributes) == 16 );
+-C_ASSERT( FIELD_OFFSET(struct open_esync_request, rootdir) == 20 );
+-C_ASSERT( FIELD_OFFSET(struct open_esync_request, type) == 24 );
 -C_ASSERT( sizeof(struct open_esync_request) == 32 );
--C_ASSERT( offsetof(struct open_esync_reply, handle) == 8 );
--C_ASSERT( offsetof(struct open_esync_reply, type) == 12 );
--C_ASSERT( offsetof(struct open_esync_reply, shm_idx) == 16 );
+-C_ASSERT( FIELD_OFFSET(struct open_esync_reply, handle) == 8 );
+-C_ASSERT( FIELD_OFFSET(struct open_esync_reply, type) == 12 );
+-C_ASSERT( FIELD_OFFSET(struct open_esync_reply, shm_idx) == 16 );
 -C_ASSERT( sizeof(struct open_esync_reply) == 24 );
--C_ASSERT( offsetof(struct get_esync_fd_request, handle) == 12 );
+-C_ASSERT( FIELD_OFFSET(struct get_esync_fd_request, handle) == 12 );
 -C_ASSERT( sizeof(struct get_esync_fd_request) == 16 );
--C_ASSERT( offsetof(struct get_esync_fd_reply, type) == 8 );
--C_ASSERT( offsetof(struct get_esync_fd_reply, shm_idx) == 12 );
+-C_ASSERT( FIELD_OFFSET(struct get_esync_fd_reply, type) == 8 );
+-C_ASSERT( FIELD_OFFSET(struct get_esync_fd_reply, shm_idx) == 12 );
 -C_ASSERT( sizeof(struct get_esync_fd_reply) == 16 );
--C_ASSERT( offsetof(struct esync_msgwait_request, in_msgwait) == 12 );
+-C_ASSERT( FIELD_OFFSET(struct esync_msgwait_request, in_msgwait) == 12 );
 -C_ASSERT( sizeof(struct esync_msgwait_request) == 16 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_request) == 16 );
-+C_ASSERT( offsetof(struct get_linux_sync_device_reply, handle) == 8 );
++C_ASSERT( FIELD_OFFSET(struct get_linux_sync_device_reply, handle) == 8 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_reply) == 16 );
-+C_ASSERT( offsetof(struct get_linux_sync_obj_request, handle) == 12 );
++C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_request, handle) == 12 );
 +C_ASSERT( sizeof(struct get_linux_sync_obj_request) == 16 );
-+C_ASSERT( offsetof(struct get_linux_sync_obj_reply, handle) == 8 );
-+C_ASSERT( offsetof(struct get_linux_sync_obj_reply, type) == 12 );
-+C_ASSERT( offsetof(struct get_linux_sync_obj_reply, access) == 16 );
++C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_reply, handle) == 8 );
++C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_reply, type) == 12 );
++C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_reply, access) == 16 );
 +C_ASSERT( sizeof(struct get_linux_sync_obj_reply) == 24 );
-+C_ASSERT( offsetof(struct fast_select_queue_request, handle) == 12 );
++C_ASSERT( FIELD_OFFSET(struct fast_select_queue_request, handle) == 12 );
 +C_ASSERT( sizeof(struct fast_select_queue_request) == 16 );
-+C_ASSERT( offsetof(struct fast_unselect_queue_request, handle) == 12 );
-+C_ASSERT( offsetof(struct fast_unselect_queue_request, signaled) == 16 );
++C_ASSERT( FIELD_OFFSET(struct fast_unselect_queue_request, handle) == 12 );
++C_ASSERT( FIELD_OFFSET(struct fast_unselect_queue_request, signaled) == 16 );
 +C_ASSERT( sizeof(struct fast_unselect_queue_request) == 24 );
 +C_ASSERT( sizeof(struct get_fast_alert_event_request) == 16 );
-+C_ASSERT( offsetof(struct get_fast_alert_event_reply, handle) == 8 );
- C_ASSERT( offsetof(struct set_keyboard_repeat_request, enable) == 12 );
- C_ASSERT( offsetof(struct set_keyboard_repeat_request, delay) == 16 );
- C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
++C_ASSERT( FIELD_OFFSET(struct get_fast_alert_event_reply, handle) == 8 );
+ C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, enable) == 12 );
+ C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, delay) == 16 );
+ C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, period) == 20 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
- C_ASSERT( offsetof(struct set_keyboard_repeat_reply, enable) == 8 );
+ C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_reply, enable) == 8 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_reply) == 16 );
 -C_ASSERT( sizeof(struct get_esync_apc_fd_request) == 16 );
 +C_ASSERT( sizeof(struct get_fast_alert_event_reply) == 16 );
+ 
+ #endif  /* WANT_REQUEST_HANDLERS */
+ 
 diff --git a/server/semaphore.c b/server/semaphore.c
 index e3889f2..9940919 100644
 --- a/server/semaphore.c
@@ -8192,10 +8184,10 @@ index 8b4d2f0..42562fd 100644
      no_close_handle,           /* close_handle */
      token_destroy              /* destroy */
  };
-diff --git a/server/request_trace.h b/server/request_trace.h
+diff --git a/server/trace.c b/server/trace.c
 index af96565..c027f4b 100644
---- a/server/request_trace.h
-+++ b/server/request_trace.h
+--- a/server/trace.c
++++ b/server/trace.c
 @@ -4619,67 +4619,56 @@ static void dump_get_next_thread_reply( const struct get_next_thread_reply *req
      fprintf( stderr, " handle=%04x", req->handle );
  }
