@@ -2214,14 +2214,14 @@ index 0d4b320..dba7645 100644
 + * using the fast synchronization path */
 +unsigned int server_wait_for_object( HANDLE handle, BOOL alertable, const LARGE_INTEGER *timeout )
 +{
-+    union select_op select_op;
++    select_op_t select_op;
 +    UINT flags = SELECT_INTERRUPTIBLE;
 +
 +    if (alertable) flags |= SELECT_ALERTABLE;
 +
 +    select_op.wait.op = SELECT_WAIT;
 +    select_op.wait.handles[0] = wine_server_obj_handle( handle );
-+    return server_wait( &select_op, offsetof( union select_op, wait.handles[1] ), flags, timeout );
++    return server_wait( &select_op, offsetof( select_op_t, wait.handles[1] ), flags, timeout );
 +}
 +
 +
@@ -3475,7 +3475,7 @@ index 1072265..a9a0a2c 100644
          req->handle = wine_server_obj_handle( handle );
 @@ -1498,20 +2418,29 @@ NTSTATUS WINAPI NtWaitForMultipleObjects( DWORD count, const HANDLE *handles, BO
  {
-     union select_op select_op;
+     select_op_t select_op;
      UINT i, flags = SELECT_INTERRUPTIBLE;
 +    unsigned int ret;
  
@@ -3501,8 +3501,8 @@ index 1072265..a9a0a2c 100644
      if (alertable) flags |= SELECT_ALERTABLE;
      select_op.wait.op = wait_any ? SELECT_WAIT : SELECT_WAIT_ALL;
      for (i = 0; i < count; i++) select_op.wait.handles[i] = wine_server_obj_handle( handles[i] );
--    return server_wait( &select_op, offsetof( union select_op, wait.handles[count] ), flags, timeout );
-+    ret = server_wait( &select_op, offsetof( union select_op, wait.handles[count] ), flags, timeout );
+-    return server_wait( &select_op, offsetof( select_op_t, wait.handles[count] ), flags, timeout );
++    ret = server_wait( &select_op, offsetof( select_op_t, wait.handles[count] ), flags, timeout );
 +    TRACE( "-> %#x\n", ret );
 +    return ret;
  }
@@ -3510,7 +3510,7 @@ index 1072265..a9a0a2c 100644
  
 @@ -1532,12 +2461,15 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
  {
-     union select_op select_op;
+     select_op_t select_op;
      UINT flags = SELECT_INTERRUPTIBLE;
 +    NTSTATUS ret;
  
@@ -3546,7 +3546,7 @@ index 1072265..a9a0a2c 100644
      if ((ret = validate_open_object_attributes( attr ))) return ret;
  
 @@ -1810,6 +2747,8 @@ NTSTATUS WINAPI NtWaitForKeyedEvent( HANDLE handle, const void *key,
-     union select_op select_op;
+     select_op_t select_op;
      UINT flags = SELECT_INTERRUPTIBLE;
  
 +    TRACE( "handle %p, key %p, alertable %u, timeout %s\n", handle, key, alertable, debugstr_timeout(timeout) );
@@ -3555,7 +3555,7 @@ index 1072265..a9a0a2c 100644
      if ((ULONG_PTR)key & 1) return STATUS_INVALID_PARAMETER_1;
      if (alertable) flags |= SELECT_ALERTABLE;
 @@ -1829,6 +2768,8 @@ NTSTATUS WINAPI NtReleaseKeyedEvent( HANDLE handle, const void *key,
-     union select_op select_op;
+     select_op_t select_op;
      UINT flags = SELECT_INTERRUPTIBLE;
  
 +    TRACE( "handle %p, key %p, alertable %u, timeout %s\n", handle, key, alertable, debugstr_timeout(timeout) );
