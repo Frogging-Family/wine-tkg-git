@@ -106,9 +106,9 @@ _src_init() {
   if [ "$_NUKR" != "debug" ]; then
     # Performing the following:
     #
-    #   - copy patches inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
+    #   - copy .conf files inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
     #   - copy userpatches inside the PKGBUILD's dir
-    find "$_where"/wine-tkg-patches -type f '(' -iname '*patch' -or -iname '*.conf' ')' -not -path "*hotfixes*" -exec cp -n {} "$_where" \;
+    find "$_where"/wine-tkg-patches -type f '(' -iname '*.conf' ')' -not -path "*hotfixes*" -exec cp -n {} "$_where" \;
     find "$_where"/wine-tkg-userpatches -type f -name "*.my*" -exec cp -n {} "$_where" \;
 
     ## Handle git repos similarly to makepkg to preserve repositories when building both with and without makepkg on Arch
@@ -188,7 +188,7 @@ _script_init() {
   # dependencies
   if [[ "$_nomakepkg_dependency_autoresolver" == "true" ]] && [ "$_DEPSHELPER" != "1" ]; then
     source "$_where"/wine-tkg-scripts/deps
-    if [[ "${_ci_build}" != "true" ]]; then
+    if [[ "${_ci_build}" != "true" ]] && [ "$_os" = "ubuntu" ]; then
       warning "PLEASE MAKE SURE TO READ https://github.com/Frogging-Family/wine-tkg-git/issues/773 BEFORE ATTEMPTING TO USE \"debuntu\" dependency resolution"
       read -rp "Either press enter to continue, or ctrl+c to leave."
     fi
@@ -227,9 +227,28 @@ nonuser_patcher() {
     if [ "$_nopatchmsg" != "true" ]; then
       _fullpatchmsg=" -- ( $_patchmsg )"
     fi
-    msg2 "Applying ${_patchname}"
+    # Pretty ugly - maybe make it more dynamic? Find?
+    msg2 "Applying ${_patchname}"    
     echo -e "\n${_patchname}${_fullpatchmsg}" >>"$_where"/prepare.log
-    patch -Np1 <"$_where"/"$_patchname" >>"$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+    if [ -n "$_patchpath" ]; then
+      if [ -f "${_patchpath%/*}"/mainline/"$_patchname" ] || [ -f "${_patchpath%/*}"/mainline/legacy/"$_patchname" ]; then
+        _patchpath="${_patchpath%/*}/mainline/"
+      elif [ -f "${_patchpath%/*}"/staging/"$_patchname" ] || [ -f "${_patchpath%/*}"/staging/legacy/"$_patchname" ]; then
+        _patchpath="${_patchpath%/*}/staging/"
+      fi
+      if [ -e "${_patchpath%/*}"/"$_patchname" ]; then
+        patch -Np1 <"${_patchpath%/*}"/"$_patchname" >>"$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+      elif [ -e "${_patchpath%/*}"/legacy/"$_patchname" ] || [ -e "${_patchpath}"/legacy/"$_patchname" ]; then
+        patch -Np1 <"${_patchpath%/*}"/legacy/"$_patchname" >>"$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+      elif [ -e "$_where"/"$_patchname" ]; then
+        warning "Falling back to root dir patching"
+        patch -Np1 <"$_where"/"$_patchname" >>"$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+      else
+        warning "Patch not found -- Skipping"
+      fi
+    else
+      patch -Np1 <"$_where"/"$_patchname" >>"$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+    fi
     echo -e "${_patchname}${_fullpatchmsg}" >>"$_where"/last_build_config.log
   fi
 }

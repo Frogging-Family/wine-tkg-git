@@ -78,7 +78,7 @@ depends=(
     'gettext'     'freetype2'
     'glu'         'libsm'
     'gcc-libs'    'libpcap'
-    'jxrlib'      'desktop-file-utils'
+    'desktop-file-utils'
     $_user_deps
 )
 
@@ -139,7 +139,7 @@ if [ "$_NOLIB32" = "false" ]; then
 fi
 
 # mingw
-if [ -z "${CUSTOM_MINGW_PATH}" ]; then
+if [ "$_NOMINGW" != "true" ] && [ -z "${CUSTOM_MINGW_PATH}" ]; then
   makedepends+=('mingw-w64-gcc')
 fi
 
@@ -217,7 +217,7 @@ if [ ! -e "$_where"/BIG_UGLY_FROGMINER ]; then
   if [ -L "$_where"/src ]; then
     rm -rf "$_where"/src
   fi
-  find "$_where"/wine-tkg-patches -type f '(' -iname '*patch' -or -iname '*.conf' ')' -not -path "*hotfixes*" -exec cp -n {} "$_where" \; && # copy patches inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
+  find "$_where"/wine-tkg-patches -type f '(' -iname '*.conf' ')' -not -path "*hotfixes*" -exec cp -n {} "$_where" \; && # copy .conf files inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
   cp "$_where"/wine-tkg-userpatches/*.my* "$_where" 2>/dev/null # copy userpatches inside the PKGBUILD's dir
 fi
 
@@ -280,10 +280,29 @@ nonuser_patcher() {
     if [ "$_nopatchmsg" != "true" ]; then
       _fullpatchmsg=" -- ( $_patchmsg )"
     fi
-    msg2 "Applying ${_patchname}"
-    echo -e "\n${_patchname}${_fullpatchmsg}" >> "$_where"/prepare.log
-    patch -Np1 < ../"$_patchname" >> "$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
-    echo -e "${_patchname}${_fullpatchmsg}" >> "$_where"/last_build_config.log
+    # Pretty ugly - maybe make it more dynamic? Find?
+    msg2 "Applying ${_patchname}"    
+    echo -e "\n${_patchname}${_fullpatchmsg}" >>"$_where"/prepare.log
+    if [ -n "$_patchpath" ]; then
+      if [ -f "${_patchpath%/*}"/mainline/"$_patchname" ] || [ -f "${_patchpath%/*}"/mainline/legacy/"$_patchname" ]; then
+        _patchpath="${_patchpath%/*}/mainline/"
+      elif [ -f "${_patchpath%/*}"/staging/"$_patchname" ] || [ -f "${_patchpath%/*}"/staging/legacy/"$_patchname" ]; then
+        _patchpath="${_patchpath%/*}/staging/"
+      fi
+      if [ -e "${_patchpath%/*}"/"$_patchname" ]; then
+        patch -Np1 <"${_patchpath%/*}"/"$_patchname" >>"$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+      elif [ -e "${_patchpath%/*}"/legacy/"$_patchname" ] || [ -e "${_patchpath}"/legacy/"$_patchname" ]; then
+        patch -Np1 <"${_patchpath%/*}"/legacy/"$_patchname" >>"$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+      elif [ -e "$_where"/"$_patchname" ]; then
+        warning "Falling back to root dir patching"
+        patch -Np1 <"$_where"/"$_patchname" >>"$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+      else
+        warning "Patch not found -- Skipping"
+      fi
+    else
+      patch -Np1 <"$_where"/"$_patchname" >>"$_where"/prepare.log || (error "Patch application has failed. The error was logged to $_where/prepare.log for your convenience." && exit 1)
+    fi
+    echo -e "${_patchname}${_fullpatchmsg}" >>"$_where"/last_build_config.log
   fi
 }
 

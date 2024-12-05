@@ -1,0 +1,451 @@
+From 19b86fe3d35e00c8985e0c616cd7bc2eeb5e2df7 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Wed, 27 Jun 2018 10:06:48 -0500
+Subject: [PATCH] HACK: winex11.drv: Let the WM focus our windows by default.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This should fix game windows not being in focus when first started
+and when exiting, which can cause surprising keyboard behavior (e.g.
+accidentally Alt-F4ing Steam itself, which is in the background).
+
+This may break modal dialogs in some WMs (fvwm2?) which do not respect
+our responses to WM_TAKE_FOCUS. For games that show that issue, we can
+re-enable UseTakeFocus.
+
+From Zeb:
+
+"""
+The basic problem, if I understand it correctly, is that Wine uses the
+"globally active" focus model by default. This means that the window
+manager won't focus our windows unless we respond in the affirmative to
+a WM_TAKE_FOCUS event. Since the GUI thread isn't processing messages,
+this doesn't happen.
+
+Luckily, there is a very easy workaround: create the registry key
+HKCU\Software\Wine\X11 Driver and set the somewhat inaptly named value
+"UseTakeFocus" to "N" (i.e. No). This causes Wine to use the "locally
+active" model instead, which means that the window manager will focus
+our windows when it sees fit—i.e. when the user clicks on them, or when
+they are created.
+"""
+---
+ dlls/winex11.drv/x11drv_main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+index 8c2688f2a58..6bf4a0a4211 100644
+--- a/dlls/winex11.drv/x11drv_main.c
++++ b/dlls/winex11.drv/x11drv_main.c
+@@ -68,7 +68,7 @@ BOOL usexrandr = TRUE;
+ BOOL usexvidmode = TRUE;
+ BOOL usexrandr = TRUE;
+ BOOL usexcomposite = TRUE;
+-BOOL use_take_focus = TRUE;
++BOOL use_take_focus = FALSE;
+ BOOL use_primary_selection = FALSE;
+ BOOL use_system_cursors = TRUE;
+ BOOL grab_fullscreen = TRUE;
+From 7563c241f385299b4639c3b939558c2ba430886e Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Tue, 18 Sep 2018 14:48:58 -0500
+Subject: [PATCH] winex11.drv: Allow the application to change window size and
+ states during PropertyNotify.
+
+On focus loss, fullscreened DDLC changes to a 1x1 pixel window and
+minimizes. On restore, it un-minimizes and changes back to fullscreen
+size. However, this restoring happens during the PropertyNotify handler,
+which means we didn't update size or the NET_WM_STATEs.
+---
+ dlls/winex11.drv/window.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index 01b12f96e03..294d84bfccc 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -2615,7 +2615,7 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
+     }
+ 
+     /* don't change position if we are about to minimize or maximize a managed window */
+-    if (!event_type &&
++    if ((!event_type || event_type == PropertyNotify) &&
+         !(data->managed && (swp_flags & SWP_STATECHANGED) && (new_style & (WS_MINIMIZE|WS_MAXIMIZE))))
+         sync_window_position( data, swp_flags, &old_window_rect, &old_whole_rect, &old_client_rect );
+ 
+@@ -2649,7 +2649,7 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
+         else
+         {
+             if (swp_flags & (SWP_FRAMECHANGED|SWP_STATECHANGED)) set_wm_hints( data );
+-            if (!event_type) update_net_wm_states( data );
++            if (!event_type || event_type == PropertyNotify) update_net_wm_states( data );
+         }
+     }
+ 
+From 32821e17a97f4e0afb703eaf17280cadb8030a16 Mon Sep 17 00:00:00 2001
+From: Alexey Prokhin <alexey@prokhin.ru>
+Date: Wed, 17 Oct 2018 19:55:27 +0300
+Subject: [PATCH] winex11.drv: Ignore clip_reset when trying to clip the mouse
+ after the desktop has been resized.
+
+This fixes the mouse clipping when the desktop is resized multiple times in a row.
+---
+ dlls/win32u/input.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+index d02163cbaa8..d2ff071a9f2 100644
+--- a/dlls/win32u/input.c
++++ b/dlls/win32u/input.c
+@@ -2485,9 +2485,10 @@ BOOL clip_fullscreen_window( HWND hwnd, BOOL reset )
+     if (!NtUserGetWindowRect( hwnd, &rect )) return FALSE;
+     if (!NtUserIsWindowRectFullScreen( &rect )) return FALSE;
+     if (is_captured_by_system()) return FALSE;
+-    if (NtGetTickCount() - thread_info->clipping_reset < 1000) return FALSE;
+-    if (!reset && clipping_cursor && thread_info->clipping_cursor) return FALSE;  /* already clipping */
+-
++    if (!reset) {
++        if (NtGetTickCount() - thread_info->clipping_reset < 1000) return FALSE;
++        if (!reset && clipping_cursor && thread_info->clipping_cursor) return FALSE;  /* already clipping */
++    }
+     ctx = set_thread_dpi_awareness_context( NTUSER_DPI_PER_MONITOR_AWARE );
+     monitor_info = monitor_info_from_window( hwnd, MONITOR_DEFAULTTONEAREST );
+     virtual_rect = NtUserGetVirtualScreenRect();
+From 24d7f2bda1e98905206476fa3664ea8fa7bd7dd1 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Fri, 11 Jan 2019 11:34:03 -0600
+Subject: [PATCH] winex11.drv: Ignore ConfigureNotify messages if there is a
+ FULLSCREEN WM state pending.
+
+Into the Breach goes fullscreen by first maximizing, then setting the
+window to fullscreen in a separate call. Mutter processes the maximize
+request _after_ Wine has sent the fullscreen request. As a result, we
+get a ConfigureNotify for the size of the workspace when we expect the
+window to be fullscreened. We then notify ITB that it is no longer
+fullscreen, which begins the process over again, causing an infinite
+loop.
+
+This fixes that by setting a flag if we have a fullscreen request
+pending and ignoring ConfigureNotify requests if it is set. We unset it
+when we receive a _NET_WM_STATE PropertyNotify event that contains the
+FULLSCREEN flag.
+---
+ dlls/winex11.drv/event.c  | 35 +++++++++++++++++++++++++++++++++++
+ dlls/winex11.drv/window.c |  3 +++
+ dlls/winex11.drv/x11drv.h |  1 +
+ 3 files changed, 39 insertions(+)
+
+diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+index b7f5614f222..42c66f911ce 100644
+--- a/dlls/winex11.drv/event.c
++++ b/dlls/winex11.drv/event.c
+@@ -1129,6 +1129,12 @@ static BOOL X11DRV_ConfigureNotify( HWND hwnd, XEvent *xev )
+                event->serial, data->configure_serial );
+         goto done;
+     }
++    if (data->pending_fullscreen)
++    {
++        TRACE( "win %p/%lx event %d,%d,%dx%d pending_fullscreen is pending, so ignoring\n",
++               hwnd, data->whole_window, event->x, event->y, event->width, event->height );
++        goto done;
++    }
+ 
+     /* Get geometry */
+ 
+@@ -1362,15 +1368,44 @@ static void handle_wm_state_notify( HWND hwnd, XPropertyEvent *event, BOOL updat
+ }
+ 
+ 
++static void handle__net_wm_state_notify( HWND hwnd, XPropertyEvent *event )
++{
++    struct x11drv_win_data *data = get_win_data( hwnd );
++
++    if(data->pending_fullscreen)
++    {
++        read_net_wm_states( event->display, data );
++        if(data->net_wm_state & (1 << NET_WM_STATE_FULLSCREEN)){
++            data->pending_fullscreen = FALSE;
++            TRACE("PropertyNotify _NET_WM_STATE, now 0x%x, pending_fullscreen no longer pending.\n",
++                    data->net_wm_state);
++        }else
++            TRACE("PropertyNotify _NET_WM_STATE, now 0x%x, pending_fullscreen still pending.\n",
++                    data->net_wm_state);
++    }
++
++    release_win_data( data );
++}
++
++
+ /***********************************************************************
+  *           X11DRV_PropertyNotify
+  */
+ static BOOL X11DRV_PropertyNotify( HWND hwnd, XEvent *xev )
+ {
+     XPropertyEvent *event = &xev->xproperty;
++    char *name;
+ 
+     if (!hwnd) return FALSE;
++
++    name = XGetAtomName(event->display, event->atom);
++    if(name){
++        TRACE("win %p PropertyNotify atom: %s, state: 0x%x\n", hwnd, name, event->state);
++        XFree(name);
++    }
++
+     if (event->atom == x11drv_atom(WM_STATE)) handle_wm_state_notify( hwnd, event, TRUE );
++    else if (event->atom == x11drv_atom(_NET_WM_STATE)) handle__net_wm_state_notify( hwnd, event );
+     return TRUE;
+ }
+ 
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index 319a28d6fa3..1d42801291c 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -1260,6 +1260,7 @@ static void unmap_window( HWND hwnd )
+ 
+         data->mapped = FALSE;
+         data->net_wm_state = 0;
++        data->pending_fullscreen = FALSE;
+     }
+     release_win_data( data );
+ }
+@@ -1276,6 +1277,7 @@ void make_window_embedded( struct x11drv_win_data *data )
+         if (!data->managed) XUnmapWindow( data->display, data->whole_window );
+         else XWithdrawWindow( data->display, data->whole_window, data->vis.screen );
+         data->net_wm_state = 0;
++        data->pending_fullscreen = FALSE;
+     }
+     data->embedded = TRUE;
+     data->managed = TRUE;
+@@ -1759,6 +1761,7 @@ static void destroy_whole_window( struct x11drv_win_data *data, BOOL already_des
+     data->whole_colormap = 0;
+     data->wm_state = WithdrawnState;
+     data->net_wm_state = 0;
++    data->pending_fullscreen = FALSE;
+     data->mapped = FALSE;
+     if (data->xic)
+     {
+diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+index 91cb02b902e..9767fdcf681 100644
+--- a/dlls/winex11.drv/x11drv.h
++++ b/dlls/winex11.drv/x11drv.h
+@@ -621,6 +621,7 @@ struct x11drv_win_data
+     UINT        add_taskbar : 1; /* does window should be added to taskbar regardless of style */
+     UINT        net_wm_fullscreen_monitors_set : 1; /* is _NET_WM_FULLSCREEN_MONITORS set */
+     UINT        is_fullscreen : 1; /* is the window visible rect fullscreen */
++    UINT        pending_fullscreen : 1;
+     UINT        parent_invalid : 1; /* is the parent host window possibly invalid */
+     int         wm_state;       /* current value of the WM_STATE property */
+     DWORD       net_wm_state;   /* bit mask of active x11drv_net_wm_state values */
+
+From c5aa20a70a5e681ba718feb7db9adc357cb7bec0 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Tue, 31 Aug 2021 00:41:15 +0300
+Subject: [PATCH] winex11.drv: HACK: Mind insert_after X11DRV_WindowPosChanged
+ in some cases.
+
+Fixes FH4 rendering black window until focus is lost.
+
+CW-Bug-Id: #19335
+---
+ dlls/winex11.drv/window.c | 50 ++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 44 insertions(+), 6 deletions(-)
+
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index 4cd2324bff2..815a6279e59 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -1335,14 +1335,15 @@
+  *
+  * Synchronize the X window position with the Windows one
+  */
+-static void sync_window_position( struct x11drv_win_data *data, UINT swp_flags )
++static HWND sync_window_position( struct x11drv_win_data *data, UINT swp_flags )
+ {
+     DWORD style = NtUserGetWindowLongW( data->hwnd, GWL_STYLE );
+     DWORD ex_style = NtUserGetWindowLongW( data->hwnd, GWL_EXSTYLE );
++    HWND prev_window = NULL;
+     XWindowChanges changes;
+     unsigned int mask = 0;
+ 
+-    if (data->managed && data->iconic) return;
++    if (data->managed && data->iconic) return NULL;
+ 
+     /* resizing a managed maximized window is not allowed */
+     if (!(style & WS_MAXIMIZE) || !data->managed)
+@@ -1529,9 +1530,10 @@ static void sync_window_position( struct x11drv_win_data *data,
+     {
+         /* find window that this one must be after */
+         HWND prev = NtUserGetWindowRelative( data->hwnd, GW_HWNDPREV );
++
+         while (prev && !(NtUserGetWindowLongW( prev, GWL_STYLE ) & WS_VISIBLE))
+             prev = NtUserGetWindowRelative( prev, GW_HWNDPREV );
+-        if (!prev)  /* top child */
++        if (!(prev_window = prev))  /* top child */
+         {
+             changes.stack_mode = Above;
+             mask |= CWStackMode;
+@@ -1577,6 +1580,8 @@ static void sync_window_position( struct x11drv_win_data *data,
+            data->whole_rect.right - data->whole_rect.left,
+            data->whole_rect.bottom - data->whole_rect.top,
+            changes.sibling, mask, data->configure_serial );
++
++    return prev_window;
+ }
+ 
+ 
+@@ -2733,6 +2738,25 @@ BOOL CDECL X11DRV_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flag
+ }
+ 
+ 
++static void restack_windows( struct x11drv_win_data *data, HWND prev )
++{
++    struct x11drv_win_data *prev_data;
++
++    TRACE("data->hwnd %p, prev %p.\n", data->hwnd, prev);
++
++    while (prev)
++    {
++        if (!(prev_data = get_win_data( prev ))) break;
++
++        TRACE( "Raising window %p.\n", prev );
++
++        if (prev_data->whole_window && data->display == prev_data->display)
++            XRaiseWindow( prev_data->display, prev_data->whole_window );
++        release_win_data( prev_data );
++        prev = NtUserGetWindowRelative( prev, GW_HWNDPREV );
++    }
++}
++
+ /***********************************************************************
+  *     WindowPosChanged   (X11DRV.@)
+  */
+@@ -2707,6 +2708,7 @@
+     UINT new_style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
+     struct window_rects old_rects;
+     BOOL was_fullscreen;
++    HWND prev_window = NULL;
+     int event_type;
+ 
+     if (!(data = get_win_data( hwnd ))) return;
+@@ -2766,7 +2768,7 @@
+     if ((!event_type || event_type == PropertyNotify) &&
+         !(data->managed && (swp_flags & SWP_STATECHANGED) && (new_style & (WS_MINIMIZE|WS_MAXIMIZE))))
+     {
+-        sync_window_position( data, swp_flags );
++        prev_window = sync_window_position( data, swp_flags );
+ #ifdef HAVE_LIBXSHAPE
+         if (IsRectEmpty( &old_rects.window ) != IsRectEmpty( &new_rects->window ))
+             sync_empty_window_shape( data, surface );
+@@ -2864,6 +2889,10 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
+             release_win_data( data );
+             if (needs_icon) fetch_icon_data( hwnd, 0, 0 );
+             if (needs_map) map_window( hwnd, new_style );
++
++            if (!(data = get_win_data( hwnd ))) return;
++            restack_windows( data, prev_window );
++            release_win_data( data );
+             return;
+         }
+         else if ((swp_flags & SWP_STATECHANGED) && (!data->iconic != !(new_style & WS_MINIMIZE)))
+@@ -2880,10 +2909,20 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
+         else
+         {
+             if (swp_flags & (SWP_FRAMECHANGED|SWP_STATECHANGED)) set_wm_hints( data );
+-            if (!event_type || event_type == PropertyNotify) update_net_wm_states( data );
++            if (!event_type || event_type == PropertyNotify)
++            {
++                update_net_wm_states( data );
++                if (!prev_window && insert_after && data->net_wm_state & (1 << NET_WM_STATE_FULLSCREEN))
++                {
++                    prev_window = NtUserGetWindowRelative( hwnd, GW_HWNDPREV );
++                    if (prev_window != insert_after) prev_window = NULL;
++                }
++            }
+         }
+     }
+ 
++    restack_windows( data, prev_window );
++
+     XFlush( data->display );  /* make sure changes are done before we start painting again */
+     if (data->surface && data->vis.visualid != default_visual.visualid)
+         data->surface->funcs->flush( data->surface );
+From 399675bd511cbfd57a44e3afaae32a9ddf6dac87 Mon Sep 17 00:00:00 2001
+From: Zhiyi Zhang <zzhang@codeweavers.com>
+Date: Wed, 11 Nov 2020 10:41:42 +0800
+Subject: [PATCH] winex11.drv: Call XIconifyWindow() after XMapWindow() with a
+ minimized window.
+
+Mutter always unminimizes a window when handling map requests. So a window could be in
+normal state as far as Mutter concerns while Wine mistakenly considers it still minimized.
+
+Fix Disgaea PC black screen after Alt+Tab in fullscreen mode.
+
+CW-Bug-Id: #18364
+Signed-off-by: Zhiyi Zhang <zzhang@codeweavers.com>
+---
+ dlls/winex11.drv/window.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index 76d06b57814..b8cba02a0a8 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -1346,6 +1346,9 @@ static void map_window( HWND hwnd, DWORD new_style )
+             update_net_wm_states( data );
+             sync_window_style( data );
+             XMapWindow( data->display, data->whole_window );
++            /* Mutter always unminimizes windows when handling map requests. Restore iconic state */
++            if (new_style & WS_MINIMIZE)
++                XIconifyWindow( data->display, data->whole_window, data->vis.screen );
+             XFlush( data->display );
+             if (data->surface && data->vis.visualid != default_visual.visualid)
+                 data->surface->funcs->flush( data->surface );
+@@ -2947,9 +2950,17 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
+             data->iconic = (new_style & WS_MINIMIZE) != 0;
+             TRACE( "changing win %p iconic state to %u\n", data->hwnd, data->iconic );
+             if (data->iconic)
++            {
+                 XIconifyWindow( data->display, data->whole_window, data->vis.screen );
++            }
+             else if (is_window_rect_mapped( &new_rects->window ))
++            {
++                /* whole_window could be both iconic and mapped. Since XMapWindow() doesn't do
++                 * anything if the window is already mapped, we need to unmap it first */
++                if (data->mapped)
++                    XUnmapWindow( data->display, data->whole_window );
+                 XMapWindow( data->display, data->whole_window );
++            }
+             update_net_wm_states( data );
+         }
+         else
+From 1a33ba6c9617af4384601a7a0033fc6a62bb147c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 7 Mar 2022 16:53:09 +0100
+Subject: [PATCH] winex11.drv: Call SetForegroundWindow instead of
+ SetActiveWindow on restore.
+
+So that the window is both active and foreground before we send the
+SC_RESTORE command. Project Cars 3 expects that as it tries to reacquire
+DInput devices on SC_RESTORE.
+
+CW-Bug-Id: #19011
+CW-Bug-Id: #20227
+---
+ dlls/winex11.drv/event.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+index 7e262646811..15cc47f935a 100644
+--- a/dlls/winex11.drv/event.c
++++ b/dlls/winex11.drv/event.c
+@@ -1411,7 +1411,7 @@ static void handle_wm_state_notify( HWND hwnd, XPropertyEvent *event, BOOL updat
+                 TRACE( "restoring win %p/%lx\n", data->hwnd, data->whole_window );
+                 release_win_data( data );
+                 if ((style & (WS_MINIMIZE | WS_VISIBLE)) == (WS_MINIMIZE | WS_VISIBLE))
+-                    NtUserSetActiveWindow( hwnd );
++                    NtUserSetForegroundWindow( hwnd );
+                 send_message( hwnd, WM_SYSCOMMAND, SC_RESTORE, 0 );
+                 return;
+             }

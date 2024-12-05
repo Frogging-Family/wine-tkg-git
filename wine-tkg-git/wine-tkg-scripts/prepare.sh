@@ -112,6 +112,14 @@ _exit_cleanup() {
   fi
 }
 
+_patchpathloader() {
+  for _patchpath in "${_patchpathes[@]}"; do
+    source "$_patchpath"
+  done
+
+  unset _patchpathes
+}
+
 _cfgstring() {
   if [[ "$_cfgstringin" = /home/* ]]; then
     _cfgstringout="~/$( echo $_cfgstringin | cut -d'/' -f4-)"
@@ -434,15 +442,17 @@ _pkgnaming() {
       msg2 "Using staging patchset"
     fi
 
-    if [ "$_use_esync" = "true" ]; then
-      if [ "$_use_fsync" = "true" ]; then
-        pkgname+="-fsync"
-        msg2 "Using fsync patchset"
-      else
-        pkgname+="-esync"
-        msg2 "Using esync patchset"
-      fi
+    if [ "$_use_ntsync" = "true" ] && [ "$_use_fsync" != "true" ]; then
+      pkgname+="-ntsync"
+      msg2 "Using ntsync patchset"
+    elif [ "$_use_fsync" = "true" ] && [ "$_use_esync" = "true" ]; then
+      pkgname+="-fsync"
+      msg2 "Using fsync patchset"
+    elif [ "$_use_esync" = "true" ]; then
+      pkgname+="-esync"
+      msg2 "Using esync patchset"
     fi
+
     if [ "$_use_legacy_gallium_nine" = "true" ]; then
       pkgname+="-nine"
       msg2 "Using gallium nine patchset (legacy)"
@@ -884,30 +894,32 @@ _prepare() {
 
 	# Update winevulkan
 	if [ "$_update_winevulkan" = "true" ] && ! git merge-base --is-ancestor 3e4189e3ada939ff3873c6d76b17fb4b858330a8 HEAD && git merge-base --is-ancestor eb39d3dbcac7a8d9c17211ab358cda4b7e07708a HEAD; then
+	  _patchpath=( "$_where/wine-tkg-patches/misc/winevulkan/" )
 	  _patchname='winevulkan-1.1.103.patch' && _patchmsg="Applied winevulkan 1.1.103 patch" && nonuser_patcher
 	fi
 
-    source "$_where"/wine-tkg-patches/misc/plasma_systray_fix/plasma_systray_fix
-    source "$_where"/wine-tkg-patches/proton/valve_proton_fullscreen_hack/FS_bypass_compositor
-    source "$_where"/wine-tkg-patches/misc/faudio-exp/faudio-exp
-    source "$_where"/wine-tkg-patches/game-specific/poe-fix/poe-fix
-    source "$_where"/wine-tkg-patches/game-specific/warframe-launcher/warframe-launcher
-    source "$_where"/wine-tkg-patches/game-specific/f4skyrimse-fix/f4skyrimse-fix
-    source "$_where"/wine-tkg-patches/game-specific/mtga/mtga-legacy
-    source "$_where"/wine-tkg-patches/game-specific/sims_3-oldnvidia/sims_3-oldnvidia
-    source "$_where"/wine-tkg-patches/game-specific/mwo/mwo
-    source "$_where"/wine-tkg-patches/game-specific/resident_evil_4_hack/resident_evil_4_hack
-    source "$_where"/wine-tkg-patches/misc/childwindow/childwindow
-    source "$_where"/wine-tkg-patches/misc/0001-kernelbase-Remove-DECLSPEC_HOTPATCH-from-SetThreadSt/0001-kernelbase-Remove-DECLSPEC_HOTPATCH-from-SetThreadSt
-    source "$_where"/wine-tkg-patches/misc/usvfs/usvfs
+	_patchpathes=( "$_where/wine-tkg-patches/misc/plasma_systray_fix/plasma_systray_fix"
+                   "$_where/wine-tkg-patches/proton/valve_proton_fullscreen_hack/FS_bypass_compositor"
+                   "$_where/wine-tkg-patches/misc/faudio-exp/faudio-exp"
+                   "$_where/wine-tkg-patches/game-specific/poe-fix/poe-fix"
+                   "$_where/wine-tkg-patches/game-specific/warframe-launcher/warframe-launcher"
+                   "$_where/wine-tkg-patches/game-specific/f4skyrimse-fix/f4skyrimse-fix"
+                   "$_where/wine-tkg-patches/game-specific/mtga/mtga-legacy"
+                   "$_where/wine-tkg-patches/game-specific/sims_3-oldnvidia/sims_3-oldnvidia"
+                   "$_where/wine-tkg-patches/game-specific/mwo/mwo"
+                   "$_where/wine-tkg-patches/game-specific/resident_evil_4_hack/resident_evil_4_hack"
+                   "$_where/wine-tkg-patches/misc/childwindow/childwindow"
+                   "$_where/wine-tkg-patches/misc/0001-kernelbase-Remove-DECLSPEC_HOTPATCH-from-SetThreadSt/0001-kernelbase-Remove-DECLSPEC_HOTPATCH-from-SetThreadSt"
+                   "$_where/wine-tkg-patches/misc/usvfs/usvfs" ) && _patchpathloader
 
 	# Reverts c6b6935 due to https://bugs.winehq.org/show_bug.cgi?id=47752
 	if [ "$_c6b6935_revert" = "true" ] && ! git merge-base --is-ancestor cb703739e5c138e3beffab321b84edb129156000 HEAD; then
+	  _patchpath=( "$_where/wine-tkg-patches/misc/reverts/" )
 	  _patchname='revert-c6b6935.patch' && _patchmsg="Reverted c6b6935 to fix regression affecting performance negatively" && nonuser_patcher
 	fi
 
-    source "$_where"/wine-tkg-patches/misc/steam/steam
-    source "$_where"/wine-tkg-patches/misc/CSMT-toggle/CSMT-toggle
+	_patchpathes=( "$_where/wine-tkg-patches/misc/steam/steam"
+                   "$_where/wine-tkg-patches/misc/CSMT-toggle/CSMT-toggle" ) && _patchpathloader
 
 	_commitmsg="02-pre-staging" _committer
 
@@ -943,18 +955,17 @@ _prepare() {
 	  fi
 	fi
 
-    source "$_where"/wine-tkg-patches/proton/use_clock_monotonic/use_clock_monotonic
-    source "$_where"/wine-tkg-patches/proton/esync/esync
-    source "$_where"/wine-tkg-patches/misc/launch-with-dedicated-gpu-desktop-entry/launch-with-dedicated-gpu-desktop-entry
-    source "$_where"/wine-tkg-patches/misc/lowlatency_audio/lowlatency_audio
-    source "$_where"/wine-tkg-patches/game-specific/sims_2-fix/sims_2-fix
-    source "$_where"/wine-tkg-patches/misc/pythonfix/pythonfix
-    source "$_where"/wine-tkg-patches/misc/high-core-count-fix/high-core-count-fix
-    source "$_where"/wine-tkg-patches/game-specific/ffxiv-launcher-workaround/ffxiv-launcher-workaround
-    source "$_where"/wine-tkg-patches/game-specific/leagueoflolfix/leagueoflolfix
-    source "$_where"/wine-tkg-patches/game-specific/assettocorsa_hud_perf/assettocorsa_hud_perf
-    source "$_where"/wine-tkg-patches/game-specific/mk11/mk11
-    source "$_where"/wine-tkg-patches/misc/PBA/PBA
+	_patchpathes=( "$_where/wine-tkg-patches/proton/use_clock_monotonic/use_clock_monotonic"
+                   "$_where/wine-tkg-patches/proton/esync/esync"
+                   "$_where/wine-tkg-patches/misc/launch-with-dedicated-gpu-desktop-entry/launch-with-dedicated-gpu-desktop-entry"
+                   "$_where/wine-tkg-patches/misc/lowlatency_audio/lowlatency_audio"
+                   "$_where/wine-tkg-patches/game-specific/sims_2-fix/sims_2-fix"
+                   "$_where/wine-tkg-patches/misc/pythonfix/pythonfix"
+                   "$_where/wine-tkg-patches/misc/high-core-count-fix/high-core-count-fix"
+                   "$_where/wine-tkg-patches/game-specific/ffxiv-launcher-workaround/ffxiv-launcher-workaround"
+                   "$_where/wine-tkg-patches/game-specific/assettocorsa_hud_perf/assettocorsa_hud_perf"
+                   "$_where/wine-tkg-patches/game-specific/mk11/mk11"
+                   "$_where/wine-tkg-patches/misc/PBA/PBA" ) && _patchpathloader
 
 	# d3d9 patches
 	if [ "$_use_legacy_gallium_nine" = "true" ] && [ "$_use_staging" = "true" ] && ! git merge-base --is-ancestor e24b16247d156542b209ae1d08e2c366eee3071a HEAD; then
@@ -973,26 +984,26 @@ _prepare() {
 	  echo "Legacy Gallium Nine disabled due to known issues with selected Wine version" >> "$_where"/last_build_config.log
 	fi
 
-    source "$_where"/wine-tkg-patches/misc/GLSL-toggle/GLSL-toggle
-    source "$_where"/wine-tkg-patches/misc/virtual_desktop_refreshrate/virtual_desktop_refreshrate
-    source "$_where"/wine-tkg-patches/proton/fsync/fsync
+	_patchpathes=( "$_where/wine-tkg-patches/misc/GLSL-toggle/GLSL-toggle"
+                   "$_where/wine-tkg-patches/misc/virtual_desktop_refreshrate/virtual_desktop_refreshrate"
+                   "$_where/wine-tkg-patches/proton/fsync/fsync" ) && _patchpathloader
 
 	echo -e "" >> "$_where"/last_build_config.log
 
-    source "$_where"/wine-tkg-patches/proton/valve_proton_fullscreen_hack/valve_proton_fullscreen_hack
-    source "$_where"/wine-tkg-patches/misc/childwindow/childwindow-proton
-    #source "$_where"/wine-tkg-patches/proton/shared-gpu-resources/shared-gpu-resources # broken patchset on any version
-    source "$_where"/wine-tkg-patches/proton/proton-rawinput/proton-rawinput
-    source "$_where"/wine-tkg-patches/misc/winevulkan/winevulkan
-    source "$_where"/wine-tkg-patches/game-specific/overwatch-mfstub/overwatch-mfstub
-    source "$_where"/wine-tkg-patches/game-specific/mtga/mtga
-    source "$_where"/wine-tkg-patches/proton/proton_mf_hacks/proton_mf_hacks
-    source "$_where"/wine-tkg-patches/misc/enable_stg_shared_mem_def/enable_stg_shared_mem_def
-    source "$_where"/wine-tkg-patches/misc/nvidia-hate/nvidia-hate
-    source "$_where"/wine-tkg-patches/misc/kernelbase-reverts/kernelbase-reverts
-    source "$_where"/wine-tkg-patches/proton/LAA/LAA
-    source "$_where"/wine-tkg-patches/proton-tkg-specific/proton-staging/proton-staging_winex11-MWM_Decorations
-    source "$_where"/wine-tkg-patches/proton-tkg-specific/proton-tkg-steamclient-swap/proton-tkg-steamclient-swap
+    #source "$_where/wine-tkg-patches/proton/shared-gpu-resources/shared-gpu-resources # broken patchset on any version
+	_patchpathes=( "$_where/wine-tkg-patches/proton/valve_proton_fullscreen_hack/valve_proton_fullscreen_hack"
+                   "$_where/wine-tkg-patches/misc/childwindow/childwindow-proton"
+                   "$_where/wine-tkg-patches/proton/proton-rawinput/proton-rawinput"
+                   "$_where/wine-tkg-patches/misc/winevulkan/winevulkan"
+                   "$_where/wine-tkg-patches/game-specific/overwatch-mfstub/overwatch-mfstub"
+                   "$_where/wine-tkg-patches/game-specific/mtga/mtga"
+                   "$_where/wine-tkg-patches/proton/proton_mf_hacks/proton_mf_hacks"
+                   "$_where/wine-tkg-patches/misc/enable_stg_shared_mem_def/enable_stg_shared_mem_def"
+                   "$_where/wine-tkg-patches/misc/nvidia-hate/nvidia-hate"
+                   "$_where/wine-tkg-patches/misc/kernelbase-reverts/kernelbase-reverts"
+                   "$_where/wine-tkg-patches/proton/LAA/LAA"
+                   "$_where/wine-tkg-patches/proton-tkg-specific/proton-staging/proton-staging_winex11-MWM_Decorations"
+                   "$_where/wine-tkg-patches/proton-tkg-specific/proton-tkg-steamclient-swap/proton-tkg-steamclient-swap") && _patchpathloader
 
 	echo -e "" >> "$_where"/last_build_config.log
 
@@ -1008,7 +1019,7 @@ _prepare() {
 	  fi
 	fi
 
-    source "$_where"/wine-tkg-patches/proton-tkg-specific/proton-tkg/proton-tkg
+	_patchpathes=( "$_where/wine-tkg-patches/proton-tkg-specific/proton-tkg/proton-tkg" ) && _patchpathloader
 
 	# Proton RDR2 fixes from Paul Gofman - Bound to the "Protonify the staging syscall emu" hotfix
 	# The legacy patch is found in proton meta patchsets, and was moved here for more flexibility following the recent ntdll changes
@@ -1016,25 +1027,25 @@ _prepare() {
 	  _patchname='rdr2.patch' && _patchmsg="Enable Proton's RDR2 fixes from Paul Gofman" && nonuser_patcher
 	fi
 
-    source "$_where"/wine-tkg-patches/game-specific/quake_champions_fix/quake_champions_fix
-    source "$_where"/wine-tkg-patches/proton-tkg-specific/proton-cpu-topology-overrides/proton-cpu-topology-overrides
-    source "$_where"/wine-tkg-patches/misc/fastsync/fastsync
-    source "$_where"/wine-tkg-patches/proton-tkg-specific/proton-sdl-joy/proton-sdl-joy
+	_patchpathes=( "$_where/wine-tkg-patches/game-specific/quake_champions_fix/quake_champions_fix"
+                   "$_where/wine-tkg-patches/proton-tkg-specific/proton-cpu-topology-overrides/proton-cpu-topology-overrides"
+                   "$_where/wine-tkg-patches/misc/fastsync/fastsync"
+                   "$_where/wine-tkg-patches/proton-tkg-specific/proton-sdl-joy/proton-sdl-joy" ) && _patchpathloader
 
 	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_unfrog" != "true" ] || [ "$_steamvr_support" = "true" ]; then
 	  #source "$_where"/proton-restore-unicode
-	  source "$_where"/wine-tkg-patches/proton-tkg-specific/proton-wined3d-additions/proton-wined3d-additions
-	  source "$_where"/wine-tkg-patches/proton-tkg-specific/proton-vr/proton-vr
+	  _patchpathes=( "$_where/wine-tkg-patches/proton-tkg-specific/proton-wined3d-additions/proton-wined3d-additions"
+                     "$_where/wine-tkg-patches/proton-tkg-specific/proton-vr/proton-vr" ) && _patchpathloader
 	fi
 
-    source "$_where"/wine-tkg-patches/proton-tkg-specific/proton-vk-bits-4.5/proton-vk-bits-4.5
-    source "$_where"/wine-tkg-patches/proton/msvcrt_nativebuiltin/msvcrt_nativebuiltin
-    source "$_where"/wine-tkg-patches/proton/proton-bcrypt/proton-bcrypt
-    source "$_where"/wine-tkg-patches/misc/josh-flat-theme/josh-flat-theme
-    source "$_where"/wine-tkg-patches/proton/proton-win10-default/proton-win10-default
-    source "$_where"/wine-tkg-patches/proton/dxvk_config/dxvk_config
-    source "$_where"/wine-tkg-patches/proton-tkg-specific/proton_battleye/proton_battleye
-    source "$_where"/wine-tkg-patches/proton-tkg-specific/proton_eac/proton_eac
+	_patchpathes=( "$_where/wine-tkg-patches/proton-tkg-specific/proton-vk-bits-4.5/proton-vk-bits-4.5"
+                   "$_where/wine-tkg-patches/proton/msvcrt_nativebuiltin/msvcrt_nativebuiltin"
+                   "$_where/wine-tkg-patches/proton/proton-bcrypt/proton-bcrypt"
+                   "$_where/wine-tkg-patches/misc/josh-flat-theme/josh-flat-theme"
+                   "$_where/wine-tkg-patches/proton/proton-win10-default/proton-win10-default"
+                   "$_where/wine-tkg-patches/proton/dxvk_config/dxvk_config"
+                   "$_where/wine-tkg-patches/proton-tkg-specific/proton_battleye/proton_battleye"
+                   "$_where/wine-tkg-patches/proton-tkg-specific/proton_eac/proton_eac" ) && _patchpathloader
 
 	# Proton-tkg needs to know if standard dlopen() is in use
 	if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor b87256cd1db21a59484248a193b6ad12ca2853ca HEAD ); then
@@ -1072,7 +1083,7 @@ _polish() {
 
 	echo "" >> "$_where"/last_build_config.log
 
-	source "$_where"/wine-tkg-patches/misc/wine-tkg/wine-tkg
+	_patchpathes=( "$_where/wine-tkg-patches/misc/wine-tkg/wine-tkg" ) && _patchpathloader
 
 	# tools/make_makefiles destroys Valve trees - disable on those
 	if [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
@@ -1138,11 +1149,14 @@ _polish() {
 	  else
 	    _version_tags+=(Plain)
 	  fi
-	  if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
+	  if [ "$_use_esync" = "true" ] || [ "$_staging_esync" = "true" ] && [ "$_use_ntsync" != "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	   _version_tags+=(Esync)
 	  fi
 	  if [ "$_use_fsync" = "true" ] && [ "$_staging_esync" = "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	    _version_tags+=(Fsync)
+	  fi
+	  if [ "$_use_ntsync" = "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
+	    _version_tags+=(NTsync)
 	  fi
 	  if [ "$_use_pba" = "true" ] && [ "$_pba_version" != "none" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	    _version_tags+=(PBA)

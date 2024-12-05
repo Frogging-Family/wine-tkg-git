@@ -780,11 +780,11 @@ index edfeb03..0000000
 -#pragma makedep unix
 -#endif
 -
+-#include "config.h"
+-
 -#ifndef _GNU_SOURCE
 -#define _GNU_SOURCE
 -#endif
--
--#include "config.h"
 -
 -#include <assert.h>
 -#include <errno.h>
@@ -831,29 +831,29 @@ index edfeb03..0000000
 -
 -struct esync
 -{
--    enum esync_type type;
+-    LONG type;
 -    int fd;
 -    void *shm;
 -};
 -
 -struct semaphore
 -{
--    int max;
--    int count;
+-    LONG max;
+-    LONG count;
 -};
 -C_ASSERT(sizeof(struct semaphore) == 8);
 -
 -struct mutex
 -{
--    DWORD tid;
--    int count;    /* recursion count */
+-    LONG tid;
+-    LONG count;    /* recursion count */
 -};
 -C_ASSERT(sizeof(struct mutex) == 8);
 -
 -struct event
 -{
--    int signaled;
--    int locked;
+-    LONG signaled;
+-    LONG locked;
 -};
 -C_ASSERT(sizeof(struct event) == 8);
 -
@@ -940,7 +940,7 @@ index edfeb03..0000000
 -        }
 -    }
 -
--    if (!InterlockedCompareExchange( (int *)&esync_list[entry][idx].type, type, 0 ))
+-    if (!InterlockedCompareExchange( &esync_list[entry][idx].type, type, 0 ))
 -    {
 -        esync_list[entry][idx].fd = fd;
 -        esync_list[entry][idx].shm = shm;
@@ -964,7 +964,7 @@ index edfeb03..0000000
 - * message queue, etc.) */
 -static NTSTATUS get_object( HANDLE handle, struct esync **obj )
 -{
--    NTSTATUS ret = STATUS_SUCCESS;
+-    int ret = STATUS_SUCCESS;
 -    enum esync_type type = 0;
 -    unsigned int shm_idx = 0;
 -    obj_handle_t fd_handle;
@@ -1032,7 +1032,7 @@ index edfeb03..0000000
 -
 -    if (entry < ESYNC_LIST_ENTRIES && esync_list[entry])
 -    {
--        if (InterlockedExchange((int *)&esync_list[entry][idx].type, 0))
+-        if (InterlockedExchange(&esync_list[entry][idx].type, 0))
 -        {
 -            close( esync_list[entry][idx].fd );
 -            return STATUS_SUCCESS;
@@ -1128,7 +1128,7 @@ index edfeb03..0000000
 -}
 -
 -extern NTSTATUS esync_create_semaphore(HANDLE *handle, ACCESS_MASK access,
--    const OBJECT_ATTRIBUTES *attr, LONG initial, LONG max)
+-    const OBJECT_ATTRIBUTES *attr, int initial, int max)
 -{
 -    TRACE("name %s, initial %d, max %d.\n",
 -        attr ? debugstr_us(attr->ObjectName) : "<no name>", initial, max);
@@ -1144,7 +1144,7 @@ index edfeb03..0000000
 -    return open_esync( ESYNC_SEMAPHORE, handle, access, attr );
 -}
 -
--NTSTATUS esync_release_semaphore( HANDLE handle, ULONG count, ULONG *prev )
+-NTSTATUS esync_release_semaphore( HANDLE handle, unsigned int count, ULONG *prev )
 -{
 -    struct esync *obj;
 -    struct semaphore *semaphore;
@@ -1558,7 +1558,7 @@ index edfeb03..0000000
 -
 -/* A value of STATUS_NOT_IMPLEMENTED returned from this function means that we
 - * need to delegate to server_select(). */
--static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
+-static NTSTATUS __esync_wait_objects( unsigned int count, const HANDLE *handles, BOOLEAN wait_any,
 -                             BOOLEAN alertable, const LARGE_INTEGER *timeout )
 -{
 -    static const LARGE_INTEGER zero;
@@ -2124,11 +2124,11 @@ index 59f8809..0000000
 -extern NTSTATUS esync_close( HANDLE handle );
 -
 -extern NTSTATUS esync_create_semaphore(HANDLE *handle, ACCESS_MASK access,
--    const OBJECT_ATTRIBUTES *attr, LONG initial, LONG max);
+-    const OBJECT_ATTRIBUTES *attr, int initial, int max);
 -extern NTSTATUS esync_open_semaphore( HANDLE *handle, ACCESS_MASK access,
 -    const OBJECT_ATTRIBUTES *attr );
 -extern NTSTATUS esync_query_semaphore( HANDLE handle, void *info, ULONG *ret_len );
--extern NTSTATUS esync_release_semaphore( HANDLE handle, ULONG count, ULONG *prev );
+-extern NTSTATUS esync_release_semaphore( HANDLE handle, unsigned int count, ULONG *prev );
 -
 -extern NTSTATUS esync_create_event( HANDLE *handle, ACCESS_MASK access,
 -    const OBJECT_ATTRIBUTES *attr, EVENT_TYPE type, BOOLEAN initial );
@@ -2226,14 +2226,14 @@ index 0d4b320..dba7645 100644
 + * using the fast synchronization path */
 +unsigned int server_wait_for_object( HANDLE handle, BOOL alertable, const LARGE_INTEGER *timeout )
 +{
-+    select_op_t select_op;
++    union select_op select_op;
 +    UINT flags = SELECT_INTERRUPTIBLE;
 +
 +    if (alertable) flags |= SELECT_ALERTABLE;
 +
 +    select_op.wait.op = SELECT_WAIT;
 +    select_op.wait.handles[0] = wine_server_obj_handle( handle );
-+    return server_wait( &select_op, offsetof( select_op_t, wait.handles[1] ), flags, timeout );
++    return server_wait( &select_op, offsetof( union select_op, wait.handles[1] ), flags, timeout );
 +}
 +
 +
@@ -3487,7 +3487,7 @@ index 1072265..a9a0a2c 100644
          req->handle = wine_server_obj_handle( handle );
 @@ -1498,20 +2418,29 @@ NTSTATUS WINAPI NtWaitForMultipleObjects( DWORD count, const HANDLE *handles, BO
  {
-     select_op_t select_op;
+     union select_op select_op;
      UINT i, flags = SELECT_INTERRUPTIBLE;
 +    unsigned int ret;
  
@@ -3513,8 +3513,8 @@ index 1072265..a9a0a2c 100644
      if (alertable) flags |= SELECT_ALERTABLE;
      select_op.wait.op = wait_any ? SELECT_WAIT : SELECT_WAIT_ALL;
      for (i = 0; i < count; i++) select_op.wait.handles[i] = wine_server_obj_handle( handles[i] );
--    return server_wait( &select_op, offsetof( select_op_t, wait.handles[count] ), flags, timeout );
-+    ret = server_wait( &select_op, offsetof( select_op_t, wait.handles[count] ), flags, timeout );
+-    return server_wait( &select_op, offsetof( union select_op, wait.handles[count] ), flags, timeout );
++    ret = server_wait( &select_op, offsetof( union select_op, wait.handles[count] ), flags, timeout );
 +    TRACE( "-> %#x\n", ret );
 +    return ret;
  }
@@ -3522,7 +3522,7 @@ index 1072265..a9a0a2c 100644
  
 @@ -1532,12 +2461,15 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
  {
-     select_op_t select_op;
+     union select_op select_op;
      UINT flags = SELECT_INTERRUPTIBLE;
 +    NTSTATUS ret;
  
@@ -3558,7 +3558,7 @@ index 1072265..a9a0a2c 100644
      if ((ret = validate_open_object_attributes( attr ))) return ret;
  
 @@ -1810,6 +2747,8 @@ NTSTATUS WINAPI NtWaitForKeyedEvent( HANDLE handle, const void *key,
-     select_op_t select_op;
+     union select_op select_op;
      UINT flags = SELECT_INTERRUPTIBLE;
  
 +    TRACE( "handle %p, key %p, alertable %u, timeout %s\n", handle, key, alertable, debugstr_timeout(timeout) );
@@ -3567,7 +3567,7 @@ index 1072265..a9a0a2c 100644
      if ((ULONG_PTR)key & 1) return STATUS_INVALID_PARAMETER_1;
      if (alertable) flags |= SELECT_ALERTABLE;
 @@ -1829,6 +2768,8 @@ NTSTATUS WINAPI NtReleaseKeyedEvent( HANDLE handle, const void *key,
-     select_op_t select_op;
+     union select_op select_op;
      UINT flags = SELECT_INTERRUPTIBLE;
  
 +    TRACE( "handle %p, key %p, alertable %u, timeout %s\n", handle, key, alertable, debugstr_timeout(timeout) );
@@ -3575,6 +3575,24 @@ index 1072265..a9a0a2c 100644
      if (!handle) handle = keyed_event;
      if ((ULONG_PTR)key & 1) return STATUS_INVALID_PARAMETER_1;
      if (alertable) flags |= SELECT_ALERTABLE;
+@@ -2019,7 +2019,7 @@ NTSTATUS WINAPI NtRemoveIoCompletion( HANDLE handle, ULONG_PTR *key, ULONG_PTR *
+     }
+     SERVER_END_REQ;
+     if (status != STATUS_PENDING) return status;
+-    if (!timeout || timeout->QuadPart) status = NtWaitForSingleObject( wait_handle, FALSE, timeout );
++    if (!timeout || timeout->QuadPart) status = server_wait_for_object( wait_handle, FALSE, timeout );
+     else                               status = STATUS_TIMEOUT;
+     if (status != WAIT_OBJECT_0) return status;
+ 
+@@ -2081,7 +2081,7 @@ NTSTATUS WINAPI NtRemoveIoCompletionEx( HANDLE handle, FILE_IO_COMPLETION_INFORM
+         assert( status == STATUS_USER_APC );
+         goto done;
+     }
+-    if (!timeout || timeout->QuadPart) status = NtWaitForSingleObject( wait_handle, alertable, timeout );
++    if (!timeout || timeout->QuadPart) status = server_wait_for_object( wait_handle, alertable, timeout );
+     else                               status = STATUS_TIMEOUT;
+     if (status != WAIT_OBJECT_0) goto done;
+ 
 diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
 index 7f2f1b9..3f706f4 100644
 --- a/dlls/ntdll/unix/thread.c
@@ -3618,12 +3636,12 @@ index 4e5b282..fc5b259 100644
  extern void server_enter_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
  extern void server_leave_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
 @@ -203,6 +205,7 @@ extern unsigned int server_select( const select_op_t *select_op, data_size_t siz
-                                    timeout_t abs_timeout, context_t *context, user_apc_t *user_apc );
+                                    timeout_t abs_timeout, context_t *context, struct user_apc *user_apc );
  extern unsigned int server_wait( const select_op_t *select_op, data_size_t size, UINT flags,
                                   const LARGE_INTEGER *timeout );
 +extern unsigned int server_wait_for_object( HANDLE handle, BOOL alertable, const LARGE_INTEGER *timeout );
- extern unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call,
-                                               apc_result_t *result );
+ extern unsigned int server_queue_process_apc( HANDLE process, const union apc_call *call,
+                                               union apc_result *result );
  extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
 @@ -353,6 +356,8 @@ extern NTSTATUS wow64_wine_spawnvp( void *args );
  
@@ -3996,20 +4014,60 @@ diff --git a/server/completion.c b/server/completion.c
 index 3d4be86..5ec6d20 100644
 --- a/server/completion.c
 +++ b/server/completion.c
-@@ -61,10 +61,12 @@ struct completion
-     struct object  obj;
-     struct list    queue;
+@@ -61,6 +61,7 @@ struct completion
+     struct list    wait_queue;
      unsigned int   depth;
+     int            closed;
 +    struct fast_sync *fast_sync;
  };
+ 
+ static void completion_wait_dump( struct object*, int );
+@@ -92,21 +92,21 @@ static const struct object_ops completion_wait_ops =
+     add_queue,                      /* add_queue */
+     remove_queue,                   /* remove_queue */
+     completion_wait_signaled,       /* signaled */
+-    NULL,                           /* get_esync_fd */
+     completion_wait_satisfied,      /* satisfied */
+     no_signal,                      /* signal */
+     no_get_fd,                      /* get_fd */
+     default_map_access,             /* map_access */
+     default_get_sd,                 /* get_sd */
+     default_set_sd,                 /* set_sd */
+     no_get_full_name,               /* get_full_name */
+     no_lookup_name,                 /* lookup_name */
+     no_link_name,                   /* link_name */
+     NULL,                           /* unlink_name */
+     no_open_file,                   /* open_file */
+     no_kernel_obj_list,             /* get_kernel_obj_list */
++    no_get_fast_sync,               /* get_fast_sync */
+     no_close_handle,                /* close_handle */
+     completion_wait_destroy         /* destroy */
+ };
+ 
+ static void completion_wait_destroy( struct object *obj )
+@@ -75,24 +77,28 @@ static const struct object_ops completion_ops =
+     msg = LIST_ENTRY( msg_entry, struct comp_msg, queue_entry );
+     --wait->completion->depth;
+     list_remove( &msg->queue_entry );
++    if (list_empty( &wait->completion->queue ))
++    {
++        fast_reset_event( wait->completion->fast_sync );
++    }
+     if (wait->msg) free( wait->msg );
+     wait->msg = msg;
+ }
  
  static void completion_dump( struct object*, int );
  static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
 +static struct fast_sync *completion_get_fast_sync( struct object *obj );
+ static int completion_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
  static void completion_destroy( struct object * );
  
  static const struct object_ops completion_ops =
-@@ -75,7 +77,6 @@ static const struct object_ops completion_ops =
+ {
+     sizeof(struct completion), /* size */
+     &completion_type,          /* type */
+     completion_dump,           /* dump */
      add_queue,                 /* add_queue */
      remove_queue,              /* remove_queue */
      completion_signaled,       /* signaled */
@@ -4017,12 +4075,12 @@ index 3d4be86..5ec6d20 100644
      no_satisfied,              /* satisfied */
      no_signal,                 /* signal */
      no_get_fd,                 /* get_fd */
-@@ -88,6 +89,7 @@ static const struct object_ops completion_ops =
+@@ -87,6 +88,7 @@ static const struct object_ops completion_ops =
      default_unlink_name,       /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
 +    completion_get_fast_sync,  /* get_fast_sync */
-     no_close_handle,           /* close_handle */
+     completion_close_handle,   /* close_handle */
      completion_destroy         /* destroy */
  };
 @@ -110,6 +112,7 @@ static void completion_destroy( struct object *obj)
@@ -4054,22 +4112,22 @@ index 3d4be86..5ec6d20 100644
          {
              list_init( &completion->queue );
              completion->depth = 0;
+             completion->closed = 0;
 +            completion->fast_sync = NULL;
          }
      }
- 
 @@ -166,6 +180,7 @@ void add_completion( struct completion *completion, apc_param_t ckey, apc_param_
-     list_add_tail( &completion->queue, &msg->queue_entry );
-     completion->depth++;
-     wake_up( &completion->obj, 1 );
+         if (list_empty( &completion->queue )) return;
+     }
+     if (!list_empty( &completion->queue )) wake_up( &completion->obj, 0 );
 +    fast_set_event( completion->fast_sync );
  }
  
  /* create a completion */
 @@ -232,6 +247,8 @@ DECL_HANDLER(remove_completion)
-         reply->status = msg->status;
          reply->information = msg->information;
          free( msg );
+         reply->wait_handle = 0;
 +        if (list_empty( &completion->queue ))
 +            fast_reset_event( completion->fast_sync );
      }
@@ -6684,10 +6742,68 @@ index a90ec60..6d8cb3e 100644
      no_close_handle,                         /* close_handle */
      named_pipe_device_file_destroy           /* destroy */
  };
+@@ -344,7 +344,6 @@
+     add_queue,                               /* add_queue */
+     remove_queue,                            /* remove_queue */
+     default_fd_signaled,                     /* signaled */
+-    NULL,                                    /* get_esync_fd */
+     no_satisfied,                            /* satisfied */
+     no_signal,                               /* signal */
+     named_pipe_dir_get_fd,                   /* get_fd */
+@@ -357,6 +356,7 @@
+     NULL,                                    /* unlink_name */
+     named_pipe_dir_open_file,                /* open_file */
+     no_kernel_obj_list,                      /* get_kernel_obj_list */
++    default_fd_get_fast_sync,                /* get_fast_sync */
+     no_close_handle,                         /* close_handle */
+     named_pipe_dir_destroy                   /* destroy */
+ };
 diff --git a/server/object.c b/server/object.c
 index 29f1ea9..33fc18c 100644
 --- a/server/object.c
 +++ b/server/object.c
+@@ -120,19 +120,19 @@ static const struct object_ops apc_reserve_ops =
+     no_add_queue,               /* add_queue */
+     NULL,                       /* remove_queue */
+     NULL,                       /* signaled */
+-    NULL,                       /* get_esync_fd */
+     no_satisfied,               /* satisfied */
+     no_signal,                  /* signal */
+     no_get_fd,                  /* get_fd */
+     default_map_access,         /* map_access */
+     default_get_sd,             /* get_sd */
+     default_set_sd,             /* set_sd */
+     default_get_full_name,      /* get_full_name */
+     no_lookup_name,             /* lookup_name */
+     directory_link_name,        /* link_name */
+     default_unlink_name,        /* unlink_name */
+     no_open_file,               /* open_file */
+     no_kernel_obj_list,         /* get_kernel_obj_list */
++    no_get_fast_sync,
+     no_close_handle,            /* close_handle */
+     no_destroy                  /* destroy */
+ };
+@@ -144,19 +145,19 @@ static const struct object_ops completion_reserve_ops =
+     no_add_queue,              /* add_queue */
+     NULL,                      /* remove_queue */
+     NULL,                      /* signaled */
+-    NULL,                      /* get_esync_fd */
+     no_satisfied,              /* satisfied */
+     no_signal,                 /* signal */
+     no_get_fd,                 /* get_fd */
+     default_map_access,        /* map_access */
+     default_get_sd,            /* get_sd */
+     default_set_sd,            /* set_sd */
+     default_get_full_name,     /* get_full_name */
+     no_lookup_name,            /* lookup_name */
+     directory_link_name,       /* link_name */
+     default_unlink_name,       /* unlink_name */
+     no_open_file,              /* open_file */
+     no_kernel_obj_list,        /* get_kernel_obj_list */
++    no_get_fast_sync,
+     no_close_handle,           /* close_handle */
+     no_destroy                 /* destroy */
+ };
 @@ -538,6 +538,12 @@ struct fd *no_get_fd( struct object *obj )
      return NULL;
  }
@@ -6947,7 +7063,7 @@ index bedd8bb..2140427 100644
 @@ -86,7 +86,7 @@ struct process
      struct list          rawinput_entry;  /* entry in the rawinput process list */
      struct list          kernel_object;   /* list of kernel object pointers */
-     pe_image_info_t      image_info;      /* main exe image info */
+     struct pe_image_info image_info;      /* main exe image info */
 -    int                  esync_fd;        /* esync file descriptor (signaled on exit) */
 +    struct fast_sync    *fast_sync;       /* fast synchronization object */
  };
@@ -7352,11 +7468,11 @@ index ca83fdb..8c50f99 100644
      no_close_handle,               /* close_handle */
      master_socket_destroy          /* destroy */
  };
-diff --git a/server/request.h b/server/request.h
+diff --git a/server/request_handlers.h b/server/request_handlers.h
 index eb6b8f4..1636e98 100644
---- a/server/request.h
-+++ b/server/request.h
-@@ -406,12 +406,12 @@ DECL_HANDLER(terminate_job);
+--- a/server/request_handlers.h	2024-11-18 18:02:30.072599085 +0500
++++ b/server/request_handlers.h	2024-11-18 18:14:42.357268807 +0500
+@@ -298,12 +298,12 @@
  DECL_HANDLER(suspend_process);
  DECL_HANDLER(resume_process);
  DECL_HANDLER(get_next_thread);
@@ -7372,9 +7488,9 @@ index eb6b8f4..1636e98 100644
 -DECL_HANDLER(get_esync_apc_fd);
 +DECL_HANDLER(get_fast_alert_event);
  
- #ifdef WANT_REQUEST_HANDLERS
- 
-@@ -704,12 +704,12 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+ typedef void (*req_handler)( const void *req, void *reply );
+ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+@@ -599,12 +599,12 @@
      (req_handler)req_suspend_process,
      (req_handler)req_resume_process,
      (req_handler)req_get_next_thread,
@@ -7392,62 +7508,59 @@ index eb6b8f4..1636e98 100644
  };
  
  C_ASSERT( sizeof(abstime_t) == 8 );
-@@ -2363,37 +2363,28 @@ C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, flags) == 28 );
+@@ -2276,35 +2276,26 @@
  C_ASSERT( sizeof(struct get_next_thread_request) == 32 );
- C_ASSERT( FIELD_OFFSET(struct get_next_thread_reply, handle) == 8 );
+ C_ASSERT( offsetof(struct get_next_thread_reply, handle) == 8 );
  C_ASSERT( sizeof(struct get_next_thread_reply) == 16 );
--C_ASSERT( FIELD_OFFSET(struct create_esync_request, access) == 12 );
--C_ASSERT( FIELD_OFFSET(struct create_esync_request, initval) == 16 );
--C_ASSERT( FIELD_OFFSET(struct create_esync_request, type) == 20 );
--C_ASSERT( FIELD_OFFSET(struct create_esync_request, max) == 24 );
+-C_ASSERT( offsetof(struct create_esync_request, access) == 12 );
+-C_ASSERT( offsetof(struct create_esync_request, initval) == 16 );
+-C_ASSERT( offsetof(struct create_esync_request, type) == 20 );
+-C_ASSERT( offsetof(struct create_esync_request, max) == 24 );
 -C_ASSERT( sizeof(struct create_esync_request) == 32 );
--C_ASSERT( FIELD_OFFSET(struct create_esync_reply, handle) == 8 );
--C_ASSERT( FIELD_OFFSET(struct create_esync_reply, type) == 12 );
--C_ASSERT( FIELD_OFFSET(struct create_esync_reply, shm_idx) == 16 );
+-C_ASSERT( offsetof(struct create_esync_reply, handle) == 8 );
+-C_ASSERT( offsetof(struct create_esync_reply, type) == 12 );
+-C_ASSERT( offsetof(struct create_esync_reply, shm_idx) == 16 );
 -C_ASSERT( sizeof(struct create_esync_reply) == 24 );
--C_ASSERT( FIELD_OFFSET(struct open_esync_request, access) == 12 );
--C_ASSERT( FIELD_OFFSET(struct open_esync_request, attributes) == 16 );
--C_ASSERT( FIELD_OFFSET(struct open_esync_request, rootdir) == 20 );
--C_ASSERT( FIELD_OFFSET(struct open_esync_request, type) == 24 );
+-C_ASSERT( offsetof(struct open_esync_request, access) == 12 );
+-C_ASSERT( offsetof(struct open_esync_request, attributes) == 16 );
+-C_ASSERT( offsetof(struct open_esync_request, rootdir) == 20 );
+-C_ASSERT( offsetof(struct open_esync_request, type) == 24 );
 -C_ASSERT( sizeof(struct open_esync_request) == 32 );
--C_ASSERT( FIELD_OFFSET(struct open_esync_reply, handle) == 8 );
--C_ASSERT( FIELD_OFFSET(struct open_esync_reply, type) == 12 );
--C_ASSERT( FIELD_OFFSET(struct open_esync_reply, shm_idx) == 16 );
+-C_ASSERT( offsetof(struct open_esync_reply, handle) == 8 );
+-C_ASSERT( offsetof(struct open_esync_reply, type) == 12 );
+-C_ASSERT( offsetof(struct open_esync_reply, shm_idx) == 16 );
 -C_ASSERT( sizeof(struct open_esync_reply) == 24 );
--C_ASSERT( FIELD_OFFSET(struct get_esync_fd_request, handle) == 12 );
+-C_ASSERT( offsetof(struct get_esync_fd_request, handle) == 12 );
 -C_ASSERT( sizeof(struct get_esync_fd_request) == 16 );
--C_ASSERT( FIELD_OFFSET(struct get_esync_fd_reply, type) == 8 );
--C_ASSERT( FIELD_OFFSET(struct get_esync_fd_reply, shm_idx) == 12 );
+-C_ASSERT( offsetof(struct get_esync_fd_reply, type) == 8 );
+-C_ASSERT( offsetof(struct get_esync_fd_reply, shm_idx) == 12 );
 -C_ASSERT( sizeof(struct get_esync_fd_reply) == 16 );
--C_ASSERT( FIELD_OFFSET(struct esync_msgwait_request, in_msgwait) == 12 );
+-C_ASSERT( offsetof(struct esync_msgwait_request, in_msgwait) == 12 );
 -C_ASSERT( sizeof(struct esync_msgwait_request) == 16 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_request) == 16 );
-+C_ASSERT( FIELD_OFFSET(struct get_linux_sync_device_reply, handle) == 8 );
++C_ASSERT( offsetof(struct get_linux_sync_device_reply, handle) == 8 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_reply) == 16 );
-+C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_request, handle) == 12 );
++C_ASSERT( offsetof(struct get_linux_sync_obj_request, handle) == 12 );
 +C_ASSERT( sizeof(struct get_linux_sync_obj_request) == 16 );
-+C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_reply, handle) == 8 );
-+C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_reply, type) == 12 );
-+C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_reply, access) == 16 );
++C_ASSERT( offsetof(struct get_linux_sync_obj_reply, handle) == 8 );
++C_ASSERT( offsetof(struct get_linux_sync_obj_reply, type) == 12 );
++C_ASSERT( offsetof(struct get_linux_sync_obj_reply, access) == 16 );
 +C_ASSERT( sizeof(struct get_linux_sync_obj_reply) == 24 );
-+C_ASSERT( FIELD_OFFSET(struct fast_select_queue_request, handle) == 12 );
++C_ASSERT( offsetof(struct fast_select_queue_request, handle) == 12 );
 +C_ASSERT( sizeof(struct fast_select_queue_request) == 16 );
-+C_ASSERT( FIELD_OFFSET(struct fast_unselect_queue_request, handle) == 12 );
-+C_ASSERT( FIELD_OFFSET(struct fast_unselect_queue_request, signaled) == 16 );
++C_ASSERT( offsetof(struct fast_unselect_queue_request, handle) == 12 );
++C_ASSERT( offsetof(struct fast_unselect_queue_request, signaled) == 16 );
 +C_ASSERT( sizeof(struct fast_unselect_queue_request) == 24 );
 +C_ASSERT( sizeof(struct get_fast_alert_event_request) == 16 );
-+C_ASSERT( FIELD_OFFSET(struct get_fast_alert_event_reply, handle) == 8 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, enable) == 12 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, delay) == 16 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, period) == 20 );
++C_ASSERT( offsetof(struct get_fast_alert_event_reply, handle) == 8 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_request, enable) == 12 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_request, delay) == 16 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_reply, enable) == 8 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_reply, enable) == 8 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_reply) == 16 );
 -C_ASSERT( sizeof(struct get_esync_apc_fd_request) == 16 );
 +C_ASSERT( sizeof(struct get_fast_alert_event_reply) == 16 );
- 
- #endif  /* WANT_REQUEST_HANDLERS */
- 
 diff --git a/server/semaphore.c b/server/semaphore.c
 index e3889f2..9940919 100644
 --- a/server/semaphore.c
@@ -7895,8 +8008,8 @@ index 10e9e28..cb4643a 100644
      struct msg_queue      *queue;         /* message queue */
      struct thread_wait    *wait;          /* current wait condition if sleeping */
 @@ -94,6 +92,7 @@ struct thread
-     data_size_t            desc_len;      /* thread description length in bytes */
      WCHAR                 *desc;          /* thread description string */
+     struct completion_wait *completion_wait; /* completion port wait object the thread is associated with */
 -    struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
 +    struct fast_sync      *fast_sync;     /* fast synchronization object */
 +    struct event          *fast_alert_event; /* fast synchronization alert event */
@@ -8038,10 +8151,10 @@ index 8b4d2f0..42562fd 100644
      no_close_handle,           /* close_handle */
      token_destroy              /* destroy */
  };
-diff --git a/server/trace.c b/server/trace.c
+diff --git a/server/request_trace.h b/server/request_trace.h
 index af96565..c027f4b 100644
---- a/server/trace.c
-+++ b/server/trace.c
+--- a/server/request_trace.h
++++ b/server/request_trace.h
 @@ -4619,67 +4619,56 @@ static void dump_get_next_thread_reply( const struct get_next_thread_reply *req
      fprintf( stderr, " handle=%04x", req->handle );
  }

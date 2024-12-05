@@ -170,14 +170,14 @@ index f3ffd99..6e0ecf9 100644
 + * using the fast synchronization path */
 +unsigned int server_wait_for_object( HANDLE handle, BOOL alertable, const LARGE_INTEGER *timeout )
 +{
-+    select_op_t select_op;
++    union select_op select_op;
 +    UINT flags = SELECT_INTERRUPTIBLE;
 +
 +    if (alertable) flags |= SELECT_ALERTABLE;
 +
 +    select_op.wait.op = SELECT_WAIT;
 +    select_op.wait.handles[0] = wine_server_obj_handle( handle );
-+    return server_wait( &select_op, offsetof( select_op_t, wait.handles[1] ), flags, timeout );
++    return server_wait( &select_op, offsetof( union select_op, wait.handles[1] ), flags, timeout );
 +}
 +
 +
@@ -1364,7 +1364,7 @@ index e070233..6e7fd4e 100644
          req->handle = wine_server_obj_handle( handle );
 @@ -1473,13 +2442,29 @@ NTSTATUS WINAPI NtWaitForMultipleObjects( DWORD count, const HANDLE *handles, BO
  {
-     select_op_t select_op;
+     union select_op select_op;
      UINT i, flags = SELECT_INTERRUPTIBLE;
 +    unsigned int ret;
  
@@ -1386,8 +1386,8 @@ index e070233..6e7fd4e 100644
      if (alertable) flags |= SELECT_ALERTABLE;
      select_op.wait.op = wait_any ? SELECT_WAIT : SELECT_WAIT_ALL;
      for (i = 0; i < count; i++) select_op.wait.handles[i] = wine_server_obj_handle( handles[i] );
--    return server_wait( &select_op, offsetof( select_op_t, wait.handles[count] ), flags, timeout );
-+    ret = server_wait( &select_op, offsetof( select_op_t, wait.handles[count] ), flags, timeout );
+-    return server_wait( &select_op, offsetof( union select_op, wait.handles[count] ), flags, timeout );
++    ret = server_wait( &select_op, offsetof( union select_op, wait.handles[count] ), flags, timeout );
 +    TRACE( "-> %#x\n", ret );
 +    return ret;
  }
@@ -1395,7 +1395,7 @@ index e070233..6e7fd4e 100644
  
 @@ -1500,9 +2485,15 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
  {
-     select_op_t select_op;
+     union select_op select_op;
      UINT flags = SELECT_INTERRUPTIBLE;
 +    NTSTATUS ret;
 +
@@ -1429,7 +1429,7 @@ index e070233..6e7fd4e 100644
      if ((ret = validate_open_object_attributes( attr ))) return ret;
  
 @@ -1785,6 +2781,8 @@ NTSTATUS WINAPI NtWaitForKeyedEvent( HANDLE handle, const void *key,
-     select_op_t select_op;
+     union select_op select_op;
      UINT flags = SELECT_INTERRUPTIBLE;
  
 +    TRACE( "handle %p, key %p, alertable %u, timeout %s\n", handle, key, alertable, debugstr_timeout(timeout) );
@@ -1438,7 +1438,7 @@ index e070233..6e7fd4e 100644
      if ((ULONG_PTR)key & 1) return STATUS_INVALID_PARAMETER_1;
      if (alertable) flags |= SELECT_ALERTABLE;
 @@ -1804,6 +2802,8 @@ NTSTATUS WINAPI NtReleaseKeyedEvent( HANDLE handle, const void *key,
-     select_op_t select_op;
+     union select_op select_op;
      UINT flags = SELECT_INTERRUPTIBLE;
  
 +    TRACE( "handle %p, key %p, alertable %u, timeout %s\n", handle, key, alertable, debugstr_timeout(timeout) );
@@ -1446,6 +1446,24 @@ index e070233..6e7fd4e 100644
      if (!handle) handle = keyed_event;
      if ((ULONG_PTR)key & 1) return STATUS_INVALID_PARAMETER_1;
      if (alertable) flags |= SELECT_ALERTABLE;
+@@ -2019,7 +2019,7 @@ NTSTATUS WINAPI NtRemoveIoCompletion( HANDLE handle, ULONG_PTR *key, ULONG_PTR *
+     }
+     SERVER_END_REQ;
+     if (status != STATUS_PENDING) return status;
+-    if (!timeout || timeout->QuadPart) status = NtWaitForSingleObject( wait_handle, FALSE, timeout );
++    if (!timeout || timeout->QuadPart) status = server_wait_for_object( wait_handle, FALSE, timeout );
+     else                               status = STATUS_TIMEOUT;
+     if (status != WAIT_OBJECT_0) return status;
+ 
+@@ -2081,7 +2081,7 @@ NTSTATUS WINAPI NtRemoveIoCompletionEx( HANDLE handle, FILE_IO_COMPLETION_INFORM
+         assert( status == STATUS_USER_APC );
+         goto done;
+     }
+-    if (!timeout || timeout->QuadPart) status = NtWaitForSingleObject( wait_handle, alertable, timeout );
++    if (!timeout || timeout->QuadPart) status = server_wait_for_object( wait_handle, alertable, timeout );
+     else                               status = STATUS_TIMEOUT;
+     if (status != WAIT_OBJECT_0) goto done;
+ 
 diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
 index 3d151e7..68339d7 100644
 --- a/dlls/ntdll/unix/thread.c
@@ -1481,12 +1499,12 @@ index b278ab8..2226096 100644
  extern void server_enter_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
  extern void server_leave_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
 @@ -201,6 +204,7 @@ extern unsigned int server_select( const select_op_t *select_op, data_size_t siz
-                                    timeout_t abs_timeout, context_t *context, user_apc_t *user_apc );
+                                    timeout_t abs_timeout, context_t *context, struct user_apc *user_apc );
  extern unsigned int server_wait( const select_op_t *select_op, data_size_t size, UINT flags,
                                   const LARGE_INTEGER *timeout );
 +extern unsigned int server_wait_for_object( HANDLE handle, BOOL alertable, const LARGE_INTEGER *timeout );
- extern unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call,
-                                               apc_result_t *result );
+ extern unsigned int server_queue_process_apc( HANDLE process, const union apc_call *call,
+                                               union apc_result *result );
  extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
 @@ -360,6 +364,8 @@ extern NTSTATUS wow64_wine_spawnvp( void *args );
  
@@ -1746,28 +1764,49 @@ diff --git a/server/completion.c b/server/completion.c
 index 6933195..5ec6d20 100644
 --- a/server/completion.c
 +++ b/server/completion.c
-@@ -61,10 +61,12 @@ struct completion
-     struct object  obj;
-     struct list    queue;
+@@ -77,6 +77,7 @@
+     struct list    wait_queue;
      unsigned int   depth;
+     int            closed;
 +    struct fast_sync *fast_sync;
  };
+ 
+ static void completion_wait_dump( struct object*, int );
+@@ -104,6 +105,7 @@
+     NULL,                           /* unlink_name */
+     no_open_file,                   /* open_file */
+     no_kernel_obj_list,             /* get_kernel_obj_list */
++    no_get_fast_sync,               /* get_fast_sync */
+     no_close_handle,                /* close_handle */
+     completion_wait_destroy         /* destroy */
+ };
+@@ -149,12 +151,17 @@
+     msg = LIST_ENTRY( msg_entry, struct comp_msg, queue_entry );
+     --wait->completion->depth;
+     list_remove( &msg->queue_entry );
++    if (list_empty( &wait->completion->queue ))
++    {
++        fast_reset_event( wait->completion->fast_sync );
++    }
+     if (wait->msg) free( wait->msg );
+     wait->msg = msg;
+ }
  
  static void completion_dump( struct object*, int );
  static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
 +static struct fast_sync *completion_get_fast_sync( struct object *obj );
+ static int completion_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
  static void completion_destroy( struct object * );
  
- static const struct object_ops completion_ops =
-@@ -87,6 +89,7 @@ static const struct object_ops completion_ops =
+@@ -178,6 +185,7 @@
      default_unlink_name,       /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
 +    completion_get_fast_sync,  /* get_fast_sync */
-     no_close_handle,           /* close_handle */
+     completion_close_handle,   /* close_handle */
      completion_destroy         /* destroy */
  };
-@@ -109,6 +112,7 @@ static void completion_destroy( struct object *obj)
+@@ -191,6 +199,7 @@
      {
          free( tmp );
      }
@@ -1775,8 +1814,8 @@ index 6933195..5ec6d20 100644
  }
  
  static void completion_dump( struct object *obj, int verbose )
-@@ -126,6 +130,16 @@ static int completion_signaled( struct object *obj, struct wait_queue_entry *ent
-     return !list_empty( &completion->queue );
+@@ -261,6 +270,16 @@
+     return wait;
  }
  
 +static struct fast_sync *completion_get_fast_sync( struct object *obj )
@@ -1792,26 +1831,26 @@ index 6933195..5ec6d20 100644
  static struct completion *create_completion( struct object *root, const struct unicode_str *name,
                                               unsigned int attr, unsigned int concurrent,
                                               const struct security_descriptor *sd )
-@@ -138,6 +152,7 @@ static struct completion *create_completion( struct object *root, const struct u
-         {
-             list_init( &completion->queue );
+@@ -275,6 +294,7 @@
+             list_init( &completion->wait_queue );
              completion->depth = 0;
+             completion->closed = 0;
 +            completion->fast_sync = NULL;
          }
      }
  
-@@ -165,6 +180,7 @@ void add_completion( struct completion *completion, apc_param_t ckey, apc_param_
-     list_add_tail( &completion->queue, &msg->queue_entry );
-     completion->depth++;
-     wake_up( &completion->obj, 1 );
+@@ -308,6 +328,7 @@
+         if (list_empty( &completion->queue )) return;
+     }
+     if (!list_empty( &completion->queue )) wake_up( &completion->obj, 0 );
 +    fast_set_event( completion->fast_sync );
  }
  
  /* create a completion */
-@@ -231,6 +247,8 @@ DECL_HANDLER(remove_completion)
-         reply->status = msg->status;
+@@ -404,6 +425,8 @@
          reply->information = msg->information;
          free( msg );
+         reply->wait_handle = 0;
 +        if (list_empty( &completion->queue ))
 +            fast_reset_event( completion->fast_sync );
      }
@@ -3286,10 +3325,34 @@ index f3404a3..6d8cb3e 100644
      no_close_handle,                         /* close_handle */
      named_pipe_device_file_destroy           /* destroy */
  };
+@@ -357,6 +356,7 @@
+     NULL,                                    /* unlink_name */
+     named_pipe_dir_open_file,                /* open_file */
+     no_kernel_obj_list,                      /* get_kernel_obj_list */
++    default_fd_get_fast_sync,                /* get_fast_sync */
+     no_close_handle,                         /* close_handle */
+     named_pipe_dir_destroy                   /* destroy */
+ };
 diff --git a/server/object.c b/server/object.c
 index 89e541f..6c6568e 100644
 --- a/server/object.c
 +++ b/server/object.c
+@@ -120,6 +120,7 @@ static const struct object_ops apc_reserve_ops =
+     default_unlink_name,        /* unlink_name */
+     no_open_file,               /* open_file */
+     no_kernel_obj_list,         /* get_kernel_obj_list */
++    no_get_fast_sync,
+     no_close_handle,            /* close_handle */
+     no_destroy                  /* destroy */
+ };
+@@ -144,6 +145,7 @@ static const struct object_ops completion_reserve_ops =
+     default_unlink_name,       /* unlink_name */
+     no_open_file,              /* open_file */
+     no_kernel_obj_list,        /* get_kernel_obj_list */
++    no_get_fast_sync,
+     no_close_handle,           /* close_handle */
+     no_destroy                 /* destroy */
+ };
 @@ -538,6 +538,12 @@ struct fd *no_get_fd( struct object *obj )
      return NULL;
  }
@@ -3478,7 +3541,7 @@ index 1e73e9d..2140427 100644
 @@ -86,6 +86,7 @@ struct process
      struct list          rawinput_entry;  /* entry in the rawinput process list */
      struct list          kernel_object;   /* list of kernel object pointers */
-     pe_image_info_t      image_info;      /* main exe image info */
+     struct pe_image_info image_info;      /* main exe image info */
 +    struct fast_sync    *fast_sync;       /* fast synchronization object */
  };
  
@@ -3736,11 +3799,11 @@ index 2691e0c..e0585be 100644
      no_close_handle,               /* close_handle */
      master_socket_destroy          /* destroy */
  };
-diff --git a/server/request.h b/server/request.h
-index 5e85e31..b1e1b2c 100644
---- a/server/request.h
-+++ b/server/request.h
-@@ -404,7 +404,12 @@ DECL_HANDLER(terminate_job);
+diff --git a/server/request_handlers.h b/server/request_handlers.h
+index eb6b8f4..1636e98 100644
+--- a/server/request_handlers.h	2024-11-18 18:02:30.072599085 +0500
++++ b/server/request_handlers.h	2024-11-18 18:14:42.357268807 +0500
+@@ -298,7 +298,12 @@
  DECL_HANDLER(suspend_process);
  DECL_HANDLER(resume_process);
  DECL_HANDLER(get_next_thread);
@@ -3751,9 +3814,9 @@ index 5e85e31..b1e1b2c 100644
  DECL_HANDLER(set_keyboard_repeat);
 +DECL_HANDLER(get_fast_alert_event);
  
- #ifdef WANT_REQUEST_HANDLERS
- 
-@@ -695,7 +700,12 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+ typedef void (*req_handler)( const void *req, void *reply );
+ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+@@ -599,7 +599,12 @@
      (req_handler)req_suspend_process,
      (req_handler)req_resume_process,
      (req_handler)req_get_next_thread,
@@ -3766,36 +3829,33 @@ index 5e85e31..b1e1b2c 100644
  };
  
  C_ASSERT( sizeof(abstime_t) == 8 );
-@@ -2343,11 +2353,28 @@ C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, flags) == 28 );
+@@ -2276,9 +2276,26 @@
  C_ASSERT( sizeof(struct get_next_thread_request) == 32 );
- C_ASSERT( FIELD_OFFSET(struct get_next_thread_reply, handle) == 8 );
+ C_ASSERT( offsetof(struct get_next_thread_reply, handle) == 8 );
  C_ASSERT( sizeof(struct get_next_thread_reply) == 16 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_request) == 16 );
-+C_ASSERT( FIELD_OFFSET(struct get_linux_sync_device_reply, handle) == 8 );
++C_ASSERT( offsetof(struct get_linux_sync_device_reply, handle) == 8 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_reply) == 16 );
-+C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_request, handle) == 12 );
++C_ASSERT( offsetof(struct get_linux_sync_obj_request, handle) == 12 );
 +C_ASSERT( sizeof(struct get_linux_sync_obj_request) == 16 );
-+C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_reply, handle) == 8 );
-+C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_reply, type) == 12 );
-+C_ASSERT( FIELD_OFFSET(struct get_linux_sync_obj_reply, access) == 16 );
++C_ASSERT( offsetof(struct get_linux_sync_obj_reply, handle) == 8 );
++C_ASSERT( offsetof(struct get_linux_sync_obj_reply, type) == 12 );
++C_ASSERT( offsetof(struct get_linux_sync_obj_reply, access) == 16 );
 +C_ASSERT( sizeof(struct get_linux_sync_obj_reply) == 24 );
-+C_ASSERT( FIELD_OFFSET(struct fast_select_queue_request, handle) == 12 );
++C_ASSERT( offsetof(struct fast_select_queue_request, handle) == 12 );
 +C_ASSERT( sizeof(struct fast_select_queue_request) == 16 );
-+C_ASSERT( FIELD_OFFSET(struct fast_unselect_queue_request, handle) == 12 );
-+C_ASSERT( FIELD_OFFSET(struct fast_unselect_queue_request, signaled) == 16 );
++C_ASSERT( offsetof(struct fast_unselect_queue_request, handle) == 12 );
++C_ASSERT( offsetof(struct fast_unselect_queue_request, signaled) == 16 );
 +C_ASSERT( sizeof(struct fast_unselect_queue_request) == 24 );
 +C_ASSERT( sizeof(struct get_fast_alert_event_request) == 16 );
-+C_ASSERT( FIELD_OFFSET(struct get_fast_alert_event_reply, handle) == 8 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, enable) == 12 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, delay) == 16 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_request, period) == 20 );
++C_ASSERT( offsetof(struct get_fast_alert_event_reply, handle) == 8 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_request, enable) == 12 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_request, delay) == 16 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
- C_ASSERT( FIELD_OFFSET(struct set_keyboard_repeat_reply, enable) == 8 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_reply, enable) == 8 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_reply) == 16 );
 +C_ASSERT( sizeof(struct get_fast_alert_event_reply) == 16 );
- 
- #endif  /* WANT_REQUEST_HANDLERS */
- 
 diff --git a/server/semaphore.c b/server/semaphore.c
 index 53b42a8..9940919 100644
 --- a/server/semaphore.c
@@ -4053,9 +4113,9 @@ index 766ed78..9bf4b48 100644
 --- a/server/thread.h
 +++ b/server/thread.h
 @@ -91,6 +91,8 @@ struct thread
-     struct list            kernel_object; /* list of kernel object pointers */
      data_size_t            desc_len;      /* thread description length in bytes */
      WCHAR                 *desc;          /* thread description string */
+     struct completion_wait *completion_wait; /* completion port wait object the thread is associated with */
 +    struct fast_sync      *fast_sync;     /* fast synchronization object */
 +    struct event          *fast_alert_event; /* fast synchronization alert event */
  };
@@ -4151,10 +4211,10 @@ index 4df8d2e..42562fd 100644
      no_close_handle,           /* close_handle */
      token_destroy              /* destroy */
  };
-diff --git a/server/trace.c b/server/trace.c
-index d76d131..a361a7e 100644
---- a/server/trace.c
-+++ b/server/trace.c
+diff --git a/server/request_trace.h b/server/request_trace.h
+index af96565..c027f4b 100644
+--- a/server/request_trace.h
++++ b/server/request_trace.h
 @@ -4603,18 +4603,59 @@ static void dump_get_next_thread_reply( const struct get_next_thread_reply *req
      fprintf( stderr, " handle=%04x", req->handle );
  }
@@ -4212,9 +4272,9 @@ index d76d131..a361a7e 100644
 +    fprintf( stderr, " handle=%04x", req->handle );
 +}
 +
+ typedef void (*dump_func)( const void *req );
+ 
  static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
-     (dump_func)dump_new_process_request,
-     (dump_func)dump_get_new_process_info_request,
 @@ -4889,7 +4930,12 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
      (dump_func)dump_suspend_process_request,
      (dump_func)dump_resume_process_request,
