@@ -442,7 +442,7 @@ _pkgnaming() {
       msg2 "Using staging patchset"
     fi
 
-    if [ "$_use_ntsync" = "true" ] && [ "$_use_fsync" != "true" ]; then
+    if [ "$_use_ntsync" = "true" ] || [ "$_use_ntsync" = "ntsync7" ] && [ "$_use_fsync" != "true" ]; then
       pkgname+="-ntsync"
       msg2 "Using ntsync patchset"
     elif [ "$_use_fsync" = "true" ] && [ "$_use_esync" = "true" ]; then
@@ -1155,7 +1155,7 @@ _polish() {
 	  if [ "$_use_fsync" = "true" ] && [ "$_staging_esync" = "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	    _version_tags+=(Fsync)
 	  fi
-	  if [ "$_use_ntsync" = "true" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
+	  if [ "$_use_ntsync" = "true" ] || [ "$_use_ntsync" = "ntsync7" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	    _version_tags+=(NTsync)
 	  fi
 	  if [ "$_use_pba" = "true" ] && [ "$_pba_version" != "none" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
