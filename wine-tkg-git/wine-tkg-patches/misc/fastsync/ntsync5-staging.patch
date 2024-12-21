@@ -7361,18 +7361,20 @@ index fee3a8d..287a56e 100644
  }
  
  static void thread_input_dump( struct object *obj, int verbose )
-@@ -2982,11 +2982,14 @@ DECL_HANDLER(set_queue_mask)
-                     shared->changed_mask = 0;
+@@ -2982,10 +2982,15 @@ DECL_HANDLER(set_queue_mask)
                  }
                  SHARED_WRITE_END;
-+
-+                fast_reset_event( queue->fast_sync );
 +            }
 +            else
 +            {
 +                wake_up( &queue->obj, 0 );
 +                fast_set_event( queue->fast_sync );
-             }
++            }
++        }
++        else
++        {
++            fast_reset_event( queue->fast_sync );
+-            }
 -            else wake_up( &queue->obj, 0 );
          }
 -
@@ -8401,89 +8403,3 @@ index 4ef21d9..2719c9e 100644
      desktop_close_handle,         /* close_handle */
      desktop_destroy               /* destroy */
  };
-From 9c4c5779b6f87c27e73a4cb5a0973896c26c8d31 Mon Sep 17 00:00:00 2001
-From: Kirill Artemev <artewar6767@gmail.com>
-Date: Wed, 3 Jul 2024 18:39:15 +0500
-Subject: [PATCH] test3
-
-Signed-off-by: Kirill Artemev <artewar6767@gmail.com>
----
- server/queue.c | 55 +++++++++++++++++++++++++++++++++++++++++---------
- 1 file changed, 46 insertions(+), 9 deletions(-)
-
-diff --git a/server/queue.c b/server/queue.c
-index 0c9c043d68f..c911ae3e574 100644
---- a/server/queue.c
-+++ b/server/queue.c
-@@ -4020,21 +4020,60 @@ DECL_HANDLER(update_rawinput_devices)
-     }
- }
- 
--DECL_HANDLER(esync_msgwait)
-+DECL_HANDLER(fast_select_queue)
- {
--    struct msg_queue *queue = get_current_queue();
-+    struct msg_queue *queue;
-     const queue_shm_t *queue_shm;
- 
--    if (!queue) return;
-+    if (!(queue = (struct msg_queue *)get_handle_obj( current->process, req->handle,
-+                                                      SYNCHRONIZE, &msg_queue_ops )))
-+        return;
-     queue_shm = queue->shared;
--    queue->esync_in_msgwait = req->in_msgwait;
-+    /* a thread can only wait on its own queue */
-+    if (current->queue != queue || queue->in_fast_wait)
-+    {
-+        set_error( STATUS_ACCESS_DENIED );
-+    }
-+    else
-+    {
-+        if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
-+            set_event( current->process->idle_event );
-+
-+        if (queue->fd)
-+            set_fd_events( queue->fd, POLLIN );
- 
--    if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
--        set_event( current->process->idle_event );
-+        queue->in_fast_wait = 1;
-+    }
- 
--    /* and start/stop waiting on the driver */
--    if (queue->fd)
--        set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
-+    release_object( queue );
-+}
-+
-+DECL_HANDLER(fast_unselect_queue)
-+{
-+    struct msg_queue *queue;
-+    const queue_shm_t *queue_shm;
-+
-+    if (!(queue = (struct msg_queue *)get_handle_obj( current->process, req->handle,
-+                                                      SYNCHRONIZE, &msg_queue_ops )))
-+        return;
-+
-+    queue_shm = queue->shared;
-+    if (current->queue != queue || !queue->in_fast_wait)
-+    {
-+        set_error( STATUS_ACCESS_DENIED );
-+    }
-+    else
-+    {
-+        if (queue->fd)
-+            set_fd_events( queue->fd, 0 );
-+
-+        if (req->signaled)
-+            msg_queue_satisfied( &queue->obj, NULL );
-+
-+        queue->in_fast_wait = 0;
-+    }
-+
-+    release_object( queue );
- }
- 
- DECL_HANDLER(set_keyboard_repeat)
--- 
-2.45.2
