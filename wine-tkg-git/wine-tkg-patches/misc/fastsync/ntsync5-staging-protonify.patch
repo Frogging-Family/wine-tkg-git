@@ -2271,7 +2271,7 @@ index 0d4b320..dba7645 100644
      if (options & DUPLICATE_CLOSE_SOURCE)
 +    {
          fd = remove_fd_from_cache( source );
-+        close_fast_sync_obj( source );
++        close_inproc_sync_obj( source );
 +    }
  
      SERVER_START_REQ( dup_handle )
@@ -2290,7 +2290,7 @@ index 0d4b320..dba7645 100644
  
 -    if (do_esync())
 -        esync_close( handle );
-+    close_fast_sync_obj( handle );
++    close_inproc_sync_obj( handle );
  
      SERVER_START_REQ( close_handle )
      {
@@ -2349,7 +2349,7 @@ index 1072265..a9a0a2c 100644
  /* return a monotonic time counter, in Win32 ticks */
  static inline ULONGLONG monotonic_counter(void)
  {
-@@ -239,6 +246,902 @@ static unsigned int validate_open_object_attributes( const OBJECT_ATTRIBUTES *at
+@@ -301,6 +309,901 @@
  }
  
  
@@ -2357,44 +2357,44 @@ index 1072265..a9a0a2c 100644
 +
 +static int get_linux_sync_device(void)
 +{
-+    static LONG fast_sync_fd = -2;
++    static LONG device = -2;
 +
-+    if (fast_sync_fd == -2)
++    if (device == -2)
 +    {
-+        HANDLE device;
++        HANDLE handle;
 +        int fd, needs_close;
 +        NTSTATUS ret;
 +
 +        SERVER_START_REQ( get_linux_sync_device )
 +        {
-+            if (!(ret = wine_server_call( req ))) device = wine_server_ptr_handle( reply->handle );
++            if (!(ret = wine_server_call( req ))) handle = wine_server_ptr_handle( reply->handle );
 +        }
 +        SERVER_END_REQ;
 +
 +        if (!ret)
 +        {
-+            if (!server_get_unix_fd( device, 0, &fd, &needs_close, NULL, NULL ))
++            if (!server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL ))
 +            {
-+                if (InterlockedCompareExchange( &fast_sync_fd, fd, -2 ) != -2)
++                if (InterlockedCompareExchange( &device, fd, -2 ) != -2)
 +                {
 +                    /* someone beat us to it */
 +                    if (needs_close) close( fd );
-+                    NtClose( device );
++                    NtClose( handle );
 +                }
 +                /* otherwise don't close the device */
 +            }
 +            else
 +            {
-+                InterlockedCompareExchange( &fast_sync_fd, -1, -2 );
-+                NtClose( device );
++                InterlockedCompareExchange( &device, -1, -2 );
++                NtClose( handle );
 +            }
 +        }
 +        else
 +        {
-+            InterlockedCompareExchange( &fast_sync_fd, -1, -2 );
++            InterlockedCompareExchange( &device, -1, -2 );
 +        }
 +    }
-+    return fast_sync_fd;
++    return device;
 +}
 +
 +/* It's possible for synchronization primitives to remain alive even after being
@@ -2402,10 +2402,10 @@ index 1072265..a9a0a2c 100644
 + * documented as being undefined behaviour by Microsoft, but it works, and some
 + * applications rely on it. This means we need to refcount handles, and defer
 + * deleting them on the server side until the refcount reaches zero. We do this
-+ * by having each client process hold a handle to the fast synchronization
++ * by having each client process hold a handle to the in-process synchronization
 + * object, as well as a private refcount. When the client refcount reaches zero,
 + * it closes the handle; when all handles are closed, the server deletes the
-+ * fast synchronization object.
++ * in-process synchronization object.
 + *
 + * We also need this for signal-and-wait. The signal and wait operations aren't
 + * atomic, but we can't perform the signal and then return STATUS_INVALID_HANDLE
@@ -2431,20 +2431,20 @@ index 1072265..a9a0a2c 100644
 + * the same handle immediately reallocated to a different object. This should be
 + * a very rare situation, and in that case we simply don't cache the handle.
 + */
-+struct fast_sync_cache_entry
++struct inproc_sync_cache_entry
 +{
 +    LONG refcount;
 +    int fd;
-+    enum fast_sync_type type;
++    enum inproc_sync_type type;
 +    unsigned int access;
 +    BOOL closed;
-+    /* handle to the underlying fast sync object, stored as obj_handle_t to save
-+     * space */
++    /* handle to the underlying in-process sync object, stored as obj_handle_t
++     * to save space */
 +    obj_handle_t handle;
 +};
 +
 +
-+static void release_fast_sync_obj( struct fast_sync_cache_entry *cache )
++static void release_inproc_sync_obj( struct inproc_sync_cache_entry *cache )
 +{
 +    /* save the handle and fd now; as soon as the refcount hits 0 we cannot
 +     * access the cache anymore */
@@ -2472,52 +2472,52 @@ index 1072265..a9a0a2c 100644
 +}
 +
 +
-+#define FAST_SYNC_CACHE_BLOCK_SIZE  (65536 / sizeof(struct fast_sync_cache_entry))
-+#define FAST_SYNC_CACHE_ENTRIES     128
++#define INPROC_SYNC_CACHE_BLOCK_SIZE  (65536 / sizeof(struct inproc_sync_cache_entry))
++#define INPROC_SYNC_CACHE_ENTRIES     128
 +
-+static struct fast_sync_cache_entry *fast_sync_cache[FAST_SYNC_CACHE_ENTRIES];
-+static struct fast_sync_cache_entry fast_sync_cache_initial_block[FAST_SYNC_CACHE_BLOCK_SIZE];
++static struct inproc_sync_cache_entry *inproc_sync_cache[INPROC_SYNC_CACHE_ENTRIES];
++static struct inproc_sync_cache_entry inproc_sync_cache_initial_block[INPROC_SYNC_CACHE_BLOCK_SIZE];
 +
-+static inline unsigned int fast_sync_handle_to_index( HANDLE handle, unsigned int *entry )
++static inline unsigned int inproc_sync_handle_to_index( HANDLE handle, unsigned int *entry )
 +{
 +    unsigned int idx = (wine_server_obj_handle(handle) >> 2) - 1;
-+    *entry = idx / FAST_SYNC_CACHE_BLOCK_SIZE;
-+    return idx % FAST_SYNC_CACHE_BLOCK_SIZE;
++    *entry = idx / INPROC_SYNC_CACHE_BLOCK_SIZE;
++    return idx % INPROC_SYNC_CACHE_BLOCK_SIZE;
 +}
 +
 +
-+static struct fast_sync_cache_entry *cache_fast_sync_obj( HANDLE handle, obj_handle_t fast_sync, int fd,
-+                                                          enum fast_sync_type type, unsigned int access )
++static struct inproc_sync_cache_entry *cache_inproc_sync_obj( HANDLE handle, obj_handle_t inproc_sync, int fd,
++                                                              enum inproc_sync_type type, unsigned int access )
 +{
-+    unsigned int entry, idx = fast_sync_handle_to_index( handle, &entry );
-+    struct fast_sync_cache_entry *cache;
++    unsigned int entry, idx = inproc_sync_handle_to_index( handle, &entry );
++    struct inproc_sync_cache_entry *cache;
 +    sigset_t sigset;
 +    int refcount;
 +
-+    if (entry >= FAST_SYNC_CACHE_ENTRIES)
++    if (entry >= INPROC_SYNC_CACHE_ENTRIES)
 +    {
 +        FIXME( "too many allocated handles, not caching %p\n", handle );
 +        return NULL;
 +    }
 +
-+    if (!fast_sync_cache[entry])  /* do we need to allocate a new block of entries? */
++    if (!inproc_sync_cache[entry])  /* do we need to allocate a new block of entries? */
 +    {
-+        if (!entry) fast_sync_cache[0] = fast_sync_cache_initial_block;
++        if (!entry) inproc_sync_cache[0] = inproc_sync_cache_initial_block;
 +        else
 +        {
-+            static const size_t size = FAST_SYNC_CACHE_BLOCK_SIZE * sizeof(struct fast_sync_cache_entry);
++            static const size_t size = INPROC_SYNC_CACHE_BLOCK_SIZE * sizeof(struct inproc_sync_cache_entry);
 +            void *ptr = anon_mmap_alloc( size, PROT_READ | PROT_WRITE );
 +            if (ptr == MAP_FAILED) return NULL;
-+            if (InterlockedCompareExchangePointer( (void **)&fast_sync_cache[entry], ptr, NULL ))
++            if (InterlockedCompareExchangePointer( (void **)&inproc_sync_cache[entry], ptr, NULL ))
 +                munmap( ptr, size ); /* someone beat us to it */
 +        }
 +    }
 +
-+    cache = &fast_sync_cache[entry][idx];
++    cache = &inproc_sync_cache[entry][idx];
 +
 +    /* Hold fd_cache_mutex instead of a separate mutex, to prevent the same
 +     * race between this function and NtClose. That is, prevent the object from
-+     * being cached again between close_fast_sync_obj() and close_handle. */
++     * being cached again between close_inproc_sync_obj() and close_handle. */
 +    server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
 +
 +    if (InterlockedCompareExchange( &cache->refcount, 0, 0 ))
@@ -2531,13 +2531,13 @@ index 1072265..a9a0a2c 100644
 +        return NULL;
 +    }
 +
-+    cache->handle = fast_sync;
++    cache->handle = inproc_sync;
 +    cache->fd = fd;
 +    cache->type = type;
 +    cache->access = access;
 +    cache->closed = FALSE;
 +    /* Make sure we set the other members before the refcount; this store needs
-+     * release semantics [paired with the load in get_cached_fast_sync_obj()].
++     * release semantics [paired with the load in get_cached_inproc_sync_obj()].
 +     * Set the refcount to 2 (one for the handle, one for the caller). */
 +    refcount = InterlockedExchange( &cache->refcount, 2 );
 +    assert( !refcount );
@@ -2561,18 +2561,18 @@ index 1072265..a9a0a2c 100644
 +}
 +
 +
-+static struct fast_sync_cache_entry *get_cached_fast_sync_obj( HANDLE handle )
++static struct inproc_sync_cache_entry *get_cached_inproc_sync_obj( HANDLE handle )
 +{
-+    unsigned int entry, idx = fast_sync_handle_to_index( handle, &entry );
-+    struct fast_sync_cache_entry *cache;
++    unsigned int entry, idx = inproc_sync_handle_to_index( handle, &entry );
++    struct inproc_sync_cache_entry *cache;
 +
-+    if (entry >= FAST_SYNC_CACHE_ENTRIES || !fast_sync_cache[entry])
++    if (entry >= INPROC_SYNC_CACHE_ENTRIES || !inproc_sync_cache[entry])
 +        return NULL;
 +
-+    cache = &fast_sync_cache[entry][idx];
++    cache = &inproc_sync_cache[entry][idx];
 +
 +    /* this load needs acquire semantics [paired with the store in
-+     * cache_fast_sync_obj()] */
++     * cache_inproc_sync_obj()] */
 +    if (!interlocked_inc_if_nonzero( &cache->refcount ))
 +        return NULL;
 +
@@ -2582,7 +2582,7 @@ index 1072265..a9a0a2c 100644
 +         * handle value might have been reused for another object in the
 +         * meantime, in which case we have to report that valid object, so
 +         * force the caller to check the server. */
-+        release_fast_sync_obj( cache );
++        release_inproc_sync_obj( cache );
 +        return NULL;
 +    }
 +
@@ -2590,30 +2590,31 @@ index 1072265..a9a0a2c 100644
 +}
 +
 +
-+static BOOL fast_sync_types_match( enum fast_sync_type a, enum fast_sync_type b )
++static BOOL inproc_sync_types_match( enum inproc_sync_type a, enum inproc_sync_type b )
 +{
 +    if (a == b) return TRUE;
-+    if (a == FAST_SYNC_AUTO_EVENT && b == FAST_SYNC_MANUAL_EVENT) return TRUE;
-+    if (b == FAST_SYNC_AUTO_EVENT && a == FAST_SYNC_MANUAL_EVENT) return TRUE;
++    if (a == INPROC_SYNC_AUTO_EVENT && b == INPROC_SYNC_MANUAL_EVENT) return TRUE;
++    if (b == INPROC_SYNC_AUTO_EVENT && a == INPROC_SYNC_MANUAL_EVENT) return TRUE;
 +    return FALSE;
 +}
 +
 +
 +/* returns a pointer to a cache entry; if the object could not be cached,
 + * returns "stack_cache" instead, which should be allocated on stack */
-+static NTSTATUS get_fast_sync_obj( HANDLE handle, enum fast_sync_type desired_type, ACCESS_MASK desired_access,
-+                                   struct fast_sync_cache_entry *stack_cache,
-+                                   struct fast_sync_cache_entry **ret_cache )
++static NTSTATUS get_inproc_sync_obj( HANDLE handle, enum inproc_sync_type desired_type,
++                                     ACCESS_MASK desired_access,
++                                     struct inproc_sync_cache_entry *stack_cache,
++                                     struct inproc_sync_cache_entry **ret_cache )
 +{
-+    struct fast_sync_cache_entry *cache;
-+    obj_handle_t fast_sync_handle;
-+    enum fast_sync_type type;
++    struct inproc_sync_cache_entry *cache;
++    obj_handle_t inproc_sync_handle;
++    enum inproc_sync_type type;
 +    unsigned int access;
 +    int fd, needs_close;
 +    NTSTATUS ret;
 +
 +    /* try to find it in the cache already */
-+    if ((cache = get_cached_fast_sync_obj( handle )))
++    if ((cache = get_cached_inproc_sync_obj( handle )))
 +    {
 +        *ret_cache = cache;
 +        return STATUS_SUCCESS;
@@ -2625,7 +2626,7 @@ index 1072265..a9a0a2c 100644
 +        req->handle = wine_server_obj_handle( handle );
 +        if (!(ret = wine_server_call( req )))
 +        {
-+            fast_sync_handle = reply->handle;
++            inproc_sync_handle = reply->handle;
 +            access = reply->access;
 +            type = reply->type;
 +        }
@@ -2634,15 +2635,15 @@ index 1072265..a9a0a2c 100644
 +
 +    if (ret) return ret;
 +
-+    if ((ret = server_get_unix_fd( wine_server_ptr_handle( fast_sync_handle ),
++    if ((ret = server_get_unix_fd( wine_server_ptr_handle( inproc_sync_handle ),
 +                                   0, &fd, &needs_close, NULL, NULL )))
 +        return ret;
 +
-+    cache = cache_fast_sync_obj( handle, fast_sync_handle, fd, type, access );
++    cache = cache_inproc_sync_obj( handle, inproc_sync_handle, fd, type, access );
 +    if (!cache)
 +    {
 +        cache = stack_cache;
-+        cache->handle = fast_sync_handle;
++        cache->handle = inproc_sync_handle;
 +        cache->fd = fd;
 +        cache->type = type;
 +        cache->access = access;
@@ -2652,15 +2653,15 @@ index 1072265..a9a0a2c 100644
 +
 +    *ret_cache = cache;
 +
-+    if (desired_type && !fast_sync_types_match( cache->type, desired_type ))
++    if (desired_type && !inproc_sync_types_match( cache->type, desired_type ))
 +    {
-+        release_fast_sync_obj( cache );
++        release_inproc_sync_obj( cache );
 +        return STATUS_OBJECT_TYPE_MISMATCH;
 +    }
 +
 +    if ((cache->access & desired_access) != desired_access)
 +    {
-+        release_fast_sync_obj( cache );
++        release_inproc_sync_obj( cache );
 +        return STATUS_ACCESS_DENIED;
 +    }
 +
@@ -2669,16 +2670,16 @@ index 1072265..a9a0a2c 100644
 +
 +
 +/* caller must hold fd_cache_mutex */
-+void close_fast_sync_obj( HANDLE handle )
++void close_inproc_sync_obj( HANDLE handle )
 +{
-+    struct fast_sync_cache_entry *cache = get_cached_fast_sync_obj( handle );
++    struct inproc_sync_cache_entry *cache = get_cached_inproc_sync_obj( handle );
 +
 +    if (cache)
 +    {
 +        cache->closed = TRUE;
 +        /* once for the reference we just grabbed, and once for the handle */
-+        release_fast_sync_obj( cache );
-+        release_fast_sync_obj( cache );
++        release_inproc_sync_obj( cache );
++        release_inproc_sync_obj( cache );
 +    }
 +}
 +
@@ -2687,7 +2688,7 @@ index 1072265..a9a0a2c 100644
 +{
 +    NTSTATUS ret;
 +
-+    ret = ioctl( obj, NTSYNC_IOC_SEM_POST, &count );
++    ret = ioctl( obj, NTSYNC_IOC_SEM_RELEASE, &count );
 +    if (ret < 0)
 +    {
 +        if (errno == EOVERFLOW)
@@ -2700,18 +2701,18 @@ index 1072265..a9a0a2c 100644
 +}
 +
 +
-+static NTSTATUS fast_release_semaphore( HANDLE handle, ULONG count, ULONG *prev_count )
++static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *prev_count )
 +{
-+    struct fast_sync_cache_entry stack_cache, *cache;
++    struct inproc_sync_cache_entry stack_cache, *cache;
 +    NTSTATUS ret;
 +
-+    if ((ret = get_fast_sync_obj( handle, FAST_SYNC_SEMAPHORE,
-+                                  SEMAPHORE_MODIFY_STATE, &stack_cache, &cache )))
++    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_SEMAPHORE,
++                                    SEMAPHORE_MODIFY_STATE, &stack_cache, &cache )))
 +        return ret;
 +
 +    ret = linux_release_semaphore_obj( cache->fd, count, prev_count );
 +
-+    release_fast_sync_obj( cache );
++    release_inproc_sync_obj( cache );
 +    return ret;
 +}
 +
@@ -2730,18 +2731,18 @@ index 1072265..a9a0a2c 100644
 +}
 +
 +
-+static NTSTATUS fast_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATION *info )
++static NTSTATUS inproc_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATION *info )
 +{
-+    struct fast_sync_cache_entry stack_cache, *cache;
++    struct inproc_sync_cache_entry stack_cache, *cache;
 +    NTSTATUS ret;
 +
-+    if ((ret = get_fast_sync_obj( handle, FAST_SYNC_SEMAPHORE,
-+                                  SEMAPHORE_QUERY_STATE, &stack_cache, &cache )))
++    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_SEMAPHORE,
++                                    SEMAPHORE_QUERY_STATE, &stack_cache, &cache )))
 +        return ret;
 +
 +    ret = linux_query_semaphore_obj( cache->fd, info );
 +
-+    release_fast_sync_obj( cache );
++    release_inproc_sync_obj( cache );
 +    return ret;
 +}
 +
@@ -2759,18 +2760,18 @@ index 1072265..a9a0a2c 100644
 +}
 +
 +
-+static NTSTATUS fast_set_event( HANDLE handle, LONG *prev_state )
++static NTSTATUS inproc_set_event( HANDLE handle, LONG *prev_state )
 +{
-+    struct fast_sync_cache_entry stack_cache, *cache;
++    struct inproc_sync_cache_entry stack_cache, *cache;
 +    NTSTATUS ret;
 +
-+    if ((ret = get_fast_sync_obj( handle, FAST_SYNC_AUTO_EVENT,
-+                                  EVENT_MODIFY_STATE, &stack_cache, &cache )))
++    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT,
++                                    EVENT_MODIFY_STATE, &stack_cache, &cache )))
 +        return ret;
 +
 +    ret = linux_set_event_obj( cache->fd, prev_state );
 +
-+    release_fast_sync_obj( cache );
++    release_inproc_sync_obj( cache );
 +    return ret;
 +}
 +
@@ -2788,18 +2789,18 @@ index 1072265..a9a0a2c 100644
 +}
 +
 +
-+static NTSTATUS fast_reset_event( HANDLE handle, LONG *prev_state )
++static NTSTATUS inproc_reset_event( HANDLE handle, LONG *prev_state )
 +{
-+    struct fast_sync_cache_entry stack_cache, *cache;
++    struct inproc_sync_cache_entry stack_cache, *cache;
 +    NTSTATUS ret;
 +
-+    if ((ret = get_fast_sync_obj( handle, FAST_SYNC_AUTO_EVENT,
-+                                  EVENT_MODIFY_STATE, &stack_cache, &cache )))
++    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT,
++                                    EVENT_MODIFY_STATE, &stack_cache, &cache )))
 +        return ret;
 +
 +    ret = linux_reset_event_obj( cache->fd, prev_state );
 +
-+    release_fast_sync_obj( cache );
++    release_inproc_sync_obj( cache );
 +    return ret;
 +}
 +
@@ -2817,23 +2818,23 @@ index 1072265..a9a0a2c 100644
 +}
 +
 +
-+static NTSTATUS fast_pulse_event( HANDLE handle, LONG *prev_state )
++static NTSTATUS inproc_pulse_event( HANDLE handle, LONG *prev_state )
 +{
-+    struct fast_sync_cache_entry stack_cache, *cache;
++    struct inproc_sync_cache_entry stack_cache, *cache;
 +    NTSTATUS ret;
 +
-+    if ((ret = get_fast_sync_obj( handle, FAST_SYNC_AUTO_EVENT,
-+                                  EVENT_MODIFY_STATE, &stack_cache, &cache )))
++    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT,
++                                    EVENT_MODIFY_STATE, &stack_cache, &cache )))
 +        return ret;
 +
 +    ret = linux_pulse_event_obj( cache->fd, prev_state );
 +
-+    release_fast_sync_obj( cache );
++    release_inproc_sync_obj( cache );
 +    return ret;
 +}
 +
 +
-+static NTSTATUS linux_query_event_obj( int obj, enum fast_sync_type type, EVENT_BASIC_INFORMATION *info )
++static NTSTATUS linux_query_event_obj( int obj, enum inproc_sync_type type, EVENT_BASIC_INFORMATION *info )
 +{
 +    struct ntsync_event_args args = {0};
 +    NTSTATUS ret;
@@ -2841,24 +2842,24 @@ index 1072265..a9a0a2c 100644
 +    ret = ioctl( obj, NTSYNC_IOC_EVENT_READ, &args );
 +    if (ret < 0)
 +        return errno_to_status( errno );
-+    info->EventType = (type == FAST_SYNC_AUTO_EVENT) ? SynchronizationEvent : NotificationEvent;
++    info->EventType = (type == INPROC_SYNC_AUTO_EVENT) ? SynchronizationEvent : NotificationEvent;
 +    info->EventState = args.signaled;
 +    return STATUS_SUCCESS;
 +}
 +
 +
-+static NTSTATUS fast_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info )
++static NTSTATUS inproc_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info )
 +{
-+    struct fast_sync_cache_entry stack_cache, *cache;
++    struct inproc_sync_cache_entry stack_cache, *cache;
 +    NTSTATUS ret;
 +
-+    if ((ret = get_fast_sync_obj( handle, FAST_SYNC_AUTO_EVENT,
-+                                  EVENT_QUERY_STATE, &stack_cache, &cache )))
++    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT,
++                                    EVENT_QUERY_STATE, &stack_cache, &cache )))
 +        return ret;
 +
 +    ret = linux_query_event_obj( cache->fd, cache->type, info );
 +
-+    release_fast_sync_obj( cache );
++    release_inproc_sync_obj( cache );
 +    return ret;
 +}
 +
@@ -2885,17 +2886,17 @@ index 1072265..a9a0a2c 100644
 +}
 +
 +
-+static NTSTATUS fast_release_mutex( HANDLE handle, LONG *prev_count )
++static NTSTATUS inproc_release_mutex( HANDLE handle, LONG *prev_count )
 +{
-+    struct fast_sync_cache_entry stack_cache, *cache;
++    struct inproc_sync_cache_entry stack_cache, *cache;
 +    NTSTATUS ret;
 +
-+    if ((ret = get_fast_sync_obj( handle, FAST_SYNC_MUTEX, 0, &stack_cache, &cache )))
++    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_MUTEX, 0, &stack_cache, &cache )))
 +        return ret;
 +
 +    ret = linux_release_mutex_obj( cache->fd, prev_count );
 +
-+    release_fast_sync_obj( cache );
++    release_inproc_sync_obj( cache );
 +    return ret;
 +}
 +
@@ -2926,71 +2927,69 @@ index 1072265..a9a0a2c 100644
 +}
 +
 +
-+static NTSTATUS fast_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *info )
++static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *info )
 +{
-+    struct fast_sync_cache_entry stack_cache, *cache;
++    struct inproc_sync_cache_entry stack_cache, *cache;
 +    NTSTATUS ret;
 +
-+    if ((ret = get_fast_sync_obj( handle, FAST_SYNC_MUTEX, MUTANT_QUERY_STATE,
-+                                  &stack_cache, &cache )))
++    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_MUTEX, MUTANT_QUERY_STATE,
++                                    &stack_cache, &cache )))
 +        return ret;
 +
 +    ret = linux_query_mutex_obj( cache->fd, info );
 +
-+    release_fast_sync_obj( cache );
++    release_inproc_sync_obj( cache );
 +    return ret;
 +}
 +
-+static void select_queue( HANDLE queue )
++static void select_queue(void)
 +{
-+    SERVER_START_REQ( fast_select_queue )
++    SERVER_START_REQ( select_inproc_queue )
 +    {
-+        req->handle = wine_server_obj_handle( queue );
 +        wine_server_call( req );
 +    }
 +    SERVER_END_REQ;
 +}
 +
-+static void unselect_queue( HANDLE queue, BOOL signaled )
++static void unselect_queue( BOOL signaled )
 +{
-+    SERVER_START_REQ( fast_unselect_queue )
++    SERVER_START_REQ( unselect_inproc_queue )
 +    {
-+        req->handle = wine_server_obj_handle( queue );
 +        req->signaled = signaled;
 +        wine_server_call( req );
 +    }
 +    SERVER_END_REQ;
 +}
 +
-+static int get_fast_alert_obj(void)
++static int get_inproc_alert_obj(void)
 +{
 +    struct ntdll_thread_data *data = ntdll_get_thread_data();
-+    struct fast_sync_cache_entry stack_cache, *cache;
++    struct inproc_sync_cache_entry stack_cache, *cache;
 +    HANDLE alert_handle;
 +    unsigned int ret;
 +
-+    if (!data->fast_alert_obj)
++    if (data->linux_alert_obj == -1)
 +    {
-+        SERVER_START_REQ( get_fast_alert_event )
++        SERVER_START_REQ( get_inproc_alert_event )
 +        {
 +            if ((ret = wine_server_call( req )))
-+                ERR( "failed to get fast alert event, status %#x\n", ret );
++                ERR( "failed to get inproc alert event, status %#x\n", ret );
 +            alert_handle = wine_server_ptr_handle( reply->handle );
 +        }
 +        SERVER_END_REQ;
 +
-+        if ((ret = get_fast_sync_obj( alert_handle, 0, SYNCHRONIZE, &stack_cache, &cache )))
-+            ERR( "failed to get fast alert obj, status %#x\n", ret );
-+        data->fast_alert_obj = cache->fd;
-+        /* Set the fd to -1 so release_fast_sync_obj() won't close it.
++        if ((ret = get_inproc_sync_obj( alert_handle, 0, SYNCHRONIZE, &stack_cache, &cache )))
++            ERR( "failed to get inproc alert obj, status %#x\n", ret );
++        data->linux_alert_obj = cache->fd;
++        /* Set the fd to -1 so release_inproc_sync_obj() won't close it.
 +         * Manhandling the cache entry here is fine since we're the only thread
 +         * that can access our own alert event. */
 +        cache->fd = -1;
-+        release_fast_sync_obj( cache );
++        release_inproc_sync_obj( cache );
 +        NtClose( alert_handle );
 +    }
 +
-+    return data->fast_alert_obj;
++    return data->linux_alert_obj;
 +}
 +
 +static NTSTATUS linux_wait_objs( int device, const DWORD count, const int *objs,
@@ -3022,7 +3021,7 @@ index 1072265..a9a0a2c 100644
 +    args.index = ~0u;
 +
 +    if (alertable)
-+        args.alert = get_fast_alert_obj();
++        args.alert = get_inproc_alert_obj();
 +
 +    if (wait_any || count == 1)
 +        request = NTSYNC_IOC_WAIT_ANY;
@@ -3055,10 +3054,10 @@ index 1072265..a9a0a2c 100644
 +        return errno_to_status( errno );
 +}
 +
-+static NTSTATUS fast_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
-+                           BOOLEAN alertable, const LARGE_INTEGER *timeout )
++static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
++                             BOOLEAN alertable, const LARGE_INTEGER *timeout )
 +{
-+    struct fast_sync_cache_entry stack_cache[64], *cache[64];
++    struct inproc_sync_cache_entry stack_cache[64], *cache[64];
 +    int device, objs[64];
 +    HANDLE queue = NULL;
 +    NTSTATUS ret;
@@ -3069,13 +3068,13 @@ index 1072265..a9a0a2c 100644
 +
 +    for (i = 0; i < count; ++i)
 +    {
-+        if ((ret = get_fast_sync_obj( handles[i], 0, SYNCHRONIZE, &stack_cache[i], &cache[i] )))
++        if ((ret = get_inproc_sync_obj( handles[i], 0, SYNCHRONIZE, &stack_cache[i], &cache[i] )))
 +        {
 +            for (j = 0; j < i; ++j)
-+                release_fast_sync_obj( cache[j] );
++                release_inproc_sync_obj( cache[j] );
 +            return ret;
 +        }
-+        if (cache[i]->type == FAST_SYNC_QUEUE)
++        if (cache[i]->type == INPROC_SYNC_QUEUE)
 +            queue = handles[i];
 +
 +        objs[i] = cache[i]->fd;
@@ -3083,32 +3082,32 @@ index 1072265..a9a0a2c 100644
 +
 +    /* It's common to wait on the message queue alone. Some applications wait
 +     * on it in fast paths, with a zero timeout. Since we take two server calls
-+     * instead of one when going through fast_wait_objs(), and since we only
-+     * need to go through that path if we're waiting on other objects, just
-+     * delegate to the server if we're only waiting on the message queue. */
++     * instead of one when going through inproc_wait(), and since we only need
++     * to go through that path if we're waiting on other objects, just delegate
++     * to the server if we're only waiting on the message queue. */
 +    if (count == 1 && queue)
 +    {
-+        release_fast_sync_obj( cache[0] );
++        release_inproc_sync_obj( cache[0] );
 +        return server_wait_for_object( handles[0], alertable, timeout );
 +    }
 +
-+    if (queue) select_queue( queue );
++    if (queue) select_queue();
 +
 +    ret = linux_wait_objs( device, count, objs, wait_any, alertable, timeout );
 +
-+    if (queue) unselect_queue( queue, handles[ret] == queue );
++    if (queue) unselect_queue( handles[ret] == queue );
 +
 +    for (i = 0; i < count; ++i)
-+        release_fast_sync_obj( cache[i] );
++        release_inproc_sync_obj( cache[i] );
 +
 +    return ret;
 +}
 +
-+static NTSTATUS fast_signal_and_wait( HANDLE signal, HANDLE wait,
-+                                      BOOLEAN alertable, const LARGE_INTEGER *timeout )
++static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
++                                        BOOLEAN alertable, const LARGE_INTEGER *timeout )
 +{
-+    struct fast_sync_cache_entry signal_stack_cache, *signal_cache;
-+    struct fast_sync_cache_entry wait_stack_cache, *wait_cache;
++    struct inproc_sync_cache_entry signal_stack_cache, *signal_cache;
++    struct inproc_sync_cache_entry wait_stack_cache, *wait_cache;
 +    HANDLE queue = NULL;
 +    NTSTATUS ret;
 +    int device;
@@ -3116,58 +3115,58 @@ index 1072265..a9a0a2c 100644
 +    if ((device = get_linux_sync_device()) < 0)
 +        return STATUS_NOT_IMPLEMENTED;
 +
-+    if ((ret = get_fast_sync_obj( signal, 0, 0, &signal_stack_cache, &signal_cache )))
++    if ((ret = get_inproc_sync_obj( signal, 0, 0, &signal_stack_cache, &signal_cache )))
 +        return ret;
 +
 +    switch (signal_cache->type)
 +    {
-+        case FAST_SYNC_SEMAPHORE:
++        case INPROC_SYNC_SEMAPHORE:
 +            if (!(signal_cache->access & SEMAPHORE_MODIFY_STATE))
 +            {
-+                release_fast_sync_obj( signal_cache );
++                release_inproc_sync_obj( signal_cache );
 +                return STATUS_ACCESS_DENIED;
 +            }
 +            break;
 +
-+        case FAST_SYNC_AUTO_EVENT:
-+        case FAST_SYNC_MANUAL_EVENT:
++        case INPROC_SYNC_AUTO_EVENT:
++        case INPROC_SYNC_MANUAL_EVENT:
 +            if (!(signal_cache->access & EVENT_MODIFY_STATE))
 +            {
-+                release_fast_sync_obj( signal_cache );
++                release_inproc_sync_obj( signal_cache );
 +                return STATUS_ACCESS_DENIED;
 +            }
 +            break;
 +
-+        case FAST_SYNC_MUTEX:
++        case INPROC_SYNC_MUTEX:
 +            break;
 +
 +        default:
 +            /* can't be signaled */
-+            release_fast_sync_obj( signal_cache );
++            release_inproc_sync_obj( signal_cache );
 +            return STATUS_OBJECT_TYPE_MISMATCH;
 +    }
 +
-+    if ((ret = get_fast_sync_obj( wait, 0, SYNCHRONIZE, &wait_stack_cache, &wait_cache )))
++    if ((ret = get_inproc_sync_obj( wait, 0, SYNCHRONIZE, &wait_stack_cache, &wait_cache )))
 +    {
-+        release_fast_sync_obj( signal_cache );
++        release_inproc_sync_obj( signal_cache );
 +        return ret;
 +    }
 +
-+    if (wait_cache->type == FAST_SYNC_QUEUE)
++    if (wait_cache->type == INPROC_SYNC_QUEUE)
 +        queue = wait;
 +
 +    switch (signal_cache->type)
 +    {
-+        case FAST_SYNC_SEMAPHORE:
++        case INPROC_SYNC_SEMAPHORE:
 +            ret = linux_release_semaphore_obj( signal_cache->fd, 1, NULL );
 +            break;
 +
-+        case FAST_SYNC_AUTO_EVENT:
-+        case FAST_SYNC_MANUAL_EVENT:
++        case INPROC_SYNC_AUTO_EVENT:
++        case INPROC_SYNC_MANUAL_EVENT:
 +            ret = linux_set_event_obj( signal_cache->fd, NULL );
 +            break;
 +
-+        case FAST_SYNC_MUTEX:
++        case INPROC_SYNC_MUTEX:
 +            ret = linux_release_mutex_obj( signal_cache->fd, NULL );
 +            break;
 +
@@ -3178,70 +3177,70 @@ index 1072265..a9a0a2c 100644
 +
 +    if (!ret)
 +    {
-+        if (queue) select_queue( queue );
++        if (queue) select_queue();
 +        ret = linux_wait_objs( device, 1, &wait_cache->fd, TRUE, alertable, timeout );
-+        if (queue) unselect_queue( queue, !ret );
++        if (queue) unselect_queue( !ret );
 +    }
 +
-+    release_fast_sync_obj( signal_cache );
-+    release_fast_sync_obj( wait_cache );
++    release_inproc_sync_obj( signal_cache );
++    release_inproc_sync_obj( wait_cache );
 +    return ret;
 +}
 +
 +#else
 +
-+void close_fast_sync_obj( HANDLE handle )
++void close_inproc_sync_obj( HANDLE handle )
 +{
 +}
 +
-+static NTSTATUS fast_release_semaphore( HANDLE handle, ULONG count, ULONG *prev_count )
-+{
-+    return STATUS_NOT_IMPLEMENTED;
-+}
-+
-+static NTSTATUS fast_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATION *info )
++static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *prev_count )
 +{
 +    return STATUS_NOT_IMPLEMENTED;
 +}
 +
-+static NTSTATUS fast_set_event( HANDLE handle, LONG *prev_state )
++static NTSTATUS inproc_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATION *info )
 +{
 +    return STATUS_NOT_IMPLEMENTED;
 +}
 +
-+static NTSTATUS fast_reset_event( HANDLE handle, LONG *prev_state )
++static NTSTATUS inproc_set_event( HANDLE handle, LONG *prev_state )
 +{
 +    return STATUS_NOT_IMPLEMENTED;
 +}
 +
-+static NTSTATUS fast_pulse_event( HANDLE handle, LONG *prev_state )
++static NTSTATUS inproc_reset_event( HANDLE handle, LONG *prev_state )
 +{
 +    return STATUS_NOT_IMPLEMENTED;
 +}
 +
-+static NTSTATUS fast_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info )
++static NTSTATUS inproc_pulse_event( HANDLE handle, LONG *prev_state )
 +{
 +    return STATUS_NOT_IMPLEMENTED;
 +}
 +
-+static NTSTATUS fast_release_mutex( HANDLE handle, LONG *prev_count )
++static NTSTATUS inproc_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info )
 +{
 +    return STATUS_NOT_IMPLEMENTED;
 +}
 +
-+static NTSTATUS fast_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *info )
++static NTSTATUS inproc_release_mutex( HANDLE handle, LONG *prev_count )
 +{
 +    return STATUS_NOT_IMPLEMENTED;
 +}
 +
-+static NTSTATUS fast_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
-+                           BOOLEAN alertable, const LARGE_INTEGER *timeout )
++static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *info )
 +{
 +    return STATUS_NOT_IMPLEMENTED;
 +}
 +
-+static NTSTATUS fast_signal_and_wait( HANDLE signal, HANDLE wait,
-+                                      BOOLEAN alertable, const LARGE_INTEGER *timeout )
++static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
++                             BOOLEAN alertable, const LARGE_INTEGER *timeout )
++{
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
++                                        BOOLEAN alertable, const LARGE_INTEGER *timeout )
 +{
 +    return STATUS_NOT_IMPLEMENTED;
 +}
@@ -3289,7 +3288,7 @@ index 1072265..a9a0a2c 100644
  
 -    if (do_esync())
 -        return esync_query_semaphore( handle, info, ret_len );
-+    if ((ret = fast_query_semaphore( handle, out )) != STATUS_NOT_IMPLEMENTED)
++    if ((ret = inproc_query_semaphore( handle, out )) != STATUS_NOT_IMPLEMENTED)
 +    {
 +        if (!ret && ret_len) *ret_len = sizeof(SEMAPHORE_BASIC_INFORMATION);
 +        return ret;
@@ -3305,7 +3304,7 @@ index 1072265..a9a0a2c 100644
 -        return esync_release_semaphore( handle, count, previous );
 +    TRACE( "handle %p, count %u, prev_count %p\n", handle, (int)count, previous );
 +
-+    if ((ret = fast_release_semaphore( handle, count, previous )) != STATUS_NOT_IMPLEMENTED)
++    if ((ret = inproc_release_semaphore( handle, count, previous )) != STATUS_NOT_IMPLEMENTED)
 +        return ret;
  
      SERVER_START_REQ( release_semaphore )
@@ -3352,7 +3351,7 @@ index 1072265..a9a0a2c 100644
 -        return esync_set_event( handle );
 +    TRACE( "handle %p, prev_state %p\n", handle, prev_state );
 +
-+    if ((ret = fast_set_event( handle, prev_state )) != STATUS_NOT_IMPLEMENTED)
++    if ((ret = inproc_set_event( handle, prev_state )) != STATUS_NOT_IMPLEMENTED)
 +        return ret;
  
      SERVER_START_REQ( event_op )
@@ -3368,7 +3367,7 @@ index 1072265..a9a0a2c 100644
 -        return esync_reset_event( handle );
 +    TRACE( "handle %p, prev_state %p\n", handle, prev_state );
  
-+    if ((ret = fast_reset_event( handle, prev_state )) != STATUS_NOT_IMPLEMENTED)
++    if ((ret = inproc_reset_event( handle, prev_state )) != STATUS_NOT_IMPLEMENTED)
 +        return ret;
  
      SERVER_START_REQ( event_op )
@@ -3381,7 +3380,7 @@ index 1072265..a9a0a2c 100644
 -        return esync_pulse_event( handle );
 +    TRACE( "handle %p, prev_state %p\n", handle, prev_state );
 +
-+    if ((ret = fast_pulse_event( handle, prev_state )) != STATUS_NOT_IMPLEMENTED)
++    if ((ret = inproc_pulse_event( handle, prev_state )) != STATUS_NOT_IMPLEMENTED)
 +        return ret;
  
      SERVER_START_REQ( event_op )
@@ -3392,7 +3391,7 @@ index 1072265..a9a0a2c 100644
  
 -    if (do_esync())
 -        return esync_query_event( handle, info, ret_len );
-+    if ((ret = fast_query_event( handle, out )) != STATUS_NOT_IMPLEMENTED)
++    if ((ret = inproc_query_event( handle, out )) != STATUS_NOT_IMPLEMENTED)
 +    {
 +        if (!ret && ret_len) *ret_len = sizeof(EVENT_BASIC_INFORMATION);
 +        return ret;
@@ -3438,7 +3437,7 @@ index 1072265..a9a0a2c 100644
 -        return esync_release_mutex( handle, prev_count );
 +    TRACE( "handle %p, prev_count %p\n", handle, prev_count );
 +
-+    if ((ret = fast_release_mutex( handle, prev_count )) != STATUS_NOT_IMPLEMENTED)
++    if ((ret = inproc_release_mutex( handle, prev_count )) != STATUS_NOT_IMPLEMENTED)
 +        return ret;
  
      SERVER_START_REQ( release_mutex )
@@ -3449,7 +3448,7 @@ index 1072265..a9a0a2c 100644
  
 -    if (do_esync())
 -        return esync_query_mutex( handle, info, ret_len );
-+    if ((ret = fast_query_mutex( handle, out )) != STATUS_NOT_IMPLEMENTED)
++    if ((ret = inproc_query_mutex( handle, out )) != STATUS_NOT_IMPLEMENTED)
 +    {
 +        if (!ret && ret_len) *ret_len = sizeof(MUTANT_BASIC_INFORMATION);
 +        return ret;
@@ -3504,7 +3503,7 @@ index 1072265..a9a0a2c 100644
 +        TRACE( "}, timeout %s\n", debugstr_timeout(timeout) );
 +    }
 +
-+    if ((ret = fast_wait( count, handles, wait_any, alertable, timeout )) != STATUS_NOT_IMPLEMENTED)
++    if ((ret = inproc_wait( count, handles, wait_any, alertable, timeout )) != STATUS_NOT_IMPLEMENTED)
 +    {
 +        TRACE( "-> %#x\n", ret );
 +        return ret;
@@ -3532,7 +3531,7 @@ index 1072265..a9a0a2c 100644
  
      if (!signal) return STATUS_INVALID_HANDLE;
  
-+    if ((ret = fast_signal_and_wait( signal, wait, alertable, timeout )) != STATUS_NOT_IMPLEMENTED)
++    if ((ret = inproc_signal_and_wait( signal, wait, alertable, timeout )) != STATUS_NOT_IMPLEMENTED)
 +        return ret;
 +
      if (alertable) flags |= SELECT_ALERTABLE;
@@ -3622,7 +3621,7 @@ index 4e5b282..fc5b259 100644
      PRTL_THREAD_START_ROUTINE start;  /* thread entry point */
      void              *param;         /* thread entry point parameter */
      void              *jmp_buf;       /* setjmp buffer for exception handling */
-+    int                fast_alert_obj; /* fd for the fast alert event */
++    int                linux_alert_obj; /* fd for the linux in-process alert event */
  };
  
  C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
@@ -3647,7 +3646,7 @@ index 4e5b282..fc5b259 100644
  
  extern void dbg_init(void);
  
-+extern void close_fast_sync_obj( HANDLE handle );
++extern void close_inproc_sync_obj( HANDLE handle );
 +
  extern NTSTATUS call_user_apc_dispatcher( CONTEXT *context_ptr, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3,
                                            PNTAPCFUNC func, NTSTATUS status );
@@ -3673,7 +3672,7 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 index 1e1af8c..a54ac45 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
-@@ -3712,7 +3712,6 @@ static TEB *init_teb( void *ptr, BOOL is_wow )
+@@ -3712,11 +3712,11 @@ static TEB *init_teb( void *ptr, BOOL is_wow )
      teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
      teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
      thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
@@ -3681,40 +3680,11 @@ index 1e1af8c..a54ac45 100644
      thread_data->request_fd = -1;
      thread_data->reply_fd   = -1;
      thread_data->wait_fd[0] = -1;
-diff --git a/dlls/rpcrt4/rpc_server.c b/dlls/rpcrt4/rpc_server.c
-index 02193b8..eb733f6 100644
---- a/dlls/rpcrt4/rpc_server.c
-+++ b/dlls/rpcrt4/rpc_server.c
-@@ -701,6 +701,10 @@ static DWORD CALLBACK RPCRT4_server_thread(LPVOID the_arg)
-   }
-   LeaveCriticalSection(&cps->cs);
- 
-+  EnterCriticalSection(&listen_cs);
-+  CloseHandle(cps->server_thread);
-+  cps->server_thread = NULL;
-+  LeaveCriticalSection(&listen_cs);
-   TRACE("done\n");
-   return 0;
+     thread_data->wait_fd[1] = -1;
++    thread_data->linux_alert_obj = -1;
+     list_add_head( &teb_list, &thread_data->entry );
+     return teb;
  }
-@@ -1566,10 +1570,7 @@ RPC_STATUS WINAPI RpcMgmtWaitServerListen( void )
-       LIST_FOR_EACH_ENTRY(protseq, &protseqs, RpcServerProtseq, entry)
-       {
-           if ((wait_thread = protseq->server_thread))
--          {
--              protseq->server_thread = NULL;
-               break;
--          }
-       }
-       LeaveCriticalSection(&server_cs);
-       if (!wait_thread)
-@@ -1578,7 +1579,6 @@ RPC_STATUS WINAPI RpcMgmtWaitServerListen( void )
-       TRACE("waiting for thread %lu\n", GetThreadId(wait_thread));
-       LeaveCriticalSection(&listen_cs);
-       WaitForSingleObject(wait_thread, INFINITE);
--      CloseHandle(wait_thread);
-       EnterCriticalSection(&listen_cs);
-   }
-   if (listen_done_event == event)
 diff --git a/dlls/webservices/tests/channel.c b/dlls/webservices/tests/channel.c
 index c64027f..ddcf896 100644
 --- a/dlls/webservices/tests/channel.c
@@ -3757,19 +3727,19 @@ diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
 index 34655d1..1f8e10a 100644
 --- a/include/wine/server_protocol.h
 +++ b/include/wine/server_protocol.h
-@@ -5634,6 +5634,88 @@ struct get_next_thread_reply
+@@ -5881,6 +5881,86 @@
  };
-
-
-+enum fast_sync_type
+ 
+ 
++enum inproc_sync_type
 +{
-+    FAST_SYNC_SEMAPHORE = 1,
-+    FAST_SYNC_MUTEX,
-+    FAST_SYNC_AUTO_EVENT,
-+    FAST_SYNC_MANUAL_EVENT,
-+    FAST_SYNC_AUTO_SERVER,
-+    FAST_SYNC_MANUAL_SERVER,
-+    FAST_SYNC_QUEUE,
++    INPROC_SYNC_SEMAPHORE = 1,
++    INPROC_SYNC_MUTEX,
++    INPROC_SYNC_AUTO_EVENT,
++    INPROC_SYNC_MANUAL_EVENT,
++    INPROC_SYNC_AUTO_SERVER,
++    INPROC_SYNC_MANUAL_SERVER,
++    INPROC_SYNC_QUEUE,
 +};
 +
 +
@@ -3804,38 +3774,36 @@ index 34655d1..1f8e10a 100644
 +
 +
 +
-+struct fast_select_queue_request
-+{
-+    struct request_header __header;
-+    obj_handle_t handle;
-+};
-+struct fast_select_queue_reply
-+{
-+    struct reply_header __header;
-+};
-+
-+
-+
-+struct fast_unselect_queue_request
-+{
-+    struct request_header __header;
-+    obj_handle_t handle;
-+    int          signaled;
-+    char __pad_20[4];
-+};
-+struct fast_unselect_queue_reply
-+{
-+    struct reply_header __header;
-+};
-+
-+
-+
-+struct get_fast_alert_event_request
++struct select_inproc_queue_request
 +{
 +    struct request_header __header;
 +    char __pad_12[4];
 +};
-+struct get_fast_alert_event_reply
++struct select_inproc_queue_reply
++{
++    struct reply_header __header;
++};
++
++
++
++struct unselect_inproc_queue_request
++{
++    struct request_header __header;
++    int          signaled;
++};
++struct unselect_inproc_queue_reply
++{
++    struct reply_header __header;
++};
++
++
++
++struct get_inproc_alert_event_request
++{
++    struct request_header __header;
++    char __pad_12[4];
++};
++struct get_inproc_alert_event_reply
 +{
 +    struct reply_header __header;
 +    obj_handle_t handle;
@@ -3854,13 +3822,13 @@ index 34655d1..1f8e10a 100644
 -    REQ_open_esync,
 -    REQ_get_esync_fd,
 -    REQ_esync_msgwait,
-+    REQ_get_linux_sync_device,
-+    REQ_get_linux_sync_obj,
-+    REQ_fast_select_queue,
-+    REQ_fast_unselect_queue,
      REQ_set_keyboard_repeat,
 -    REQ_get_esync_apc_fd,
-+    REQ_get_fast_alert_event,
++    REQ_get_linux_sync_device,
++    REQ_get_linux_sync_obj,
++    REQ_select_inproc_queue,
++    REQ_unselect_inproc_queue,
++    REQ_get_inproc_alert_event,
      REQ_NB_REQUESTS
  };
 
@@ -3872,13 +3840,13 @@ index 34655d1..1f8e10a 100644
 -    struct open_esync_request open_esync_request;
 -    struct get_esync_fd_request get_esync_fd_request;
 -    struct esync_msgwait_request esync_msgwait_request;
-+    struct get_linux_sync_device_request get_linux_sync_device_request;
-+    struct get_linux_sync_obj_request get_linux_sync_obj_request;
-+    struct fast_select_queue_request fast_select_queue_request;
-+    struct fast_unselect_queue_request fast_unselect_queue_request;
      struct set_keyboard_repeat_request set_keyboard_repeat_request;
 -    struct get_esync_apc_fd_request get_esync_apc_fd_request;
-+    struct get_fast_alert_event_request get_fast_alert_event_request;
++    struct get_linux_sync_device_request get_linux_sync_device_request;
++    struct get_linux_sync_obj_request get_linux_sync_obj_request;
++    struct select_inproc_queue_request select_inproc_queue_request;
++    struct unselect_inproc_queue_request unselect_inproc_queue_request;
++    struct get_inproc_alert_event_request get_inproc_alert_event_request;
  };
  union generic_reply
  {
@@ -3890,13 +3858,13 @@ index 34655d1..1f8e10a 100644
 -    struct open_esync_reply open_esync_reply;
 -    struct get_esync_fd_reply get_esync_fd_reply;
 -    struct esync_msgwait_reply esync_msgwait_reply;
-+    struct get_linux_sync_device_reply get_linux_sync_device_reply;
-+    struct get_linux_sync_obj_reply get_linux_sync_obj_reply;
-+    struct fast_select_queue_reply fast_select_queue_reply;
-+    struct fast_unselect_queue_reply fast_unselect_queue_reply;
      struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
 -    struct get_esync_apc_fd_reply get_esync_apc_fd_reply;
-+    struct get_fast_alert_event_reply get_fast_alert_event_reply;
++    struct get_linux_sync_device_reply get_linux_sync_device_reply;
++    struct get_linux_sync_obj_reply get_linux_sync_obj_reply;
++    struct select_inproc_queue_reply select_inproc_queue_reply;
++    struct unselect_inproc_queue_reply unselect_inproc_queue_reply;
++    struct get_inproc_alert_event_reply get_inproc_alert_event_reply;
  };
 
  /* ### protocol_version begin ### */
@@ -3910,7 +3878,7 @@ index b164193..b30df66 100644
  	directory.c \
 -	esync.c \
  	event.c \
-+	fast_sync.c \
++	inproc_sync.c \
  	fd.c \
  	file.c \
  	handle.c \
@@ -3930,7 +3898,7 @@ index b0f9fe4..02fb966 100644
      NULL,                      /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
-+    no_get_fast_sync,          /* get_fast_sync */
++    no_get_inproc_sync,        /* get_inproc_sync */
      no_close_handle,           /* close_handle */
      async_destroy              /* destroy */
  };
@@ -3946,7 +3914,7 @@ index b0f9fe4..02fb966 100644
      NULL,                     /* unlink_name */
      no_open_file,             /* open_file */
      no_kernel_obj_list,       /* get_kernel_obj_list */
-+    no_get_fast_sync,         /* get_fast_sync */
++    no_get_inproc_sync,       /* get_inproc_sync */
      no_close_handle,          /* close_handle */
      iosb_destroy              /* destroy */
  };
@@ -3966,7 +3934,7 @@ index d9824de..ba320c4 100644
      NULL,                         /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    no_get_fast_sync,             /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      no_close_handle,              /* close_handle */
      atom_table_destroy            /* destroy */
  };
@@ -3986,7 +3954,7 @@ index ec61711..dafa7e8 100644
      NULL,                     /* unlink_name */
      no_open_file,             /* open_file */
      no_kernel_obj_list,       /* get_kernel_obj_list */
-+    default_fd_get_fast_sync, /* get_fast_sync */
++    default_fd_get_inproc_sync, /* get_inproc_sync */
      dir_close_handle,         /* close_handle */
      dir_destroy               /* destroy */
  };
@@ -4006,7 +3974,7 @@ index 8b265f2..de9f84f 100644
      NULL,                         /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    no_get_fast_sync,             /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      no_close_handle,              /* close_handle */
      clipboard_destroy             /* destroy */
  };
@@ -4014,15 +3982,15 @@ diff --git a/server/completion.c b/server/completion.c
 index 3d4be86..5ec6d20 100644
 --- a/server/completion.c
 +++ b/server/completion.c
-@@ -61,6 +61,7 @@ struct completion
+@@ -77,6 +77,7 @@
      struct list    wait_queue;
      unsigned int   depth;
      int            closed;
-+    struct fast_sync *fast_sync;
++    struct inproc_sync *inproc_sync;
  };
  
  static void completion_wait_dump( struct object*, int );
-@@ -92,21 +92,21 @@ static const struct object_ops completion_wait_ops =
+@@ -92,7 +93,6 @@
      add_queue,                      /* add_queue */
      remove_queue,                   /* remove_queue */
      completion_wait_signaled,       /* signaled */
@@ -4030,44 +3998,23 @@ index 3d4be86..5ec6d20 100644
      completion_wait_satisfied,      /* satisfied */
      no_signal,                      /* signal */
      no_get_fd,                      /* get_fd */
-     default_map_access,             /* map_access */
-     default_get_sd,                 /* get_sd */
-     default_set_sd,                 /* set_sd */
-     no_get_full_name,               /* get_full_name */
-     no_lookup_name,                 /* lookup_name */
-     no_link_name,                   /* link_name */
+@@ -105,6 +105,7 @@
      NULL,                           /* unlink_name */
      no_open_file,                   /* open_file */
      no_kernel_obj_list,             /* get_kernel_obj_list */
-+    no_get_fast_sync,               /* get_fast_sync */
++    no_get_inproc_sync,             /* get_inproc_sync */
      no_close_handle,                /* close_handle */
      completion_wait_destroy         /* destroy */
  };
- 
- static void completion_wait_destroy( struct object *obj )
-@@ -75,24 +77,28 @@ static const struct object_ops completion_ops =
-     msg = LIST_ENTRY( msg_entry, struct comp_msg, queue_entry );
-     --wait->completion->depth;
-     list_remove( &msg->queue_entry );
-+    if (list_empty( &wait->completion->queue ))
-+    {
-+        fast_reset_event( wait->completion->fast_sync );
-+    }
-     if (wait->msg) free( wait->msg );
-     wait->msg = msg;
- }
+@@ -156,6 +157,7 @@
  
  static void completion_dump( struct object*, int );
  static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
-+static struct fast_sync *completion_get_fast_sync( struct object *obj );
++static struct inproc_sync *completion_get_inproc_sync( struct object *obj );
  static int completion_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
  static void completion_destroy( struct object * );
  
- static const struct object_ops completion_ops =
- {
-     sizeof(struct completion), /* size */
-     &completion_type,          /* type */
-     completion_dump,           /* dump */
+@@ -167,7 +169,6 @@
      add_queue,                 /* add_queue */
      remove_queue,              /* remove_queue */
      completion_signaled,       /* signaled */
@@ -4075,61 +4022,74 @@ index 3d4be86..5ec6d20 100644
      no_satisfied,              /* satisfied */
      no_signal,                 /* signal */
      no_get_fd,                 /* get_fd */
-@@ -87,6 +88,7 @@ static const struct object_ops completion_ops =
+@@ -180,6 +181,7 @@
      default_unlink_name,       /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
-+    completion_get_fast_sync,  /* get_fast_sync */
++    completion_get_inproc_sync,/* get_inproc_sync */
      completion_close_handle,   /* close_handle */
      completion_destroy         /* destroy */
  };
-@@ -110,6 +112,7 @@ static void completion_destroy( struct object *obj)
+@@ -193,6 +195,7 @@
      {
          free( tmp );
      }
-+    if (completion->fast_sync) release_object( completion->fast_sync );
++    if (completion->inproc_sync) release_object( completion->inproc_sync );
  }
  
  static void completion_dump( struct object *obj, int verbose )
-@@ -127,6 +130,16 @@ static int completion_signaled( struct object *obj, struct wait_queue_entry *ent
-     return !list_empty( &completion->queue );
+@@ -230,6 +233,7 @@
+     }
+     completion->closed = 1;
+     wake_up( obj, 0 );
++    set_inproc_event( completion->inproc_sync );
+     return 1;
  }
  
-+static struct fast_sync *completion_get_fast_sync( struct object *obj )
+@@ -263,6 +267,16 @@
+     return wait;
+ }
+ 
++static struct inproc_sync *completion_get_inproc_sync( struct object *obj )
 +{
 +    struct completion *completion = (struct completion *)obj;
 +
-+    if (!completion->fast_sync)
-+        completion->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, !list_empty( &completion->queue ) );
-+    if (completion->fast_sync) grab_object( completion->fast_sync );
-+    return completion->fast_sync;
++    if (!completion->inproc_sync)
++        completion->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, !list_empty( &completion->queue ) );
++    if (completion->inproc_sync) grab_object( completion->inproc_sync );
++    return completion->inproc_sync;
 +}
 +
  static struct completion *create_completion( struct object *root, const struct unicode_str *name,
                                               unsigned int attr, unsigned int concurrent,
                                               const struct security_descriptor *sd )
-@@ -139,6 +152,7 @@ static struct completion *create_completion( struct object *root, const struct u
-         {
-             list_init( &completion->queue );
+@@ -277,6 +291,7 @@
+             list_init( &completion->wait_queue );
              completion->depth = 0;
              completion->closed = 0;
-+            completion->fast_sync = NULL;
++            completion->inproc_sync = NULL;
          }
      }
-@@ -166,6 +180,7 @@ void add_completion( struct completion *completion, apc_param_t ckey, apc_param_
+ 
+@@ -309,7 +324,11 @@
+         wake_up( &wait->obj, 1 );
          if (list_empty( &completion->queue )) return;
      }
-     if (!list_empty( &completion->queue )) wake_up( &completion->obj, 0 );
-+    fast_set_event( completion->fast_sync );
+-    if (!list_empty( &completion->queue )) wake_up( &completion->obj, 0 );
++    if (!list_empty( &completion->queue ))
++    {
++        wake_up( &completion->obj, 0 );
++        set_inproc_event( completion->inproc_sync );
++    }
  }
  
  /* create a completion */
-@@ -232,6 +247,8 @@ DECL_HANDLER(remove_completion)
+@@ -410,6 +429,8 @@
          reply->information = msg->information;
          free( msg );
          reply->wait_handle = 0;
 +        if (list_empty( &completion->queue ))
-+            fast_reset_event( completion->fast_sync );
++            reset_inproc_event( completion->inproc_sync );
      }
  
      release_object( completion );
@@ -4149,7 +4109,7 @@ index dbd4a97..17708df 100644
      struct fd                   *fd;            /* for bare console, attached input fd */
      struct async_queue           ioctl_q;       /* ioctl queue */
      struct async_queue           read_q;        /* read queue */
-+    struct fast_sync            *fast_sync;     /* fast synchronization object */
++    struct inproc_sync          *inproc_sync;   /* in-process synchronization object */
  };
  
  static void console_dump( struct object *obj, int verbose );
@@ -4157,7 +4117,7 @@ index dbd4a97..17708df 100644
  static struct object *console_open_file( struct object *obj, unsigned int access,
                                           unsigned int sharing, unsigned int options );
  static int console_add_queue( struct object *obj, struct wait_queue_entry *entry );
-+static struct fast_sync *console_get_fast_sync( struct object *obj );
++static struct inproc_sync *console_get_inproc_sync( struct object *obj );
  
  static const struct object_ops console_ops =
  {
@@ -4173,7 +4133,7 @@ index dbd4a97..17708df 100644
      NULL,                             /* unlink_name */
      console_open_file,                /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
-+    console_get_fast_sync,            /* get_fast_sync */
++    console_get_inproc_sync,          /* get_inproc_sync */
      no_close_handle,                  /* close_handle */
      console_destroy                   /* destroy */
  };
@@ -4198,7 +4158,7 @@ index dbd4a97..17708df 100644
 -    int                   esync_fd;
 +    int                   term_fd;        /* UNIX terminal fd */
 +    struct termios        termios;        /* original termios */
-+    struct fast_sync     *fast_sync;      /* fast synchronization object */
++    struct inproc_sync   *inproc_sync;    /* in-process synchronization object */
  };
  
  static void console_server_dump( struct object *obj, int verbose );
@@ -4210,7 +4170,7 @@ index dbd4a97..17708df 100644
                                                  unsigned int attr, struct object *root );
  static struct object *console_server_open_file( struct object *obj, unsigned int access,
                                                  unsigned int sharing, unsigned int options );
-+static struct fast_sync *console_server_get_fast_sync( struct object *obj );
++static struct inproc_sync *console_server_get_inproc_sync( struct object *obj );
  
  static const struct object_ops console_server_ops =
  {
@@ -4226,7 +4186,7 @@ index dbd4a97..17708df 100644
      NULL,                             /* unlink_name */
      console_server_open_file,         /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
-+    console_server_get_fast_sync,     /* get_fast_sync */
++    console_server_get_inproc_sync,   /* get_inproc_sync */
      no_close_handle,                  /* close_handle */
      console_server_destroy            /* destroy */
  };
@@ -4234,7 +4194,7 @@ index dbd4a97..17708df 100644
  static struct fd *screen_buffer_get_fd( struct object *obj );
  static struct object *screen_buffer_open_file( struct object *obj, unsigned int access,
                                                 unsigned int sharing, unsigned int options );
-+static struct fast_sync *screen_buffer_get_fast_sync( struct object *obj );
++static struct inproc_sync *screen_buffer_get_inproc_sync( struct object *obj );
  
  static const struct object_ops screen_buffer_ops =
  {
@@ -4250,7 +4210,7 @@ index dbd4a97..17708df 100644
      NULL,                             /* unlink_name */
      screen_buffer_open_file,          /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
-+    screen_buffer_get_fast_sync,      /* get_fast_sync */
++    screen_buffer_get_inproc_sync,    /* get_inproc_sync */
      no_close_handle,                  /* close_handle */
      screen_buffer_destroy             /* destroy */
  };
@@ -4266,7 +4226,7 @@ index dbd4a97..17708df 100644
      default_unlink_name,              /* unlink_name */
      console_device_open_file,         /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
-+    no_get_fast_sync,                 /* get_fast_sync */
++    no_get_inproc_sync,               /* get_inproc_sync */
      no_close_handle,                  /* close_handle */
      no_destroy                        /* destroy */
  };
@@ -4274,7 +4234,7 @@ index dbd4a97..17708df 100644
                                                 unsigned int sharing, unsigned int options );
  static int console_input_add_queue( struct object *obj, struct wait_queue_entry *entry );
  static struct fd *console_input_get_fd( struct object *obj );
-+static struct fast_sync *console_input_get_fast_sync( struct object *obj );
++static struct inproc_sync *console_input_get_inproc_sync( struct object *obj );
  static void console_input_destroy( struct object *obj );
  
  static const struct object_ops console_input_ops =
@@ -4290,7 +4250,7 @@ index dbd4a97..17708df 100644
      default_unlink_name,              /* unlink_name */
      console_input_open_file,          /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
-+    console_input_get_fast_sync,      /* get_fast_sync */
++    console_input_get_inproc_sync,    /* get_inproc_sync */
      no_close_handle,                  /* close_handle */
      console_input_destroy             /* destroy */
  };
@@ -4298,7 +4258,7 @@ index dbd4a97..17708df 100644
  static struct fd *console_output_get_fd( struct object *obj );
  static struct object *console_output_open_file( struct object *obj, unsigned int access,
                                                  unsigned int sharing, unsigned int options );
-+static struct fast_sync *console_output_get_fast_sync( struct object *obj );
++static struct inproc_sync *console_output_get_inproc_sync( struct object *obj );
  static void console_output_destroy( struct object *obj );
  
  static const struct object_ops console_output_ops =
@@ -4314,7 +4274,7 @@ index dbd4a97..17708df 100644
      default_unlink_name,              /* unlink_name */
      console_output_open_file,         /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
-+    console_output_get_fast_sync,     /* get_fast_sync */
++    console_output_get_inproc_sync,   /* get_inproc_sync */
      no_close_handle,                  /* close_handle */
      console_output_destroy            /* destroy */
  };
@@ -4330,7 +4290,7 @@ index dbd4a97..17708df 100644
      default_unlink_name,              /* unlink_name */
      console_connection_open_file,     /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
-+    no_get_fast_sync,                 /* get_fast_sync */
++    no_get_inproc_sync,               /* get_inproc_sync */
      console_connection_close_handle,  /* close_handle */
      console_connection_destroy        /* destroy */
  };
@@ -4338,7 +4298,7 @@ index dbd4a97..17708df 100644
      console->server        = NULL;
      console->fd            = NULL;
      console->last_id       = 0;
-+    console->fast_sync     = NULL;
++    console->inproc_sync     = NULL;
      init_async_queue( &console->ioctl_q );
      init_async_queue( &console->read_q );
  
@@ -4346,7 +4306,7 @@ index dbd4a97..17708df 100644
      }
      list_add_tail( &server->queue, &ioctl->entry );
      wake_up( &server->obj, 0 );
-+    fast_set_event( server->fast_sync );
++    set_inproc_event( server->inproc_sync );
      if (async) set_error( STATUS_PENDING );
      return 1;
  }
@@ -4363,7 +4323,7 @@ index dbd4a97..17708df 100644
          server->console->server = NULL;
          server->console = NULL;
          wake_up( &server->obj, 0 );
-+        fast_set_event( server->fast_sync );
++        set_inproc_event( server->inproc_sync );
      }
  }
  
@@ -4372,7 +4332,7 @@ index dbd4a97..17708df 100644
      if (console->fd)
          release_object( console->fd );
 +
-+    if (console->fast_sync) release_object( console->fast_sync );
++    if (console->inproc_sync) release_object( console->inproc_sync );
  }
  
  static struct object *create_console_connection( struct console *console )
@@ -4380,14 +4340,14 @@ index dbd4a97..17708df 100644
      return grab_object( obj );
  }
  
-+static struct fast_sync *console_get_fast_sync( struct object *obj )
++static struct inproc_sync *console_get_inproc_sync( struct object *obj )
 +{
 +    struct console *console = (struct console *)obj;
 +
-+    if (!console->fast_sync)
-+        console->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, console->signaled );
-+    if (console->fast_sync) grab_object( console->fast_sync );
-+    return console->fast_sync;
++    if (!console->inproc_sync)
++        console->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, console->signaled );
++    if (console->inproc_sync) grab_object( console->inproc_sync );
++    return console->inproc_sync;
 +}
 +
  static void screen_buffer_dump( struct object *obj, int verbose )
@@ -4397,7 +4357,7 @@ index dbd4a97..17708df 100644
      return NULL;
  }
  
-+static struct fast_sync *screen_buffer_get_fast_sync( struct object *obj )
++static struct inproc_sync *screen_buffer_get_inproc_sync( struct object *obj )
 +{
 +    struct screen_buffer *screen_buffer = (struct screen_buffer *)obj;
 +    if (!screen_buffer->input)
@@ -4405,7 +4365,7 @@ index dbd4a97..17708df 100644
 +        set_error( STATUS_ACCESS_DENIED );
 +        return NULL;
 +    }
-+    return console_get_fast_sync( &screen_buffer->input->obj );
++    return console_get_inproc_sync( &screen_buffer->input->obj );
 +}
 +
  static void console_server_dump( struct object *obj, int verbose )
@@ -4416,7 +4376,7 @@ index dbd4a97..17708df 100644
      disconnect_console_server( server );
      if (server->fd) release_object( server->fd );
 -    if (do_esync()) close( server->esync_fd );
-+    if (server->fast_sync) release_object( server->fast_sync );
++    if (server->inproc_sync) release_object( server->inproc_sync );
  }
  
  static struct object *console_server_lookup_name( struct object *obj, struct unicode_str *name,
@@ -4438,15 +4398,15 @@ index dbd4a97..17708df 100644
      return grab_object( obj );
  }
  
-+static struct fast_sync *console_server_get_fast_sync( struct object *obj )
++static struct inproc_sync *console_server_get_inproc_sync( struct object *obj )
 +{
 +    struct console_server *server = (struct console_server *)obj;
 +    int signaled = !server->console || !list_empty( &server->queue );
 +
-+    if (!server->fast_sync)
-+        server->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, signaled );
-+    if (server->fast_sync) grab_object( server->fast_sync );
-+    return server->fast_sync;
++    if (!server->inproc_sync)
++        server->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, signaled );
++    if (server->inproc_sync) grab_object( server->inproc_sync );
++    return server->inproc_sync;
 +}
 +
  static struct object *create_console_server( void )
@@ -4456,7 +4416,7 @@ index dbd4a97..17708df 100644
      server->term_fd    = -1;
      list_init( &server->queue );
      list_init( &server->read_queue );
-+    server->fast_sync = NULL;
++    server->inproc_sync = NULL;
      server->fd = alloc_pseudo_fd( &console_server_fd_ops, &server->obj, FILE_SYNCHRONOUS_IO_NONALERT );
      if (!server->fd)
      {
@@ -4475,14 +4435,14 @@ index dbd4a97..17708df 100644
      return grab_object( obj );
  }
  
-+static struct fast_sync *console_input_get_fast_sync( struct object *obj )
++static struct inproc_sync *console_input_get_inproc_sync( struct object *obj )
 +{
 +    if (!current->process->console)
 +    {
 +        set_error( STATUS_ACCESS_DENIED );
 +        return NULL;
 +    }
-+    return console_get_fast_sync( &current->process->console->obj );
++    return console_get_inproc_sync( &current->process->console->obj );
 +}
 +
  static void console_input_destroy( struct object *obj )
@@ -4492,14 +4452,14 @@ index dbd4a97..17708df 100644
      return grab_object( obj );
  }
  
-+static struct fast_sync *console_output_get_fast_sync( struct object *obj )
++static struct inproc_sync *console_output_get_inproc_sync( struct object *obj )
 +{
 +    if (!current->process->console || !current->process->console->active)
 +    {
 +        set_error( STATUS_ACCESS_DENIED );
 +        return NULL;
 +    }
-+    return console_get_fast_sync( &current->process->console->obj );
++    return console_get_inproc_sync( &current->process->console->obj );
 +}
 +
  static void console_output_destroy( struct object *obj )
@@ -4513,13 +4473,13 @@ index dbd4a97..17708df 100644
 +    if (!req->signal)
 +    {
 +        server->console->signaled = 0;
-+        fast_reset_event( server->console->fast_sync );
++        reset_inproc_event( server->console->inproc_sync );
 +    }
      else if (!server->console->signaled)
      {
          server->console->signaled = 1;
          wake_up( &server->console->obj, 0 );
-+        fast_set_event( server->console->fast_sync );
++        set_inproc_event( server->console->inproc_sync );
      }
  
      if (req->read)
@@ -4530,7 +4490,7 @@ index dbd4a97..17708df 100644
 -        if (do_esync() && list_empty( &server->queue ))
 -            esync_clear( server->esync_fd );
 +        if (list_empty( &server->queue ))
-+            fast_reset_event( server->fast_sync );
++            reset_inproc_event( server->inproc_sync );
      }
  
      if (ioctl)
@@ -4542,7 +4502,7 @@ index dbd4a97..17708df 100644
 -        esync_clear( server->esync_fd );
 +
 +    if (list_empty( &server->queue ))
-+        fast_reset_event( server->fast_sync );
++        reset_inproc_event( server->inproc_sync );
  
      release_object( server );
  }
@@ -4554,7 +4514,7 @@ index ca04d4c..7975fc4 100644
      struct object        obj;         /* object header */
      struct list          event_queue; /* pending events queue */
      unsigned int         flags;       /* debug flags */
-+    struct fast_sync    *fast_sync;   /* fast synchronization object */
++    struct inproc_sync  *inproc_sync; /* in-process synchronization object */
  };
  
  
@@ -4570,14 +4530,14 @@ index ca04d4c..7975fc4 100644
      NULL,                          /* unlink_name */
      no_open_file,                  /* open_file */
      no_kernel_obj_list,            /* get_kernel_obj_list */
-+    no_get_fast_sync,              /* get_fast_sync */
++    no_get_inproc_sync,            /* get_inproc_sync */
      no_close_handle,               /* close_handle */
      debug_event_destroy            /* destroy */
  };
  
  static void debug_obj_dump( struct object *obj, int verbose );
  static int debug_obj_signaled( struct object *obj, struct wait_queue_entry *entry );
-+static struct fast_sync *debug_obj_get_fast_sync( struct object *obj );
++static struct inproc_sync *debug_obj_get_inproc_sync( struct object *obj );
  static void debug_obj_destroy( struct object *obj );
  
  static const struct object_ops debug_obj_ops =
@@ -4593,7 +4553,7 @@ index ca04d4c..7975fc4 100644
      default_unlink_name,           /* unlink_name */
      no_open_file,                  /* open_file */
      no_kernel_obj_list,            /* get_kernel_obj_list */
-+    debug_obj_get_fast_sync,       /* get_fast_sync */
++    debug_obj_get_inproc_sync,     /* get_inproc_sync */
      no_close_handle,               /* close_handle */
      debug_obj_destroy              /* destroy */
  };
@@ -4601,7 +4561,7 @@ index ca04d4c..7975fc4 100644
          /* grab reference since debugger could be killed while trying to wake up */
          grab_object( debug_obj );
          wake_up( &debug_obj->obj, 0 );
-+        fast_set_event( debug_obj->fast_sync );
++        set_inproc_event( debug_obj->inproc_sync );
          release_object( debug_obj );
      }
  }
@@ -4609,7 +4569,7 @@ index ca04d4c..7975fc4 100644
      {
          grab_object( debug_obj );
          wake_up( &debug_obj->obj, 0 );
-+        fast_set_event( debug_obj->fast_sync );
++        set_inproc_event( debug_obj->inproc_sync );
          release_object( debug_obj );
      }
  }
@@ -4617,15 +4577,15 @@ index ca04d4c..7975fc4 100644
      return find_event_to_send( debug_obj ) != NULL;
  }
  
-+static struct fast_sync *debug_obj_get_fast_sync( struct object *obj )
++static struct inproc_sync *debug_obj_get_inproc_sync( struct object *obj )
 +{
 +    struct debug_obj *debug_obj = (struct debug_obj *)obj;
 +    int signaled = find_event_to_send( debug_obj ) != NULL;
 +
-+    if (!debug_obj->fast_sync)
-+        debug_obj->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, signaled );
-+    if (debug_obj->fast_sync) grab_object( debug_obj->fast_sync );
-+    return debug_obj->fast_sync;
++    if (!debug_obj->inproc_sync)
++        debug_obj->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, signaled );
++    if (debug_obj->inproc_sync) grab_object( debug_obj->inproc_sync );
++    return debug_obj->inproc_sync;
 +}
 +
  static void debug_obj_destroy( struct object *obj )
@@ -4636,7 +4596,7 @@ index ca04d4c..7975fc4 100644
      while ((ptr = list_head( &debug_obj->event_queue )))
          unlink_event( debug_obj, LIST_ENTRY( ptr, struct debug_event, entry ));
 +
-+    if (debug_obj->fast_sync) release_object( debug_obj->fast_sync );
++    if (debug_obj->inproc_sync) release_object( debug_obj->inproc_sync );
  }
  
  struct debug_obj *get_debug_obj( struct process *process, obj_handle_t handle, unsigned int access )
@@ -4644,7 +4604,7 @@ index ca04d4c..7975fc4 100644
          {
              debug_obj->flags = flags;
              list_init( &debug_obj->event_queue );
-+            debug_obj->fast_sync = NULL;
++            debug_obj->inproc_sync = NULL;
          }
      }
      return debug_obj;
@@ -4654,7 +4614,7 @@ index ca04d4c..7975fc4 100644
          set_reply_data( &event->data, min( get_reply_max_size(), sizeof(event->data) ));
 +
 +        if (!find_event_to_send( debug_obj ))
-+            fast_reset_event( debug_obj->fast_sync );
++            reset_inproc_event( debug_obj->inproc_sync );
      }
      else
      {
@@ -4682,7 +4642,7 @@ index c45d010..698fee6 100644
      NULL,                             /* unlink_name */
      no_open_file,                     /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
-+    no_get_fast_sync,                 /* get_fast_sync */
++    no_get_inproc_sync,               /* get_inproc_sync */
      no_close_handle,                  /* close_handle */
      irp_call_destroy                  /* destroy */
  };
@@ -4691,13 +4651,13 @@ index c45d010..698fee6 100644
      struct irp_call       *current_call;   /* call currently executed on client side */
      struct wine_rb_tree    kernel_objects; /* map of objects that have client side pointer associated */
 -    int                    esync_fd;       /* esync file descriptor */
-+    struct fast_sync      *fast_sync;      /* fast synchronization object */
++    struct inproc_sync    *inproc_sync;    /* in-process synchronization object */
  };
  
  static void device_manager_dump( struct object *obj, int verbose );
  static int device_manager_signaled( struct object *obj, struct wait_queue_entry *entry );
 -static int device_manager_get_esync_fd( struct object *obj, enum esync_type *type );
-+static struct fast_sync *device_manager_get_fast_sync( struct object *obj );
++static struct inproc_sync *device_manager_get_inproc_sync( struct object *obj );
  static void device_manager_destroy( struct object *obj );
  
  static const struct object_ops device_manager_ops =
@@ -4713,7 +4673,7 @@ index c45d010..698fee6 100644
      NULL,                             /* unlink_name */
      no_open_file,                     /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
-+    device_manager_get_fast_sync,     /* get_fast_sync */
++    device_manager_get_inproc_sync,   /* get_inproc_sync */
      no_close_handle,                  /* close_handle */
      device_manager_destroy            /* destroy */
  };
@@ -4729,7 +4689,7 @@ index c45d010..698fee6 100644
      default_unlink_name,              /* unlink_name */
      device_open_file,                 /* open_file */
      device_get_kernel_obj_list,       /* get_kernel_obj_list */
-+    no_get_fast_sync,                 /* get_fast_sync */
++    no_get_inproc_sync,               /* get_inproc_sync */
      no_close_handle,                  /* close_handle */
      device_destroy                    /* destroy */
  };
@@ -4745,7 +4705,7 @@ index c45d010..698fee6 100644
      NULL,                             /* unlink_name */
      no_open_file,                     /* open_file */
      device_file_get_kernel_obj_list,  /* get_kernel_obj_list */
-+    default_fd_get_fast_sync,         /* get_fast_sync */
++    default_fd_get_inproc_sync,       /* get_inproc_sync */
      device_file_close_handle,         /* close_handle */
      device_file_destroy               /* destroy */
  };
@@ -4758,7 +4718,7 @@ index c45d010..698fee6 100644
 +    {
 +        /* first one */
 +        wake_up( &manager->obj, 0 );
-+        fast_set_event( manager->fast_sync );
++        set_inproc_event( manager->inproc_sync );
 +    }
  }
  
@@ -4775,7 +4735,7 @@ index c45d010..698fee6 100644
      }
  
 +    if (list_empty( &file->device->manager->requests ))
-+        fast_reset_event( file->device->manager->fast_sync );
++        reset_inproc_event( file->device->manager->inproc_sync );
 +
      release_object( file );
  }
@@ -4785,16 +4745,16 @@ index c45d010..698fee6 100644
  }
  
 -static int device_manager_get_esync_fd( struct object *obj, enum esync_type *type )
-+static struct fast_sync *device_manager_get_fast_sync( struct object *obj )
++static struct inproc_sync *device_manager_get_inproc_sync( struct object *obj )
  {
      struct device_manager *manager = (struct device_manager *)obj;
 -    *type = ESYNC_MANUAL_SERVER;
 -    return manager->esync_fd;
 +
-+    if (!manager->fast_sync)
-+        manager->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, !list_empty( &manager->requests ) );
-+    if (manager->fast_sync) grab_object( manager->fast_sync );
-+    return manager->fast_sync;
++    if (!manager->inproc_sync)
++        manager->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, !list_empty( &manager->requests ) );
++    if (manager->inproc_sync) grab_object( manager->inproc_sync );
++    return manager->inproc_sync;
  }
  
  static void device_manager_destroy( struct object *obj )
@@ -4804,7 +4764,7 @@ index c45d010..698fee6 100644
  
 -    if (do_esync())
 -        close( manager->esync_fd );
-+    if (manager->fast_sync) release_object( manager->fast_sync );
++    if (manager->inproc_sync) release_object( manager->inproc_sync );
  }
  
  static struct device_manager *create_device_manager(void)
@@ -4812,7 +4772,7 @@ index c45d010..698fee6 100644
      if ((manager = alloc_object( &device_manager_ops )))
      {
          manager->current_call = NULL;
-+        manager->fast_sync = NULL;
++        manager->inproc_sync = NULL;
          list_init( &manager->devices );
          list_init( &manager->requests );
          wine_rb_init( &manager->kernel_objects, compare_kernel_object );
@@ -4828,7 +4788,7 @@ index c45d010..698fee6 100644
                  list_init( &irp->mgr_entry );
 +
 +                if (list_empty( &manager->requests ))
-+                    fast_reset_event( manager->fast_sync );
++                    reset_inproc_event( manager->inproc_sync );
 +
                  /* we already own the object if it's only on manager queue */
                  if (irp->file) grab_object( irp );
@@ -4855,7 +4815,7 @@ index bc161b9..8e32abb 100644
      default_unlink_name,          /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    no_get_fast_sync,             /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      no_close_handle,              /* close_handle */
      no_destroy                    /* destroy */
  };
@@ -4871,7 +4831,7 @@ index bc161b9..8e32abb 100644
      default_unlink_name,          /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    no_get_fast_sync,             /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      no_close_handle,              /* close_handle */
      directory_destroy             /* destroy */
  };
@@ -5527,7 +5487,7 @@ index f4ca3e4..b750a22 100644
      int            manual_reset;    /* is it a manual reset event? */
      int            signaled;        /* event has been signaled */
 -    int            esync_fd;        /* esync file descriptor */
-+    struct fast_sync *fast_sync;    /* fast synchronization object */
++    struct inproc_sync *inproc_sync;/* in-process synchronization object */
  };
  
  static void event_dump( struct object *obj, int verbose );
@@ -5536,7 +5496,7 @@ index f4ca3e4..b750a22 100644
 -static int event_get_esync_fd( struct object *obj, enum esync_type *type );
  static int event_signal( struct object *obj, unsigned int access);
  static struct list *event_get_kernel_obj_list( struct object *obj );
-+static struct fast_sync *event_get_fast_sync( struct object *obj );
++static struct inproc_sync *event_get_inproc_sync( struct object *obj );
  static void event_destroy( struct object *obj );
  
  static const struct object_ops event_ops =
@@ -5552,7 +5512,7 @@ index f4ca3e4..b750a22 100644
      default_unlink_name,       /* unlink_name */
      no_open_file,              /* open_file */
      event_get_kernel_obj_list, /* get_kernel_obj_list */
-+    event_get_fast_sync,       /* get_fast_sync */
++    event_get_inproc_sync,     /* get_inproc_sync */
      no_close_handle,           /* close_handle */
      event_destroy              /* destroy */
  };
@@ -5560,12 +5520,12 @@ index f4ca3e4..b750a22 100644
  struct keyed_event
  {
      struct object  obj;             /* object header */
-+    struct fast_sync *fast_sync;    /* fast synchronization object */
++    struct inproc_sync *inproc_sync;/* in-process synchronization object */
  };
  
  static void keyed_event_dump( struct object *obj, int verbose );
  static int keyed_event_signaled( struct object *obj, struct wait_queue_entry *entry );
-+static struct fast_sync *keyed_event_get_fast_sync( struct object *obj );
++static struct inproc_sync *keyed_event_get_inproc_sync( struct object *obj );
 +static void keyed_event_destroy( struct object *obj );
  
  static const struct object_ops keyed_event_ops =
@@ -5582,7 +5542,7 @@ index f4ca3e4..b750a22 100644
      default_unlink_name,         /* unlink_name */
      no_open_file,                /* open_file */
      no_kernel_obj_list,          /* get_kernel_obj_list */
-+    keyed_event_get_fast_sync,   /* get_fast_sync */
++    keyed_event_get_inproc_sync, /* get_inproc_sync */
      no_close_handle,             /* close_handle */
 -    no_destroy                   /* destroy */
 +    keyed_event_destroy          /* destroy */
@@ -5596,7 +5556,7 @@ index f4ca3e4..b750a22 100644
 -
 -            if (do_esync())
 -                event->esync_fd = esync_create_fd( initial_state, 0 );
-+            event->fast_sync    = NULL;
++            event->inproc_sync    = NULL;
          }
      }
      return event;
@@ -5624,7 +5584,7 @@ index f4ca3e4..b750a22 100644
      event->signaled = 1;
      /* wake up all waiters if manual reset, a single one otherwise */
      wake_up( &event->obj, !event->manual_reset );
-+    fast_set_event( event->fast_sync );
++    set_inproc_event( event->inproc_sync );
  }
  
  void reset_event( struct event *event )
@@ -5638,7 +5598,7 @@ index f4ca3e4..b750a22 100644
 -
 -    if (do_esync())
 -        esync_clear( event->esync_fd );
-+    fast_reset_event( event->fast_sync );
++    reset_inproc_event( event->inproc_sync );
  }
  
  static void event_dump( struct object *obj, int verbose )
@@ -5660,17 +5620,17 @@ index f4ca3e4..b750a22 100644
      return &event->kernel_object;
  }
  
-+static struct fast_sync *event_get_fast_sync( struct object *obj )
++static struct inproc_sync *event_get_inproc_sync( struct object *obj )
 +{
 +    struct event *event = (struct event *)obj;
 +
-+    if (!event->fast_sync)
++    if (!event->inproc_sync)
 +    {
-+        enum fast_sync_type type = event->manual_reset ? FAST_SYNC_MANUAL_EVENT : FAST_SYNC_AUTO_EVENT;
-+        event->fast_sync = fast_create_event( type, event->signaled );
++        enum inproc_sync_type type = event->manual_reset ? INPROC_SYNC_MANUAL_EVENT : INPROC_SYNC_AUTO_EVENT;
++        event->inproc_sync = create_inproc_event( type, event->signaled );
 +    }
-+    if (event->fast_sync) grab_object( event->fast_sync );
-+    return event->fast_sync;
++    if (event->inproc_sync) grab_object( event->inproc_sync );
++    return event->inproc_sync;
 +}
 +
  static void event_destroy( struct object *obj )
@@ -5679,7 +5639,7 @@ index f4ca3e4..b750a22 100644
  
 -    if (do_esync())
 -        close( event->esync_fd );
-+    if (event->fast_sync) release_object( event->fast_sync );
++    if (event->inproc_sync) release_object( event->inproc_sync );
  }
  
  struct keyed_event *create_keyed_event( struct object *root, const struct unicode_str *name,
@@ -5687,7 +5647,7 @@ index f4ca3e4..b750a22 100644
          if (get_error() != STATUS_OBJECT_NAME_EXISTS)
          {
              /* initialize it if it didn't already exist */
-+            event->fast_sync = NULL;
++            event->inproc_sync = NULL;
          }
      }
      return event;
@@ -5695,34 +5655,34 @@ index f4ca3e4..b750a22 100644
      return 0;
  }
  
-+static struct fast_sync *keyed_event_get_fast_sync( struct object *obj )
++static struct inproc_sync *keyed_event_get_inproc_sync( struct object *obj )
 +{
 +    struct keyed_event *event = (struct keyed_event *)obj;
 +
-+    if (!event->fast_sync)
-+        event->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, 1 );
-+    if (event->fast_sync) grab_object( event->fast_sync );
-+    return event->fast_sync;
++    if (!event->inproc_sync)
++        event->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, 1 );
++    if (event->inproc_sync) grab_object( event->inproc_sync );
++    return event->inproc_sync;
 +}
 +
 +static void keyed_event_destroy( struct object *obj )
 +{
 +    struct keyed_event *event = (struct keyed_event *)obj;
 +
-+    if (event->fast_sync) release_object( event->fast_sync );
++    if (event->inproc_sync) release_object( event->inproc_sync );
 +}
 +
  /* create an event */
  DECL_HANDLER(create_event)
  {
-diff --git a/server/fast_sync.c b/server/fast_sync.c
+diff --git a/server/inproc_sync.c b/server/inproc_sync.c
 new file mode 100644
 index 0000000..fed6eb9
 --- /dev/null
-+++ b/server/fast_sync.c
-@@ -0,0 +1,434 @@
++++ b/server/inproc_sync.c
+@@ -0,0 +1,437 @@
 +/*
-+ * Fast synchronization primitives
++ * In-process synchronization primitives
 + *
 + * Copyright (C) 2021-2022 Elizabeth Figura for CodeWeavers
 + *
@@ -5776,7 +5736,7 @@ index 0000000..fed6eb9
 +static void linux_device_dump( struct object *obj, int verbose );
 +static struct fd *linux_device_get_fd( struct object *obj );
 +static void linux_device_destroy( struct object *obj );
-+static enum server_fd_type fast_sync_get_fd_type( struct fd *fd );
++static enum server_fd_type inproc_sync_get_fd_type( struct fd *fd );
 +
 +static const struct object_ops linux_device_ops =
 +{
@@ -5798,16 +5758,16 @@ index 0000000..fed6eb9
 +    NULL,                               /* unlink_name */
 +    no_open_file,                       /* open_file */
 +    no_kernel_obj_list,                 /* get_kernel_obj_list */
-+    no_get_fast_sync,                   /* get_fast_sync */
++    no_get_inproc_sync,                 /* get_inproc_sync */
 +    no_close_handle,                    /* close_handle */
 +    linux_device_destroy                /* destroy */
 +};
 +
-+static const struct fd_ops fast_sync_fd_ops =
++static const struct fd_ops inproc_sync_fd_ops =
 +{
 +    default_fd_get_poll_events,     /* get_poll_events */
 +    default_poll_event,             /* poll_event */
-+    fast_sync_get_fd_type,          /* get_fd_type */
++    inproc_sync_get_fd_type,        /* get_fd_type */
 +    no_fd_read,                     /* read */
 +    no_fd_write,                    /* write */
 +    no_fd_flush,                    /* flush */
@@ -5823,7 +5783,7 @@ index 0000000..fed6eb9
 +{
 +    struct linux_device *device = (struct linux_device *)obj;
 +    assert( obj->ops == &linux_device_ops );
-+    fprintf( stderr, "Fast synchronization device fd=%p\n", device->fd );
++    fprintf( stderr, "In-process synchronization device fd=%p\n", device->fd );
 +}
 +
 +static struct fd *linux_device_get_fd( struct object *obj )
@@ -5840,7 +5800,7 @@ index 0000000..fed6eb9
 +    linux_device_object = NULL;
 +}
 +
-+static enum server_fd_type fast_sync_get_fd_type( struct fd *fd )
++static enum server_fd_type inproc_sync_get_fd_type( struct fd *fd )
 +{
 +    return FD_TYPE_FILE;
 +}
@@ -5887,7 +5847,7 @@ index 0000000..fed6eb9
 +        return NULL;
 +    }
 +
-+    if (!(device->fd = create_anonymous_fd( &fast_sync_fd_ops, unix_fd, &device->obj, 0 )))
++    if (!(device->fd = create_anonymous_fd( &inproc_sync_fd_ops, unix_fd, &device->obj, 0 )))
 +    {
 +        release_object( device );
 +	initialized = 1;
@@ -5900,10 +5860,10 @@ index 0000000..fed6eb9
 +    return device;
 +}
 +
-+struct fast_sync
++struct inproc_sync
 +{
 +    struct object obj;
-+    enum fast_sync_type type;
++    enum inproc_sync_type type;
 +    struct fd *fd;
 +};
 +
@@ -5913,7 +5873,7 @@ index 0000000..fed6eb9
 +
 +static const struct object_ops linux_obj_ops =
 +{
-+    sizeof(struct fast_sync),   /* size */
++    sizeof(struct inproc_sync), /* size */
 +    &no_type,                   /* type */
 +    linux_obj_dump,             /* dump */
 +    no_add_queue,               /* add_queue */
@@ -5931,80 +5891,81 @@ index 0000000..fed6eb9
 +    NULL,                       /* unlink_name */
 +    no_open_file,               /* open_file */
 +    no_kernel_obj_list,         /* get_kernel_obj_list */
-+    no_get_fast_sync,           /* get_fast_sync */
++    no_get_inproc_sync,         /* get_inproc_sync */
 +    no_close_handle,            /* close_handle */
 +    linux_obj_destroy           /* destroy */
 +};
 +
 +static void linux_obj_dump( struct object *obj, int verbose )
 +{
-+    struct fast_sync *fast_sync = (struct fast_sync *)obj;
++    struct inproc_sync *inproc_sync = (struct inproc_sync *)obj;
 +    assert( obj->ops == &linux_obj_ops );
-+    fprintf( stderr, "Fast synchronization object type=%u fd=%p\n", fast_sync->type, fast_sync->fd );
++    fprintf( stderr, "In-process synchronization object type=%u fd=%p\n", inproc_sync->type, inproc_sync->fd );
 +}
 +
 +static void linux_obj_destroy( struct object *obj )
 +{
-+    struct fast_sync *fast_sync = (struct fast_sync *)obj;
++    struct inproc_sync *inproc_sync = (struct inproc_sync *)obj;
 +    assert( obj->ops == &linux_obj_ops );
-+    if (fast_sync->fd) release_object( fast_sync->fd );
++    if (inproc_sync->fd) release_object( inproc_sync->fd );
 +}
 +
 +static struct fd *linux_obj_get_fd( struct object *obj )
 +{
-+    struct fast_sync *fast_sync = (struct fast_sync *)obj;
++    struct inproc_sync *inproc_sync = (struct inproc_sync *)obj;
 +    assert( obj->ops == &linux_obj_ops );
-+    return (struct fd *)grab_object( fast_sync->fd );
++    return (struct fd *)grab_object( inproc_sync->fd );
 +}
 +
-+static struct fast_sync *create_fast_sync( enum fast_sync_type type, int unix_fd )
++static struct inproc_sync *create_inproc_sync( enum inproc_sync_type type, int unix_fd )
 +{
-+    struct fast_sync *fast_sync;
++    struct inproc_sync *inproc_sync;
 +
-+    if (!(fast_sync = alloc_object( &linux_obj_ops )))
++    if (!(inproc_sync = alloc_object( &linux_obj_ops )))
 +    {
 +        close( unix_fd );
 +        return NULL;
 +    }
 +
-+    fast_sync->type = type;
++    inproc_sync->type = type;
 +
-+    if (!(fast_sync->fd = create_anonymous_fd( &fast_sync_fd_ops, unix_fd, &fast_sync->obj, 0 )))
++    if (!(inproc_sync->fd = create_anonymous_fd( &inproc_sync_fd_ops, unix_fd, &inproc_sync->obj, 0 )))
 +    {
-+        release_object( fast_sync );
++        release_object( inproc_sync );
 +        return NULL;
 +    }
 +
-+    return fast_sync;
++    return inproc_sync;
 +}
 +
-+struct fast_sync *fast_create_event( enum fast_sync_type type, int signaled )
++struct inproc_sync *create_inproc_event( enum inproc_sync_type type, int signaled )
 +{
-+    struct ntsync_event_args args = {0};
++    struct ntsync_event_args args;
 +    struct linux_device *device;
++    int event;
 +
 +    if (!(device = get_linux_device())) return NULL;
 +
 +    args.signaled = signaled;
 +    switch (type)
 +    {
-+        case FAST_SYNC_AUTO_EVENT:
-+        case FAST_SYNC_AUTO_SERVER:
++        case INPROC_SYNC_AUTO_EVENT:
++        case INPROC_SYNC_AUTO_SERVER:
 +            args.manual = 0;
 +            break;
 +
-+        case FAST_SYNC_MANUAL_EVENT:
-+        case FAST_SYNC_MANUAL_SERVER:
-+        case FAST_SYNC_QUEUE:
++        case INPROC_SYNC_MANUAL_EVENT:
++        case INPROC_SYNC_MANUAL_SERVER:
++        case INPROC_SYNC_QUEUE:
 +            args.manual = 1;
 +            break;
 +
-+        case FAST_SYNC_MUTEX:
-+        case FAST_SYNC_SEMAPHORE:
++        case INPROC_SYNC_MUTEX:
++        case INPROC_SYNC_SEMAPHORE:
 +            assert(0);
 +            break;
 +    }
-+    if (ioctl( get_unix_fd( device->fd ), NTSYNC_IOC_CREATE_EVENT, &args ) < 0)
++    if ((event = ioctl( get_unix_fd( device->fd ), NTSYNC_IOC_CREATE_EVENT, &args )) < 0)
 +    {
 +        file_set_error();
 +        release_object( device );
@@ -6012,19 +5973,20 @@ index 0000000..fed6eb9
 +    }
 +    release_object( device );
 +
-+    return create_fast_sync( type, args.event );
++    return create_inproc_sync( type, event );
 +}
 +
-+struct fast_sync *fast_create_semaphore( unsigned int count, unsigned int max )
++struct inproc_sync *create_inproc_semaphore( unsigned int count, unsigned int max )
 +{
-+    struct ntsync_sem_args args = {0};
++    struct ntsync_sem_args args;
 +    struct linux_device *device;
++    int semaphore;
 +
 +    if (!(device = get_linux_device())) return NULL;
 +
 +    args.count = count;
 +    args.max = max;
-+    if (ioctl( get_unix_fd( device->fd ), NTSYNC_IOC_CREATE_SEM, &args ) < 0)
++    if ((semaphore = ioctl( get_unix_fd( device->fd ), NTSYNC_IOC_CREATE_SEM, &args )) < 0)
 +    {
 +        file_set_error();
 +        release_object( device );
@@ -6033,19 +5995,20 @@ index 0000000..fed6eb9
 +
 +    release_object( device );
 +
-+    return create_fast_sync( FAST_SYNC_SEMAPHORE, args.sem );
++    return create_inproc_sync( INPROC_SYNC_SEMAPHORE, semaphore );
 +}
 +
-+struct fast_sync *fast_create_mutex( thread_id_t owner, unsigned int count )
++struct inproc_sync *create_inproc_mutex( thread_id_t owner, unsigned int count )
 +{
-+    struct ntsync_mutex_args args = {0};
++    struct ntsync_mutex_args args;
 +    struct linux_device *device;
++    int mutex;
 +
 +    if (!(device = get_linux_device())) return NULL;
 +
 +    args.owner = owner;
 +    args.count = count;
-+    if (ioctl( get_unix_fd( device->fd ), NTSYNC_IOC_CREATE_MUTEX, &args ) < 0)
++    if ((mutex = ioctl( get_unix_fd( device->fd ), NTSYNC_IOC_CREATE_MUTEX, &args )) < 0)
 +    {
 +        file_set_error();
 +        release_object( device );
@@ -6054,65 +6017,65 @@ index 0000000..fed6eb9
 +
 +    release_object( device );
 +
-+    return create_fast_sync( FAST_SYNC_MUTEX, args.mutex );
++    return create_inproc_sync( INPROC_SYNC_MUTEX, mutex );
 +}
 +
-+void fast_set_event( struct fast_sync *fast_sync )
++void set_inproc_event( struct inproc_sync *inproc_sync )
 +{
 +    __u32 count;
 +
-+    if (!fast_sync) return;
++    if (!inproc_sync) return;
 +
-+    if (debug_level) fprintf( stderr, "fast_set_event %p\n", fast_sync->fd );
++    if (debug_level) fprintf( stderr, "set_inproc_event %p\n", inproc_sync->fd );
 +
-+    ioctl( get_unix_fd( fast_sync->fd ), NTSYNC_IOC_EVENT_SET, &count );
++    ioctl( get_unix_fd( inproc_sync->fd ), NTSYNC_IOC_EVENT_SET, &count );
 +}
 +
-+void fast_reset_event( struct fast_sync *fast_sync )
++void reset_inproc_event( struct inproc_sync *inproc_sync )
 +{
 +    __u32 count;
 +
-+    if (!fast_sync) return;
++    if (!inproc_sync) return;
 +
-+    if (debug_level) fprintf( stderr, "fast_set_event %p\n", fast_sync->fd );
++    if (debug_level) fprintf( stderr, "set_inproc_event %p\n", inproc_sync->fd );
 +
-+    ioctl( get_unix_fd( fast_sync->fd ), NTSYNC_IOC_EVENT_RESET, &count );
++    ioctl( get_unix_fd( inproc_sync->fd ), NTSYNC_IOC_EVENT_RESET, &count );
 +}
 +
-+void fast_abandon_mutex( thread_id_t tid, struct fast_sync *fast_sync )
++void abandon_inproc_mutex( thread_id_t tid, struct inproc_sync *inproc_sync )
 +{
-+    ioctl( get_unix_fd( fast_sync->fd ), NTSYNC_IOC_MUTEX_KILL, &tid );
++    ioctl( get_unix_fd( inproc_sync->fd ), NTSYNC_IOC_MUTEX_KILL, &tid );
 +}
 +
 +#else
 +
-+struct fast_sync *fast_create_event( enum fast_sync_type type, int signaled )
++struct inproc_sync *create_inproc_event( enum inproc_sync_type type, int signaled )
 +{
 +    set_error( STATUS_NOT_IMPLEMENTED );
 +    return NULL;
 +}
 +
-+struct fast_sync *fast_create_semaphore( unsigned int count, unsigned int max )
++struct inproc_sync *create_inproc_semaphore( unsigned int count, unsigned int max )
 +{
 +    set_error( STATUS_NOT_IMPLEMENTED );
 +    return NULL;
 +}
 +
-+struct fast_sync *fast_create_mutex( thread_id_t owner, unsigned int count )
++struct inproc_sync *create_inproc_mutex( thread_id_t owner, unsigned int count )
 +{
 +    set_error( STATUS_NOT_IMPLEMENTED );
 +    return NULL;
 +}
 +
-+void fast_set_event( struct fast_sync *fast_sync )
++void set_inproc_event( struct inproc_sync *inproc_sync )
 +{
 +}
 +
-+void fast_reset_event( struct fast_sync *obj )
++void reset_inproc_event( struct inproc_sync *obj )
 +{
 +}
 +
-+void fast_abandon_mutex( thread_id_t tid, struct fast_sync *fast_sync )
++void abandon_inproc_mutex( thread_id_t tid, struct inproc_sync *inproc_sync )
 +{
 +}
 +
@@ -6140,14 +6103,14 @@ index 0000000..fed6eb9
 +
 +    if ((obj = get_handle_obj( current->process, req->handle, 0, NULL )))
 +    {
-+        struct fast_sync *fast_sync;
++        struct inproc_sync *inproc_sync;
 +
-+        if ((fast_sync = obj->ops->get_fast_sync( obj )))
++        if ((inproc_sync = obj->ops->get_inproc_sync( obj )))
 +        {
-+            reply->handle = alloc_handle( current->process, fast_sync, 0, 0 );
-+            reply->type = fast_sync->type;
++            reply->handle = alloc_handle( current->process, inproc_sync, 0, 0 );
++            reply->type = inproc_sync->type;
 +            reply->access = get_handle_access( current->process, req->handle );
-+            release_object( fast_sync );
++            release_object( inproc_sync );
 +        }
 +        release_object( obj );
 +    }
@@ -6172,7 +6135,7 @@ index a6782b0..f00e22d 100644
      apc_param_t          comp_key;    /* completion key to set in completion events */
      unsigned int         comp_flags;  /* completion flags */
 -    int                  esync_fd;    /* esync file descriptor */
-+    struct fast_sync    *fast_sync;   /* fast synchronization object */
++    struct inproc_sync  *inproc_sync; /* in-process synchronization object */
  };
  
  static void fd_dump( struct object *obj, int verbose );
@@ -6188,7 +6151,7 @@ index a6782b0..f00e22d 100644
      NULL,                     /* unlink_name */
      no_open_file,             /* open_file */
      no_kernel_obj_list,       /* get_kernel_obj_list */
-+    no_get_fast_sync,         /* get_fast_sync */
++    no_get_inproc_sync,       /* get_inproc_sync */
      no_close_handle,          /* close_handle */
      fd_destroy                /* destroy */
  };
@@ -6204,7 +6167,7 @@ index a6782b0..f00e22d 100644
      NULL,                     /* unlink_name */
      no_open_file,             /* open_file */
      no_kernel_obj_list,       /* get_kernel_obj_list */
-+    no_get_fast_sync,         /* get_fast_sync */
++    no_get_inproc_sync,       /* get_inproc_sync */
      no_close_handle,          /* close_handle */
      device_destroy            /* destroy */
  };
@@ -6220,7 +6183,7 @@ index a6782b0..f00e22d 100644
      NULL,                     /* unlink_name */
      no_open_file,             /* open_file */
      no_kernel_obj_list,       /* get_kernel_obj_list */
-+    no_get_fast_sync,         /* get_fast_sync */
++    no_get_inproc_sync,       /* get_inproc_sync */
      no_close_handle,          /* close_handle */
      inode_destroy             /* destroy */
  };
@@ -6236,7 +6199,7 @@ index a6782b0..f00e22d 100644
      NULL,                       /* unlink_name */
      no_open_file,               /* open_file */
      no_kernel_obj_list,         /* get_kernel_obj_list */
-+    no_get_fast_sync,           /* get_fast_sync */
++    no_get_inproc_sync,       /* get_inproc_sync */
      no_close_handle,            /* close_handle */
      no_destroy                  /* destroy */
  };
@@ -6247,7 +6210,7 @@ index a6782b0..f00e22d 100644
 -
 -    if (do_esync())
 -        close( fd->esync_fd );
-+    if (fd->fast_sync) release_object( fd->fast_sync );
++    if (fd->inproc_sync) release_object( fd->inproc_sync );
  }
  
  /* check if the desired access is possible without violating */
@@ -6256,7 +6219,7 @@ index a6782b0..f00e22d 100644
      fd->completion = NULL;
      fd->comp_flags = 0;
 -    fd->esync_fd   = -1;
-+    fd->fast_sync  = NULL;
++    fd->inproc_sync = NULL;
      init_async_queue( &fd->read_q );
      init_async_queue( &fd->write_q );
      init_async_queue( &fd->wait_q );
@@ -6273,7 +6236,7 @@ index a6782b0..f00e22d 100644
      fd->poll_index = -1;
      fd->completion = NULL;
      fd->comp_flags = 0;
-+    fd->fast_sync  = NULL;
++    fd->inproc_sync = NULL;
      fd->no_fd_status = STATUS_BAD_DEVICE_TYPE;
 -    fd->esync_fd   = -1;
      init_async_queue( &fd->read_q );
@@ -6298,11 +6261,11 @@ index a6782b0..f00e22d 100644
 +    if (signaled)
 +    {
 +        wake_up( fd->user, 0 );
-+        fast_set_event( fd->fast_sync );
++        set_inproc_event( fd->inproc_sync );
 +    }
 +    else
 +    {
-+        fast_reset_event( fd->fast_sync );
++        reset_inproc_event( fd->inproc_sync );
 +    }
  }
  
@@ -6312,16 +6275,16 @@ index a6782b0..f00e22d 100644
  }
  
 -int default_fd_get_esync_fd( struct object *obj, enum esync_type *type )
-+struct fast_sync *default_fd_get_fast_sync( struct object *obj )
++struct inproc_sync *default_fd_get_inproc_sync( struct object *obj )
  {
      struct fd *fd = get_obj_fd( obj );
 -    int ret = fd->esync_fd;
 -    *type = ESYNC_MANUAL_SERVER;
-+    struct fast_sync *ret;
++    struct inproc_sync *ret;
 +
-+    if (!fd->fast_sync)
-+        fd->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, fd->signaled );
-+    ret = fd->fast_sync;
++    if (!fd->inproc_sync)
++        fd->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, fd->signaled );
++    ret = fd->inproc_sync;
      release_object( fd );
 +    if (ret) grab_object( ret );
      return ret;
@@ -6343,7 +6306,7 @@ index 828a21c..c6bdbef 100644
      NULL,                         /* unlink_name */
      file_open_file,               /* open_file */
      file_get_kernel_obj_list,     /* get_kernel_obj_list */
-+    default_fd_get_fast_sync,     /* get_fast_sync */
++    default_fd_get_inproc_sync,   /* get_inproc_sync */
      no_close_handle,              /* close_handle */
      file_destroy                  /* destroy */
  };
@@ -6356,7 +6319,7 @@ index abad355..6b4fa51 100644
  
  extern int default_fd_signaled( struct object *obj, struct wait_queue_entry *entry );
 -extern int default_fd_get_esync_fd( struct object *obj, enum esync_type *type );
-+extern struct fast_sync *default_fd_get_fast_sync( struct object *obj );
++extern struct inproc_sync *default_fd_get_inproc_sync( struct object *obj );
  extern int default_fd_get_poll_events( struct fd *fd );
  extern void default_poll_event( struct fd *fd, int event );
  extern void fd_cancel_async( struct fd *fd, struct async *async );
@@ -6376,7 +6339,7 @@ index cf6afe4..e07f32c 100644
      NULL,                            /* unlink_name */
      no_open_file,                    /* open_file */
      no_kernel_obj_list,              /* get_kernel_obj_list */
-+    no_get_fast_sync,                /* get_fast_sync */
++    no_get_inproc_sync,              /* get_inproc_sync */
      no_close_handle,                 /* close_handle */
      handle_table_destroy             /* destroy */
  };
@@ -6396,7 +6359,7 @@ index da351d6..5a00699 100644
      NULL,                         /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    no_get_fast_sync,             /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      no_close_handle,              /* close_handle */
      hook_table_destroy            /* destroy */
  };
@@ -6416,7 +6379,7 @@ index 4cf9b73..d9807b4 100644
      default_unlink_name,       /* unlink_name */
      mailslot_open_file,        /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
-+    default_fd_get_fast_sync,  /* get_fast_sync */
++    default_fd_get_inproc_sync,/* get_inproc_sync */
      no_close_handle,           /* close_handle */
      mailslot_destroy           /* destroy */
  };
@@ -6432,7 +6395,7 @@ index 4cf9b73..d9807b4 100644
      NULL,                       /* unlink_name */
      no_open_file,               /* open_file */
      no_kernel_obj_list,         /* get_kernel_obj_list */
-+    no_get_fast_sync,           /* get_fast_sync */
++    default_fd_get_inproc_sync, /* get_inproc_sync */
      no_close_handle,            /* close_handle */
      mail_writer_destroy         /* destroy */
  };
@@ -6448,7 +6411,7 @@ index 4cf9b73..d9807b4 100644
      default_unlink_name,            /* unlink_name */
      mailslot_device_open_file,      /* open_file */
      no_kernel_obj_list,             /* get_kernel_obj_list */
-+    no_get_fast_sync,               /* get_fast_sync */
++    no_get_inproc_sync,             /* get_inproc_sync */
      no_close_handle,                /* close_handle */
      mailslot_device_destroy         /* destroy */
  };
@@ -6464,7 +6427,7 @@ index 4cf9b73..d9807b4 100644
      NULL,                                   /* unlink_name */
      no_open_file,                           /* open_file */
      no_kernel_obj_list,                     /* get_kernel_obj_list */
-+    default_fd_get_fast_sync,               /* get_fast_sync */
++    default_fd_get_inproc_sync,             /* get_inproc_sync */
      no_close_handle,                        /* close_handle */
      mailslot_device_file_destroy            /* destroy */
  };
@@ -6506,7 +6469,7 @@ index 88de806..c3cba90 100644
      NULL,                      /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
-+    no_get_fast_sync,          /* get_fast_sync */
++    no_get_inproc_sync,        /* get_inproc_sync */
      no_close_handle,           /* close_handle */
      ranges_destroy             /* destroy */
  };
@@ -6522,7 +6485,7 @@ index 88de806..c3cba90 100644
      NULL,                      /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
-+    no_get_fast_sync,          /* get_fast_sync */
++    no_get_inproc_sync,        /* get_inproc_sync */
      no_close_handle,           /* close_handle */
      shared_map_destroy         /* destroy */
  };
@@ -6538,7 +6501,7 @@ index 88de806..c3cba90 100644
      default_unlink_name,         /* unlink_name */
      no_open_file,                /* open_file */
      no_kernel_obj_list,          /* get_kernel_obj_list */
-+    no_get_fast_sync,            /* get_fast_sync */
++    no_get_inproc_sync,        /* get_inproc_sync */
      no_close_handle,             /* close_handle */
      mapping_destroy              /* destroy */
  };
@@ -6550,7 +6513,7 @@ index 4785a83..167c236 100644
  
  static const WCHAR mutex_name[] = {'M','u','t','a','n','t'};
  
-+static struct list fast_mutexes = LIST_INIT(fast_mutexes);
++static struct list inproc_mutexes = LIST_INIT(inproc_mutexes);
 +
  struct type_descr mutex_type =
  {
@@ -6559,8 +6522,8 @@ index 4785a83..167c236 100644
      unsigned int   count;           /* recursion count */
      int            abandoned;       /* has it been abandoned? */
      struct list    entry;           /* entry in owner thread mutex list */
-+    struct list    fast_mutexes_entry; /* entry in fast_mutexes list */
-+    struct fast_sync *fast_sync;    /* fast synchronization object */
++    struct list    inproc_mutexes_entry; /* entry in inproc_mutexes list */
++    struct inproc_sync *inproc_sync;/* in-process synchronization object */
  };
  
  static void mutex_dump( struct object *obj, int verbose );
@@ -6568,7 +6531,7 @@ index 4785a83..167c236 100644
  static void mutex_satisfied( struct object *obj, struct wait_queue_entry *entry );
  static void mutex_destroy( struct object *obj );
  static int mutex_signal( struct object *obj, unsigned int access );
-+static struct fast_sync *mutex_get_fast_sync( struct object *obj );
++static struct inproc_sync *mutex_get_inproc_sync( struct object *obj );
  
  static const struct object_ops mutex_ops =
  {
@@ -6584,7 +6547,7 @@ index 4785a83..167c236 100644
      default_unlink_name,       /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
-+    mutex_get_fast_sync,       /* get_fast_sync */
++    mutex_get_inproc_sync,     /* get_inproc_sync */
      no_close_handle,           /* close_handle */
      mutex_destroy              /* destroy */
  };
@@ -6592,7 +6555,7 @@ index 4785a83..167c236 100644
              mutex->owner = NULL;
              mutex->abandoned = 0;
              if (owned) do_grab( mutex, current );
-+            mutex->fast_sync = NULL;
++            mutex->inproc_sync = NULL;
          }
      }
      return mutex;
@@ -6613,9 +6576,9 @@ index 4785a83..167c236 100644
          do_release( mutex );
      }
 +
-+    LIST_FOR_EACH_ENTRY(mutex, &fast_mutexes, struct mutex, fast_mutexes_entry)
++    LIST_FOR_EACH_ENTRY(mutex, &inproc_mutexes, struct mutex, inproc_mutexes_entry)
 +    {
-+        fast_abandon_mutex( thread->id, mutex->fast_sync );
++        abandon_inproc_mutex( thread->id, mutex->inproc_sync );
 +    }
  }
  
@@ -6624,17 +6587,17 @@ index 4785a83..167c236 100644
      return 1;
  }
  
-+static struct fast_sync *mutex_get_fast_sync( struct object *obj )
++static struct inproc_sync *mutex_get_inproc_sync( struct object *obj )
 +{
 +    struct mutex *mutex = (struct mutex *)obj;
 +
-+    if (!mutex->fast_sync)
++    if (!mutex->inproc_sync)
 +    {
-+        mutex->fast_sync = fast_create_mutex( mutex->owner ? mutex->owner->id : 0, mutex->count );
-+        if (mutex->fast_sync) list_add_tail( &fast_mutexes, &mutex->fast_mutexes_entry );
++        mutex->inproc_sync = create_inproc_mutex( mutex->owner ? mutex->owner->id : 0, mutex->count );
++        if (mutex->inproc_sync) list_add_tail( &inproc_mutexes, &mutex->inproc_mutexes_entry );
 +    }
-+    if (mutex->fast_sync) grab_object( mutex->fast_sync );
-+    return mutex->fast_sync;
++    if (mutex->inproc_sync) grab_object( mutex->inproc_sync );
++    return mutex->inproc_sync;
 +}
 +
  static void mutex_destroy( struct object *obj )
@@ -6650,10 +6613,10 @@ index 4785a83..167c236 100644
 +        mutex->count = 0;
 +        do_release( mutex );
 +    }
-+    if (mutex->fast_sync)
++    if (mutex->inproc_sync)
 +    {
-+        release_object( mutex->fast_sync );
-+        list_remove( &mutex->fast_mutexes_entry );
++        release_object( mutex->inproc_sync );
++        list_remove( &mutex->inproc_mutexes_entry );
 +    }
  }
  
@@ -6674,7 +6637,7 @@ index a90ec60..6d8cb3e 100644
      default_unlink_name,          /* unlink_name */
      named_pipe_open_file,         /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    no_get_fast_sync,             /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      no_close_handle,              /* close_handle */
      named_pipe_destroy            /* destroy */
  };
@@ -6690,7 +6653,7 @@ index a90ec60..6d8cb3e 100644
      NULL,                         /* unlink_name */
      pipe_server_open_file,        /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    default_fd_get_fast_sync,     /* get_fast_sync */
++    default_fd_get_inproc_sync,   /* get_inproc_sync */
      async_close_obj_handle,       /* close_handle */
      pipe_server_destroy           /* destroy */
  };
@@ -6706,7 +6669,7 @@ index a90ec60..6d8cb3e 100644
      NULL,                         /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    default_fd_get_fast_sync,     /* get_fast_sync */
++    default_fd_get_inproc_sync,   /* get_inproc_sync */
      async_close_obj_handle,       /* close_handle */
      pipe_end_destroy              /* destroy */
  };
@@ -6722,7 +6685,7 @@ index a90ec60..6d8cb3e 100644
      default_unlink_name,              /* unlink_name */
      named_pipe_device_open_file,      /* open_file */
      no_kernel_obj_list,               /* get_kernel_obj_list */
-+    no_get_fast_sync,                 /* get_fast_sync */
++    no_get_inproc_sync,               /* get_inproc_sync */
      no_close_handle,                  /* close_handle */
      named_pipe_device_destroy         /* destroy */
  };
@@ -6738,7 +6701,7 @@ index a90ec60..6d8cb3e 100644
      NULL,                                    /* unlink_name */
      no_open_file,                            /* open_file */
      no_kernel_obj_list,                      /* get_kernel_obj_list */
-+    default_fd_get_fast_sync,                /* get_fast_sync */
++    default_fd_get_inproc_sync,              /* get_inproc_sync */
      no_close_handle,                         /* close_handle */
      named_pipe_device_file_destroy           /* destroy */
  };
@@ -6754,7 +6717,7 @@ index a90ec60..6d8cb3e 100644
      NULL,                                    /* unlink_name */
      named_pipe_dir_open_file,                /* open_file */
      no_kernel_obj_list,                      /* get_kernel_obj_list */
-+    default_fd_get_fast_sync,                /* get_fast_sync */
++    default_fd_get_inproc_sync,              /* get_inproc_sync */
      no_close_handle,                         /* close_handle */
      named_pipe_dir_destroy                   /* destroy */
  };
@@ -6779,7 +6742,7 @@ index 29f1ea9..33fc18c 100644
      default_unlink_name,        /* unlink_name */
      no_open_file,               /* open_file */
      no_kernel_obj_list,         /* get_kernel_obj_list */
-+    no_get_fast_sync,
++    no_get_inproc_sync,         /* get_inproc_sync */
      no_close_handle,            /* close_handle */
      no_destroy                  /* destroy */
  };
@@ -6800,7 +6763,7 @@ index 29f1ea9..33fc18c 100644
      default_unlink_name,       /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
-+    no_get_fast_sync,
++    no_get_inproc_sync,        /* get_inproc_sync */
      no_close_handle,           /* close_handle */
      no_destroy                 /* destroy */
  };
@@ -6808,7 +6771,7 @@ index 29f1ea9..33fc18c 100644
      return NULL;
  }
  
-+struct fast_sync *no_get_fast_sync( struct object *obj )
++struct inproc_sync *no_get_inproc_sync( struct object *obj )
 +{
 +    set_error( STATUS_OBJECT_TYPE_MISMATCH );
 +    return NULL;
@@ -6825,7 +6788,7 @@ index 6f4bca8..f028a8e 100644
  struct async_queue;
  struct winstation;
  struct object_type;
-+struct fast_sync;
++struct inproc_sync;
  
  
  struct unicode_str
@@ -6842,8 +6805,8 @@ index 6f4bca8..f028a8e 100644
                                  unsigned int options);
      /* return list of kernel objects */
      struct list *(*get_kernel_obj_list)(struct object *);
-+    /* get a client-waitable fast-synchronization handle to this object */
-+    struct fast_sync *(*get_fast_sync)(struct object *);
++    /* get a client-waitable in-process synchronization handle to this object */
++    struct inproc_sync *(*get_inproc_sync)(struct object *);
      /* close a handle to this object */
      int (*close_handle)(struct object *,struct process *,obj_handle_t);
      /* destroy on refcount == 0 */
@@ -6851,16 +6814,16 @@ index 6f4bca8..f028a8e 100644
  
  extern void abandon_mutexes( struct thread *thread );
  
-+/* fast-synchronization functions */
++/* in-process synchronization functions */
 +
-+extern struct fast_sync *fast_create_event( enum fast_sync_type type, int signaled );
-+extern struct fast_sync *fast_create_semaphore( unsigned int count, unsigned int max );
-+extern struct fast_sync *fast_create_mutex( thread_id_t owner, unsigned int count );
-+extern void fast_set_event( struct fast_sync *obj );
-+extern void fast_reset_event( struct fast_sync *obj );
-+extern void fast_abandon_mutex( thread_id_t tid, struct fast_sync *fast_sync );
++extern struct inproc_sync *create_inproc_event( enum inproc_sync_type type, int signaled );
++extern struct inproc_sync *create_inproc_mutex( thread_id_t owner, unsigned int count );
++extern struct inproc_sync *create_inproc_semaphore( unsigned int count, unsigned int max );
++extern void set_inproc_event( struct inproc_sync *obj );
++extern void reset_inproc_event( struct inproc_sync *obj );
++extern void abandon_inproc_mutex( thread_id_t tid, struct inproc_sync *inproc_sync );
 +
-+extern struct fast_sync *no_get_fast_sync( struct object *obj );
++extern struct inproc_sync *no_get_inproc_sync( struct object *obj );
 +
  /* serial functions */
  
@@ -6881,7 +6844,7 @@ index 6d66a7c..34451c1 100644
  static struct security_descriptor *process_get_sd( struct object *obj );
  static void process_poll_event( struct fd *fd, int event );
  static struct list *process_get_kernel_obj_list( struct object *obj );
-+static struct fast_sync *process_get_fast_sync( struct object *obj );
++static struct inproc_sync *process_get_inproc_sync( struct object *obj );
  static void process_destroy( struct object *obj );
 -static int process_get_esync_fd( struct object *obj, enum esync_type *type );
  static void terminate_process( struct process *process, struct thread *skip, int exit_code );
@@ -6899,7 +6862,7 @@ index 6d66a7c..34451c1 100644
      NULL,                        /* unlink_name */
      no_open_file,                /* open_file */
      process_get_kernel_obj_list, /* get_kernel_obj_list */
-+    process_get_fast_sync,       /* get_fast_sync */
++    process_get_inproc_sync,     /* get_inproc_sync */
      no_close_handle,             /* close_handle */
      process_destroy              /* destroy */
  };
@@ -6915,7 +6878,7 @@ index 6d66a7c..34451c1 100644
      NULL,                          /* unlink_name */
      no_open_file,                  /* open_file */
      no_kernel_obj_list,            /* get_kernel_obj_list */
-+    no_get_fast_sync,              /* get_fast_sync */
++    no_get_inproc_sync,            /* get_inproc_sync */
      no_close_handle,               /* close_handle */
      startup_info_destroy           /* destroy */
  };
@@ -6923,7 +6886,7 @@ index 6d66a7c..34451c1 100644
  
  static void job_dump( struct object *obj, int verbose );
  static int job_signaled( struct object *obj, struct wait_queue_entry *entry );
-+static struct fast_sync *job_get_fast_sync( struct object *obj );
++static struct inproc_sync *job_get_inproc_sync( struct object *obj );
  static int job_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
  static void job_destroy( struct object *obj );
  
@@ -6931,7 +6894,7 @@ index 6d66a7c..34451c1 100644
      struct job *parent;
      struct list parent_job_entry;  /* list entry for parent job */
      struct list child_job_list;    /* list of child jobs */
-+    struct fast_sync *fast_sync;   /* fast synchronization object */
++    struct inproc_sync *inproc_sync; /* in-process synchronization object */
  };
  
  static const struct object_ops job_ops =
@@ -6947,7 +6910,7 @@ index 6d66a7c..34451c1 100644
      default_unlink_name,           /* unlink_name */
      no_open_file,                  /* open_file */
      no_kernel_obj_list,            /* get_kernel_obj_list */
-+    job_get_fast_sync,             /* get_fast_sync */
++    job_get_inproc_sync,           /* get_inproc_sync */
      job_close_handle,              /* close_handle */
      job_destroy                    /* destroy */
  };
@@ -6955,7 +6918,7 @@ index 6d66a7c..34451c1 100644
              job->completion_port = NULL;
              job->completion_key = 0;
              job->parent = NULL;
-+            job->fast_sync = NULL;
++            job->inproc_sync = NULL;
          }
      }
      return job;
@@ -6963,17 +6926,17 @@ index 6d66a7c..34451c1 100644
      job->terminating = 0;
      job->signaled = 1;
      wake_up( &job->obj, 0 );
-+    fast_set_event( job->fast_sync );
++    set_inproc_event( job->inproc_sync );
 +}
 +
-+static struct fast_sync *job_get_fast_sync( struct object *obj )
++static struct inproc_sync *job_get_inproc_sync( struct object *obj )
 +{
 +    struct job *job = (struct job *)obj;
 +
-+    if (!job->fast_sync)
-+        job->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, job->signaled );
-+    if (job->fast_sync) grab_object( job->fast_sync );
-+    return job->fast_sync;
++    if (!job->inproc_sync)
++        job->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, job->signaled );
++    if (job->inproc_sync) grab_object( job->inproc_sync );
++    return job->inproc_sync;
  }
  
  static int job_close_handle( struct object *obj, struct process *process, obj_handle_t handle )
@@ -6982,7 +6945,7 @@ index 6d66a7c..34451c1 100644
          release_object( job->parent );
      }
 +
-+    if (job->fast_sync) release_object( job->fast_sync );
++    if (job->inproc_sync) release_object( job->inproc_sync );
  }
  
  static void job_dump( struct object *obj, int verbose )
@@ -6990,7 +6953,7 @@ index 6d66a7c..34451c1 100644
      process->rawinput_device_count = 0;
      process->rawinput_mouse  = NULL;
      process->rawinput_kbd    = NULL;
-+    process->fast_sync       = NULL;
++    process->inproc_sync       = NULL;
      memset( &process->image_info, 0, sizeof(process->image_info) );
      list_init( &process->rawinput_entry );
 -    process->esync_fd        = -1;
@@ -7013,7 +6976,7 @@ index 6d66a7c..34451c1 100644
      free( process->image );
 -    if (do_esync()) close( process->esync_fd );
 +
-+    if (process->fast_sync) release_object( process->fast_sync );
++    if (process->inproc_sync) release_object( process->inproc_sync );
  }
  
  /* dump a process on stdout for debugging purposes */
@@ -7035,14 +6998,14 @@ index 6d66a7c..34451c1 100644
      return &process->kernel_object;
  }
  
-+static struct fast_sync *process_get_fast_sync( struct object *obj )
++static struct inproc_sync *process_get_inproc_sync( struct object *obj )
 +{
 +    struct process *process = (struct process *)obj;
 +
-+    if (!process->fast_sync)
-+        process->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, !process->running_threads );
-+    if (process->fast_sync) grab_object( process->fast_sync );
-+    return process->fast_sync;
++    if (!process->inproc_sync)
++        process->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, !process->running_threads );
++    if (process->inproc_sync) grab_object( process->inproc_sync );
++    return process->inproc_sync;
 +}
 +
  static struct security_descriptor *process_get_sd( struct object *obj )
@@ -7052,7 +7015,7 @@ index 6d66a7c..34451c1 100644
      release_job_process( process );
      start_sigkill_timer( process );
      wake_up( &process->obj, 0 );
-+    fast_set_event( process->fast_sync );
++    set_inproc_event( process->inproc_sync );
  }
  
  /* add a thread to a process running threads list */
@@ -7065,7 +7028,7 @@ index bedd8bb..2140427 100644
      struct list          kernel_object;   /* list of kernel object pointers */
      struct pe_image_info image_info;      /* main exe image info */
 -    int                  esync_fd;        /* esync file descriptor (signaled on exit) */
-+    struct fast_sync    *fast_sync;       /* fast synchronization object */
++    struct inproc_sync  *inproc_sync;     /* in-process synchronization object */
  };
  
  /* process functions */
@@ -7081,13 +7044,13 @@ index 4983691..7bc4208 100644
  /* Iterate thread list for process */
  @REQ(get_next_thread)
      obj_handle_t process;      /* process handle */
-@@ -3898,63 +3899,60 @@ struct handle_info
+@@ -3898,63 +3899,58 @@ struct handle_info
      obj_handle_t handle;       /* next thread handle */
  @END
  
 -enum esync_type
 +
-+enum fast_sync_type
++enum inproc_sync_type
  {
 -    ESYNC_SEMAPHORE = 1,
 -    ESYNC_AUTO_EVENT,
@@ -7096,13 +7059,13 @@ index 4983691..7bc4208 100644
 -    ESYNC_AUTO_SERVER,
 -    ESYNC_MANUAL_SERVER,
 -    ESYNC_QUEUE,
-+    FAST_SYNC_SEMAPHORE = 1,
-+    FAST_SYNC_MUTEX,
-+    FAST_SYNC_AUTO_EVENT,
-+    FAST_SYNC_MANUAL_EVENT,
-+    FAST_SYNC_AUTO_SERVER,
-+    FAST_SYNC_MANUAL_SERVER,
-+    FAST_SYNC_QUEUE,
++    INPROC_SYNC_SEMAPHORE = 1,
++    INPROC_SYNC_MUTEX,
++    INPROC_SYNC_AUTO_EVENT,
++    INPROC_SYNC_MANUAL_EVENT,
++    INPROC_SYNC_AUTO_SERVER,
++    INPROC_SYNC_MANUAL_SERVER,
++    INPROC_SYNC_QUEUE,
  };
  
 -/* Create a new eventfd-based synchronization object */
@@ -7129,7 +7092,7 @@ index 4983691..7bc4208 100644
 -    int          type;          /* type of esync object (above) */
 -    VARARG(name,unicode_str);   /* object name */
 +
-+/* Get the fast synchronization object associated with the given handle */
++/* Get the in-process synchronization object associated with the given handle */
 +@REQ(get_linux_sync_obj)
 +    obj_handle_t handle;          /* handle to the object */
  @REPLY
@@ -7149,16 +7112,14 @@ index 4983691..7bc4208 100644
 -    unsigned int shm_idx;
 +
 +/* Begin a client-side wait on a message queue */
-+@REQ(fast_select_queue)
-+    obj_handle_t handle;          /* handle to the queue */
++@REQ(select_inproc_queue)
  @END
  
 -@REQ(esync_msgwait)
 -    int          in_msgwait;    /* are we in a message wait? */
 +
 +/* End a client-side wait on a message queue */
-+@REQ(fast_unselect_queue)
-+    obj_handle_t handle;          /* handle to the queue */
++@REQ(unselect_inproc_queue)
 +    int          signaled;        /* was the queue signaled? */
  @END
 
@@ -7174,8 +7135,8 @@ index 4983691..7bc4208 100644
 -/* Retrieve the fd to wait on for user APCs. */
 -@REQ(get_esync_apc_fd)
 +
-+/* Get an event handle to be used for thread alerts with fast synchronization */
-+@REQ(get_fast_alert_event)
++/* Get an event handle to be used for thread alerts with in-process synchronization */
++@REQ(get_inproc_alert_event)
 +@REPLY
 +    obj_handle_t handle;          /* handle to the event */
  @END
@@ -7197,8 +7158,8 @@ index fee3a8d..287a56e 100644
      unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
 -    int                    esync_fd;        /* esync file descriptor (signalled on message) */
 -    int                    esync_in_msgwait; /* our thread is currently waiting on us */
-+    struct fast_sync      *fast_sync;       /* fast synchronization object */
-+    int                    in_fast_wait;    /* are we in a client-side wait? */
++    struct inproc_sync    *inproc_sync;     /* in-process synchronization object */
++    int                    in_inproc_wait;  /* are we in a client-side wait? */
  };
  
  struct hotkey
@@ -7208,7 +7169,7 @@ index fee3a8d..287a56e 100644
  static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry );
 -static int msg_queue_get_esync_fd( struct object *obj, enum esync_type *type );
  static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *entry );
-+static struct fast_sync *msg_queue_get_fast_sync( struct object *obj );
++static struct inproc_sync *msg_queue_get_inproc_sync( struct object *obj );
  static void msg_queue_destroy( struct object *obj );
  static void msg_queue_poll_event( struct fd *fd, int event );
  static void thread_input_dump( struct object *obj, int verbose );
@@ -7224,7 +7185,7 @@ index fee3a8d..287a56e 100644
      NULL,                      /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
-+    msg_queue_get_fast_sync,   /* get_fast_sync */
++    msg_queue_get_inproc_sync, /* get_inproc_sync */
      no_close_handle,           /* close_handle */
      msg_queue_destroy          /* destroy */
  };
@@ -7240,7 +7201,7 @@ index fee3a8d..287a56e 100644
      NULL,                         /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    no_get_fast_sync,             /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      no_close_handle,              /* close_handle */
      thread_input_destroy          /* destroy */
  };
@@ -7250,8 +7211,8 @@ index fee3a8d..287a56e 100644
          queue->ignore_post_msg = 0;
 -        queue->esync_fd        = -1;
 -        queue->esync_in_msgwait = 0;
-+        queue->fast_sync       = NULL;
-+        queue->in_fast_wait    = 0;
++        queue->inproc_sync     = NULL;
++        queue->in_inproc_wait  = 0;
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
          list_init( &queue->pending_timers );
@@ -7288,7 +7249,7 @@ index fee3a8d..287a56e 100644
 +    if (is_signaled( queue ))
 +    {
 +        wake_up( &queue->obj, 0 );
-+        fast_set_event( queue->fast_sync );
++        set_inproc_event( queue->inproc_sync );
 +    }
  }
  
@@ -7301,7 +7262,7 @@ index fee3a8d..287a56e 100644
 -    if (do_esync() && !is_signaled( queue ))
 -        esync_clear( queue->esync_fd );
 +    if (!is_signaled( queue ))
-+        fast_reset_event( queue->fast_sync );
++        reset_inproc_event( queue->inproc_sync );
  }
  
  /* check if message is matched by the filter */
@@ -7311,12 +7272,12 @@ index fee3a8d..287a56e 100644
  
 -    if (do_esync() && queue->esync_in_msgwait)
 -        return 0;   /* thread is waiting on queue in absentia -> not hung */
-+    if (queue->in_fast_wait)
++    if (queue->in_inproc_wait)
 +        return 0;  /* thread is waiting on queue in absentia -> not hung */
  
      return 1;
  }
-@@ -1168,24 +1167,30 @@ static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entr
+@@ -1168,24 +1167,29 @@ static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entr
      return ret || is_signaled( queue );
  }
  
@@ -7335,14 +7296,14 @@ index fee3a8d..287a56e 100644
 +    }
 +    SHARED_WRITE_END;
 +
-+    fast_reset_event( queue->fast_sync );
++    reset_inproc_event( queue->inproc_sync );
  }
  
 -static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *entry )
-+static struct fast_sync *msg_queue_get_fast_sync( struct object *obj )
++static struct inproc_sync *msg_queue_get_inproc_sync( struct object *obj )
  {
      struct msg_queue *queue = (struct msg_queue *)obj;
-     const queue_shm_t *queue_shm = queue->shared;
+-    const queue_shm_t *queue_shm = queue->shared;
  
 -    SHARED_WRITE_BEGIN( queue_shm, queue_shm_t )
 -    {
@@ -7350,10 +7311,10 @@ index fee3a8d..287a56e 100644
 -        shared->changed_mask = 0;
 -    }
 -    SHARED_WRITE_END;
-+    if (!queue->fast_sync)
-+        queue->fast_sync = fast_create_event( FAST_SYNC_QUEUE, is_signaled( queue ) );
-+    if (queue->fast_sync) grab_object( queue->fast_sync );
-+    return queue->fast_sync;
++    if (!queue->inproc_sync)
++        queue->inproc_sync = create_inproc_event( INPROC_SYNC_QUEUE, is_signaled( queue ) );
++    if (queue->inproc_sync) grab_object( queue->inproc_sync );
++    return queue->inproc_sync;
  }
  
  static void msg_queue_destroy( struct object *obj )
@@ -7362,7 +7323,7 @@ index fee3a8d..287a56e 100644
      if (queue->fd) release_object( queue->fd );
      if (queue->shared) free_shared_object( queue->shared );
 -    if (do_esync()) close( queue->esync_fd );
-+    if (queue->fast_sync) release_object( queue->fast_sync );
++    if (queue->inproc_sync) release_object( queue->inproc_sync );
  }
  
  static void msg_queue_poll_event( struct fd *fd, int event )
@@ -7370,7 +7331,7 @@ index fee3a8d..287a56e 100644
      if (event & (POLLERR | POLLHUP)) set_fd_events( fd, -1 );
      else set_fd_events( queue->fd, 0 );
      wake_up( &queue->obj, 0 );
-+    fast_set_event( queue->fast_sync );
++    set_inproc_event( queue->inproc_sync );
  }
  
  static void thread_input_dump( struct object *obj, int verbose )
@@ -7381,12 +7342,12 @@ index fee3a8d..287a56e 100644
 +            else
 +            {
 +                wake_up( &queue->obj, 0 );
-+                fast_set_event( queue->fast_sync );
++                set_inproc_event( queue->inproc_sync );
 +            }
 +        }
 +        else
 +        {
-+            fast_reset_event( queue->fast_sync );
++            reset_inproc_event( queue->inproc_sync );
 -            }
 -            else wake_up( &queue->obj, 0 );
          }
@@ -7402,7 +7363,7 @@ index fee3a8d..287a56e 100644
 -        if (do_esync() && !is_signaled( queue ))
 -            esync_clear( queue->esync_fd );
 +        if (!is_signaled( queue ))
-+            fast_reset_event( queue->fast_sync );
++            reset_inproc_event( queue->inproc_sync );
      }
      else reply->wake_bits = reply->changed_bits = 0;
  }
@@ -7411,7 +7372,7 @@ index fee3a8d..287a56e 100644
      if (filter & QS_PAINT) queue->changed_bits &= ~QS_PAINT;
  
 +    if (!is_signaled( queue ))
-+        fast_reset_event( queue->fast_sync );
++        reset_inproc_event( queue->inproc_sync );
 +
      /* then check for posted messages */
      if ((filter & QS_POSTMESSAGE) &&
@@ -7421,7 +7382,7 @@ index fee3a8d..287a56e 100644
      }
      SHARED_WRITE_END;
  
-+    fast_reset_event( queue->fast_sync );
++    reset_inproc_event( queue->inproc_sync );
      set_error( STATUS_PENDING );  /* FIXME */
 -
 -    if (do_esync() && !is_signaled( queue ))
@@ -7446,7 +7407,7 @@ index 4454de3..dd5c556 100644
      key_unlink_name,         /* unlink_name */
      no_open_file,            /* open_file */
      no_kernel_obj_list,      /* get_kernel_obj_list */
-+    no_get_fast_sync,        /* get_fast_sync */
++    no_get_inproc_sync,      /* get_inproc_sync */
      key_close_handle,        /* close_handle */
      key_destroy              /* destroy */
  };
@@ -7466,7 +7427,7 @@ index ca83fdb..8c50f99 100644
      NULL,                          /* unlink_name */
      no_open_file,                  /* open_file */
      no_kernel_obj_list,            /* get_kernel_obj_list */
-+    no_get_fast_sync,              /* get_fast_sync */
++    no_get_inproc_sync,            /* get_inproc_sync */
      no_close_handle,               /* close_handle */
      master_socket_destroy          /* destroy */
  };
@@ -7482,13 +7443,13 @@ index eb6b8f4..1636e98 100644
 -DECL_HANDLER(open_esync);
 -DECL_HANDLER(get_esync_fd);
 -DECL_HANDLER(esync_msgwait);
-+DECL_HANDLER(get_linux_sync_device);
-+DECL_HANDLER(get_linux_sync_obj);
-+DECL_HANDLER(fast_select_queue);
-+DECL_HANDLER(fast_unselect_queue);
  DECL_HANDLER(set_keyboard_repeat);
 -DECL_HANDLER(get_esync_apc_fd);
-+DECL_HANDLER(get_fast_alert_event);
++DECL_HANDLER(get_linux_sync_device);
++DECL_HANDLER(get_linux_sync_obj);
++DECL_HANDLER(select_inproc_queue);
++DECL_HANDLER(unselect_inproc_queue);
++DECL_HANDLER(get_inproc_alert_event);
  
  typedef void (*req_handler)( const void *req, void *reply );
  static const req_handler req_handlers[REQ_NB_REQUESTS] =
@@ -7500,17 +7461,17 @@ index eb6b8f4..1636e98 100644
 -    (req_handler)req_open_esync,
 -    (req_handler)req_get_esync_fd,
 -    (req_handler)req_esync_msgwait,
-+    (req_handler)req_get_linux_sync_device,
-+    (req_handler)req_get_linux_sync_obj,
-+    (req_handler)req_fast_select_queue,
-+    (req_handler)req_fast_unselect_queue,
      (req_handler)req_set_keyboard_repeat,
 -    (req_handler)req_get_esync_apc_fd,
-+    (req_handler)req_get_fast_alert_event,
++    (req_handler)req_get_linux_sync_device,
++    (req_handler)req_get_linux_sync_obj,
++    (req_handler)req_select_inproc_queue,
++    (req_handler)req_unselect_inproc_queue,
++    (req_handler)req_get_inproc_alert_event,
  };
  
  C_ASSERT( sizeof(abstime_t) == 8 );
-@@ -2276,35 +2276,26 @@
+@@ -2276,35 +2276,24 @@
  C_ASSERT( sizeof(struct get_next_thread_request) == 32 );
  C_ASSERT( offsetof(struct get_next_thread_reply, handle) == 8 );
  C_ASSERT( sizeof(struct get_next_thread_reply) == 16 );
@@ -7539,6 +7500,13 @@ index eb6b8f4..1636e98 100644
 -C_ASSERT( sizeof(struct get_esync_fd_reply) == 16 );
 -C_ASSERT( offsetof(struct esync_msgwait_request, in_msgwait) == 12 );
 -C_ASSERT( sizeof(struct esync_msgwait_request) == 16 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_request, enable) == 12 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_request, delay) == 16 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
+ C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
+ C_ASSERT( offsetof(struct set_keyboard_repeat_reply, enable) == 8 );
+ C_ASSERT( sizeof(struct set_keyboard_repeat_reply) == 16 );
+-C_ASSERT( sizeof(struct get_esync_apc_fd_request) == 16 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_request) == 16 );
 +C_ASSERT( offsetof(struct get_linux_sync_device_reply, handle) == 8 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_reply) == 16 );
@@ -7548,21 +7516,12 @@ index eb6b8f4..1636e98 100644
 +C_ASSERT( offsetof(struct get_linux_sync_obj_reply, type) == 12 );
 +C_ASSERT( offsetof(struct get_linux_sync_obj_reply, access) == 16 );
 +C_ASSERT( sizeof(struct get_linux_sync_obj_reply) == 24 );
-+C_ASSERT( offsetof(struct fast_select_queue_request, handle) == 12 );
-+C_ASSERT( sizeof(struct fast_select_queue_request) == 16 );
-+C_ASSERT( offsetof(struct fast_unselect_queue_request, handle) == 12 );
-+C_ASSERT( offsetof(struct fast_unselect_queue_request, signaled) == 16 );
-+C_ASSERT( sizeof(struct fast_unselect_queue_request) == 24 );
-+C_ASSERT( sizeof(struct get_fast_alert_event_request) == 16 );
-+C_ASSERT( offsetof(struct get_fast_alert_event_reply, handle) == 8 );
- C_ASSERT( offsetof(struct set_keyboard_repeat_request, enable) == 12 );
- C_ASSERT( offsetof(struct set_keyboard_repeat_request, delay) == 16 );
- C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
- C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
- C_ASSERT( offsetof(struct set_keyboard_repeat_reply, enable) == 8 );
- C_ASSERT( sizeof(struct set_keyboard_repeat_reply) == 16 );
--C_ASSERT( sizeof(struct get_esync_apc_fd_request) == 16 );
-+C_ASSERT( sizeof(struct get_fast_alert_event_reply) == 16 );
++C_ASSERT( sizeof(struct select_inproc_queue_request) == 16 );
++C_ASSERT( offsetof(struct unselect_inproc_queue_request, signaled) == 12 );
++C_ASSERT( sizeof(struct unselect_inproc_queue_request) == 16 );
++C_ASSERT( sizeof(struct get_inproc_alert_event_request) == 16 );
++C_ASSERT( offsetof(struct get_inproc_alert_event_reply, handle) == 8 );
++C_ASSERT( sizeof(struct get_inproc_alert_event_reply) == 16 );
 diff --git a/server/semaphore.c b/server/semaphore.c
 index e3889f2..9940919 100644
 --- a/server/semaphore.c
@@ -7571,14 +7530,14 @@ index e3889f2..9940919 100644
      struct object  obj;    /* object header */
      unsigned int   count;  /* current count */
      unsigned int   max;    /* maximum possible count */
-+    struct fast_sync *fast_sync; /* fast synchronization object */
++    struct inproc_sync *inproc_sync; /* fast synchronization object */
  };
  
  static void semaphore_dump( struct object *obj, int verbose );
  static int semaphore_signaled( struct object *obj, struct wait_queue_entry *entry );
  static void semaphore_satisfied( struct object *obj, struct wait_queue_entry *entry );
  static int semaphore_signal( struct object *obj, unsigned int access );
-+static struct fast_sync *semaphore_get_fast_sync( struct object *obj );
++static struct inproc_sync *semaphore_get_inproc_sync( struct object *obj );
 +static void semaphore_destroy( struct object *obj );
  
  static const struct object_ops semaphore_ops =
@@ -7595,7 +7554,7 @@ index e3889f2..9940919 100644
      default_unlink_name,           /* unlink_name */
      no_open_file,                  /* open_file */
      no_kernel_obj_list,            /* get_kernel_obj_list */
-+    semaphore_get_fast_sync,       /* get_fast_sync */
++    semaphore_get_inproc_sync,     /* get_inproc_sync */
      no_close_handle,               /* close_handle */
 -    no_destroy                     /* destroy */
 +    semaphore_destroy              /* destroy */
@@ -7606,7 +7565,7 @@ index e3889f2..9940919 100644
              /* initialize it if it didn't already exist */
              sem->count = initial;
              sem->max   = max;
-+            sem->fast_sync = NULL;
++            sem->inproc_sync = NULL;
          }
      }
      return sem;
@@ -7614,21 +7573,21 @@ index e3889f2..9940919 100644
      return release_semaphore( sem, 1, NULL );
  }
  
-+static struct fast_sync *semaphore_get_fast_sync( struct object *obj )
++static struct inproc_sync *semaphore_get_inproc_sync( struct object *obj )
 +{
 +    struct semaphore *semaphore = (struct semaphore *)obj;
 +
-+    if (!semaphore->fast_sync)
-+        semaphore->fast_sync = fast_create_semaphore( semaphore->count, semaphore->max );
-+    if (semaphore->fast_sync) grab_object( semaphore->fast_sync );
-+    return semaphore->fast_sync;
++    if (!semaphore->inproc_sync)
++        semaphore->inproc_sync = create_inproc_semaphore( semaphore->count, semaphore->max );
++    if (semaphore->inproc_sync) grab_object( semaphore->inproc_sync );
++    return semaphore->inproc_sync;
 +}
 +
 +static void semaphore_destroy( struct object *obj )
 +{
 +    struct semaphore *semaphore = (struct semaphore *)obj;
 +
-+    if (semaphore->fast_sync) release_object( semaphore->fast_sync );
++    if (semaphore->inproc_sync) release_object( semaphore->inproc_sync );
 +}
 +
  /* create a semaphore */
@@ -7650,7 +7609,7 @@ index 11e204e..5c210d1 100644
      NULL,                         /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    default_fd_get_fast_sync,     /* get_fast_sync */
++    default_fd_get_inproc_sync,   /* get_inproc_sync */
      no_close_handle,              /* close_handle */
      serial_destroy                /* destroy */
  };
@@ -7670,7 +7629,7 @@ index 55cd6aa..e5def3d 100644
      NULL,                     /* unlink_name */
      no_open_file,             /* open_file */
      no_kernel_obj_list,       /* get_kernel_obj_list */
-+    no_get_fast_sync,         /* get_fast_sync */
++    no_get_inproc_sync,       /* get_inproc_sync */
      no_close_handle,          /* close_handle */
      handler_destroy           /* destroy */
  };
@@ -7690,7 +7649,7 @@ index 104321b..3fb2e29 100644
      NULL,                         /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    default_fd_get_fast_sync,     /* get_fast_sync */
++    default_fd_get_inproc_sync,   /* get_inproc_sync */
      sock_close_handle,            /* close_handle */
      sock_destroy                  /* destroy */
  };
@@ -7706,7 +7665,7 @@ index 104321b..3fb2e29 100644
      NULL,                    /* unlink_name */
      no_open_file,            /* open_file */
      no_kernel_obj_list,      /* get_kernel_obj_list */
-+    no_get_fast_sync,        /* get_fast_sync */
++    no_get_inproc_sync,      /* get_inproc_sync */
      no_close_handle,         /* close_handle */
      ifchange_destroy         /* destroy */
  };
@@ -7722,7 +7681,7 @@ index 104321b..3fb2e29 100644
      default_unlink_name,        /* unlink_name */
      socket_device_open_file,    /* open_file */
      no_kernel_obj_list,         /* get_kernel_obj_list */
-+    no_get_fast_sync,           /* get_fast_sync */
++    no_get_inproc_sync,      /* get_inproc_sync */
      no_close_handle,            /* close_handle */
      no_destroy                  /* destroy */
  };
@@ -7742,7 +7701,7 @@ index c7f3441..4a7cf68 100644
      default_unlink_name,          /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    no_get_fast_sync,             /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      no_close_handle,              /* close_handle */
      symlink_destroy               /* destroy */
  };
@@ -7770,7 +7729,7 @@ index 2ce94b4..8f603fc 100644
      NULL,                       /* unlink_name */
      no_open_file,               /* open_file */
      no_kernel_obj_list,         /* get_kernel_obj_list */
-+    no_get_fast_sync,           /* get_fast_sync */
++    no_get_inproc_sync,         /* get_inproc_sync */
      no_close_handle,            /* close_handle */
      thread_apc_destroy          /* destroy */
  };
@@ -7786,7 +7745,7 @@ index 2ce94b4..8f603fc 100644
      NULL,                       /* unlink_name */
      no_open_file,               /* open_file */
      no_kernel_obj_list,         /* get_kernel_obj_list */
-+    no_get_fast_sync,           /* get_fast_sync */
++    no_get_inproc_sync,         /* get_inproc_sync */
      no_close_handle,            /* close_handle */
      no_destroy                  /* destroy */
  };
@@ -7798,7 +7757,7 @@ index 2ce94b4..8f603fc 100644
  static unsigned int thread_map_access( struct object *obj, unsigned int access );
  static void thread_poll_event( struct fd *fd, int event );
  static struct list *thread_get_kernel_obj_list( struct object *obj );
-+static struct fast_sync *thread_get_fast_sync( struct object *obj );
++static struct inproc_sync *thread_get_inproc_sync( struct object *obj );
  static void destroy_thread( struct object *obj );
  
  static const struct object_ops thread_ops =
@@ -7814,7 +7773,7 @@ index 2ce94b4..8f603fc 100644
      NULL,                       /* unlink_name */
      no_open_file,               /* open_file */
      thread_get_kernel_obj_list, /* get_kernel_obj_list */
-+    thread_get_fast_sync,       /* get_fast_sync */
++    thread_get_inproc_sync,     /* get_inproc_sync */
      no_close_handle,            /* close_handle */
      destroy_thread              /* destroy */
  };
@@ -7831,8 +7790,8 @@ index 2ce94b4..8f603fc 100644
      thread->token           = NULL;
      thread->desc            = NULL;
      thread->desc_len        = 0;
-+    thread->fast_sync       = NULL;
-+    thread->fast_alert_event = NULL;
++    thread->inproc_sync     = NULL;
++    thread->inproc_alert_event = NULL;
 -    thread->exit_poll       = NULL;
  
      thread->creation_time = current_time;
@@ -7853,14 +7812,14 @@ index 2ce94b4..8f603fc 100644
      return &thread->kernel_object;
  }
  
-+static struct fast_sync *thread_get_fast_sync( struct object *obj )
++static struct inproc_sync *thread_get_inproc_sync( struct object *obj )
 +{
 +    struct thread *thread = (struct thread *)obj;
 +
-+    if (!thread->fast_sync)
-+        thread->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, thread->state == TERMINATED );
-+    if (thread->fast_sync) grab_object( thread->fast_sync );
-+    return thread->fast_sync;
++    if (!thread->inproc_sync)
++        thread->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, thread->state == TERMINATED );
++    if (thread->inproc_sync) grab_object( thread->inproc_sync );
++    return thread->inproc_sync;
 +}
 +
  /* cleanup everything that is no longer needed by a dead thread */
@@ -7873,8 +7832,8 @@ index 2ce94b4..8f603fc 100644
 -
 -    if (do_esync())
 -        close( thread->esync_fd );
-+    if (thread->fast_sync) release_object( thread->fast_sync );
-+    if (thread->fast_alert_event) release_object( thread->fast_alert_event );
++    if (thread->inproc_sync) release_object( thread->inproc_sync );
++    if (thread->inproc_alert_event) release_object( thread->inproc_alert_event );
  }
  
  /* dump a thread on stdout for debugging purposes */
@@ -7909,8 +7868,8 @@ index 2ce94b4..8f603fc 100644
  
 -        if (do_esync() && queue == &thread->user_apc)
 -            esync_wake_fd( thread->esync_apc_fd );
-+        if (apc->call.type == APC_USER && thread->fast_alert_event)
-+            set_event( thread->fast_alert_event );
++        if (apc->call.type == APC_USER && thread->inproc_alert_event)
++            set_event( thread->inproc_alert_event );
      }
  
      return 1;
@@ -7918,8 +7877,8 @@ index 2ce94b4..8f603fc 100644
          apc->executed = 1;
          wake_up( &apc->obj, 0 );
          release_object( apc );
-+        if (list_empty( &thread->user_apc ) && thread->fast_alert_event)
-+            reset_event( thread->fast_alert_event );
++        if (list_empty( &thread->user_apc ) && thread->inproc_alert_event)
++            reset_event( thread->inproc_alert_event );
          return;
      }
  }
@@ -7932,8 +7891,8 @@ index 2ce94b4..8f603fc 100644
 -    if (do_esync() && list_empty( &thread->system_apc ) && list_empty( &thread->user_apc ))
 -        esync_clear( thread->esync_apc_fd );
  
-+        if (list_empty( &thread->user_apc ) && thread->fast_alert_event)
-+            reset_event( thread->fast_alert_event );
++        if (list_empty( &thread->user_apc ) && thread->inproc_alert_event)
++            reset_event( thread->inproc_alert_event );
 +    }
      return apc;
  }
@@ -7971,8 +7930,8 @@ index 2ce94b4..8f603fc 100644
      abandon_mutexes( thread );
 -    if (do_esync())
 -        esync_abandon_mutexes( thread );
-+    fast_set_event( thread->fast_sync );
 +    wake_up( &thread->obj, 0 );
++    set_inproc_event( thread->inproc_sync );
 +    if (violent_death) send_thread_signal( thread, SIGQUIT );
 -    if (violent_death)
 -    {
@@ -7988,13 +7947,13 @@ index 2ce94b4..8f603fc 100644
      release_object( process );
  }
 +
-+DECL_HANDLER(get_fast_alert_event)
++DECL_HANDLER(get_inproc_alert_event)
 +{
-+    if (!current->fast_alert_event)
-+        current->fast_alert_event = create_event( NULL, NULL, 0, 1, !list_empty( &current->user_apc ), NULL );
++    if (!current->inproc_alert_event)
++        current->inproc_alert_event = create_event( NULL, NULL, 0, 1, !list_empty( &current->user_apc ), NULL );
 +
-+    if (current->fast_alert_event)
-+        reply->handle = alloc_handle( current->process, current->fast_alert_event, SYNCHRONIZE, 0 );
++    if (current->inproc_alert_event)
++        reply->handle = alloc_handle( current->process, current->inproc_alert_event, SYNCHRONIZE, 0 );
 +}
 diff --git a/server/thread.h b/server/thread.h
 index 10e9e28..cb4643a 100644
@@ -8013,8 +7972,8 @@ index 10e9e28..cb4643a 100644
      WCHAR                 *desc;          /* thread description string */
      struct completion_wait *completion_wait; /* completion port wait object the thread is associated with */
 -    struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
-+    struct fast_sync      *fast_sync;     /* fast synchronization object */
-+    struct event          *fast_alert_event; /* fast synchronization alert event */
++    struct inproc_sync    *inproc_sync;   /* in-process synchronization object */
++    struct event          *inproc_alert_event; /* in-process synchronization alert event */
  };
  
  extern struct thread *current;
@@ -8035,14 +7994,14 @@ index 36645a2..854a8e1 100644
      client_ptr_t         callback;  /* callback APC function */
      client_ptr_t         arg;       /* callback argument */
 -    int                  esync_fd;  /* esync file descriptor */
-+    struct fast_sync    *fast_sync; /* fast synchronization object */
++    struct inproc_sync  *inproc_sync;   /* in-process synchronization object */
  };
  
  static void timer_dump( struct object *obj, int verbose );
  static int timer_signaled( struct object *obj, struct wait_queue_entry *entry );
 -static int timer_get_esync_fd( struct object *obj, enum esync_type *type );
  static void timer_satisfied( struct object *obj, struct wait_queue_entry *entry );
-+static struct fast_sync *timer_get_fast_sync( struct object *obj );
++static struct inproc_sync *timer_get_inproc_sync( struct object *obj );
  static void timer_destroy( struct object *obj );
  
  static const struct object_ops timer_ops =
@@ -8058,7 +8017,7 @@ index 36645a2..854a8e1 100644
      default_unlink_name,       /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
-+    timer_get_fast_sync,       /* get_fast_sync */
++    timer_get_inproc_sync,     /* get_inproc_sync */
      no_close_handle,           /* close_handle */
      timer_destroy              /* destroy */
  };
@@ -8070,7 +8029,7 @@ index 36645a2..854a8e1 100644
 -
 -            if (do_esync())
 -                timer->esync_fd = esync_create_fd( 0, 0 );
-+            timer->fast_sync = NULL;
++            timer->inproc_sync = NULL;
          }
      }
      return timer;
@@ -8078,7 +8037,7 @@ index 36645a2..854a8e1 100644
      /* wake up waiters */
      timer->signaled = 1;
      wake_up( &timer->obj, 0 );
-+    fast_set_event( timer->fast_sync );
++    set_inproc_event( timer->inproc_sync );
  }
  
  /* cancel a running timer */
@@ -8089,7 +8048,7 @@ index 36645a2..854a8e1 100644
 -
 -        if (do_esync())
 -            esync_clear( timer->esync_fd );
-+        fast_reset_event( timer->fast_sync );
++        reset_inproc_event( timer->inproc_sync );
      }
      timer->when     = (expire <= 0) ? expire - monotonic_time : max( expire, current_time );
      timer->period   = period;
@@ -8108,19 +8067,19 @@ index 36645a2..854a8e1 100644
  }
  
 -static void timer_satisfied( struct object *obj, struct wait_queue_entry *entry )
-+static struct fast_sync *timer_get_fast_sync( struct object *obj )
++static struct inproc_sync *timer_get_inproc_sync( struct object *obj )
  {
      struct timer *timer = (struct timer *)obj;
 -    assert( obj->ops == &timer_ops );
 -    if (!timer->manual) timer->signaled = 0;
 +
-+    if (!timer->fast_sync)
++    if (!timer->inproc_sync)
 +    {
-+        enum fast_sync_type type = timer->manual ? FAST_SYNC_MANUAL_SERVER : FAST_SYNC_AUTO_SERVER;
-+        timer->fast_sync = fast_create_event( type, timer->signaled );
++        enum inproc_sync_type type = timer->manual ? INPROC_SYNC_MANUAL_SERVER : INPROC_SYNC_AUTO_SERVER;
++        timer->inproc_sync = create_inproc_event( type, timer->signaled );
 +    }
-+    if (timer->fast_sync) grab_object( timer->fast_sync );
-+    return timer->fast_sync;
++    if (timer->inproc_sync) grab_object( timer->inproc_sync );
++    return timer->inproc_sync;
  }
  
  static void timer_destroy( struct object *obj )
@@ -8129,7 +8088,7 @@ index 36645a2..854a8e1 100644
      if (timer->timeout) remove_timeout_user( timer->timeout );
      if (timer->thread) release_object( timer->thread );
 -    if (do_esync()) close( timer->esync_fd );
-+    if (timer->fast_sync) release_object( timer->fast_sync );
++    if (timer->inproc_sync) release_object( timer->inproc_sync );
  }
  
  /* create a timer */
@@ -8149,7 +8108,7 @@ index 8b4d2f0..42562fd 100644
      NULL,                      /* unlink_name */
      no_open_file,              /* open_file */
      no_kernel_obj_list,        /* get_kernel_obj_list */
-+    no_get_fast_sync,          /* get_fast_sync */
++    no_get_inproc_sync,        /* get_inproc_sync */
      no_close_handle,           /* close_handle */
      token_destroy              /* destroy */
  };
@@ -8157,7 +8116,7 @@ diff --git a/server/request_trace.h b/server/request_trace.h
 index af96565..c027f4b 100644
 --- a/server/request_trace.h
 +++ b/server/request_trace.h
-@@ -4619,67 +4619,56 @@ static void dump_get_next_thread_reply( const struct get_next_thread_reply *req
+@@ -4619,67 +4619,54 @@ static void dump_get_next_thread_reply( const struct get_next_thread_reply *req
      fprintf( stderr, " handle=%04x", req->handle );
  }
  
@@ -8200,22 +8159,21 @@ index af96565..c027f4b 100644
  }
  
 -static void dump_get_esync_fd_request( const struct get_esync_fd_request *req )
-+static void dump_fast_select_queue_request( const struct fast_select_queue_request *req )
++static void dump_select_inproc_queue_request( const struct select_inproc_queue_request *req )
  {
-     fprintf( stderr, " handle=%04x", req->handle );
+-    fprintf( stderr, " handle=%04x", req->handle );
  }
  
 -static void dump_get_esync_fd_reply( const struct get_esync_fd_reply *req )
-+static void dump_fast_unselect_queue_request( const struct fast_unselect_queue_request *req )
++static void dump_unselect_inproc_queue_request( const struct unselect_inproc_queue_request *req )
  {
 -    fprintf( stderr, " type=%d", req->type );
 -    fprintf( stderr, ", shm_idx=%08x", req->shm_idx );
-+    fprintf( stderr, " handle=%04x", req->handle );
 +    fprintf( stderr, ", signaled=%d", req->signaled );
  }
  
 -static void dump_esync_msgwait_request( const struct esync_msgwait_request *req )
-+static void dump_get_fast_alert_event_request( const struct get_fast_alert_event_request *req )
++static void dump_get_inproc_alert_event_request( const struct get_inproc_alert_event_request *req )
  {
 -    fprintf( stderr, " in_msgwait=%d", req->in_msgwait );
  }
@@ -8233,7 +8191,7 @@ index af96565..c027f4b 100644
  }
 
 -static void dump_get_esync_apc_fd_request( const struct get_esync_apc_fd_request *req )
-+static void dump_get_fast_alert_event_reply( const struct get_fast_alert_event_reply *req )
++static void dump_get_inproc_alert_event_reply( const struct get_inproc_alert_event_reply *req )
  {
 +    fprintf( stderr, " handle=%04x", req->handle );
  }
@@ -8250,9 +8208,9 @@ index af96565..c027f4b 100644
 -    (dump_func)dump_get_esync_apc_fd_request,
 +    (dump_func)dump_get_linux_sync_device_request,
 +    (dump_func)dump_get_linux_sync_obj_request,
-+    (dump_func)dump_fast_select_queue_request,
-+    (dump_func)dump_fast_unselect_queue_request,
-+    (dump_func)dump_get_fast_alert_event_request,
++    (dump_func)dump_select_inproc_queue_request,
++    (dump_func)dump_unselect_inproc_queue_request,
++    (dump_func)dump_get_inproc_alert_event_request,
  };
  
  static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
@@ -8263,12 +8221,14 @@ index af96565..c027f4b 100644
 -    (dump_func)dump_create_esync_reply,
 -    (dump_func)dump_open_esync_reply,
 -    (dump_func)dump_get_esync_fd_reply,
-+    (dump_func)dump_get_linux_sync_device_reply,
-+    (dump_func)dump_get_linux_sync_obj_reply,
      NULL,
      (dump_func)dump_set_keyboard_repeat_reply,
      NULL,
-+    (dump_func)dump_get_fast_alert_event_reply,
++    (dump_func)dump_get_linux_sync_device_reply,
++    (dump_func)dump_get_linux_sync_obj_reply,
++    NULL,
++    NULL,
++    (dump_func)dump_get_inproc_alert_event_reply,
  };
  
  static const char * const req_names[REQ_NB_REQUESTS] = {
@@ -8280,13 +8240,13 @@ index af96565..c027f4b 100644
 -    "open_esync",
 -    "get_esync_fd",
 -    "esync_msgwait",
-+    "get_linux_sync_device",
-+    "get_linux_sync_obj",
-+    "fast_select_queue",
-+    "fast_unselect_queue",
      "set_keyboard_repeat",
 -    "get_esync_apc_fd",
-+    "get_fast_alert_event",
++    "get_linux_sync_device",
++    "get_linux_sync_obj",
++    "select_inproc_queue",
++    "unselect_inproc_queue",
++    "get_inproc_alert_event",
  };
  
  static const struct
@@ -8306,7 +8266,7 @@ index feac54e..f52e118 100644
      NULL,                     /* unlink_name */
      no_open_file,             /* open_file */
      no_kernel_obj_list,       /* get_kernel_obj_list */
-+    no_get_fast_sync,         /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      no_close_handle,          /* close_handle */
      window_destroy            /* destroy */
  };
@@ -8326,7 +8286,7 @@ index 4ef21d9..2719c9e 100644
      default_unlink_name,          /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    no_get_fast_sync,             /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      winstation_close_handle,      /* close_handle */
      winstation_destroy            /* destroy */
  };
@@ -8342,76 +8302,64 @@ index 4ef21d9..2719c9e 100644
      default_unlink_name,          /* unlink_name */
      no_open_file,                 /* open_file */
      no_kernel_obj_list,           /* get_kernel_obj_list */
-+    no_get_fast_sync,             /* get_fast_sync */
++    no_get_inproc_sync,           /* get_inproc_sync */
      desktop_close_handle,         /* close_handle */
      desktop_destroy               /* destroy */
  };
-From 9c4c5779b6f87c27e73a4cb5a0973896c26c8d31 Mon Sep 17 00:00:00 2001
-From: Kirill Artemev <artewar6767@gmail.com>
-Date: Wed, 3 Jul 2024 18:39:15 +0500
-Subject: [PATCH] test3
-
-Signed-off-by: Kirill Artemev <artewar6767@gmail.com>
----
- server/queue.c | 55 +++++++++++++++++++++++++++++++++++++++++---------
- 1 file changed, 46 insertions(+), 9 deletions(-)
-
-diff --git a/server/queue.c b/server/queue.c
-index 0c9c043d68f..c911ae3e574 100644
---- a/server/queue.c
-+++ b/server/queue.c
-@@ -4020,21 +4020,60 @@ DECL_HANDLER(update_rawinput_devices)
+--- a/server/queue.c	2024-12-20 20:01:39.879368500 +0500
++++ b/server/queue.c	2024-12-20 20:03:11.782212833 +0500
+@@ -4252,23 +4252,6 @@
      }
  }
  
 -DECL_HANDLER(esync_msgwait)
-+DECL_HANDLER(fast_select_queue)
- {
+-{
 -    struct msg_queue *queue = get_current_queue();
-+    struct msg_queue *queue;
-     const queue_shm_t *queue_shm;
- 
+-    const queue_shm_t *queue_shm;
+-
 -    if (!queue) return;
-+    if (!(queue = (struct msg_queue *)get_handle_obj( current->process, req->handle,
-+                                                      SYNCHRONIZE, &msg_queue_ops )))
-+        return;
-     queue_shm = queue->shared;
+-    queue_shm = queue->shared;
 -    queue->esync_in_msgwait = req->in_msgwait;
-+    /* a thread can only wait on its own queue */
-+    if (current->queue != queue || queue->in_fast_wait)
+-
+-    if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
+-        set_event( current->process->idle_event );
+-
+-    /* and start/stop waiting on the driver */
+-    if (queue->fd)
+-        set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
+-}
+-
+ DECL_HANDLER(set_keyboard_repeat)
+ {
+     struct desktop *desktop;
+@@ -4288,3 +4271,41 @@
+     release_object( desktop );
+ }
+ 
++DECL_HANDLER(select_inproc_queue)
++{
++    struct msg_queue *queue = current->queue;
++
++    if (queue->in_inproc_wait)
 +    {
 +        set_error( STATUS_ACCESS_DENIED );
 +    }
 +    else
 +    {
-+        if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
-+            set_event( current->process->idle_event );
++        check_thread_queue_idle( current );
 +
 +        if (queue->fd)
 +            set_fd_events( queue->fd, POLLIN );
- 
--    if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
--        set_event( current->process->idle_event );
-+        queue->in_fast_wait = 1;
++
++        queue->in_inproc_wait = 1;
 +    }
- 
--    /* and start/stop waiting on the driver */
--    if (queue->fd)
--        set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
-+    release_object( queue );
 +}
 +
-+DECL_HANDLER(fast_unselect_queue)
++DECL_HANDLER(unselect_inproc_queue)
 +{
-+    struct msg_queue *queue;
-+    const queue_shm_t *queue_shm;
++    struct msg_queue *queue = current->queue;
 +
-+    if (!(queue = (struct msg_queue *)get_handle_obj( current->process, req->handle,
-+                                                      SYNCHRONIZE, &msg_queue_ops )))
-+        return;
-+
-+    queue_shm = queue->shared;
-+    if (current->queue != queue || !queue->in_fast_wait)
++    if (!queue->in_inproc_wait)
 +    {
 +        set_error( STATUS_ACCESS_DENIED );
 +    }
@@ -8423,12 +8371,6 @@ index 0c9c043d68f..c911ae3e574 100644
 +        if (req->signaled)
 +            msg_queue_satisfied( &queue->obj, NULL );
 +
-+        queue->in_fast_wait = 0;
++        queue->in_inproc_wait = 0;
 +    }
-+
-+    release_object( queue );
- }
- 
- DECL_HANDLER(set_keyboard_repeat)
--- 
-2.45.2
++}
