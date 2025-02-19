@@ -1,0 +1,46 @@
+From 11858b51cb4d3ab64de89a426b1238f4976a652f Mon Sep 17 00:00:00 2001
+From: Jinoh Kang <jinoh.kang.kr@gmail.com>
+Date: Wed, 19 Feb 2025 21:44:25 +0900
+Subject: [PATCH] makefiles: Handle absolute path in create_dir() due to
+ --with-wine64=(absolute path).
+
+Since commit 7620f21ff98 (makefiles: Generate the wow64 symlinks from
+makedep., 2025-02-18), makedep generates a symlink target for
+"<wine64_dir>/loader-wow64".  This causes <wine64-dir> to be added as an
+"ignore path," ultimately leading to create_file_directories() and then
+create_dir().
+
+create_dir() only expects relative paths.  If it's passed an absolute
+path, it will recognize the "/" prefix as an empty path component
+followed by slash, and will attempt to mkdir(""), which fails.
+
+Fix this by skipping initial slashes in create_dir().
+
+Fixes: 7620f21ff98a85249b0b110bcba9953b32763f28
+---
+ tools/makedep.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/tools/makedep.c b/tools/makedep.c
+index 6930472f8dc..a64c979620f 100644
+--- a/tools/makedep.c
++++ b/tools/makedep.c
+@@ -2007,12 +2007,13 @@ static void create_dir( const char *dir )
+     char *p, *path;
+ 
+     p = path = xstrdup( dir );
+-    while ((p = strchr( p, '/' )))
++    for (;;)
+     {
++        while (*p == '/') p++;
++        if (!(p = strchr( p, '/' ))) break;
+         *p = 0;
+         if (mkdir( path, 0755 ) == -1 && errno != EEXIST) fatal_perror( "mkdir %s", path );
+         *p++ = '/';
+-        while (*p == '/') p++;
+     }
+     if (mkdir( path, 0755 ) == -1 && errno != EEXIST) fatal_perror( "mkdir %s", path );
+     free( path );
+-- 
+GitLab
+
