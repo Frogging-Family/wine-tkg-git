@@ -933,6 +933,17 @@ else
     cp -rv liberation-fonts-ttf*/Liberation{Sans-Regular,Sans-Bold,Serif-Regular,Mono-Regular}.ttf "$_nowhere/proton_template/share/fonts"/
     cd "$_nowhere"
 
+    # Umu-protonfixes
+    rm -rf proton_template/share/protonfixes/*
+    git clone https://github.com/Open-Wine-Components/umu-protonfixes.git || true
+    cd umu-protonfixes
+    git reset --hard HEAD
+    git clean -xdf
+    git pull origin master
+    git submodule update --init --recursive
+    cp -rv "$_nowhere/umu-protonfixes/"* "$_nowhere/proton_template/conf/protonfixes"/
+    cd "$_nowhere"
+
     if [ "$_NUKR" != "debug" ]; then
       if [ -d Proton ] && [ ! -f Proton/proton ]; then
         ( cd Proton && find . -name . -o -prune -exec rm -rf -- {} + ) # We need to clean everything including dotfiles
@@ -1136,6 +1147,9 @@ else
     elif [ -e "$_nowhere"/Proton/toolmanifest_noruntime.vdf ]; then
       rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_noruntime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
     fi
+
+    # Inject umu-protonfixes
+    cp -r "$_nowhere"/proton_template/conf/protonfixes "proton_tkg_$_protontkg_version"
 
     # steampipe fixups
     cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
