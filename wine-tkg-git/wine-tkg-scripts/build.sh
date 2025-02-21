@@ -85,6 +85,13 @@ _prebuild_common() {
 		fi
 	fi
 
+	# Check wine commit and change lib path to workaround
+	if (cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8c3f205696571558a6fae42314370fbd7cc14a12 HEAD); then
+		export _new_makefiles="true"
+	else
+		export _new_makefiles="false"
+	fi
+
 	echo -e "\nconfigure arguments: ${_configure_args[@]}\n" >>"$_where"/last_build_config.log
 }
 
@@ -204,7 +211,7 @@ _package_nomakepkg() {
 		local _lib32name="lib"
 		local _lib64name="lib"
 	elif [ -e /lib ] && [ -e /lib64 ] && [ -d /usr/lib ] && [ -d /usr/lib32 ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
-		if (cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8c3f205696571558a6fae42314370fbd7cc14a12 HEAD); then
+		if [ "$_new_makefiles" = "true" ]; then
 			local _lib32name="lib"
 		else
 			local _lib32name="lib32"
@@ -212,7 +219,11 @@ _package_nomakepkg() {
 		local _lib64name="lib"
 	else
 		local _lib32name="lib"
-		local _lib64name="lib64"
+		if [ "$_new_makefiles" = "true" ]; then
+			local _lib64name="lib"
+		else
+			local _lib64name="lib64"
+		fi
 	fi
 
 	# External install
