@@ -379,7 +379,12 @@ _package_makepkg() {
 
 	# External install
 	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
-		_lib32name="lib" && _lib64name="lib64"
+		if [ "$_new_makefiles" = "true" ]; then
+			_lib32name="lib" && _lib64name="lib"
+		else
+			_lib32name="lib" && _lib64name="lib64"
+		fi
+
 		if [ "$_EXTERNAL_NOVER" = "true" ]; then
 			_prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
 		else
