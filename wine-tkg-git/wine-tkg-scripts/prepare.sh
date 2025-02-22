@@ -77,6 +77,11 @@ _exit_cleanup() {
     echo "_reuse_built_gst='${_reuse_built_gst}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_unfrog='${_unfrog}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_NOLIB32='${_NOLIB32}'" >> "$_proton_tkg_path"/proton_tkg_token
+    if (cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8c3f205696571558a6fae42314370fbd7cc14a12 HEAD); then
+      echo "_new_makefiles='true'" >> "$_proton_tkg_path"/proton_tkg_token
+    else
+      echo "_new_makefiles='false'" >> "$_proton_tkg_path"/proton_tkg_token
+    fi
   fi
 
   rm -f "$_where"/BIG_UGLY_FROGMINER && msg2 'Removed BIG_UGLY_FROGMINER - Ribbit' # state tracker end
