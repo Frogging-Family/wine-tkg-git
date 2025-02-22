@@ -370,7 +370,7 @@ _package_nomakepkg() {
 
 _package_makepkg() {
 	local _prefix=/usr
-	if (cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8c3f205696571558a6fae42314370fbd7cc14a12 HEAD); then
+	if [ "$_new_makefiles" = "true" ]; then
 		local _lib32name="lib"
 	else
 		local _lib32name="lib32"
