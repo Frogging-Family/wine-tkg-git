@@ -865,7 +865,11 @@ else
     _lib64name="lib"
   else
     _lib32name="lib"
-    _lib64name="lib64"
+    if [ "$_new_makefiles" = "true" ]; then
+      _lib64name="lib"
+    else
+      _lib64name="lib64"
+    fi
   fi
 
   # Prompt to re-use existing gst
