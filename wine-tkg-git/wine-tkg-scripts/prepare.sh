@@ -1000,6 +1000,7 @@ _prepare() {
                    "$_where/wine-tkg-patches/game-specific/mtga/mtga"
                    "$_where/wine-tkg-patches/proton/proton_mf_hacks/proton_mf_hacks"
                    "$_where/wine-tkg-patches/misc/enable_stg_shared_mem_def/enable_stg_shared_mem_def"
+		   "$_where/wine-tkg-patches/misc/enable_dynamic_wow64_def/enable_dynamic_wow64_def"
                    "$_where/wine-tkg-patches/misc/nvidia-hate/nvidia-hate"
                    "$_where/wine-tkg-patches/misc/kernelbase-reverts/kernelbase-reverts"
                    "$_where/wine-tkg-patches/proton/LAA/LAA"
