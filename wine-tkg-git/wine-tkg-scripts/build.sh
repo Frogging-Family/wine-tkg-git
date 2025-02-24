@@ -370,7 +370,7 @@ _package_nomakepkg() {
 
 _package_makepkg() {
 	local _prefix=/usr
-	if [ "$_new_makefiles" = "true" ]; then
+	if (cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8c3f205696571558a6fae42314370fbd7cc14a12 HEAD); then
 		local _lib32name="lib"
 	else
 		local _lib32name="lib32"
@@ -379,12 +379,7 @@ _package_makepkg() {
 
 	# External install
 	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
-		if [ "$_new_makefiles" = "true" ]; then
-			_lib32name="lib" && _lib64name="lib"
-		else
-			_lib32name="lib" && _lib64name="lib64"
-		fi
-
+		_lib32name="lib" && _lib64name="lib64"
 		if [ "$_EXTERNAL_NOVER" = "true" ]; then
 			_prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
 		else
