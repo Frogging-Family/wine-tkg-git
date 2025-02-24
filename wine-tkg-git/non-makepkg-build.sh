@@ -303,19 +303,11 @@ build_wine_tkg() {
     local _lib32name="lib"
     local _lib64name="lib"
   elif [ -e /lib ] && [ -e /lib64 ] && [ -d /usr/lib ] && [ -d /usr/lib32 ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
-    if [ "$_new_makefiles" = "true" ]; then
-      local _lib32name="lib"
-    else
-      local _lib32name="lib32"
-    fi
+    local _lib32name="lib32"
     local _lib64name="lib"
   else
     local _lib32name="lib"
-    if [ "$_new_makefiles" = "true" ]; then
-      local _lib64name="lib"
-    else
-      local _lib64name="lib64"
-    fi
+    local _lib64name="lib64"
   fi
 
   # configure args

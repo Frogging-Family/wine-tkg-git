@@ -77,7 +77,6 @@ _exit_cleanup() {
     echo "_reuse_built_gst='${_reuse_built_gst}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_unfrog='${_unfrog}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_NOLIB32='${_NOLIB32}'" >> "$_proton_tkg_path"/proton_tkg_token
-    echo "_new_makefiles='${_new_makefiles}'" >> "$_proton_tkg_path"/proton_tkg_token
   fi
 
   rm -f "$_where"/BIG_UGLY_FROGMINER && msg2 'Removed BIG_UGLY_FROGMINER - Ribbit' # state tracker end

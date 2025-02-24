@@ -211,19 +211,11 @@ _package_nomakepkg() {
 		local _lib32name="lib"
 		local _lib64name="lib"
 	elif [ -e /lib ] && [ -e /lib64 ] && [ -d /usr/lib ] && [ -d /usr/lib32 ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
-		if [ "$_new_makefiles" = "true" ]; then
-			local _lib32name="lib"
-		else
-			local _lib32name="lib32"
-		fi
+		local _lib32name="lib32"
 		local _lib64name="lib"
 	else
 		local _lib32name="lib"
-		if [ "$_new_makefiles" = "true" ]; then
-			local _lib64name="lib"
-		else
-			local _lib64name="lib64"
-		fi
+		local _lib64name="lib64"
 	fi
 
 	# External install
@@ -273,8 +265,16 @@ _package_nomakepkg() {
 
 	# Fixes compatibility with installation scripts (like winetricks) that use
 	# the wine64 binary, which is not present in WoW64 builds.
-	if [ "$_NOLIB32" = "wow64" ]; then
+	if [ "$_NOLIB32" = "wow64" ] || [ "$_new_makefiles" = "true" ]; then
 		(cd "$_prefix/bin" && ln -s wine wine64)
+	fi
+
+	# This fix for new makefiles. Should work for old wine
+	if [ "$_NOLIB32" != "true" ]; then
+		ln -s "${pkgdir}$_prefix/$_lib32name/wine/i386-windows" "${pkgdir}$_prefix/$_lib64name/wine/"
+		if [ "$_NOLIB32" != "wow64" ]; then
+			ln -s "${pkgdir}$_prefix/$_lib32name/wine/i386-unix" "${pkgdir}$_prefix/$_lib64name/wine/"
+		fi
 	fi
 
 	# strip
@@ -370,21 +370,12 @@ _package_nomakepkg() {
 
 _package_makepkg() {
 	local _prefix=/usr
-	if [ "$_new_makefiles" = "true" ]; then
-		local _lib32name="lib"
-	else
-		local _lib32name="lib32"
-	fi
+	local _lib32name="lib32"
 	local _lib64name="lib"
 
 	# External install
 	if [ "$_EXTERNAL_INSTALL" = "true" ]; then
-		if [ "$_new_makefiles" = "true" ]; then
-			_lib32name="lib" && _lib64name="lib"
-		else
-			_lib32name="lib" && _lib64name="lib64"
-		fi
-
+		_lib32name="lib" && _lib64name="lib64"
 		if [ "$_EXTERNAL_NOVER" = "true" ]; then
 			_prefix="$_DEFAULT_EXTERNAL_PATH/$pkgname"
 		else
