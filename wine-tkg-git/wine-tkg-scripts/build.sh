@@ -277,9 +277,6 @@ _package_nomakepkg() {
 		cd "$_prefix"/"$_lib64name"/wine/
 		ln -s ../../"$_lib32name"/wine/i386-windows ./
 		ln -s ../../"$_lib32name"/wine/i386-unix ./
-		if [ "$_NOLIB32" != "wow64" ]; then
-			
-		fi
 	fi
 
 	# strip
