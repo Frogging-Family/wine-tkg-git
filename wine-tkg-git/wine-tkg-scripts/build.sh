@@ -270,14 +270,15 @@ _package_nomakepkg() {
 	fi
 
 	# This fix for new makefiles. Should work for old wine
-	if [ "$_NOLIB32" != "true" ]; then
+	if [ "$_NOLIB32" = "false" ]; then
 		cd "$_prefix"/"$_lib32name"/wine/
 		ln -s ../../"$_lib64name"/wine/x86_64-windows ./
   		ln -s ../../"$_lib64name"/wine/x86_64-unix ./
 		cd "$_prefix"/"$_lib64name"/wine/
 		ln -s ../../"$_lib32name"/wine/i386-windows ./
+		ln -s ../../"$_lib32name"/wine/i386-unix ./
 		if [ "$_NOLIB32" != "wow64" ]; then
-			ln -s ../../"$_lib32name"/wine/i386-unix ./
+			
 		fi
 	fi
 
@@ -454,15 +455,13 @@ _package_makepkg() {
 	fi
 
 	# This fix for new makefiles. Should work for old wine
-	if [ "$_NOLIB32" != "true" ]; then
+	if [ "$_NOLIB32" = "false" ]; then
 		cd "${pkgdir}$_prefix"/"$_lib32name"/wine/
 		ln -s ../../"$_lib64name"/wine/x86_64-windows ./
   		ln -s ../../"$_lib64name"/wine/x86_64-unix ./
 		cd "${pkgdir}$_prefix"/"$_lib64name"/wine/
 		ln -s ../../"$_lib32name"/wine/i386-windows ./
-		if [ "$_NOLIB32" != "wow64" ]; then
-			ln -s ../../"$_lib32name"/wine/i386-unix ./
-		fi
+		ln -s ../../"$_lib32name"/wine/i386-unix ./
 	fi
 
 	# strip
