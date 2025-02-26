@@ -282,6 +282,12 @@ build_wine_tkg() {
     ## prepare step end
   fi
 
+  if (cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8c3f205696571558a6fae42314370fbd7cc14a12 HEAD); then
+    local _new_makefiles="true"
+  else
+    local _new_makefiles="false"
+  fi
+
   pkgver=$(pkgver)
 
   _polish
@@ -303,10 +309,18 @@ build_wine_tkg() {
     local _lib32name="lib"
     local _lib64name="lib"
   elif [ -e /lib ] && [ -e /lib64 ] && [ -d /usr/lib ] && [ -d /usr/lib32 ] && [ "$_EXTERNAL_INSTALL" != "proton" ]; then
-    local _lib32name="lib32"
+    if [ "$_new_makefiles" = "true" ]; then
+      local _lib32name="lib"
+    else
+      local _lib32name="lib32"
+    fi
     local _lib64name="lib"
   else
-    local _lib32name="lib"
+    if [ "$_new_makefiles" = "true" ]; then
+      local _lib32name="lib64"
+    else
+      local _lib32name="lib"
+    fi
     local _lib64name="lib64"
   fi
 
