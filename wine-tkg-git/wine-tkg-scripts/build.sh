@@ -278,13 +278,15 @@ _package_nomakepkg() {
 	fi
 
 	# This fix for new makefiles. Should work for old wine
-	if [ "$_NOLIB32" = "false" ]; then
-		cd "$_prefix"/"$_lib32name"/wine/
+	if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ "$_NOLIB32" != "true" ] && [ "$_new_makefiles" = "true" ]; then
+		mkdir -v "$_prefix"/lib/ && mkdir -v "$_prefix"/lib/wine
+		cd "$_prefix"/lib/wine/
 		ln -s ../../"$_lib64name"/wine/x86_64-windows ./
   		ln -s ../../"$_lib64name"/wine/x86_64-unix ./
-		cd "$_prefix"/"$_lib64name"/wine/
-		ln -s ../../"$_lib32name"/wine/i386-windows ./
-		ln -s ../../"$_lib32name"/wine/i386-unix ./
+		ln -s ../../"$_lib64name"/wine/i386-windows ./
+		if [ "$_NOLIB32" != "wow64" ]; then
+			ln -s ../../"$_lib64name"/wine/i386-unix ./
+		fi
 	fi
 
 	# strip
