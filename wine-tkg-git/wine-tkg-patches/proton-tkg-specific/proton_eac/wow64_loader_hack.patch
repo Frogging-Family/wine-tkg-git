@@ -1,0 +1,104 @@
+From 621e287ab112007bfb3f7630d1aa7d4035d3b265 Mon Sep 17 00:00:00 2001
+From: Vingian <89702391+Vingian@users.noreply.github.com>
+Date: Mon, 24 Feb 2025 15:07:47 -0300
+Subject: [PATCH] Wine 10.2+ EAC temp fix.
+
+The EAC, in some games, expects the 64-bit loader to be named wine64.
+This is just a temporary fix until EAC gets updated.
+---
+ configure.ac             | 11 +++++++++--
+ dlls/ntdll/unix/loader.c | 15 +++++++++++++++
+ loader/Makefile.in       |  8 ++++++++
+ 3 files changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/configure.ac b/configure.ac
+index dd139950e10..c03a5c8e760 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -2033,7 +2033,13 @@ fi
+ 
+ dnl **** Platform-specific checks ****
+ 
+-AC_SUBST(WINELOADER_PROGRAMS,"wine")
++case "$HOST_ARCH,$PE_ARCHS" in
++  x86_64,*i386*) wine_binary="wine" ;;
++  x86_64,*) wine_binary="wine64" ;;
++  *) wine_binary="wine" ;;
++esac
++test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine)
++AC_SUBST(WINELOADER_PROGRAMS,"$wine_binary")
+ 
+ case $host_os in
+   linux*)
+@@ -2046,7 +2052,8 @@ esac
+ 
+ if test "$wine_use_preloader" = "yes"
+ then
+-  WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS wine-preloader"
++  test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine-preloader)
++  WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS $wine_binary-preloader"
+   AC_DEFINE(HAVE_WINE_PRELOADER, 1, [Define to 1 if the Wine preloader is being used.])
+ fi
+ 
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 0bade5b35f0..38c16598822 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -476,7 +476,11 @@ static void init_paths(void)
+ 
+     if ((build_dir = remove_tail( ntdll_dir, "/dlls/ntdll" )))
+     {
++#ifdef _WIN64
++        wineloader = build_path( build_dir, "loader/wine64" );
++#else
+         wineloader = build_path( build_dir, "loader/wine" );
++#endif
+         alt_build_dir = realpath_dirname( build_path( build_dir, "loader-wow64" ));
+     }
+     else
+@@ -484,7 +488,11 @@ static void init_paths(void)
+         if (!(dll_dir = remove_tail( ntdll_dir, get_so_dir(current_machine) ))) dll_dir = ntdll_dir;
+         bin_dir = build_relative_path( dll_dir, LIBDIR "/wine", BINDIR );
+         data_dir = build_relative_path( dll_dir, LIBDIR "/wine", DATADIR "/wine" );
++#ifdef _WIN64
++        wineloader = build_path( ntdll_dir, "wine64" );
++#else
+         wineloader = build_path( ntdll_dir, "wine" );
++#endif
+     }
+ 
+     set_dll_path();
+@@ -514,10 +522,17 @@ char *get_alternate_wineloader( WORD machine )
+         machine = get_alt_machine( current_machine );
+     }
+ 
++#ifdef _WIN64
+     if (!build_dir)
+         asprintf( &ret, "%s%s/wine", dll_dir, get_so_dir( machine ));
+     else if (alt_build_dir)
+         asprintf( &ret, "%s/loader/wine", alt_build_dir );
++#else
++    if (!build_dir)
++        asprintf( &ret, "%s%s/wine64", dll_dir, get_so_dir( machine ));
++    else if (alt_build_dir)
++        asprintf( &ret, "%s/loader/wine64", alt_build_dir );
++#endif
+ 
+     return ret;
+ }
+diff --git a/loader/Makefile.in b/loader/Makefile.in
+index a9ca82f3321..01a48b01a53 100644
+--- a/loader/Makefile.in
++++ b/loader/Makefile.in
+@@ -19,3 +19,11 @@ wine_LDFLAGS = $(WINELOADER_LDFLAGS) $(LDEXECFLAGS) $(PTHREAD_LIBS)
+ wine_preloader_OBJS = preloader.o preloader_mac.o
+ wine_preloader_DEPS = $(WINELOADER_DEPENDS)
+ wine_preloader_LDFLAGS = $(WINEPRELOADER_LDFLAGS)
++
++wine64_OBJS = main.o
++wine64_DEPS = $(WINELOADER_DEPENDS)
++wine64_LDFLAGS = $(WINELOADER_LDFLAGS) $(LDEXECFLAGS) $(PTHREAD_LIBS)
++
++wine64_preloader_OBJS = preloader.o preloader_mac.o
++wine64_preloader_DEPS = $(WINELOADER_DEPENDS)
++wine64_preloader_LDFLAGS = $(WINEPRELOADER_LDFLAGS)
