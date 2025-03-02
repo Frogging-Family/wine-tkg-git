@@ -282,7 +282,7 @@ build_wine_tkg() {
     ## prepare step end
   fi
 
-  if (cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8c3f205696571558a6fae42314370fbd7cc14a12 HEAD); then
+  if ( [ "$_unfrog" != "true" ] && cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 8c3f205696571558a6fae42314370fbd7cc14a12 HEAD ); then
     local _new_makefiles="true"
   else
     local _new_makefiles="false"
