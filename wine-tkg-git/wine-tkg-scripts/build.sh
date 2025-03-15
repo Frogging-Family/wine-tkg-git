@@ -273,7 +273,7 @@ _package_nomakepkg() {
 
 	# Fixes compatibility with installation scripts (like winetricks) that use
 	# the wine64 binary, which is not present in WoW64 builds.
-	if [ "$_NOLIB32" = "wow64" ] || [ "$_new_makefiles" ]; then
+	if [ "$_NOLIB32" = "wow64" ] || [ "$_new_makefiles" = "true" ]; then
 		(cd "$_prefix/bin" && ln -s wine wine64)
 	fi
 
