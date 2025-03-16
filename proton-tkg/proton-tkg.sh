@@ -1067,12 +1067,6 @@ else
         cp -v dxvk/x64/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d8.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path64
         cp -v dxvk/x32/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d8.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path32
       fi
-      if [ -e dxvk/x64/dxvk_config.dll ]; then
-        cp -v dxvk/x64/dxvk_config.dll $_proton_dxvk_path64
-      fi
-      if [ -e dxvk/x32/dxvk_config.dll ]; then
-        cp -v dxvk/x32/dxvk_config.dll $_proton_dxvk_path32
-      fi
     fi
 
     if [ "$_proton_nvapi_disable" != "true" ]; then
@@ -1166,14 +1160,6 @@ else
       echo -e "\nApplying $_patchname"
       patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
       cd "$_nowhere"
-      # Patch our proton script to handle dxvk_config lib
-      if [ -e "$_nowhere"/dxvk/x64/dxvk_config.dll ]; then
-        cd "$_nowhere/proton_tkg_$_protontkg_version"
-        _patchname="dxvk_config_support.patch"
-        echo -e "\nApplying $_patchname"
-        patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
-        cd "$_nowhere"
-      fi
     fi
 
     # Patch our makepkg version of the proton script to not create default prefix and use /tmp/dist.lock
@@ -1241,9 +1227,6 @@ else
     fi
     if [ -n "$_proton_dxvk_hud" ]; then
       sed -i "s|.*DXVK_HUD.*|     \"DXVK_HUD\": \"${_proton_dxvk_hud}\",|g" "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
-    if [ "$_use_dxvk" != "false" ] && [ "$_dxvk_dxgi" != "true" ]; then
-      sed -i 's/.*PROTON_USE_WINE_DXGI.*/     "PROTON_USE_WINE_DXGI": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
     fi
     if [ -n "$_proton_shadercache_path" ]; then
       sed -i "s|.*PROTON_BYPASS_SHADERCACHE_PATH.*|     \"PROTON_BYPASS_SHADERCACHE_PATH\": \"${_proton_shadercache_path}\",|g" "proton_tkg_$_protontkg_version/user_settings.py"

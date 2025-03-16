@@ -50,7 +50,6 @@ _exit_cleanup() {
     echo "_proton_winetricks=${_proton_winetricks}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_use_steamhelper=${_proton_use_steamhelper}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_mf_hacks=${_proton_mf_hacks}" >> "$_proton_tkg_path"/proton_tkg_token
-    echo "_dxvk_dxgi=${_dxvk_dxgi}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_use_dxvk=${_use_dxvk}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_dxvk_version=${_dxvk_version}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_use_vkd3dlib='${_use_vkd3dlib}'" >> "$_proton_tkg_path"/proton_tkg_token
@@ -298,7 +297,6 @@ _init() {
     _use_mono="true"
     if [ "$_use_dxvk" = "true" ] || [ "$_use_dxvk" = "release" ]; then
       _use_dxvk="release"
-      _dxvk_dxgi="true"
     fi
     #if [ "$_ispkgbuild" = "true" ]; then
     #  _steamvr_support="false"
@@ -1044,7 +1042,6 @@ _prepare() {
                    "$_where/wine-tkg-patches/proton/proton-bcrypt/proton-bcrypt"
                    "$_where/wine-tkg-patches/misc/josh-flat-theme/josh-flat-theme"
                    "$_where/wine-tkg-patches/proton/proton-win10-default/proton-win10-default"
-                   "$_where/wine-tkg-patches/proton/dxvk_config/dxvk_config"
                    "$_where/wine-tkg-patches/proton-tkg-specific/proton_battleye/proton_battleye"
                    "$_where/wine-tkg-patches/proton-tkg-specific/proton_eac/proton_eac" ) && _patchpathloader
 
@@ -1164,11 +1161,6 @@ _polish() {
 	  fi
 	  if [ "$_use_legacy_gallium_nine" = "true" ]; then
 	    _version_tags+=(Nine)
-	  fi
-	  if [ "$_use_vkd3dlib" != "true" ]; then
-	    if [ "$_dxvk_dxgi" != "true" ] && git merge-base --is-ancestor 74dc0c5df9c3094352caedda8ebe14ed2dfd615e HEAD; then
-	      _version_tags+=(Vkd3d DXVK-Compatible)
-	    fi
 	  fi
 	  if [ "$_versioning_string" = "wine_srcdir" ]; then
 	    sed -i "s/\\\\\"\\\\\\\1.*\"/\\\\\"\\\\\\\1  ( ${_version_tags[*]} )\\\\\"/g" "${_versioning_path}"
