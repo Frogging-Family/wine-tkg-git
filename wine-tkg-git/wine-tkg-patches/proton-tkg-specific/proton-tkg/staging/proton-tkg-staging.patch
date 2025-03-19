@@ -3456,7 +3456,7 @@ index 9f00e45..67d071a 100644
  
 +    env_str = getenv("WINE_SIMULATE_WRITECOPY");
 +    if (env_str) simulate_writecopy = atoi(env_str);
-+    else if (main_argc > 1 && strstr(main_argv[1], "UplayWebCore.exe")) simulate_writecopy = TRUE;
++    else if (sgi) simulate_writecopy = !strcmp(sgi, "1608730");
 +
      env_str = getenv("SteamGameId");
      if (env_str && !strcmp(env_str, "50130"))
@@ -3477,16 +3477,6 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 index 59c0e6d..9a7af20 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
-@@ -1107,7 +1107,8 @@ static const char *get_prot_str( BYTE prot )
-     buffer[0] = (prot & VPROT_COMMITTED) ? 'c' : '-';
-     buffer[1] = (prot & VPROT_GUARD) ? 'g' : ((prot & VPROT_WRITEWATCH) ? 'H' : '-');
-     buffer[2] = (prot & VPROT_READ) ? 'r' : '-';
--    buffer[3] = (prot & VPROT_WRITECOPY) ? 'W' : ((prot & VPROT_WRITE) ? 'w' : '-');
-+    buffer[3] = (prot & VPROT_WRITECOPY) ? (prot & VPROT_WRITTEN ? 'w' : 'W')
-+        : ((prot & VPROT_WRITE) ? 'w' : '-');
-     buffer[4] = (prot & VPROT_EXEC) ? 'x' : '-';
-     buffer[5] = 0;
-     return buffer;
 @@ -4730,6 +4731,33 @@ NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T
          {
              old = get_win32_prot( vprot, view->protect );
@@ -3495,10 +3485,10 @@ index 59c0e6d..9a7af20 100644
 +            if (simulate_writecopy && status == STATUS_SUCCESS
 +                && ((old == PAGE_WRITECOPY || old == PAGE_EXECUTE_WRITECOPY)))
 +            {
-+                TRACE("Setting VPROT_WRITTEN.\n");
++                TRACE("Setting VPROT_COPIED.\n");
 +
-+                set_page_vprot_bits(base, size, VPROT_WRITTEN, 0);
-+                vprot |= VPROT_WRITTEN;
++                set_page_vprot_bits(base, size, VPROT_COPIED, 0);
++                vprot |= VPROT_COPIED;
 +                old = get_win32_prot( vprot, view->protect );
 +            }
 +            else if (status == STATUS_SUCCESS && (view->protect & SEC_IMAGE) &&
