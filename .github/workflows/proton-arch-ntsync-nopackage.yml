@@ -1,0 +1,59 @@
+name: Proton nopackage Arch Linux CI
+
+on:
+  schedule:
+    - cron: '25 9,21 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
+          pacman -Syu --noconfirm base-devel sudo lib32-jack2 git vulkan-headers
+
+      - name: Create User
+        run: |
+          useradd -m -G wheel -s /bin/bash user
+          echo "user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+      - name: Build and Install ntsync-header from PKGBUILD
+        run: |
+          sudo -u user bash -c "
+            cd ~
+            git clone https://aur.archlinux.org/ntsync.git
+            cd ntsync
+            makepkg -si --noconfirm
+          "
+
+      - name: Compile Proton-TKG
+        run: |
+          chown -R user:user $PWD
+          export CARGO_HOME="$PWD"
+          sudo -u user bash -c "
+            cd proton-tkg
+            sed -i 's/uninstaller=\"false\"/uninstaller=\"true\"/' proton-tkg.cfg
+            sed -i 's/autoinstall=\"false\"/autoinstall=\"true\"/' proton-tkg.cfg
+            sed -i 's/LOCAL_PRESET=\"\"/LOCAL_PRESET=\"none\"/' proton-tkg.cfg
+            sed -i 's/build_gstreamer=\"false\"/build_gstreamer=\"true\"/' proton-tkg.cfg
+            sed -i 's/lib32_gstreamer=\"false\"/lib32_gstreamer=\"true\"/' proton-tkg.cfg
+            sed -i 's/wayland_driver=\"false\"/wayland_driver=\"true\"/' proton-tkg.cfg
+            sed -i 's/_use_ntsync=\"false\"/_use_ntsync=\"true\"/' proton-tkg.cfg
+            sed -i 's/_use_esync=\"true\"/_use_esync=\"false\"/' proton-tkg.cfg
+            sed -i 's/_use_fsync=\"true\"/_use_fsync=\"false\"/' proton-tkg.cfg
+            touch tarplz
+            yes | ./proton-tkg.sh
+          "
+
+      - name: Archive Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: proton-tkg-build
+          path: proton-tkg/built/*.tar
