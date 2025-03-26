@@ -3450,13 +3450,12 @@ index 9f00e45..67d071a 100644
  
  static void hacks_init(void)
  {
-@@ -1367,6 +1368,10 @@ static void hacks_init(void)
+@@ -1367,6 +1368,9 @@ static void hacks_init(void)
      if (fsync_simulate_sched_quantum)
          ERR("HACK: Simulating sched quantum in fsync.\n");
  
 +    env_str = getenv("WINE_SIMULATE_WRITECOPY");
 +    if (env_str) simulate_writecopy = atoi(env_str);
-+    else if (sgi) simulate_writecopy = !strcmp(sgi, "1608730");
 +
      env_str = getenv("SteamGameId");
      if (env_str && !strcmp(env_str, "50130"))
@@ -3477,6 +3476,37 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 index 59c0e6d..9a7af20 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
+@@ -122,6 +122,7 @@ struct file_view
+ #define VPROT_GUARD      0x10
+ #define VPROT_COMMITTED  0x20
+ #define VPROT_WRITEWATCH 0x40
++#define VPROT_COPIED     0x80
+ /* per-mapping protection flags */
+ #define VPROT_ARM64EC          0x0100  /* view may contain ARM64EC code */
+ #define VPROT_SYSTEM           0x0200  /* system view (underlying mmap not under our control) */
+@@ -1102,7 +1103,8 @@ static const char *get_prot_str( BYTE prot )
+     buffer[0] = (prot & VPROT_COMMITTED) ? 'c' : '-';
+     buffer[1] = (prot & VPROT_GUARD) ? 'g' : ((prot & VPROT_WRITEWATCH) ? 'H' : '-');
+     buffer[2] = (prot & VPROT_READ) ? 'r' : '-';
+-    buffer[3] = (prot & VPROT_WRITECOPY) ? 'W' : ((prot & VPROT_WRITE) ? 'w' : '-');
++    buffer[3] = (prot & VPROT_WRITECOPY) ? (prot & VPROT_COPIED ? 'w' : 'W')
++        : ((prot & VPROT_WRITE) ? 'w' : '-');
+     buffer[4] = (prot & VPROT_EXEC) ? 'x' : '-';
+     buffer[5] = 0;
+     return buffer;
+@@ -1517,7 +1519,11 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
+  */
+ static DWORD get_win32_prot( BYTE vprot, unsigned int map_prot )
+ {
+-    DWORD ret = VIRTUAL_Win32Flags[vprot & 0x0f];
++    DWORD ret;
++
++    if ((vprot & (VPROT_COPIED | VPROT_WRITECOPY)) == (VPROT_COPIED | VPROT_WRITECOPY))
++        vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
++    ret = VIRTUAL_Win32Flags[vprot & 0x0f];
+     if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
+     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
+     return ret;
 @@ -4730,6 +4731,33 @@ NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T
          {
              old = get_win32_prot( vprot, view->protect );
@@ -3505,7 +3535,7 @@ index 59c0e6d..9a7af20 100644
 +                if(!wcsicmp(p, gta5W))
 +                {
 +                    FIXME("HACK: changing GTA5.exe vprot\n");
-+                    set_page_vprot_bits(base, page_size, VPROT_WRITTEN, 0);
++                    set_page_vprot_bits(base, page_size, VPROT_COPIED, 0);
 +                }
 +            }
          }
