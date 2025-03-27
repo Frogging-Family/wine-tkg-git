@@ -639,7 +639,7 @@ diff --color -r -u -N a/dlls/ntdll/Makefile.in b/dlls/ntdll/Makefile.in
 diff --color -r -u -N a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
 --- a/dlls/ntdll/unix/esync.c	2025-02-26 17:47:50.925968525 +0500
 +++ b/dlls/ntdll/unix/esync.c	1970-01-01 05:00:00.000000000 +0500
-@@ -1,1337 +0,0 @@
+@@ -1,1325 +0,0 @@
 -/*
 - * eventfd-based synchronization objects
 - *
@@ -1792,22 +1792,10 @@ diff --color -r -u -N a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
 -                        {
 -                            /* We were too slow. Put everything back. */
 -                            value = 1;
--                            for (j = i - 1; j >= 0; j--)
+-                            for (j = i; j >= 0; j--)
 -                            {
--                                struct esync *obj = objs[j];
--
--                                if (obj->type == ESYNC_MUTEX)
--                                {
--                                    struct mutex *mutex = obj->shm;
--
--                                    if (mutex->tid == GetCurrentThreadId())
--                                        continue;
--                                }
--                                if (write( fds[j].fd, &value, sizeof(value) ) == -1)
--                                {
--                                    ERR("write failed.\n");
+-                                if (write( obj->fd, &value, sizeof(value) ) == -1)
 -                                    return errno_to_status( errno );
--                                }
 -                            }
 -
 -                            goto tryagain;  /* break out of two loops and a switch */
@@ -4178,9 +4166,9 @@ diff --color -r -u -N a/server/console.c b/server/console.c
  struct screen_buffer;
  
 @@ -62,6 +61,7 @@
-     struct list                  screen_buffers;/* attached screen buffers */
-     struct list                  inputs;        /* attached console inputs */
-     struct list                  outputs;       /* attached console outputs */
+     struct fd                   *fd;            /* for bare console, attached input fd */
+     struct async_queue           ioctl_q;       /* ioctl queue */
+     struct async_queue           read_q;        /* read queue */
 +    struct inproc_sync          *inproc_sync;   /* in-process synchronization object */
  };
  
@@ -4271,11 +4259,11 @@ diff --color -r -u -N a/server/console.c b/server/console.c
  static const struct object_ops screen_buffer_ops =
  {
 @@ -232,7 +234,6 @@
-     add_queue,                        /* add_queue */
-     remove_queue,                     /* remove_queue */
-     screen_buffer_signaled,           /* signaled */
+     screen_buffer_add_queue,          /* add_queue */
+     NULL,                             /* remove_queue */
+     NULL,                             /* signaled */
 -    NULL,                             /* get_esync_fd */
-     no_satisfied,                     /* satisfied */
+     NULL,                             /* satisfied */
      no_signal,                        /* signal */
      screen_buffer_get_fd,             /* get_fd */
 @@ -245,6 +246,7 @@
@@ -4311,9 +4299,9 @@ diff --color -r -u -N a/server/console.c b/server/console.c
  
  static const struct object_ops console_input_ops =
 @@ -320,7 +323,6 @@
-     add_queue,                        /* add_queue */
-     remove_queue,                     /* remove_queue */
-     console_input_signaled,           /* signaled */
+     console_input_add_queue,          /* add_queue */
+     NULL,                             /* remove_queue */
+     NULL,                             /* signaled */
 -    NULL,                             /* get_esync_fd */
      no_satisfied,                     /* satisfied */
      no_signal,                        /* signal */
@@ -4335,9 +4323,9 @@ diff --color -r -u -N a/server/console.c b/server/console.c
  
  static const struct object_ops console_output_ops =
 @@ -378,7 +382,6 @@
-     add_queue,                        /* add_queue */
-     remove_queue,                     /* remove_queue */
-     console_output_signaled,          /* signaled */
+     console_output_add_queue,         /* add_queue */
+     NULL,                             /* remove_queue */
+     NULL,                             /* signaled */
 -    NULL,                             /* get_esync_fd */
      no_satisfied,                     /* satisfied */
      no_signal,                        /* signal */
@@ -4371,9 +4359,9 @@ diff --color -r -u -N a/server/console.c b/server/console.c
      console->fd            = NULL;
      console->last_id       = 0;
 +    console->inproc_sync   = NULL;
-     list_init( &console->screen_buffers );
-     list_init( &console->inputs );
-     list_init( &console->outputs );
+     init_async_queue( &console->ioctl_q );
+     init_async_queue( &console->read_q );
+ 
 @@ -588,6 +593,7 @@
      }
      list_add_tail( &server->queue, &ioctl->entry );
@@ -4552,9 +4540,9 @@ diff --color -r -u -N a/server/console.c b/server/console.c
          server->console->signaled = 1;
          wake_up( &server->console->obj, 0 );
 +        set_inproc_event( server->console->inproc_sync );
-         LIST_FOR_EACH_ENTRY( screen_buffer, &server->console->screen_buffers, struct screen_buffer, entry )
-             wake_up( &screen_buffer->obj, 0 );
-         LIST_FOR_EACH_ENTRY( input, &server->console->inputs, struct console_input, entry )
+     }
+ 
+     if (req->read)
 @@ -1593,8 +1647,8 @@
          /* set result of previous ioctl */
          ioctl = LIST_ENTRY( list_head( &server->queue ), struct console_host_ioctl, entry );
