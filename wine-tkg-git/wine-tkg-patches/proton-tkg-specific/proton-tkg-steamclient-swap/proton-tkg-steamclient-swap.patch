@@ -89,10 +89,82 @@ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
 index 803d8079213..028846f346a 100644
 --- a/dlls/ntdll/unix/loader.c
 +++ b/dlls/ntdll/unix/loader.c
-@@ -972,6 +972,75 @@ static NTSTATUS load_so_dll( void *args )
-     return status;
+@@ -530,11 +530,42 @@
+     WORD machine = pe_info->machine;
+     ULONGLONG res_start = pe_info->base;
+     ULONGLONG res_end = pe_info->base + pe_info->map_size;
++    const char *ld_preload = getenv( "LD_PRELOAD" );
+     char preloader_reserve[64], socket_env[64];
+ 
+     if (pe_info->wine_fakedll) res_start = res_end = 0;
+     if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady) machine = native_machine;
+ 
++    /* HACK: Unset LD_PRELOAD before executing explorer.exe to disable buggy gameoverlayrenderer.so */
++    if (ld_preload && argv[2] && !strcmp( argv[2], "C:\\windows\\system32\\explorer.exe" ) &&
++        argv[3] && !strcmp( argv[3], "/desktop" ))
++    {
++        static char const gorso[] = "gameoverlayrenderer.so";
++        static int gorso_len = sizeof(gorso) - 1;
++        int len = strlen( ld_preload );
++        char *next, *tmp, *env = malloc( sizeof("LD_PRELOAD=") + len );
++
++        if (!env) return STATUS_NO_MEMORY;
++        strcpy( env, "LD_PRELOAD=" );
++        strcat( env, ld_preload );
++
++        tmp = env + 11;
++        do
++        {
++            if (!(next = strchr( tmp, ':' ))) next = tmp + strlen( tmp );
++            if (next - tmp >= gorso_len && strncmp( next - gorso_len, gorso, gorso_len ) == 0)
++            {
++                if (*next) memmove( tmp, next + 1, strlen(next) );
++                else *tmp = 0;
++                next = tmp;
++            }
++            else tmp = next + 1;
++        }
++        while (*next);
++
++        putenv( env );
++    }
++
+     signal( SIGPIPE, SIG_DFL );
+ 
+     snprintf( socket_env, sizeof(socket_env), "WINESERVERSOCKET=%u", socketfd );
+@@ -905,7 +936,6 @@
+     return STATUS_SUCCESS;
  }
-
+ 
+-
+ /***********************************************************************
+  *           load_so_dll
+  */
+@@ -1070,20 +1100,6 @@
+ 
+ #endif /* SO_DLLS_SUPPORTED */
+ 
+-
+-static const unixlib_entry_t unix_call_funcs[] =
+-{
+-    load_so_dll,
+-    unwind_builtin_dll,
+-    unixcall_wine_dbg_write,
+-    unixcall_wine_server_call,
+-    unixcall_wine_server_fd_to_handle,
+-    unixcall_wine_server_handle_to_fd,
+-    unixcall_wine_spawnvp,
+-    system_time_precise,
+-};
+-
+-
+ #ifdef _WIN64
+ 
+ static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
+@@ -1572,6 +1588,109 @@
+     return get_rva( module, data->VirtualAddress );
+ }
+ 
 +static void *steamclient_srcs[128];
 +static void *steamclient_tgts[128];
 +static int steamclient_count;
@@ -112,8 +184,22 @@ index 803d8079213..028846f346a 100644
 +    return NULL;
 +}
 +
++static void steamclient_write_jump(void *src_addr, void *tgt_addr)
++{
++#ifdef _WIN64
++    static const char mov[] = {0x48, 0xb8};
++#else
++    static const char mov[] = {0xb8};
++#endif
++    static const char jmp[] = {0xff, 0xe0};
++    memcpy(src_addr, mov, sizeof(mov));
++    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
++    memcpy((char *)src_addr + sizeof(mov) + sizeof(tgt_addr), jmp, sizeof(jmp));
++}
++
 +static NTSTATUS steamclient_setup_trampolines( void *args )
 +{
++    static int noexec_cached = -1;
 +    struct steamclient_setup_trampolines_params *params = args;
 +    HMODULE src_mod = params->src_mod, tgt_mod = params->tgt_mod;
 +    SYSTEM_BASIC_INFORMATION info;
@@ -124,9 +210,12 @@ index 803d8079213..028846f346a 100644
 +    const DWORD *names;
 +    SIZE_T size;
 +    void *addr, *src_addr, *tgt_addr;
-+    char *name;
++    char *name, *wsne;
 +    UINT_PTR page_mask;
 +    int i;
++
++    if (noexec_cached == -1)
++        noexec_cached = (wsne = getenv("WINESTEAMNOEXEC")) && atoi(wsne);
 +
 +    virtual_get_system_info( &info, !!NtCurrentTeb()->WowTebOffset );
 +    page_mask = info.PageSize - 1;
@@ -136,7 +225,8 @@ index 803d8079213..028846f346a 100644
 +        if (memcmp(src_sec[i].Name, ".text", 5)) continue;
 +        addr = (void *)(((UINT_PTR)src_mod + src_sec[i].VirtualAddress) & ~page_mask);
 +        size = (src_sec[i].Misc.VirtualSize + page_mask) & ~page_mask;
-+        mprotect(addr, size, PROT_READ);
++        if (noexec_cached) mprotect(addr, size, PROT_READ);
++        else mprotect(addr, size, PROT_READ|PROT_WRITE|PROT_EXEC);
 +    }
 +
 +    src_exp = get_module_data_dir( src_mod, IMAGE_FILE_EXPORT_DIRECTORY, NULL );
@@ -150,7 +240,8 @@ index 803d8079213..028846f346a 100644
 +        assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
 +        steamclient_srcs[steamclient_count] = src_addr;
 +        steamclient_tgts[steamclient_count] = tgt_addr;
-+        steamclient_count++;
++        if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
++        else steamclient_count++;
 +    }
 +
 +    src_addr = (void *)((UINT_PTR)src_mod + src_nt->OptionalHeader.AddressOfEntryPoint);
@@ -158,20 +249,38 @@ index 803d8079213..028846f346a 100644
 +    assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
 +    steamclient_srcs[steamclient_count] = src_addr;
 +    steamclient_tgts[steamclient_count] = tgt_addr;
-+    steamclient_count++;
++    if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
++    else steamclient_count++;
 +
 +    return STATUS_SUCCESS;
 +}
-
- static const unixlib_entry_t unix_call_funcs[] =
- {
-@@ -983,6 +1052,7 @@ static const unixlib_entry_t unix_call_funcs[] =
-     unixcall_wine_server_handle_to_fd,
-     unixcall_wine_spawnvp,
-     system_time_precise,
++
++static const unixlib_entry_t unix_call_funcs[] =
++{
++    load_so_dll,
++    unwind_builtin_dll,
++    unixcall_wine_dbg_write,
++    unixcall_wine_server_call,
++    unixcall_wine_server_fd_to_handle,
++    unixcall_wine_server_handle_to_fd,
++    unixcall_wine_spawnvp,
++    system_time_precise,
 +    steamclient_setup_trampolines,
- };
-
++};
++
+ /***********************************************************************
+  *           load_ntdll_functions
+  */
+@@ -1887,6 +2006,9 @@
+     virtual_map_user_shared_data();
+     init_cpu_info();
+     init_files();
++
++    set_thread_teb( teb );
++
+     init_startup_info();
+     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
+     set_load_order_app_name( main_wargv[0] );
 
 diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
 index 751b0081534..d1b2fb66563 100644
@@ -260,160 +369,6 @@ index 9cb444342fe..475e532b8cf 100644
  };
 
  extern unixlib_handle_t __wine_unixlib_handle;
-
-From 787b1f95b06391ba0bdc22cd431568413bc3f4bf Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
-Date: Wed, 5 Aug 2020 10:35:50 +0200
-Subject: [PATCH] HACK: steam: ntdll: Patch entry points with jumps.
-
-As a preferred alternative to noexec pages which makes debugging
-painful. The noexec can be enabled with WINESTEAMNOEXEC=1 environmnent
-variable.
----
- dlls/ntdll/unix/loader.c | 28 ++++++++++++++++++++++++----
- 1 file changed, 24 insertions(+), 4 deletions(-)
-
-diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index 028846f346a..49876d2d054 100644
---- a/dlls/ntdll/unix/loader.c
-+++ b/dlls/ntdll/unix/loader.c
-@@ -991,8 +991,22 @@ void *steamclient_handle_fault( LPCVOID addr, DWORD err )
-     return NULL;
- }
-
-+static void steamclient_write_jump(void *src_addr, void *tgt_addr)
-+{
-+#ifdef _WIN64
-+    static const char mov[] = {0x48, 0xb8};
-+#else
-+    static const char mov[] = {0xb8};
-+#endif
-+    static const char jmp[] = {0xff, 0xe0};
-+    memcpy(src_addr, mov, sizeof(mov));
-+    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
-+    memcpy((char *)src_addr + sizeof(mov) + sizeof(tgt_addr), jmp, sizeof(jmp));
-+}
-+
- static NTSTATUS steamclient_setup_trampolines( void *args )
- {
-+    static int noexec_cached = -1;
-     struct steamclient_setup_trampolines_params *params = args;
-     HMODULE src_mod = params->src_mod, tgt_mod = params->tgt_mod;
-     SYSTEM_BASIC_INFORMATION info;
-@@ -1003,10 +1017,13 @@ static NTSTATUS steamclient_setup_trampolines( void *args )
-     const DWORD *names;
-     SIZE_T size;
-     void *addr, *src_addr, *tgt_addr;
--    char *name;
-+    char *name, *wsne;
-     UINT_PTR page_mask;
-     int i;
-
-+    if (noexec_cached == -1)
-+        noexec_cached = (wsne = getenv("WINESTEAMNOEXEC")) && atoi(wsne);
-+
-     virtual_get_system_info( &info, !!NtCurrentTeb()->WowTebOffset );
-     page_mask = info.PageSize - 1;
-
-@@ -1015,7 +1032,8 @@ static NTSTATUS steamclient_setup_trampolines( void *args )
-         if (memcmp(src_sec[i].Name, ".text", 5)) continue;
-         addr = (void *)(((UINT_PTR)src_mod + src_sec[i].VirtualAddress) & ~page_mask);
-         size = (src_sec[i].Misc.VirtualSize + page_mask) & ~page_mask;
--        mprotect(addr, size, PROT_READ);
-+        if (noexec_cached) mprotect(addr, size, PROT_READ);
-+        else mprotect(addr, size, PROT_READ|PROT_WRITE|PROT_EXEC);
-     }
-
-     src_exp = get_module_data_dir( src_mod, IMAGE_FILE_EXPORT_DIRECTORY, NULL );
-@@ -1029,7 +1047,8 @@ static NTSTATUS steamclient_setup_trampolines( void *args )
-         assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
-         steamclient_srcs[steamclient_count] = src_addr;
-         steamclient_tgts[steamclient_count] = tgt_addr;
--        steamclient_count++;
-+        if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
-+        else steamclient_count++;
-     }
-
-     src_addr = (void *)((UINT_PTR)src_mod + src_nt->OptionalHeader.AddressOfEntryPoint);
-@@ -1037,7 +1056,8 @@ static NTSTATUS steamclient_setup_trampolines( void *args )
-     assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
-     steamclient_srcs[steamclient_count] = src_addr;
-     steamclient_tgts[steamclient_count] = tgt_addr;
--    steamclient_count++;
-+    if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
-+    else steamclient_count++;
-
-     return STATUS_SUCCESS;
- }
-
-From 901e614e8f3d8913e7f75ccd6cdbabbd0502c53f Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
-Date: Wed, 18 Dec 2019 13:49:00 +0100
-Subject: [PATCH] HACK: proton: ntdll: Strip gameoverlayrenderer.so from
- LD_PRELOAD before executing explorer.exe.
-
-Work around a bug in gameoverlayrenderer which introduces 50ms hangs
-during XCheckIfEvent after approx 40 minutes of gameplay.
-
-The original user32 hack broke Steam overlay in Origin games, and Steam
-Input consequently. This ntdll implementation should be safer as it'll
-modify the environment after the new process has started forking.
-
-Link: https://github.com/ValveSoftware/Proton/issues/3316
-CW-Bug-Id: #18946
----
- dlls/ntdll/unix/loader.c | 31 +++++++++++++++++++++++++++++++
- 1 file changed, 31 insertions(+)
-
-diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index a7e79a828ca..3df74d45bd7 100644
---- a/dlls/ntdll/unix/loader.c
-+++ b/dlls/ntdll/unix/loader.c
-@@ -725,6 +725,7 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_i
-     WORD machine = pe_info->machine;
-     ULONGLONG res_start = pe_info->base;
-     ULONGLONG res_end = pe_info->base + pe_info->map_size;
-+    const char *ld_preload = getenv( "LD_PRELOAD" );
-     char preloader_reserve[64], socket_env[64];
-
-     if (pe_info->image_flags & IMAGE_FLAGS_WineFakeDll) res_start = res_end = 0;
-@@ -759,6 +760,36 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_i
-         else loader = is_child_64bit ? "wine64" : "wine";
-     }
-
-+    /* HACK: Unset LD_PRELOAD before executing explorer.exe to disable buggy gameoverlayrenderer.so */
-+    if (ld_preload && argv[2] && !strcmp( argv[2], "C:\\windows\\system32\\explorer.exe" ) &&
-+        argv[3] && !strcmp( argv[3], "/desktop" ))
-+    {
-+        static char const gorso[] = "gameoverlayrenderer.so";
-+        static int gorso_len = sizeof(gorso) - 1;
-+        int len = strlen( ld_preload );
-+        char *next, *tmp, *env = malloc( sizeof("LD_PRELOAD=") + len );
-+
-+        if (!env) return STATUS_NO_MEMORY;
-+        strcpy( env, "LD_PRELOAD=" );
-+        strcat( env, ld_preload );
-+
-+        tmp = env + 11;
-+        do
-+        {
-+            if (!(next = strchr( tmp, ':' ))) next = tmp + strlen( tmp );
-+            if (next - tmp >= gorso_len && strncmp( next - gorso_len, gorso, gorso_len ) == 0)
-+            {
-+                if (*next) memmove( tmp, next + 1, strlen(next) );
-+                else *tmp = 0;
-+                next = tmp;
-+            }
-+            else tmp = next + 1;
-+        }
-+        while (*next);
-+
-+        putenv( env );
-+    }
-+
-     signal( SIGPIPE, SIG_DFL );
-
-     sprintf( socket_env, "WINESERVERSOCKET=%u", socketfd );
 From 08290ccabc137d205ceec261706d78b021d14fa4 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Tue, 22 Nov 2022 11:08:22 +0100
@@ -804,20 +759,6 @@ CW-Bug-Id: #22218
  dlls/ntdll/unix/unix_private.h  | 1 +
  4 files changed, 14 insertions(+)
 
-diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index 19d30b4f0d5..d3dea1b0dd1 100644
---- a/dlls/ntdll/unix/loader.c
-+++ b/dlls/ntdll/unix/loader.c
-@@ -2138,6 +2138,9 @@ static void start_main_thread(void)
-     virtual_map_user_shared_data();
-     init_cpu_info();
-     init_files();
-+
-+    set_thread_teb( teb );
-+
-     init_startup_info();
-     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
-     set_load_order_app_name( main_wargv[0] );
 diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
 index eb40bda2d94..5b7d460372c 100644
 --- a/dlls/ntdll/unix/signal_i386.c
