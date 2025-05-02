@@ -176,7 +176,7 @@ function build_vrclient {
   #cd ..
 
   export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt --dll -I$_nowhere/proton_dist_tmp/include/wine/windows/ -I$_nowhere/proton_dist_tmp/include/ -I$_nowhere/proton_dist_tmp/include/wine/"
-  export CFLAGS="-O2 -g -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types"
+  export CFLAGS="-O2 -std=gnu17 -g -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types"
   export CXXFLAGS="-Wno-attributes -std=c++0x -O2 -g"
   PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
   if [[ "$_proton_branch" != *3.* ]] && [[ "$_proton_branch" != *4.* ]]; then
@@ -213,14 +213,14 @@ function build_vrclient {
 
   cd build/vrclient.win64
   winemaker $WINEMAKERFLAGS -L"$_nowhere/proton_dist_tmp/$_lib64name/" -L"$_nowhere/proton_dist_tmp/$_lib64name/wine/" -I"$_nowhere/openvr/build/vrclient.win64/vrclient_x64/" -I"$_nowhere/openvr/build/vrclient.win64/" vrclient_x64
-  make -e CC="winegcc -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/openvr/build/vrclient.win64/vrclient_x64" -j$(nproc) && strip --strip-debug vrclient_x64/vrclient_x64.dll.so || exit 1
+  make -e CC="winegcc -std=gnu17 -m64" CXX="wineg++ -m64 $_cxx_addon" -C "$_nowhere/openvr/build/vrclient.win64/vrclient_x64" -j$(nproc) && strip --strip-debug vrclient_x64/vrclient_x64.dll.so || exit 1
   winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win64$_vrclient_longpath64/vrclient_x64.spec" -o vrclient_x64.dll.fake || exit 1
   cd ../..
 
   cd build/vrclient.win32
   if [ "$_NOLIB32" != "true" ]; then
     winemaker $WINEMAKERFLAGS --wine32 -L"$_nowhere/proton_dist_tmp/$_lib32name/" -L"$_nowhere/proton_dist_tmp/$_lib32name/wine/" -I"$_nowhere/openvr/build/vrclient.win32/vrclient/" -I"$_nowhere/openvr/build/vrclient.win32/" vrclient
-    make -e CC="winegcc -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/openvr/build/vrclient.win32/vrclient" -j$(nproc) && strip --strip-debug vrclient/vrclient.dll.so || exit 1
+    make -e CC="winegcc -std=gnu17 -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/openvr/build/vrclient.win32/vrclient" -j$(nproc) && strip --strip-debug vrclient/vrclient.dll.so || exit 1
   fi
   winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win32$_vrclient_longpath32/vrclient.spec" -o vrclient.dll.fake || exit 1
   cd "$_nowhere"
@@ -252,7 +252,7 @@ function build_lsteamclient {
   cd "$_nowhere"/Proton
   source "$_nowhere/proton_tkg_token"
   export WINEMAKERFLAGS="--nosource-fix --nolower-include --nodlls --nomsvcrt -I$_nowhere/proton_dist_tmp/include/wine -I$_wine_tkg_git_path/src/$_winesrcdir/include -I$_wine_tkg_git_path/src/$_winesrcdir/include/wine"
-  export CFLAGS="-Wno-attributes -O2 -g"
+  export CFLAGS="-Wno-attributes -O2 -std=gnu17 -g"
   export CXXFLAGS="-fpermissive -Wno-attributes -O2 -g"
   export PATH="$_nowhere"/proton_dist_tmp/bin:$PATH
   if [[ "$_proton_branch" != *3.* ]] && [[ "$_proton_branch" != *4.* ]]; then
