@@ -1,0 +1,1042 @@
+From dead93698851682266368cb49b920a850e0c95ca Mon Sep 17 00:00:00 2001
+From: Federico Dossena <info@fdossena.com>
+Date: Wed, 30 Apr 2025 14:36:07 +0200
+Subject: [PATCH 1/2] De-steamify proton's wine
+
+---
+ dlls/advapi32/advapi.c          |  34 +++--
+ dlls/kernelbase/process.c       |  15 ---
+ dlls/ntdll/loader.c             |  69 +---------
+ dlls/ntdll/unix/env.c           |   3 +-
+ dlls/ntdll/unix/loader.c        | 168 +-----------------------
+ dlls/ntdll/unix/signal_i386.c   |   7 -
+ dlls/ntdll/unix/signal_x86_64.c |   7 -
+ dlls/ntdll/unix/unix_private.h  |   1 -
+ dlls/ntdll/unixlib.h            |   7 -
+ dlls/shell32/shellpath.c        | 219 +++++++++++++++++++++++++++-----
+ dlls/winex11.drv/window.c       |  15 +--
+ programs/wineboot/wineboot.c    |  33 +++++
+ programs/winebrowser/main.c     |  16 ---
+ programs/winedbg/debugger.h     |   2 -
+ programs/winedbg/tgt_active.c   |  48 -------
+ programs/winedbg/winedbg.c      |  10 +-
+ 16 files changed, 239 insertions(+), 415 deletions(-)
+
+diff --git a/dlls/advapi32/advapi.c b/dlls/advapi32/advapi.c
+index 127cec57252..2284e92b263 100644
+--- a/dlls/advapi32/advapi.c
++++ b/dlls/advapi32/advapi.c
+@@ -44,15 +44,14 @@ WINE_DEFAULT_DEBUG_CHANNEL(advapi);
+  */
+ BOOL WINAPI GetUserNameA( LPSTR name, LPDWORD size )
+ {
+-    static const char steamuserA[] = {'s','t','e','a','m','u','s','e','r',0};
+-    if(*size < ARRAY_SIZE(steamuserA)){
+-        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+-        *size = ARRAY_SIZE(steamuserA);
+-        return FALSE;
+-    }
+-    memcpy(name, steamuserA, sizeof(steamuserA));
+-    *size = ARRAY_SIZE(steamuserA);
+-    return TRUE;
++    DWORD len = GetEnvironmentVariableA( "WINEUSERNAME", name, *size );
++    BOOL ret;
++
++    if (!len) return FALSE;
++    if ((ret = (len < *size))) len++;
++    else SetLastError( ERROR_INSUFFICIENT_BUFFER );
++    *size = len;
++    return ret;
+ }
+ 
+ /******************************************************************************
+@@ -60,15 +59,14 @@ BOOL WINAPI GetUserNameA( LPSTR name, LPDWORD size )
+  */
+ BOOL WINAPI GetUserNameW( LPWSTR name, LPDWORD size )
+ {
+-    static const WCHAR steamuserW[] = {'s','t','e','a','m','u','s','e','r',0};
+-    if(*size < ARRAY_SIZE(steamuserW)){
+-        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+-        *size = ARRAY_SIZE(steamuserW);
+-        return FALSE;
+-    }
+-    memcpy(name, steamuserW, sizeof(steamuserW));
+-    *size = ARRAY_SIZE(steamuserW);
+-    return TRUE;
++    DWORD len = GetEnvironmentVariableW( L"WINEUSERNAME", name, *size );
++    BOOL ret;
++
++    if (!len) return FALSE;
++    if ((ret = (len < *size))) len++;
++    else SetLastError( ERROR_INSUFFICIENT_BUFFER );
++    *size = len;
++    return ret;
+ }
+ 
+ /******************************************************************************
+diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
+index 692d859a28d..31cd9553344 100644
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -1304,21 +1304,6 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenProcess( DWORD access, BOOL inherit, DWORD i
+     attr.SecurityDescriptor = NULL;
+     attr.SecurityQualityOfService = NULL;
+ 
+-    /* PROTON HACK:
+-     * On Windows, the Steam client puts its process ID into the registry
+-     * at:
+-     *
+-     *   [HKCU\Software\Valve\Steam\ActiveProcess]
+-     *   PID=dword:00000008
+-     *
+-     * Games get that pid from the registry and then query it with
+-     * OpenProcess to ensure Steam is running. Since we aren't running the
+-     * Windows Steam in Wine, instead we hack this magic number into the
+-     * registry and then substitute the game's process itself in its place
+-     * so it can query a valid process.
+-     */
+-    if (id == 0xfffe) id = GetCurrentProcessId();
+-
+     cid.UniqueProcess = ULongToHandle(id);
+     cid.UniqueThread  = 0;
+ 
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 75669e95b72..2e3297a4ec3 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -86,7 +86,7 @@ const WCHAR windows_dir[] = L"C:\\windows";
+ const WCHAR system_dir[] = L"C:\\windows\\system32\\";
+ 
+ /* system search path */
+-static const WCHAR system_path[] = L"C:\\windows\\system32;C:\\windows\\system;C:\\windows;C:\\Program Files (x86)\\Steam";
++static const WCHAR system_path[] = L"C:\\windows\\system32;C:\\windows\\system;C:\\windows";
+ 
+ static BOOL is_prefix_bootstrap;  /* are we bootstrapping the prefix? */
+ static BOOL imports_fixup_done = FALSE;  /* set once the imports have been fixed up, before attaching them */
+@@ -2267,19 +2267,6 @@ static NTSTATUS perform_relocations( void *module, IMAGE_NT_HEADERS *nt, SIZE_T
+     return STATUS_SUCCESS;
+ }
+ 
+-static int use_lsteamclient(void)
+-{
+-    WCHAR env[32];
+-    static int use = -1;
+-
+-    if (use != -1) return use;
+-
+-    use = !get_env( L"PROTON_DISABLE_LSTEAMCLIENT", env, sizeof(env) ) || *env == '0';
+-    if (!use)
+-        ERR("lsteamclient disabled.\n");
+-    return use;
+-}
+-
+ /*************************************************************************
+  *		build_module
+  *
+@@ -2290,17 +2277,12 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+                               DWORD flags, BOOL system, WINE_MODREF **pwm )
+ {
+     static const char builtin_signature[] = "Wine builtin DLL";
+-    static HMODULE lsteamclient = NULL;
+     char *signature = (char *)((IMAGE_DOS_HEADER *)*module + 1);
+-    UNICODE_STRING lsteamclient_us;
+     BOOL is_builtin;
+     IMAGE_NT_HEADERS *nt;
+     WINE_MODREF *wm;
+     NTSTATUS status;
+     SIZE_T map_size;
+-    WCHAR *basename, *tmp;
+-    ULONG basename_len;
+-    BOOL is_steamclient32;
+ 
+     if (!(nt = RtlImageNtHeader( *module ))) return STATUS_INVALID_IMAGE_FORMAT;
+ 
+@@ -2321,55 +2303,6 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+ 
+     update_load_config( *module );
+ 
+-    basename = nt_name->Buffer;
+-    if ((tmp = wcsrchr(basename, '\\'))) basename = tmp + 1;
+-    if ((tmp = wcsrchr(basename, '/'))) basename = tmp + 1;
+-    basename_len = wcslen(basename);
+-    if (basename_len >= 4 && !wcscmp(basename + basename_len - 4, L".dll")) basename_len -= 4;
+-
+-    if (use_lsteamclient() && ((is_steamclient32 = !RtlCompareUnicodeStrings(basename, basename_len, L"steamclient", 11, TRUE)) ||
+-         !RtlCompareUnicodeStrings(basename, basename_len, L"steamclient64", 13, TRUE) ||
+-         !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer", 19, TRUE) ||
+-         !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer64", 21, TRUE)) &&
+-        RtlCreateUnicodeStringFromAsciiz(&lsteamclient_us, "lsteamclient.dll") &&
+-        (lsteamclient || LdrLoadDll(load_path, 0, &lsteamclient_us, &lsteamclient) == STATUS_SUCCESS))
+-    {
+-        struct steamclient_setup_trampolines_params params = {.src_mod = *module, .tgt_mod = lsteamclient};
+-        WINE_UNIX_CALL( unix_steamclient_setup_trampolines, &params );
+-        wm->ldr.Flags |= LDR_DONT_RESOLVE_REFS;
+-        flags |= DONT_RESOLVE_DLL_REFERENCES;
+-        if (is_steamclient32)
+-        {
+-            OBJECT_ATTRIBUTES attr;
+-            void *addr = *module;
+-            SIZE_T size = 0x1000;
+-            LARGE_INTEGER offset;
+-            IO_STATUS_BLOCK io;
+-            DWORD protect_old;
+-            HANDLE file;
+-
+-            NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, PAGE_READWRITE, &protect_old );
+-            memset( &attr, 0, sizeof(attr) );
+-            attr.Length = sizeof(attr);
+-            attr.Attributes = OBJ_CASE_INSENSITIVE;
+-            attr.ObjectName = (UNICODE_STRING *)nt_name;
+-            NtOpenFile( &file, GENERIC_READ | SYNCHRONIZE, &attr, &io,
+-                        FILE_SHARE_READ | FILE_SHARE_DELETE,
+-                        FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE );
+-            offset.QuadPart = (ULONG_PTR)&nt->OptionalHeader.ImageBase - (ULONG_PTR)addr;
+-            NtReadFile( file, 0, NULL, NULL, &io, &nt->OptionalHeader.ImageBase,
+-                        sizeof(nt->OptionalHeader.ImageBase), &offset, NULL );
+-            NtClose( file );
+-            TRACE( "steamclient ImageBase %#Ix.\n", nt->OptionalHeader.ImageBase );
+-            NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, protect_old, &protect_old );
+-        }
+-        else
+-        {
+-            fixup_imports( wm, load_path );
+-            wm->ldr.Flags |= LDR_DONT_RESOLVE_REFS;
+-        }
+-    }
+-
+     /* fixup imports */
+ 
+     if (!(flags & DONT_RESOLVE_DLL_REFERENCES) &&
+diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
+index d475a34fbf3..c4a405f9b63 100644
+--- a/dlls/ntdll/unix/env.c
++++ b/dlls/ntdll/unix/env.c
+@@ -2523,7 +2523,6 @@ void WINAPI RtlSetLastWin32Error( DWORD err )
+  */
+ NTSTATUS WINAPI __wine_set_unix_env( const char *var, const char *val )
+ {
+-    if (!val) unsetenv(var);
+-    else setenv(var, val, 1);
++    setenv(var, val, 1);
+     return 0;
+ }
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 80b17e17b16..797108746a3 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -625,47 +625,12 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_image_info
+     WORD machine = pe_info->machine;
+     ULONGLONG res_start = pe_info->base;
+     ULONGLONG res_end = pe_info->base + pe_info->map_size;
+-    const char *ld_preload = getenv( "LD_PRELOAD" );
++
+     char preloader_reserve[64], socket_env[64];
+ 
+     if (pe_info->wine_fakedll) res_start = res_end = 0;
+     if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady) machine = native_machine;
+ 
+-    unsetenv( "WINE_LD_PRELOAD" );
+-
+-    /* HACK: Unset LD_PRELOAD before executing explorer.exe to disable buggy gameoverlayrenderer.so */
+-    if (ld_preload && argv[2] && !strcmp( argv[2], "C:\\windows\\system32\\explorer.exe" ) &&
+-        argv[3] && !strcmp( argv[3], "/desktop" ))
+-    {
+-        static char const gorso[] = "gameoverlayrenderer.so";
+-        static int gorso_len = sizeof(gorso) - 1;
+-        int len = strlen( ld_preload );
+-        char *next, *tmp, *env = malloc( sizeof("LD_PRELOAD=") + len );
+-
+-        if (!env) return STATUS_NO_MEMORY;
+-        strcpy( env, "LD_PRELOAD=" );
+-        strcat( env, ld_preload );
+-
+-        tmp = env + 11;
+-        do
+-        {
+-            if (!(next = strchr( tmp, ':' ))) next = tmp + strlen( tmp );
+-            if (next - tmp >= gorso_len && strncmp( next - gorso_len, gorso, gorso_len ) == 0)
+-            {
+-                if (*next) memmove( tmp, next + 1, strlen(next) );
+-                else *tmp = 0;
+-                next = tmp;
+-            }
+-            else tmp = next + 1;
+-        }
+-        while (*next);
+-
+-        putenv( env );
+-        ld_preload = NULL;
+-    }
+-
+-    if (ld_preload) setenv( "WINE_LD_PRELOAD", ld_preload, 1 );
+-
+     signal( SIGPIPE, SIG_DFL );
+ 
+     snprintf( socket_env, sizeof(socket_env), "WINESERVERSOCKET=%u", socketfd );
+@@ -1085,122 +1050,6 @@ static NTSTATUS load_so_dll( void *args )
+     return status;
+ }
+ 
+-static void *steamclient_srcs[128];
+-static void *steamclient_tgts[128];
+-static int steamclient_count;
+-
+-void *steamclient_handle_fault( LPCVOID addr, DWORD err )
+-{
+-    int i;
+-
+-    if (!(err & EXCEPTION_EXECUTE_FAULT)) return NULL;
+-
+-    for (i = 0; i < steamclient_count; ++i)
+-    {
+-        if (addr == steamclient_srcs[i])
+-            return steamclient_tgts[i];
+-    }
+-
+-    return NULL;
+-}
+-
+-static void steamclient_write_jump_x64(void *src_addr, ULONGLONG tgt_addr)
+-{
+-    static const char mov[] = {0x48, 0xb8};
+-    static const char jmp[] = {0xff, 0xe0};
+-    memcpy(src_addr, mov, sizeof(mov));
+-    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
+-    memcpy((char *)src_addr + sizeof(mov) + sizeof(tgt_addr), jmp, sizeof(jmp));
+-}
+-
+-static void steamclient_write_jump_x86(void *src_addr, ULONG tgt_addr)
+-{
+-    static const char mov[] = {0xb8};
+-    static const char jmp[] = {0xff, 0xe0};
+-    memcpy(src_addr, mov, sizeof(mov));
+-    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
+-    memcpy((char *)src_addr + sizeof(mov) + sizeof(tgt_addr), jmp, sizeof(jmp));
+-}
+-
+-static NTSTATUS steamclient_setup_trampolines( void *args )
+-{
+-    static int noexec_cached = -1;
+-
+-    struct steamclient_setup_trampolines_params *params = args;
+-    HMODULE src_mod = params->src_mod, tgt_mod = params->tgt_mod;
+-    SYSTEM_BASIC_INFORMATION info;
+-    IMAGE_NT_HEADERS *src_nt = get_rva( src_mod, ((IMAGE_DOS_HEADER *)src_mod)->e_lfanew );
+-    IMAGE_NT_HEADERS *tgt_nt = get_rva( tgt_mod, ((IMAGE_DOS_HEADER *)tgt_mod)->e_lfanew );
+-    IMAGE_SECTION_HEADER *src_sec = IMAGE_FIRST_SECTION( src_nt );
+-    BOOL x64 = src_nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC;
+-    const IMAGE_EXPORT_DIRECTORY *src_exp, *tgt_exp;
+-    const DWORD *names;
+-    SIZE_T size;
+-    void *addr, *src_addr, *tgt_addr;
+-    char *name, *wsne;
+-    UINT_PTR page_mask;
+-    int i;
+-
+-    if (noexec_cached == -1)
+-        noexec_cached = (wsne = getenv("WINESTEAMNOEXEC")) && atoi(wsne);
+-
+-    virtual_get_system_info( &info, !!NtCurrentTeb()->WowTebOffset );
+-    page_mask = info.PageSize - 1;
+-
+-    for (i = 0; i < src_nt->FileHeader.NumberOfSections; ++i)
+-    {
+-        if (memcmp(src_sec[i].Name, ".text", 5)) continue;
+-        addr = (void *)(((UINT_PTR)src_mod + src_sec[i].VirtualAddress) & ~page_mask);
+-        size = (src_sec[i].Misc.VirtualSize + page_mask) & ~page_mask;
+-        if (noexec_cached) mprotect(addr, size, PROT_READ);
+-        else mprotect(addr, size, PROT_READ|PROT_WRITE|PROT_EXEC);
+-    }
+-
+-    src_exp = get_module_data_dir( src_mod, IMAGE_FILE_EXPORT_DIRECTORY, NULL );
+-    tgt_exp = get_module_data_dir( tgt_mod, IMAGE_FILE_EXPORT_DIRECTORY, NULL );
+-    names = (const DWORD *)((UINT_PTR)src_mod + src_exp->AddressOfNames);
+-    for (i = 0; i < src_exp->NumberOfNames; ++i)
+-    {
+-        if (!names[i] || !(name = (char *)((UINT_PTR)src_mod + names[i]))) continue;
+-        if (!(src_addr = (void *)find_named_export(src_mod, src_exp, name))) continue;
+-        if (!(tgt_addr = (void *)find_named_export(tgt_mod, tgt_exp, name))) continue;
+-        assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
+-        steamclient_srcs[steamclient_count] = src_addr;
+-        steamclient_tgts[steamclient_count] = tgt_addr;
+-        if (!noexec_cached)
+-        {
+-            if (x64) steamclient_write_jump_x64( src_addr, (ULONG_PTR)tgt_addr );
+-            else steamclient_write_jump_x86( src_addr, PtrToUlong(tgt_addr) );
+-        }
+-        else steamclient_count++;
+-    }
+-
+-    if (x64)
+-    {
+-        IMAGE_NT_HEADERS64 *src_nt64 = (IMAGE_NT_HEADERS64 *)src_nt, *tgt_nt64 = (IMAGE_NT_HEADERS64 *)tgt_nt;
+-        src_addr = (void *)((UINT_PTR)src_mod + src_nt64->OptionalHeader.AddressOfEntryPoint);
+-        tgt_addr = (void *)((UINT_PTR)tgt_mod + tgt_nt64->OptionalHeader.AddressOfEntryPoint);
+-    }
+-    else
+-    {
+-        IMAGE_NT_HEADERS32 *src_nt32 = (IMAGE_NT_HEADERS32 *)src_nt, *tgt_nt32 = (IMAGE_NT_HEADERS32 *)tgt_nt;
+-        src_addr = (void *)((UINT_PTR)src_mod + src_nt32->OptionalHeader.AddressOfEntryPoint);
+-        tgt_addr = (void *)((UINT_PTR)tgt_mod + tgt_nt32->OptionalHeader.AddressOfEntryPoint);
+-    }
+-
+-    assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
+-    steamclient_srcs[steamclient_count] = src_addr;
+-    steamclient_tgts[steamclient_count] = tgt_addr;
+-    if (!noexec_cached)
+-    {
+-        if (x64) steamclient_write_jump_x64( src_addr, (ULONG_PTR)tgt_addr );
+-        else steamclient_write_jump_x86( src_addr, PtrToUlong(tgt_addr) );
+-    }
+-    else steamclient_count++;
+-
+-    return STATUS_SUCCESS;
+-}
+-
+ static BOOL debugstr_pc_impl( void *pc, char *buffer, unsigned int size )
+ {
+     unsigned int len;
+@@ -1262,7 +1111,6 @@ static const unixlib_entry_t unix_call_funcs[] =
+     unixcall_wine_server_handle_to_fd,
+     unixcall_wine_spawnvp,
+     system_time_precise,
+-    steamclient_setup_trampolines,
+     is_pc_in_native_so,
+     debugstr_pc,
+ };
+@@ -1273,19 +1121,6 @@ static const unixlib_entry_t unix_call_funcs[] =
+ static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
+ static NTSTATUS wow64_unwind_builtin_dll( void *args ) { return STATUS_UNSUCCESSFUL; }
+ 
+-static NTSTATUS wow64_steamclient_setup_trampolines( void *args )
+-{
+-    struct
+-    {
+-        ULONG src_mod;
+-        ULONG tgt_mod;
+-    } const *params32 = args;
+-    struct steamclient_setup_trampolines_params params;
+-    params.src_mod = (HMODULE)(UINT_PTR)params32->src_mod;
+-    params.tgt_mod = (HMODULE)(UINT_PTR)params32->tgt_mod;
+-    return steamclient_setup_trampolines( &params );
+-}
+-
+ static NTSTATUS wow64_debugstr_pc( void *args )
+ {
+     struct
+@@ -1308,7 +1143,6 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
+     wow64_wine_server_handle_to_fd,
+     wow64_wine_spawnvp,
+     system_time_precise,
+-    wow64_steamclient_setup_trampolines,
+     is_pc_in_native_so,
+     wow64_debugstr_pc,
+ };
+diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
+index 33958f76ee9..5d5a0e0cf9e 100644
+--- a/dlls/ntdll/unix/signal_i386.c
++++ b/dlls/ntdll/unix/signal_i386.c
+@@ -1927,7 +1927,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+     struct xcontext xcontext;
+     ucontext_t *ucontext = sigcontext;
+     void *stack = setup_exception_record( sigcontext, &rec, &xcontext );
+-    void *steamclient_addr = NULL;
+ 
+     switch (TRAP_sig(ucontext))
+     {
+@@ -1962,12 +1961,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+         }
+         break;
+     case TRAP_x86_PAGEFLT:  /* Page fault */
+-        if ((steamclient_addr = steamclient_handle_fault( siginfo->si_addr, (ERROR_sig(ucontext) >> 1) & 0x09 )))
+-        {
+-            EIP_sig(ucontext) = (intptr_t)steamclient_addr;
+-            return;
+-        }
+-
+         rec.NumberParameters = 2;
+         rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
+         rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index e82b5709318..7c320dedb4c 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -2321,7 +2321,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+     EXCEPTION_RECORD rec = { 0 };
+     struct xcontext context;
+     ucontext_t *ucontext = init_handler( sigcontext );
+-    void *steamclient_addr = NULL;
+ 
+     rec.ExceptionAddress = (void *)RIP_sig(ucontext);
+     save_context( &context, ucontext );
+@@ -2353,12 +2352,6 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+         }
+         break;
+     case TRAP_x86_PAGEFLT:  /* Page fault */
+-        if ((steamclient_addr = steamclient_handle_fault( siginfo->si_addr, (ERROR_sig(ucontext) >> 1) & 0x09 )))
+-        {
+-            RIP_sig(ucontext) = (intptr_t)steamclient_addr;
+-            return;
+-        }
+-
+         rec.NumberParameters = 2;
+         rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
+         rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 8ed3dec2bff..2fa67d1ecb2 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -280,7 +280,6 @@ extern unsigned int alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, stru
+                                              data_size_t *ret_len );
+ extern NTSTATUS system_time_precise( void *args );
+ 
+-extern void *steamclient_handle_fault( LPCVOID addr, DWORD err );
+ extern void *anon_mmap_fixed( void *start, size_t size, int prot, int flags );
+ extern void *anon_mmap_alloc( size_t size, int prot );
+ extern void virtual_init(void);
+diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
+index e0870584a68..94abe3450b8 100644
+--- a/dlls/ntdll/unixlib.h
++++ b/dlls/ntdll/unixlib.h
+@@ -66,12 +66,6 @@ struct unwind_builtin_dll_params
+     CONTEXT                    *context;
+ };
+ 
+-struct steamclient_setup_trampolines_params
+-{
+-    HMODULE src_mod;
+-    HMODULE tgt_mod;
+-};
+-
+ struct debugstr_pc_args
+ {
+     void *pc;
+@@ -89,7 +83,6 @@ enum ntdll_unix_funcs
+     unix_wine_server_handle_to_fd,
+     unix_wine_spawnvp,
+     unix_system_time_precise,
+-    unix_steamclient_setup_trampolines,
+     unix_is_pc_in_native_so,
+     unix_debugstr_pc,
+ };
+diff --git a/dlls/shell32/shellpath.c b/dlls/shell32/shellpath.c
+index 07295713cb3..9ffeb0986d5 100644
+--- a/dlls/shell32/shellpath.c
++++ b/dlls/shell32/shellpath.c
+@@ -2651,6 +2651,183 @@ end:
+     return hr;
+ }
+ 
++static char *xdg_config;
++static DWORD xdg_config_len;
++
++static BOOL WINAPI init_xdg_dirs( INIT_ONCE *once, void *param, void **context )
++{
++    const WCHAR *var, *fmt = L"\\??\\unix%s/user-dirs.dirs";
++    char *p;
++    WCHAR *name, *ptr;
++    HANDLE file;
++    DWORD len;
++
++    if (!(var = _wgetenv( L"XDG_CONFIG_HOME" )) || var[0] != '/')
++    {
++        if (!(var = _wgetenv( L"WINEHOMEDIR" ))) return TRUE;
++        fmt = L"%s/.config/user-dirs.dirs";
++    }
++    len = lstrlenW(var) + lstrlenW(fmt);
++    name = heap_alloc( len * sizeof(WCHAR) );
++    swprintf( name, len, fmt, var );
++    name[1] = '\\';  /* change \??\ to \\?\ */
++    for (ptr = name; *ptr; ptr++) if (*ptr == '/') *ptr = '\\';
++
++    file = CreateFileW( name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0 );
++    heap_free( name );
++    if (file != INVALID_HANDLE_VALUE)
++    {
++        len = GetFileSize( file, NULL );
++        if (!(xdg_config = heap_alloc( len + 1 ))) return TRUE;
++        if (!ReadFile( file, xdg_config, len, &xdg_config_len, NULL ))
++        {
++            heap_free( xdg_config );
++            xdg_config = NULL;
++        }
++        else
++        {
++            for (p = xdg_config; p < xdg_config + xdg_config_len; p++) if (*p == '\n') *p = 0;
++            *p = 0;  /* append null to simplify string parsing */
++        }
++        CloseHandle( file );
++    }
++    return TRUE;
++}
++
++static char *get_xdg_path( const char *var )
++{
++    static INIT_ONCE once;
++    char *p, *ret = NULL;
++    int i;
++
++    InitOnceExecuteOnce( &once, init_xdg_dirs, NULL, NULL );
++    if (!xdg_config) return NULL;
++
++    for (p = xdg_config; p < xdg_config + xdg_config_len; p += strlen(p) + 1)
++    {
++        while (*p == ' ' || *p == '\t') p++;
++        if (strncmp( p, var, strlen(var) )) continue;
++        p += strlen(var);
++        while (*p == ' ' || *p == '\t') p++;
++        if (*p != '=') continue;
++        p++;
++        while (*p == ' ' || *p == '\t') p++;
++        if (*p != '"') continue;
++        p++;
++        if (*p != '/' && strncmp( p, "$HOME/", 6 )) continue;
++
++        if (!(ret = heap_alloc( strlen(p) + 1 ))) break;
++        for (i = 0; *p && *p != '"'; i++, p++)
++        {
++            if (*p == '\\' && p[1]) p++;
++            ret[i] = *p;
++        }
++        ret[i] = 0;
++        if (*p != '"')
++        {
++            heap_free( ret );
++            ret = NULL;
++        }
++        break;
++    }
++    return ret;
++}
++
++static BOOL link_folder( HANDLE mgr, const UNICODE_STRING *path, const char *link )
++{
++    struct mountmgr_shell_folder *ioctl;
++    DWORD len = sizeof(*ioctl) + path->Length + strlen(link) + 1;
++    BOOL ret;
++
++    if (!(ioctl = heap_alloc( len ))) return FALSE;
++    ioctl->create_backup = FALSE;
++    ioctl->folder_offset = sizeof(*ioctl);
++    ioctl->folder_size = path->Length;
++    memcpy( (char *)ioctl + ioctl->folder_offset, path->Buffer, ioctl->folder_size );
++    ioctl->symlink_offset = ioctl->folder_offset + ioctl->folder_size;
++    strcpy( (char *)ioctl + ioctl->symlink_offset, link );
++
++    ret = DeviceIoControl( mgr, IOCTL_MOUNTMGR_DEFINE_SHELL_FOLDER, ioctl, len, NULL, 0, NULL, NULL );
++    heap_free( ioctl );
++    return ret;
++}
++
++/******************************************************************************
++ * create_link
++ *
++ * Sets up a symbolic link for one of the 'My Whatever' shell folders to point
++ * into the corresponding XDG directory.
++ */
++static void create_link( const WCHAR *path, const char *xdg_name, const char *default_name )
++{
++    UNICODE_STRING nt_name;
++    char *target = NULL;
++    HANDLE mgr;
++
++    if ((mgr = CreateFileW( MOUNTMGR_DOS_DEVICE_NAME, GENERIC_READ | GENERIC_WRITE,
++                            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
++                            0, 0 )) == INVALID_HANDLE_VALUE)
++    {
++        FIXME( "failed to connect to mount manager\n" );
++        return;
++    }
++
++    nt_name.Buffer = NULL;
++    if (!RtlDosPathNameToNtPathName_U( path, &nt_name, NULL, NULL )) goto done;
++
++    if ((target = get_xdg_path( xdg_name )))
++    {
++        if (link_folder( mgr, &nt_name, target )) goto done;
++    }
++    if (link_folder( mgr, &nt_name, default_name )) goto done;
++
++    /* fall back to HOME */
++    link_folder( mgr, &nt_name, "$HOME" );
++
++done:
++    RtlFreeUnicodeString( &nt_name );
++    heap_free( target );
++    CloseHandle( mgr );
++}
++
++/******************************************************************************
++ * _SHCreateSymbolicLink  [Internal]
++ *
++ * Sets up a symbolic link for one of the special shell folders to point into
++ * the users home directory.
++ *
++ * PARAMS
++ *  nFolder [I] CSIDL identifying the folder.
++ */
++static void _SHCreateSymbolicLink(int nFolder, const WCHAR *path)
++{
++    DWORD folder = nFolder & CSIDL_FOLDER_MASK;
++
++    switch (folder) {
++        case CSIDL_PERSONAL:
++            create_link( path, "XDG_DOCUMENTS_DIR", "$HOME/Documents" );
++            break;
++        case CSIDL_DESKTOPDIRECTORY:
++            create_link( path, "XDG_DESKTOP_DIR", "$HOME/Desktop" );
++            break;
++        case CSIDL_MYPICTURES:
++            create_link( path, "XDG_PICTURES_DIR", "$HOME/Pictures" );
++            break;
++        case CSIDL_MYVIDEO:
++            create_link( path, "XDG_VIDEOS_DIR", "$HOME/Movies" );
++            break;
++        case CSIDL_MYMUSIC:
++            create_link( path, "XDG_MUSIC_DIR", "$HOME/Music" );
++            break;
++        case CSIDL_DOWNLOADS:
++            create_link( path, "XDG_DOWNLOAD_DIR", "$HOME/Downloads" );
++            break;
++        case CSIDL_TEMPLATES:
++            create_link( path, "XDG_TEMPLATES_DIR", "$HOME/Templates" );
++            break;
++    }
++}
++
+ /******************************************************************************
+  * SHGetFolderPathW			[SHELL32.@]
+  *
+@@ -2839,6 +3016,10 @@ HRESULT WINAPI SHGetFolderPathAndSubDirW(
+         goto end;
+     }
+ 
++    /* create symbolic links rather than directories for specific
++     * user shell folders */
++    _SHCreateSymbolicLink(folder, szBuildPath);
++
+     /* create directory/directories */
+     ret = SHCreateDirectoryExW(hwndOwner, szBuildPath, NULL);
+     if (ret && ret != ERROR_ALREADY_EXISTS)
+@@ -2893,8 +3074,6 @@ static HRESULT _SHRegisterFolders(HKEY hRootKey, HANDLE hToken,
+  LPCWSTR szUserShellFolderPath, LPCWSTR szShellFolderPath, const UINT folders[],
+  UINT foldersLen)
+ {
+-    static const WCHAR WineVistaPathsW[] = {'_','_','W','i','n','e','V','i','s','t','a','P','a','t','h','s',0};
+-
+     const WCHAR *szValueName;
+     WCHAR buffer[40];
+     UINT i;
+@@ -2903,7 +3082,6 @@ static HRESULT _SHRegisterFolders(HKEY hRootKey, HANDLE hToken,
+     HKEY hUserKey = NULL, hKey = NULL;
+     DWORD dwType, dwPathLen;
+     LONG ret;
+-    DWORD already_vista_paths = 0;
+ 
+     TRACE("%p,%p,%s,%p,%u\n", hRootKey, hToken,
+      debugstr_w(szUserShellFolderPath), folders, foldersLen);
+@@ -2917,12 +3095,6 @@ static HRESULT _SHRegisterFolders(HKEY hRootKey, HANDLE hToken,
+         if (ret)
+             hr = HRESULT_FROM_WIN32(ret);
+     }
+-
+-    /* check if the registry has already been updated to the vista+ style paths */
+-    dwPathLen = sizeof(already_vista_paths);
+-    RegQueryValueExW(hUserKey, WineVistaPathsW, NULL, &dwType,
+-            (LPBYTE)&already_vista_paths, &dwPathLen);
+-
+     for (i = 0; SUCCEEDED(hr) && i < foldersLen; i++)
+     {
+         dwPathLen = MAX_PATH * sizeof(WCHAR);
+@@ -2935,10 +3107,9 @@ static HRESULT _SHRegisterFolders(HKEY hRootKey, HANDLE hToken,
+             szValueName = &buffer[0];
+         }
+ 
+-        if (!already_vista_paths ||
+-                RegQueryValueExW(hUserKey, szValueName, NULL, &dwType,
+-                    (LPBYTE)path, &dwPathLen) ||
+-                (dwType != REG_SZ && dwType != REG_EXPAND_SZ))
++        if (RegQueryValueExW(hUserKey, szValueName, NULL,
++         &dwType, (LPBYTE)path, &dwPathLen) || (dwType != REG_SZ &&
++         dwType != REG_EXPAND_SZ))
+         {
+             *path = '\0';
+             if (CSIDL_Data[folders[i]].type == CSIDL_Type_User)
+@@ -2979,11 +3150,6 @@ static HRESULT _SHRegisterFolders(HKEY hRootKey, HANDLE hToken,
+              hToken, SHGFP_TYPE_DEFAULT, path);
+         }
+     }
+-
+-    already_vista_paths = 1;
+-    RegSetValueExW(hUserKey, WineVistaPathsW, 0, REG_DWORD,
+-            (LPBYTE)&already_vista_paths, sizeof(already_vista_paths));
+-
+     if (hUserKey)
+         RegCloseKey(hUserKey);
+     if (hKey)
+@@ -3123,23 +3289,6 @@ static HRESULT create_extra_folders(void)
+         hr = SHGetFolderPathAndSubDirW(0, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL,
+                                        SHGFP_TYPE_DEFAULT, L"Microsoft\\Windows\\Themes", path);
+     }
+-
+-
+-    /* Proton HACK: In older Proton versions, duplicate Stuff directories were
+-     * created at both %PROFILE%\Music and %PROFILE\Documents\Music. Due to
+-     * some bugs when downgrading to those older Proton versions, create those
+-     * missing Documents directories here, too. */
+-    SHGetFolderPathAndSubDirW(0, CSIDL_PERSONAL | CSIDL_FLAG_CREATE, NULL,
+-                                   SHGFP_TYPE_DEFAULT, L"Downloads", path);
+-    SHGetFolderPathAndSubDirW(0, CSIDL_PERSONAL | CSIDL_FLAG_CREATE, NULL,
+-                                   SHGFP_TYPE_DEFAULT, L"Music", path);
+-    SHGetFolderPathAndSubDirW(0, CSIDL_PERSONAL | CSIDL_FLAG_CREATE, NULL,
+-                                   SHGFP_TYPE_DEFAULT, L"Pictures", path);
+-    SHGetFolderPathAndSubDirW(0, CSIDL_PERSONAL | CSIDL_FLAG_CREATE, NULL,
+-                                   SHGFP_TYPE_DEFAULT, L"Templates", path);
+-    SHGetFolderPathAndSubDirW(0, CSIDL_PERSONAL | CSIDL_FLAG_CREATE, NULL,
+-                                   SHGFP_TYPE_DEFAULT, L"Videos", path);
+-
+     return hr;
+ }
+ 
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index 35c6cd23d05..14978f525b1 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -1093,19 +1093,8 @@ static void set_initial_wm_hints( Display *display, Window window )
+     /* class hints */
+     if ((class_hints = XAllocClassHint()))
+     {
+-        static char steam_proton[] = "steam_proton";
+-        const char *app_id = getenv("SteamAppId");
+-        char proton_app_class[128];
+-
+-        if(app_id && *app_id){
+-            snprintf(proton_app_class, sizeof(proton_app_class), "steam_app_%s", app_id);
+-            class_hints->res_name = proton_app_class;
+-            class_hints->res_class = proton_app_class;
+-        }else{
+-            class_hints->res_name = steam_proton;
+-            class_hints->res_class = steam_proton;
+-        }
+-
++        class_hints->res_name = process_name;
++        class_hints->res_class = process_name;
+         XSetClassHint( display, window, class_hints );
+         XFree( class_hints );
+     }
+diff --git a/programs/wineboot/wineboot.c b/programs/wineboot/wineboot.c
+index 31c2c464559..6b7db33f729 100644
+--- a/programs/wineboot/wineboot.c
++++ b/programs/wineboot/wineboot.c
+@@ -1484,6 +1484,37 @@ static BOOL start_services_process(void)
+     return TRUE;
+ }
+ 
++static INT_PTR CALLBACK wait_dlgproc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
++{
++    switch (msg)
++    {
++    case WM_INITDIALOG:
++        {
++            DWORD len;
++            WCHAR *buffer, text[1024];
++            const WCHAR *name = (WCHAR *)lp;
++            HICON icon = LoadImageW( 0, (LPCWSTR)IDI_WINLOGO, IMAGE_ICON, 48, 48, LR_SHARED );
++            SendDlgItemMessageW( hwnd, IDC_WAITICON, STM_SETICON, (WPARAM)icon, 0 );
++            SendDlgItemMessageW( hwnd, IDC_WAITTEXT, WM_GETTEXT, 1024, (LPARAM)text );
++            len = lstrlenW(text) + lstrlenW(name) + 1;
++            buffer = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) );
++            swprintf( buffer, len, text, name );
++            SendDlgItemMessageW( hwnd, IDC_WAITTEXT, WM_SETTEXT, 0, (LPARAM)buffer );
++            HeapFree( GetProcessHeap(), 0, buffer );
++        }
++        break;
++    }
++    return 0;
++}
++
++static HWND show_wait_window(void)
++{
++    HWND hwnd = CreateDialogParamW( GetModuleHandleW(0), MAKEINTRESOURCEW(IDD_WAITDLG), 0,
++                                    wait_dlgproc, (LPARAM)prettyprint_configdir() );
++    ShowWindow( hwnd, SW_SHOWNORMAL );
++    return hwnd;
++}
++
+ static HANDLE start_rundll32( const WCHAR *inf_path, const WCHAR *install, WORD machine )
+ {
+     WCHAR app[MAX_PATH + ARRAY_SIZE(L"\\rundll32.exe" )];
+@@ -1684,6 +1715,7 @@ static void update_wineprefix( BOOL force )
+ 
+         if ((process = start_rundll32( inf_path, L"PreInstall", IMAGE_FILE_MACHINE_TARGET_HOST )))
+         {
++            HWND hwnd = show_wait_window();
+             for (;;)
+             {
+                 if (process)
+@@ -1704,6 +1736,7 @@ static void update_wineprefix( BOOL force )
+                     process = start_rundll32( inf_path, L"Wow64Install", machines[count].Machine );
+                 count++;
+             }
++            DestroyWindow( hwnd );
+         }
+         install_root_pnp_devices();
+         update_user_profile();
+diff --git a/programs/winebrowser/main.c b/programs/winebrowser/main.c
+index 738930e39a6..24416070152 100644
+--- a/programs/winebrowser/main.c
++++ b/programs/winebrowser/main.c
+@@ -63,17 +63,6 @@ static char *strdup_unixcp( const WCHAR *str )
+     return ret;
+ }
+ 
+-static void restore_system_environment(void)
+-{
+-    const char* orig_ld_path = getenv("ORIG_LD_LIBRARY_PATH");
+-
+-    if (orig_ld_path)
+-    {
+-        __wine_set_unix_env("LD_LIBRARY_PATH", orig_ld_path);
+-        __wine_set_unix_env("ORIG_LD_LIBRARY_PATH", NULL);
+-    }
+-}
+-
+ /* try to launch a unix app from a comma separated string of app names */
+ static int launch_app( const WCHAR *candidates, const WCHAR *argv1 )
+ {
+@@ -83,11 +72,6 @@ static int launch_app( const WCHAR *candidates, const WCHAR *argv1 )
+ 
+     if (!(cmdline = strdup_unixcp( argv1 ))) return 1;
+ 
+-    /* PROTON HACK: Restore ORIG_LD_LIBRARY_PATH to LD_LIBRARY_PATH.
+-     * System programs may not work correctly with our libraries, in
+-     * particular gio on Ubuntu 19.04 is broken by our libgio. */
+-    restore_system_environment();
+-
+     while (*candidates)
+     {
+         WCHAR **args = CommandLineToArgvW( candidates, &count );
+diff --git a/programs/winedbg/debugger.h b/programs/winedbg/debugger.h
+index f3b02e9c5df..45a91e2a6f5 100644
+--- a/programs/winedbg/debugger.h
++++ b/programs/winedbg/debugger.h
+@@ -311,8 +311,6 @@ extern	DWORD	                dbg_curr_tid;
+ extern  dbg_ctx_t               dbg_context;
+ extern  BOOL                    dbg_interactiveP;
+ extern  HANDLE                  dbg_houtput;
+-extern  HANDLE                  dbg_crash_report_file;
+-extern  BOOL                    dbg_use_wine_dbg_output;
+ 
+ struct dbg_internal_var
+ {
+diff --git a/programs/winedbg/tgt_active.c b/programs/winedbg/tgt_active.c
+index 8bb20ecadf2..a919f70a486 100644
+--- a/programs/winedbg/tgt_active.c
++++ b/programs/winedbg/tgt_active.c
+@@ -22,8 +22,6 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <stdarg.h>
+-#include <time.h>
+-#include <sys/stat.h>
+ 
+ #include "debugger.h"
+ #include "psapi.h"
+@@ -834,48 +832,6 @@ static HANDLE create_temp_file(void)
+                         NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, 0 );
+ }
+ 
+-static HANDLE create_crash_report_file(void)
+-{
+-    const char *dir = getenv("WINE_CRASH_REPORT_DIR");
+-    const char *sgi;
+-    char timestr[32];
+-    char name[MAX_PATH], *c;
+-    time_t t;
+-    struct tm lt;
+-
+-    if(!dir || dir[0] == 0)
+-        return INVALID_HANDLE_VALUE;
+-
+-    strcpy(name, dir);
+-
+-    for(c = name + 1; *c; ++c){
+-        if(*c == '/'){
+-            *c = 0;
+-            CreateDirectoryA(name, NULL);
+-            *c = '/';
+-        }
+-    }
+-    CreateDirectoryA(name, NULL);
+-
+-    sgi = getenv("SteamGameId");
+-
+-    t = time(NULL);
+-    lt = *localtime(&t);
+-    strftime(timestr, ARRAY_SIZE(timestr), "%Y-%m-%d_%H:%M:%S", &lt);
+-
+-    /* /path/to/crash/reports/2021-05-18_13:21:15_appid-976310_crash.log */
+-    snprintf(name, ARRAY_SIZE(name),
+-            "%s%s/%s_appid-%s_crash.log",
+-            dir[0] == '/' ? "Z:/" : "",
+-            dir,
+-            timestr,
+-            sgi ? sgi : "0"
+-            );
+-
+-    return CreateFileA( name, GENERIC_WRITE, FILE_SHARE_READ,
+-                        NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0 );
+-}
+-
+ /******************************************************************
+  *		dbg_active_attach
+  *
+@@ -966,10 +922,6 @@ enum dbg_start dbg_active_auto(int argc, char* argv[])
+         if (event) thread = display_crash_details( event );
+         if (thread) dbg_houtput = output = create_temp_file();
+         break;
+-    case TRUE:
+-        dbg_use_wine_dbg_output = TRUE;
+-        dbg_crash_report_file = create_crash_report_file();
+-        break;
+     }
+ 
+     input = parser_generate_command_file("echo Modules:", "info share",
+diff --git a/programs/winedbg/winedbg.c b/programs/winedbg/winedbg.c
+index b7c899d55c4..c7f14e8238f 100644
+--- a/programs/winedbg/winedbg.c
++++ b/programs/winedbg/winedbg.c
+@@ -82,8 +82,6 @@ DWORD	                dbg_curr_pid = 0;
+ dbg_ctx_t               dbg_context;
+ BOOL    	        dbg_interactiveP = FALSE;
+ HANDLE                  dbg_houtput = 0;
+-HANDLE                  dbg_crash_report_file = INVALID_HANDLE_VALUE;
+-BOOL                    dbg_use_wine_dbg_output = FALSE;
+ 
+ static struct list      dbg_process_list = LIST_INIT(dbg_process_list);
+ 
+@@ -96,9 +94,6 @@ static void dbg_outputA(const char* buffer, int len)
+ 
+     DWORD w, i;
+ 
+-    if (dbg_use_wine_dbg_output)
+-        __wine_dbg_output(buffer);
+-
+     while (len > 0)
+     {
+         unsigned int count = min( len, sizeof(line_buff) - line_pos );
+@@ -112,10 +107,7 @@ static void dbg_outputA(const char* buffer, int len)
+             if (len > 0) i = line_pos;  /* buffer is full, flush anyway */
+             else break;
+         }
+-        if (!dbg_use_wine_dbg_output)
+-            WriteFile(dbg_houtput, line_buff, i, &w, NULL);
+-        if (dbg_crash_report_file != INVALID_HANDLE_VALUE)
+-            WriteFile(dbg_crash_report_file, line_buff, i, &w, NULL);
++        WriteFile(dbg_houtput, line_buff, i, &w, NULL);
+         memmove( line_buff, line_buff + i, line_pos - i );
+         line_pos -= i;
+     }
+-- 
+2.49.0
+
