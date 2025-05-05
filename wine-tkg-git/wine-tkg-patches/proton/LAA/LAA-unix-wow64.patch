@@ -1,0 +1,148 @@
+From 245dfe63a720eae04890a8d3e0f74ebae800ffbd Mon Sep 17 00:00:00 2001
+From: Steven Noonan <steven@valvesoftware.com>
+Date: Wed, 17 Oct 2018 04:13:37 -0700
+Subject: [PATCH] ntdll/loader: add support for overriding
+ IMAGE_FILE_LARGE_ADDRESS_AWARE
+
+---
+ dlls/kernel32/heap.c           |  8 +++++++-
+ dlls/ntdll/ntdll.spec          |  1 +
+ dlls/ntdll/signal_arm64ec.c    |  1 +
+ dlls/ntdll/unix/unix_private.h |  2 ++
+ dlls/ntdll/unix/virtual.c      | 22 ++++++++++++++++++++--
+ dlls/wow64/system.c            |  6 ++++++
+ 6 files changed, 37 insertions(+), 3 deletions(-)
+
+diff --git a/dlls/kernel32/heap.c b/dlls/kernel32/heap.c
+index 1ec2f5cce0d..10f6895478e 100644
+--- a/dlls/kernel32/heap.c
++++ b/dlls/kernel32/heap.c
+@@ -42,6 +42,8 @@
+ WINE_DEFAULT_DEBUG_CHANNEL(globalmem);
+ 
+ 
++extern BOOL WINAPI __wine_needs_override_large_address_aware(void);
++
+ /***********************************************************************
+  *           HeapCreate   (KERNEL32.@)
+  *
+@@ -424,6 +426,7 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
+     OSVERSIONINFOW osver;
+ #ifndef _WIN64
+     IMAGE_NT_HEADERS *nt = RtlImageNtHeader( GetModuleHandleW(0) );
++    static int force_large_address_aware = -1;
+ #endif
+ 
+     /* Because GlobalMemoryStatus is identical to GlobalMemoryStatusEX save
+@@ -450,6 +453,8 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
+     lpBuffer->dwAvailVirtual = memstatus.ullAvailVirtual;
+ 
+ #ifndef _WIN64
++    if (force_large_address_aware == -1)
++        force_large_address_aware = __wine_needs_override_large_address_aware();
+     if ( osver.dwMajorVersion >= 5 || osver.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS )
+     {
+         lpBuffer->dwTotalPhys = min( memstatus.ullTotalPhys, MAXDWORD );
+@@ -463,7 +468,8 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
+ 
+     /* values are limited to 2Gb unless the app has the IMAGE_FILE_LARGE_ADDRESS_AWARE flag */
+     /* page file sizes are not limited (Adobe Illustrator 8 depends on this) */
+-    if (!(nt->FileHeader.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE))
++    if (!(nt->FileHeader.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) &&
++        !force_large_address_aware)
+     {
+         if (lpBuffer->dwTotalPhys > MAXLONG) lpBuffer->dwTotalPhys = MAXLONG;
+         if (lpBuffer->dwAvailPhys > MAXLONG) lpBuffer->dwAvailPhys = MAXLONG;
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index 620d96a5992..b3d93326d8c 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -1760,3 +1760,4 @@
+ # Filesystem
+ @ stdcall -syscall wine_nt_to_unix_file_name(ptr ptr ptr long)
+ @ stdcall -syscall wine_unix_to_nt_file_name(str ptr ptr)
++@ stdcall -syscall __wine_needs_override_large_address_aware()
+diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
+index 4505aeacfba..d64647f7b45 100644
+--- a/dlls/ntdll/signal_arm64ec.c
++++ b/dlls/ntdll/signal_arm64ec.c
+@@ -581,6 +581,7 @@ DEFINE_SYSCALL(NtWriteVirtualMemory, (HANDLE process, void *addr, const void *bu
+ DEFINE_SYSCALL(NtYieldExecution, (void))
+ DEFINE_SYSCALL(wine_nt_to_unix_file_name, (const OBJECT_ATTRIBUTES *attr, char *nameA, ULONG *size, UINT disposition))
+ DEFINE_SYSCALL(wine_unix_to_nt_file_name, (const char *name, WCHAR *buffer, ULONG *size))
++DEFINE_SYSCALL_(BOOL, __wine_needs_override_large_address_aware, (void))
+ 
+ NTSTATUS SYSCALL_API NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR zero_bits,
+                                               SIZE_T *size_ptr, ULONG type, ULONG protect )
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 2f956af6966..007b4fb85bc 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -575,4 +575,6 @@ static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, UL
+                                0, NULL, size, ViewShare, 0, protect );
+ }
+ 
++BOOL WINAPI __wine_needs_override_large_address_aware(void);
++
+ #endif /* __NTDLL_UNIX_PRIVATE_H */
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 909c089cf07..31fa04fdab3 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -4904,6 +4904,24 @@ static void virtual_release_address_space(void)
+ 
+ #endif  /* _WIN64 */
+ 
++BOOL WINAPI __wine_needs_override_large_address_aware(void)
++{
++    static int needs_override = -1;
++
++    if (needs_override == -1)
++    {
++        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
++
++        needs_override = !str || atoi(str) == 1;
++    }
++    return needs_override;
++}
++
++static BOOL is_large_address_aware(void)
++{
++    return (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)
++           || __wine_needs_override_large_address_aware();
++}
+ 
+ /***********************************************************************
+  *           virtual_set_large_address_space
+@@ -4915,7 +4933,7 @@ void virtual_set_large_address_space(void)
+     if (is_win64)
+     {
+         if (is_wow64())
+-            user_space_wow_limit = ((main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) ? limit_4g : limit_2g) - 1;
++            user_space_wow_limit = (is_large_address_aware() ? limit_4g : limit_2g) - 1;
+ #ifndef __APPLE__  /* don't free the zerofill section on macOS */
+         else if ((main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA) &&
+                  (main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE))
+@@ -4924,7 +4942,7 @@ void virtual_set_large_address_space(void)
+     }
+     else
+     {
+-        if (!(main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) return;
++        if (!is_large_address_aware()) return;
+         free_reserved_memory( (char *)0x80000000, address_space_limit );
+     }
+     user_space_limit = working_set_limit = address_space_limit;
+diff --git a/dlls/wow64/system.c b/dlls/wow64/system.c
+index 5f3056a4179..2f466d869dd 100644
+--- a/dlls/wow64/system.c
++++ b/dlls/wow64/system.c
+@@ -855,3 +855,9 @@ NTSTATUS WINAPI wow64_NtWow64GetNativeSystemInformation( UINT *args )
+         return STATUS_INVALID_INFO_CLASS;
+     }
+ }
++
++BOOL WINAPI __wine_needs_override_large_address_aware(void);
++NTSTATUS WINAPI wow64___wine_needs_override_large_address_aware( UINT * args )
++{
++    return __wine_needs_override_large_address_aware();
++}
