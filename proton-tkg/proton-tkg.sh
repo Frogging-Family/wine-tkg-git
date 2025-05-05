@@ -968,7 +968,7 @@ else
     fi
 
     # Tooling compilation needs an update for latest BE - Use slightly older tooling for now
-    if [ -n "$_bleeding_tag" ] || [[ "$_proton_branch" = experimental_8* ]] || [[ "$_proton_branch" = *9* ]]; then
+    if [ -n "$_bleeding_tag" ] || [[ "$_proton_branch" = experimental_8* ]] || [[ "$_proton_branch" = *9* ]] || [[ "$_proton_branch" = *10* ]]; then
       git checkout f5e9c76903e4e18e0416e719a6d42d0cb00998aa
     fi
 
