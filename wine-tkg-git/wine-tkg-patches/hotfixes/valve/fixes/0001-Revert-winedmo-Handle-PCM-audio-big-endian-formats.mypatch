@@ -1,0 +1,266 @@
+From 69ad32a3274be6e3f4bb1363a23039ff637ceab0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Bj=C3=B6rn=20Bidar?= <bjorn.bidar@thaodan.de>
+Date: Tue, 6 May 2025 22:56:36 +0300
+Subject: [PATCH] Revert "winedmo: Handle PCM audio big-endian formats."
+
+This reverts commit 063a29bc8ba05a97152b2f9a97ad7ab12007e1e7.
+
+Workaround:
+https://github.com/ValveSoftware/wine/issues/280
+---
+ dlls/winedmo/Makefile.in                      |   1 -
+ .../libavcodec/pcm_byte_order_reverse_bsf.c   | 157 ------------------
+ dlls/winedmo/unix_demuxer.c                   |  24 ---
+ dlls/winedmo/unix_media_type.c                |   2 -
+ dlls/winedmo/unix_private.h                   |   5 -
+ 5 files changed, 189 deletions(-)
+ delete mode 100644 dlls/winedmo/libavcodec/pcm_byte_order_reverse_bsf.c
+
+diff --git a/dlls/winedmo/Makefile.in b/dlls/winedmo/Makefile.in
+index bee5d80f242..1cf228ffacd 100644
+--- a/dlls/winedmo/Makefile.in
++++ b/dlls/winedmo/Makefile.in
+@@ -12,7 +12,6 @@ SOURCES = \
+ 	media-converter/fossilize.c \
+ 	media-converter/murmur3.c \
+ 	media-converter/lib.c \
+-	libavcodec/pcm_byte_order_reverse_bsf.c \
+ 	unix_demuxer.c \
+ 	unix_demuxer_mediaconv.c \
+ 	unix_media_type.c \
+diff --git a/dlls/winedmo/libavcodec/pcm_byte_order_reverse_bsf.c b/dlls/winedmo/libavcodec/pcm_byte_order_reverse_bsf.c
+deleted file mode 100644
+index 2237b1eaa84..00000000000
+--- a/dlls/winedmo/libavcodec/pcm_byte_order_reverse_bsf.c
++++ /dev/null
+@@ -1,157 +0,0 @@
+-/*
+- * PCM byte order reverse byte stream format filter
+- * Copyright (c) 2025 Conor McCarthy for CodeWeavers
+- *
+- * This library is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU Lesser General Public
+- * License as published by the Free Software Foundation; either
+- * version 2.1 of the License, or (at your option) any later version.
+- *
+- * This library is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- * Lesser General Public License for more details.
+- *
+- * You should have received a copy of the GNU Lesser General Public
+- * License along with this library; if not, write to the Free Software
+- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+- */
+-
+-#if 0
+-#pragma makedep unix
+-#endif
+-
+-#include "config.h"
+-#include "unix_private.h"
+-
+-#ifdef HAVE_FFMPEG
+-
+-#define IS_EMPTY(pkt) (!(pkt)->data && !(pkt)->side_data_elems)
+-
+-struct AVBSFInternal {
+-    AVPacket *buffer_pkt;
+-    int eof;
+-};
+-
+-/* From FFmpeg */
+-int ff_bsf_get_packet(AVBSFContext *ctx, AVPacket **pkt)
+-{
+-    AVBSFInternal *bsfi = ctx->internal;
+-    AVPacket *tmp_pkt;
+-
+-    if (bsfi->eof)
+-        return AVERROR_EOF;
+-
+-    if (IS_EMPTY(bsfi->buffer_pkt))
+-        return AVERROR(EAGAIN);
+-
+-    tmp_pkt = av_packet_alloc();
+-    if (!tmp_pkt)
+-        return AVERROR(ENOMEM);
+-
+-    *pkt = bsfi->buffer_pkt;
+-    bsfi->buffer_pkt = tmp_pkt;
+-
+-    return 0;
+-}
+-
+-static enum AVCodecID reverse_codec_id(enum AVCodecID codec_id)
+-{
+-    switch (codec_id)
+-    {
+-    case AV_CODEC_ID_PCM_S16BE: return AV_CODEC_ID_PCM_S16LE;
+-    case AV_CODEC_ID_PCM_S24BE: return AV_CODEC_ID_PCM_S24LE;
+-    case AV_CODEC_ID_PCM_S32BE: return AV_CODEC_ID_PCM_S32LE;
+-    case AV_CODEC_ID_PCM_S64BE: return AV_CODEC_ID_PCM_S64LE;
+-    case AV_CODEC_ID_PCM_F32BE: return AV_CODEC_ID_PCM_F32LE;
+-    case AV_CODEC_ID_PCM_F64BE: return AV_CODEC_ID_PCM_F64LE;
+-    case AV_CODEC_ID_PCM_S16LE: return AV_CODEC_ID_PCM_S16BE;
+-    case AV_CODEC_ID_PCM_S24LE: return AV_CODEC_ID_PCM_S24BE;
+-    case AV_CODEC_ID_PCM_S32LE: return AV_CODEC_ID_PCM_S32BE;
+-    case AV_CODEC_ID_PCM_S64LE: return AV_CODEC_ID_PCM_S64BE;
+-    case AV_CODEC_ID_PCM_F32LE: return AV_CODEC_ID_PCM_F32BE;
+-    case AV_CODEC_ID_PCM_F64LE: return AV_CODEC_ID_PCM_F64BE;
+-    default: return codec_id;
+-    }
+-}
+-
+-static int init(AVBSFContext *ctx)
+-{
+-    if (ctx->par_in->channels <= 0 || ctx->par_in->sample_rate <= 0)
+-        return AVERROR(EINVAL);
+-    if (ctx->par_in->bits_per_coded_sample % 8u)
+-        return AVERROR(EINVAL);
+-
+-    ctx->par_out->codec_id = reverse_codec_id(ctx->par_in->codec_id);
+-
+-    return 0;
+-}
+-
+-static int byte_order_reverse_filter(AVBSFContext *ctx, AVPacket *pkt)
+-{
+-    unsigned int bytes_per_sample;
+-    const uint8_t *buf_end;
+-    const uint8_t *buf;
+-    unsigned int i;
+-    AVPacket *in;
+-    uint8_t *out;
+-    int ret;
+-
+-    ret = ff_bsf_get_packet(ctx, &in);
+-    if (ret < 0)
+-        return ret;
+-
+-    buf = in->data;
+-    buf_end = in->data + in->size;
+-
+-    ret = av_new_packet(pkt, in->size);
+-    if (ret < 0)
+-        return ret;
+-    out = pkt->data;
+-
+-    ret = av_packet_copy_props(pkt, in);
+-    if (ret < 0)
+-        goto fail;
+-
+-    bytes_per_sample = ctx->par_in->bits_per_coded_sample / 8u;
+-
+-    while (buf < buf_end)
+-    {
+-        for (i = 0; i < bytes_per_sample; ++i)
+-            out[i] = buf[bytes_per_sample - i - 1];
+-        buf += bytes_per_sample;
+-        out += bytes_per_sample;
+-    }
+-
+-fail:
+-    if (ret < 0)
+-        av_packet_unref(pkt);
+-    av_packet_free(&in);
+-    return ret;
+-}
+-
+-static const enum AVCodecID codec_ids[] = {
+-    AV_CODEC_ID_PCM_S8,
+-    AV_CODEC_ID_PCM_S16LE,
+-    AV_CODEC_ID_PCM_S16BE,
+-    AV_CODEC_ID_PCM_S24LE,
+-    AV_CODEC_ID_PCM_S24BE,
+-    AV_CODEC_ID_PCM_S32LE,
+-    AV_CODEC_ID_PCM_S32BE,
+-    AV_CODEC_ID_PCM_S64LE,
+-    AV_CODEC_ID_PCM_S64BE,
+-    AV_CODEC_ID_PCM_F32LE,
+-    AV_CODEC_ID_PCM_F32BE,
+-    AV_CODEC_ID_PCM_F64LE,
+-    AV_CODEC_ID_PCM_F64BE,
+-    AV_CODEC_ID_NONE,
+-};
+-
+-const AVBitStreamFilter ff_pcm_byte_order_reverse_bsf = {
+-    .name           = "pcm_byte_order_reverse",
+-    .filter         = byte_order_reverse_filter,
+-    .init           = init,
+-    .codec_ids      = codec_ids,
+-};
+-
+-#endif /* HAVE_FFMPEG */
+diff --git a/dlls/winedmo/unix_demuxer.c b/dlls/winedmo/unix_demuxer.c
+index 24681e2d5df..4f53b5cffac 100644
+--- a/dlls/winedmo/unix_demuxer.c
++++ b/dlls/winedmo/unix_demuxer.c
+@@ -104,22 +104,6 @@ NTSTATUS demuxer_check( void *arg )
+     return STATUS_SUCCESS;
+ }
+
+-static BOOL codec_is_big_endian_pcm(enum AVCodecID codec_id)
+-{
+-    switch (codec_id)
+-    {
+-    case AV_CODEC_ID_PCM_S16BE:
+-    case AV_CODEC_ID_PCM_S24BE:
+-    case AV_CODEC_ID_PCM_S32BE:
+-    case AV_CODEC_ID_PCM_S64BE:
+-    case AV_CODEC_ID_PCM_F32BE:
+-    case AV_CODEC_ID_PCM_F64BE:
+-        return TRUE;
+-    default:
+-        return FALSE;
+-    }
+-}
+-
+ static NTSTATUS demuxer_create_streams( struct demuxer *demuxer )
+ {
+     UINT i;
+@@ -142,14 +126,6 @@ static NTSTATUS demuxer_create_streams( struct demuxer *demuxer )
+                 continue;
+             }
+         }
+-        else if (codec_is_big_endian_pcm(par->codec_id))
+-        {
+-            /* WAVEFORMATEX does not contain endianness info, so this needs to be converted here. */
+-            if (av_bsf_alloc( &ff_pcm_byte_order_reverse_bsf, &stream->filter ) < 0) return STATUS_UNSUCCESSFUL;
+-            avcodec_parameters_copy( stream->filter->par_in, par );
+-            av_bsf_init( stream->filter );
+-            continue;
+-        }
+
+         av_bsf_get_null_filter( &stream->filter );
+         avcodec_parameters_copy( stream->filter->par_in, demuxer->ctx->streams[i]->codecpar );
+diff --git a/dlls/winedmo/unix_media_type.c b/dlls/winedmo/unix_media_type.c
+index edde85172b6..15ffdaaed38 100644
+--- a/dlls/winedmo/unix_media_type.c
++++ b/dlls/winedmo/unix_media_type.c
+@@ -185,8 +185,6 @@ static NTSTATUS audio_format_from_codec_params( const AVCodecParameters *params,
+
+     format_tag = wave_format_tag_from_codec_id( params->codec_id );
+     if (params->codec_id == AV_CODEC_ID_OPUS) format_tag = WAVE_FORMAT_OPUS;
+-    /* Big-endian PCM in native Windows is given the usual WAVE_FORMAT_PCM tag. */
+-    else if (params->codec_id == AV_CODEC_ID_PCM_S16BE) format_tag = WAVE_FORMAT_PCM;
+
+     if (format_tag == WAVE_FORMAT_EXTENSIBLE || format_tag >> 16 || (channels > 2 && channel_mask != 0) ||
+         params->codec_id == AV_CODEC_ID_VORBIS)
+diff --git a/dlls/winedmo/unix_private.h b/dlls/winedmo/unix_private.h
+index 8974afd5f72..53391118f53 100644
+--- a/dlls/winedmo/unix_private.h
++++ b/dlls/winedmo/unix_private.h
+@@ -44,11 +44,6 @@ extern void mediaconv_demuxer_init(void);
+ extern void mediaconv_demuxer_exit(void);
+ extern int mediaconv_demuxer_open( AVFormatContext **ctx, struct stream_context *context );
+
+-/* libavcodec/pcm_byte_order_reverse.c */
+-#ifdef HAVE_FFMPEG
+-extern const AVBitStreamFilter ff_pcm_byte_order_reverse_bsf;
+-#endif
+-
+ /* unixlib.c */
+ extern int64_t unix_seek_callback( void *opaque, int64_t offset, int whence );
+ extern int unix_read_callback( void *opaque, uint8_t *buffer, int size );
+--
+2.45.2
