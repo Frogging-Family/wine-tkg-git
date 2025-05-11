@@ -746,7 +746,7 @@ diff --color -u -r -N a/dlls/ntdll/Makefile.in b/dlls/ntdll/Makefile.in
 diff --color -r -u -N a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
 --- a/dlls/ntdll/unix/esync.c	2025-02-26 17:47:50.925968525 +0500
 +++ b/dlls/ntdll/unix/esync.c	1970-01-01 05:00:00.000000000 +0500
-@@ -1,1325 +0,0 @@
+@@ -1,1337 +0,0 @@
 -/*
 - * eventfd-based synchronization objects
 - *
@@ -1899,10 +1899,22 @@ diff --color -r -u -N a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
 -                        {
 -                            /* We were too slow. Put everything back. */
 -                            value = 1;
--                            for (j = i; j >= 0; j--)
+-                            for (j = i - 1; j >= 0; j--)
 -                            {
--                                if (write( obj->fd, &value, sizeof(value) ) == -1)
+-                                struct esync *obj = objs[j];
+-
+-                                if (obj->type == ESYNC_MUTEX)
+-                                {
+-                                    struct mutex *mutex = obj->shm;
+-
+-                                    if (mutex->tid == GetCurrentThreadId())
+-                                        continue;
+-                                }
+-                                if (write( fds[j].fd, &value, sizeof(value) ) == -1)
+-                                {
+-                                    ERR("write failed.\n");
 -                                    return errno_to_status( errno );
+-                                }
 -                            }
 -
 -                            goto tryagain;  /* break out of two loops and a switch */
@@ -3931,8 +3943,8 @@ diff --color -u -r -N a/include/wine/server_protocol.h b/include/wine/server_pro
 +    struct get_inproc_alert_event_reply get_inproc_alert_event_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 869
-+#define SERVER_PROTOCOL_VERSION 873
+-#define SERVER_PROTOCOL_VERSION 866
++#define SERVER_PROTOCOL_VERSION 870
  
  #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 ---Zebediah Figura
@@ -5000,8 +5012,8 @@ diff --color -u -r -N a/server/directory.c b/server/directory.c
      no_close_handle,              /* close_handle */
      directory_destroy             /* destroy */
  };
-diff --color -r -u -N a/server/esync.c b/server/esync.c
---- a/server/esync.c	2025-02-26 17:47:50.917171453 +0500
+diff --color -u -r -N a/server/esync.c b/server/esync.c
+--- a/server/esync.c	2025-04-11 19:04:48.373827562 +0500
 +++ b/server/esync.c	1970-01-01 05:00:00.000000000 +0500
 @@ -1,588 +0,0 @@
 -/*
