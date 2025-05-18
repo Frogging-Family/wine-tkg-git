@@ -1,0 +1,965 @@
+From a8ae4844c39ef31b3b7999d72cb7b2139a31b24d Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Fri, 9 May 2025 08:38:26 -0400
+Subject: [PATCH 33/44] Add amdxc implementation
+
+---
+ .gitignore                        |   1 +
+ configure.ac                      |   1 +
+ dlls/amdxc64/Makefile.in          |  10 +
+ dlls/amdxc64/amdxc64.spec         | 315 +++++++++++++++++++++++++++++
+ dlls/amdxc64/amdxc_interfaces.idl |  96 +++++++++
+ dlls/amdxc64/dxvk_interfaces.idl  | 153 ++++++++++++++
+ dlls/amdxc64/main.c               | 317 ++++++++++++++++++++++++++++++
+ 7 files changed, 893 insertions(+)
+ create mode 100644 dlls/amdxc64/Makefile.in
+ create mode 100644 dlls/amdxc64/amdxc64.spec
+ create mode 100644 dlls/amdxc64/amdxc_interfaces.idl
+ create mode 100644 dlls/amdxc64/dxvk_interfaces.idl
+ create mode 100644 dlls/amdxc64/main.c
+
+diff --git a/.gitignore b/.gitignore
+index 66d83f5f1d4..57c66ae4053 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,3 @@
+ .idea
+ compile_commands.json
++.cache
+diff --git a/configure.ac b/configure.ac
+index 9acc7ce2845..dff8f27cedc 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -2456,6 +2456,7 @@ WINE_CONFIG_MAKEFILE(dlls/advpack)
+ WINE_CONFIG_MAKEFILE(dlls/advpack)
+ WINE_CONFIG_MAKEFILE(dlls/advpack/tests)
+ WINE_CONFIG_MAKEFILE(dlls/amsi)
++WINE_CONFIG_MAKEFILE(dlls/amdxc64)
+ WINE_CONFIG_MAKEFILE(dlls/amstream)
+ WINE_CONFIG_MAKEFILE(dlls/amstream/tests)
+ WINE_CONFIG_MAKEFILE(dlls/apisetschema)
+diff --git a/dlls/amdxc64/Makefile.in b/dlls/amdxc64/Makefile.in
+new file mode 100644
+index 00000000000..999a7d043e1
+--- /dev/null
++++ b/dlls/amdxc64/Makefile.in
+@@ -0,0 +1,10 @@
++MODULE = amdxc64.dll
++IMPORTS = version vulkan-1 user32 gdi32
++IMPORTLIB = amdxc64
++
++EXTRADLLFLAGS = -mno-cygwin
++
++SOURCES = \
++	main.c \
++	dxvk_interfaces.idl \
++	amdxc_interfaces.idl \
+diff --git a/dlls/amdxc64/amdxc64.spec b/dlls/amdxc64/amdxc64.spec
+new file mode 100644
+index 00000000000..2daa1ddbc94
+--- /dev/null
++++ b/dlls/amdxc64/amdxc64.spec
+@@ -0,0 +1,315 @@
++1 stub ??0?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@boost@@QEAA@XZ
++2 stub ??0?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@boost@@QEAA@XZ
++3 stub ??0?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@boost@@QEAA@XZ
++4 stub ??0?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@boost@@QEAA@XZ
++5 stub ??0?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@boost@@QEAA@XZ
++6 stub ??0?$oserializer@Vsc_xml_oarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@boost@@QEAA@XZ
++7 stub ??0?$oserializer@Vsc_xml_oarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@boost@@QEAA@XZ
++8 stub ??0?$oserializer@Vsc_xml_oarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@boost@@QEAA@XZ
++9 stub ??0?$oserializer@Vsc_xml_oarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@boost@@QEAA@XZ
++10 stub ??0?$oserializer@Vsc_xml_oarchive@@USC_INPUT@@@detail@archive@boost@@QEAA@XZ
++11 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@boost@@QEAA@XZ
++12 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@boost@@QEAA@XZ
++13 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@boost@@QEAA@XZ
++14 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@boost@@QEAA@XZ
++15 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@boost@@QEAA@XZ
++16 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CBCONSTVALUES@@@detail@archive@boost@@QEAA@XZ
++17 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@boost@@QEAA@XZ
++18 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@boost@@QEAA@XZ
++19 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@boost@@QEAA@XZ
++20 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CPS_CONFIG@@@detail@archive@boost@@QEAA@XZ
++21 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_FLOAT_CONST@@@detail@archive@boost@@QEAA@XZ
++22 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_INT_CONST@@@detail@archive@boost@@QEAA@XZ
++23 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@boost@@QEAA@XZ
++24 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@boost@@QEAA@XZ
++25 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@boost@@QEAA@XZ
++26 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@boost@@QEAA@XZ
++27 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SHADERSTATE@@@detail@archive@boost@@QEAA@XZ
++28 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@boost@@QEAA@XZ
++29 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@boost@@QEAA@XZ
++30 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@boost@@QEAA@XZ
++31 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@boost@@QEAA@XZ
++32 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@boost@@QEAA@XZ
++33 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@QEAA@XZ
++34 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@boost@@QEAA@XZ
++35 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@boost@@QEAA@XZ
++36 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@QEAA@XZ
++37 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@QEAA@XZ
++38 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_TXCONSTVALUES@@@detail@archive@boost@@QEAA@XZ
++39 stub ??0?$oserializer@Vsc_xml_oarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@boost@@QEAA@XZ
++40 stub ??0?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++41 stub ??0?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++42 stub ??0?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_NPI_DISABLE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++43 stub ??0?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++44 stub ??0?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++45 stub ??0?$singleton@V?$extended_type_info_typeid@T_SC_COMPILE_FLAGS@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++46 stub ??0?$singleton@V?$extended_type_info_typeid@T_SC_LAUNCH_MODE_FLAGS@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++47 stub ??0?$singleton@V?$extended_type_info_typeid@T_SC_SI_GLC_CONTROL@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++48 stub ??0?$singleton@V?$extended_type_info_typeid@T_SC_SI_SLC_CONTROL@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++49 stub ??0?$singleton@V?$extended_type_info_typeid@USC_INPUT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++50 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY@serialization@boost@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++51 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_ATOMIC@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++52 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_CONTROL@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++53 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_READ@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++54 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_WRITE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++55 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CBCONSTVALUES@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++56 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CBRCONSTVALUES@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++57 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CI_TRANSFORM_SHADER_DESC@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++58 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CONSTANTUSAGE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++59 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CPS_CONFIG@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++60 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_FLOAT_CONST@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++61 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_INT_CONST@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++62 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++63 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_CONTROL_FLAGS@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++64 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++65 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_PS_EXPORT_INFO@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++66 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SHADERSTATE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++67 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_DATA_IN_OUT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++68 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_DESCRIPTOR_VALUES@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++69 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_OPTIMIZATIONS@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++70 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_PSSHADERDCL_IN@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++71 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_PS_ATTR_CH_ENTRY@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++72 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_SHADERSTATE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++73 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_STREAMIODCL_OUT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++74 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_USER_DATA_ELEMENT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++75 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SRCSHADER@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++76 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SRC_PIPELINE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++77 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_TXCONSTVALUES@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++78 stub ??0?$singleton@V?$extended_type_info_typeid@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++79 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@23@XZ
++80 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@23@XZ
++81 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_NPI_DISABLE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_E_SC_SI_OPT_NPI_DISABLE@@@23@XZ
++82 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@23@XZ
++83 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@23@XZ
++84 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_SC_COMPILE_FLAGS@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_SC_COMPILE_FLAGS@@@23@XZ
++85 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_SC_LAUNCH_MODE_FLAGS@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_SC_LAUNCH_MODE_FLAGS@@@23@XZ
++86 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_SC_SI_GLC_CONTROL@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_SC_SI_GLC_CONTROL@@@23@XZ
++87 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_SC_SI_SLC_CONTROL@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_SC_SI_SLC_CONTROL@@@23@XZ
++88 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@USC_INPUT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@USC_INPUT@@@23@XZ
++89 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY@serialization@boost@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CACHE_POLICY@serialization@boost@@@23@XZ
++90 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_ATOMIC@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CACHE_POLICY_ATOMIC@@@23@XZ
++91 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_CONTROL@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CACHE_POLICY_CONTROL@@@23@XZ
++92 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_READ@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CACHE_POLICY_READ@@@23@XZ
++93 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_WRITE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CACHE_POLICY_WRITE@@@23@XZ
++94 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CBCONSTVALUES@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CBCONSTVALUES@@@23@XZ
++95 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CBRCONSTVALUES@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CBRCONSTVALUES@@@23@XZ
++96 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CI_TRANSFORM_SHADER_DESC@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CI_TRANSFORM_SHADER_DESC@@@23@XZ
++97 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CONSTANTUSAGE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CONSTANTUSAGE@@@23@XZ
++98 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CPS_CONFIG@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CPS_CONFIG@@@23@XZ
++99 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_FLOAT_CONST@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_FLOAT_CONST@@@23@XZ
++100 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_INT_CONST@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_INT_CONST@@@23@XZ
++101 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@23@XZ
++102 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_CONTROL_FLAGS@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_PRIMSHADER_CONTROL_FLAGS@@@23@XZ
++103 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@23@XZ
++104 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_PS_EXPORT_INFO@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_PS_EXPORT_INFO@@@23@XZ
++105 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SHADERSTATE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SHADERSTATE@@@23@XZ
++106 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_DATA_IN_OUT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_DATA_IN_OUT@@@23@XZ
++107 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_DESCRIPTOR_VALUES@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_DESCRIPTOR_VALUES@@@23@XZ
++108 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_OPTIMIZATIONS@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_OPTIMIZATIONS@@@23@XZ
++109 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_PSSHADERDCL_IN@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_PSSHADERDCL_IN@@@23@XZ
++110 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_PS_ATTR_CH_ENTRY@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_PS_ATTR_CH_ENTRY@@@23@XZ
++111 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_SHADERSTATE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_SHADERSTATE@@@23@XZ
++112 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_STREAMIODCL_OUT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_STREAMIODCL_OUT@@@23@XZ
++113 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_USER_DATA_ELEMENT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_USER_DATA_ELEMENT@@@23@XZ
++114 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SRCSHADER@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SRCSHADER@@@23@XZ
++115 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SRC_PIPELINE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SRC_PIPELINE@@@23@XZ
++116 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_TXCONSTVALUES@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_TXCONSTVALUES@@@23@XZ
++117 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@23@XZ
++118 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@3@XZ
++119 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@3@XZ
++120 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@3@XZ
++121 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@3@XZ
++122 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@3@XZ
++123 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@3@XZ
++124 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@3@XZ
++125 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@3@XZ
++126 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@3@XZ
++127 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@USC_INPUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@USC_INPUT@@@detail@archive@3@XZ
++128 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@3@XZ
++129 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@3@XZ
++130 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@3@XZ
++131 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@3@XZ
++132 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@3@XZ
++133 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CBCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CBCONSTVALUES@@@detail@archive@3@XZ
++134 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@3@XZ
++135 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@3@XZ
++136 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@3@XZ
++137 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CPS_CONFIG@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CPS_CONFIG@@@detail@archive@3@XZ
++138 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_FLOAT_CONST@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_FLOAT_CONST@@@detail@archive@3@XZ
++139 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_INT_CONST@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_INT_CONST@@@detail@archive@3@XZ
++140 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@3@XZ
++141 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@3@XZ
++142 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@3@XZ
++143 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@3@XZ
++144 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SHADERSTATE@@@detail@archive@3@XZ
++145 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@3@XZ
++146 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@3@XZ
++147 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@3@XZ
++148 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@3@XZ
++149 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@3@XZ
++150 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++151 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@3@XZ
++152 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@3@XZ
++153 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++154 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++155 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_TXCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_TXCONSTVALUES@@@detail@archive@3@XZ
++156 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@3@XZ
++157 stub ?get_const_instance@?$singleton@V?$map@Vsc_xml_iarchive@@@extra_detail@detail@archive@boost@@@serialization@boost@@SAAEBV?$map@Vsc_xml_iarchive@@@extra_detail@detail@archive@3@XZ
++158 stub ?get_const_instance@?$singleton@V?$multiset@PEBVextended_type_info@serialization@boost@@Ukey_compare@detail@23@V?$allocator@PEBVextended_type_info@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEBV?$multiset@PEBVextended_type_info@serialization@boost@@Ukey_compare@detail@23@V?$allocator@PEBVextended_type_info@serialization@boost@@@std@@@std@@XZ
++159 stub ?get_const_instance@?$singleton@V?$multiset@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@Utype_compare@234@V?$allocator@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEBV?$multiset@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@Utype_compare@234@V?$allocator@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@@std@@@std@@XZ
++160 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@3@XZ
++161 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@3@XZ
++162 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@3@XZ
++163 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@3@XZ
++164 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@3@XZ
++165 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@3@XZ
++166 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@3@XZ
++167 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@3@XZ
++168 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@3@XZ
++169 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@USC_INPUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@USC_INPUT@@@detail@archive@3@XZ
++170 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@3@XZ
++171 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@3@XZ
++172 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@3@XZ
++173 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@3@XZ
++174 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@3@XZ
++175 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CBCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CBCONSTVALUES@@@detail@archive@3@XZ
++176 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@3@XZ
++177 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@3@XZ
++178 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@3@XZ
++179 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CPS_CONFIG@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CPS_CONFIG@@@detail@archive@3@XZ
++180 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_FLOAT_CONST@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_FLOAT_CONST@@@detail@archive@3@XZ
++181 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_INT_CONST@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_INT_CONST@@@detail@archive@3@XZ
++182 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@3@XZ
++183 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@3@XZ
++184 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@3@XZ
++185 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@3@XZ
++186 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SHADERSTATE@@@detail@archive@3@XZ
++187 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@3@XZ
++188 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@3@XZ
++189 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@3@XZ
++190 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@3@XZ
++191 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@3@XZ
++192 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++193 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@3@XZ
++194 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@3@XZ
++195 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++196 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++197 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_TXCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_TXCONSTVALUES@@@detail@archive@3@XZ
++198 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@3@XZ
++199 stub ?get_const_instance@?$singleton@V?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++200 stub ?get_const_instance@?$singleton@V?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++201 stub ?get_const_instance@?$singleton@V?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++202 stub ?get_const_instance@?$singleton@V?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++203 stub ?get_const_instance@?$singleton@V?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++204 stub ?get_const_instance@?$singleton@V?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++205 stub ?get_const_instance@?$singleton@V?$set@PEBVvoid_caster@void_cast_detail@serialization@boost@@Uvoid_caster_compare@234@V?$allocator@PEBVvoid_caster@void_cast_detail@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEBV?$set@PEBVvoid_caster@void_cast_detail@serialization@boost@@Uvoid_caster_compare@234@V?$allocator@PEBVvoid_caster@void_cast_detail@serialization@boost@@@std@@@std@@XZ
++206 stub ?get_lock@singleton_module@serialization@boost@@AEAAAEA_NXZ
++207 stub ?get_mutable_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++208 stub ?get_mutable_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++209 stub ?get_mutable_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++210 stub ?get_mutable_instance@?$singleton@V?$map@Vsc_xml_iarchive@@@extra_detail@detail@archive@boost@@@serialization@boost@@SAAEAV?$map@Vsc_xml_iarchive@@@extra_detail@detail@archive@3@XZ
++211 stub ?get_mutable_instance@?$singleton@V?$map@Vsc_xml_oarchive@@@extra_detail@detail@archive@boost@@@serialization@boost@@SAAEAV?$map@Vsc_xml_oarchive@@@extra_detail@detail@archive@3@XZ
++212 stub ?get_mutable_instance@?$singleton@V?$multiset@PEBVextended_type_info@serialization@boost@@Ukey_compare@detail@23@V?$allocator@PEBVextended_type_info@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEAV?$multiset@PEBVextended_type_info@serialization@boost@@Ukey_compare@detail@23@V?$allocator@PEBVextended_type_info@serialization@boost@@@std@@@std@@XZ
++213 stub ?get_mutable_instance@?$singleton@V?$multiset@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@Utype_compare@234@V?$allocator@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEAV?$multiset@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@Utype_compare@234@V?$allocator@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@@std@@@std@@XZ
++214 stub ?get_mutable_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++215 stub ?get_mutable_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++216 stub ?get_mutable_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++217 stub ?get_mutable_instance@?$singleton@V?$set@PEBVvoid_caster@void_cast_detail@serialization@boost@@Uvoid_caster_compare@234@V?$allocator@PEBVvoid_caster@void_cast_detail@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEAV?$set@PEBVvoid_caster@void_cast_detail@serialization@boost@@Uvoid_caster_compare@234@V?$allocator@PEBVvoid_caster@void_cast_detail@serialization@boost@@@std@@@std@@XZ
++218 stub ?is_destroyed@?$singleton@V?$map@Vsc_xml_iarchive@@@extra_detail@detail@archive@boost@@@serialization@boost@@SA_NXZ
++219 stub ?is_destroyed@?$singleton@V?$map@Vsc_xml_oarchive@@@extra_detail@detail@archive@boost@@@serialization@boost@@SA_NXZ
++220 stub ?is_destroyed@?$singleton@V?$multiset@PEBVextended_type_info@serialization@boost@@Ukey_compare@detail@23@V?$allocator@PEBVextended_type_info@serialization@boost@@@std@@@std@@@serialization@boost@@SA_NXZ
++221 stub ?is_destroyed@?$singleton@V?$multiset@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@Utype_compare@234@V?$allocator@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@@std@@@std@@@serialization@boost@@SA_NXZ
++222 stub ?is_destroyed@?$singleton@V?$set@PEBVvoid_caster@void_cast_detail@serialization@boost@@Uvoid_caster_compare@234@V?$allocator@PEBVvoid_caster@void_cast_detail@serialization@boost@@@std@@@std@@@serialization@boost@@SA_NXZ
++223 stub ?is_locked@singleton_module@serialization@boost@@QEAA_NXZ
++224 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++225 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++226 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++227 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++228 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++229 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++230 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++231 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++232 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++233 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@USC_INPUT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++234 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++235 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++236 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++237 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++238 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++239 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CBCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++240 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++241 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++242 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++243 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CPS_CONFIG@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++244 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_FLOAT_CONST@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++245 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_INT_CONST@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++246 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++247 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++248 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++249 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++250 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SHADERSTATE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++251 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++252 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++253 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++254 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++255 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++256 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++257 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++258 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++259 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++260 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++261 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_TXCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++262 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++263 stub ?load_object_ptr@?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@EEBAXAEAVbasic_iarchive@234@PEAXI@Z
++264 stub ?load_object_ptr@?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@EEBAXAEAVbasic_iarchive@234@PEAXI@Z
++265 stub ?load_object_ptr@?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@EEBAXAEAVbasic_iarchive@234@PEAXI@Z
++266 stub ?lock@?1??get_lock@singleton_module@serialization@boost@@AEAAAEA_NXZ@4_NA
++267 stub ?lock@singleton_module@serialization@boost@@QEAAXXZ
++268 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++269 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++270 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++271 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++272 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++273 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++274 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++275 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++276 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++277 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@USC_INPUT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++278 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++279 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++280 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++281 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++282 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++283 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CBCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++284 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++285 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++286 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++287 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CPS_CONFIG@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++288 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_FLOAT_CONST@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++289 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_INT_CONST@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++290 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++291 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++292 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++293 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++294 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SHADERSTATE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++295 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++296 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++297 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++298 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++299 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++300 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++301 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++302 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++303 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++304 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++305 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_TXCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++306 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++307 stub ?save_object_ptr@?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@EEBAXAEAVbasic_oarchive@234@PEBX@Z
++308 stub ?save_object_ptr@?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@EEBAXAEAVbasic_oarchive@234@PEBX@Z
++309 stub ?save_object_ptr@?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@EEBAXAEAVbasic_oarchive@234@PEBX@Z
++310 stub ?unlock@singleton_module@serialization@boost@@QEAAXXZ
++@ cdecl AmdExtD3DCreateInterface(ptr ptr ptr)
++@ stdcall AmdGetDxcModuleHandle()
++313 stub GetSettingsBlobsAll
++314 stub OpenAdapter12
++315 stub OpenShimInterface
+diff --git a/dlls/amdxc64/amdxc_interfaces.idl b/dlls/amdxc64/amdxc_interfaces.idl
+new file mode 100644
+index 00000000000..2c2f568df37
+--- /dev/null
++++ b/dlls/amdxc64/amdxc_interfaces.idl
+@@ -0,0 +1,96 @@
++/*
++ * Copyright 2025 Etaash Mathamsetty
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++#pragma makedep register
++
++import "wtypes.idl";
++import "unknwn.idl";
++
++/* Structure version 1 for Anti-Lag 2.0: */
++struct APIData_v1
++{
++    unsigned int    uiSize;
++    unsigned int    uiVersion;
++    unsigned int    eMode;
++    const char*     sControlStr;
++    unsigned int    uiControlStrLength;
++    unsigned int    maxFPS;
++};
++
++/* Structure version 2 for Anti-Lag 2.0: */
++struct APIData_v2
++{
++    unsigned int    uiSize;
++    unsigned int    uiVersion;
++    struct Flags
++    {
++        unsigned int unused0               : 1;
++        unsigned int unused1               : 1;
++
++        unsigned int signalFgFrameType     : 1;
++        unsigned int isInterpolatedFrame   : 1;
++
++        unsigned int signalGetUserInputIdx : 1;
++        unsigned int signalEndOfFrameIdx   : 1;
++
++        unsigned int reserved              :26;
++    }               flags;
++    unsigned __int64    iiFrameIdx;
++    unsigned __int64    uiiReserved[19];
++};
++
++[
++    object,
++    uuid(b58d6601-7401-4234-8180-6febfc0e484c),
++    local
++]
++interface IAmdExtFfxApi : IUnknown
++{
++    HRESULT UpdateFfxApiProvider([in, out] void* pData, [in] unsigned int dataSizeInBytes);
++}
++
++[
++    object,
++    uuid(44085fbe-e839-40c5-bf38-0ebc5ab4d0a6),
++    local
++]
++interface IAmdExtAntiLagApi : IUnknown
++{
++    HRESULT UpdateAntiLagState([in, out] void* pData);
++}
++
++[
++    object,
++    uuid(014937ec-9288-446f-a9ac-d75a8e3a984f),
++    local
++]
++interface IAmdExtStub1 : IUnknown
++{
++    HRESULT QueryInterface2([in, out] void* unk, [in] REFIID iid, [in, out] void** out);
++}
++
++[
++    object,
++    uuid(ba019d53-ccab-4cbd-b56a-7230ed4330ad),
++    local
++]
++interface IAmdExtStub2 : IUnknown
++{
++    void stub();
++    void stub2([in] unsigned int unk);
++    void stub3();
++}
+diff --git a/dlls/amdxc64/dxvk_interfaces.idl b/dlls/amdxc64/dxvk_interfaces.idl
+new file mode 100644
+index 00000000000..9e405a32a06
+--- /dev/null
++++ b/dlls/amdxc64/dxvk_interfaces.idl
+@@ -0,0 +1,153 @@
++/*
++ * Copyright 2023      Paul Gofman for CodeWeavers
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#pragma makedep register
++
++import "d3d11.idl";
++import "dxgi1_6.idl";
++
++typedef struct VkInstance_T *VkInstance;
++typedef void (__stdcall *PFN_vkVoidFunction)(void);
++typedef PFN_vkVoidFunction (__stdcall *PFN_vkGetInstanceProcAddr)(VkInstance instance, const char* pName);
++
++typedef enum D3D11_VK_EXTENSION
++{
++    D3D11_VK_EXT_MULTI_DRAW_INDIRECT,
++    D3D11_VK_EXT_MULTI_DRAW_INDIRECT_COUNT,
++    D3D11_VK_EXT_DEPTH_BOUNDS,
++    D3D11_VK_EXT_BARRIER_CONTROL,
++    D3D11_VK_NVX_BINARY_IMPORT,
++    D3D11_VK_NVX_IMAGE_VIEW_HANDLE,
++} D3D11_VK_EXTENSION;
++
++typedef enum D3D11_VK_BARRIER_CONTROL
++{
++    D3D11_VK_BARRIER_CONTROL_IGNORE_WRITE_AFTER_WRITE = 0x1,
++    D3D11_VK_BARRIER_CONTROL_IGNORE_GRAPHICS_UAV = 0x2,
++} D3D11_VK_BARRIER_CONTROL;
++
++[
++    object,
++    uuid(bb8a4fb9-3935-4762-b44b-35189a26414a),
++    local,
++    pointer_default(unique)
++]
++interface ID3D11VkExtShader : IUnknown
++{
++    HRESULT GetSpirvCode([in, out] SIZE_T *code_size, [out] void *code);
++}
++
++[
++    object,
++    uuid(8a6e3c42-f74c-45b7-8265-a231b677ca17),
++    local,
++    pointer_default(unique)
++]
++interface ID3D11VkExtDevice : IUnknown
++{
++    BOOL GetExtensionSupport([in] D3D11_VK_EXTENSION extension);
++}
++
++[
++    object,
++    uuid(cfcf64ef-9586-46d0-bca4-97cf2ca61b06),
++    local,
++    pointer_default(unique)
++]
++interface ID3D11VkExtDevice1 : ID3D11VkExtDevice
++{
++    BOOL GetResourceHandleGPUVirtualAddressAndSizeNVX([in] void *object, [out] UINT64 *gpu_va_start,
++            [out] UINT64 *gpu_va_size);
++    BOOL CreateUnorderedAccessViewAndGetDriverHandleNVX([in] ID3D11Resource *resource,
++            [in] const D3D11_UNORDERED_ACCESS_VIEW_DESC *desc, [out] ID3D11UnorderedAccessView **uav,
++            UINT32 *driver_handle);
++    BOOL CreateShaderResourceViewAndGetDriverHandleNVX([in] ID3D11Resource *resource,
++            [in] const D3D11_SHADER_RESOURCE_VIEW_DESC* desc, [out] ID3D11ShaderResourceView **srv,
++            UINT32 *dirver_handle);
++    BOOL CreateSamplerStateAndGetDriverHandleNVX([in] const D3D11_SAMPLER_DESC *sample_desc,
++            [out] ID3D11SamplerState **sample_state, UINT32 *driver_handle);
++    BOOL CreateCubinComputeShaderWithNameNVX([in] const void *cubin, [in] UINT32 size, [in] UINT32 block_x,
++            [in] UINT32 block_y, [in] UINT32 block_z, [in] const char *shader_name, [out] IUnknown **shader);
++    BOOL GetCudaTextureObjectNVX([in] UINT32 srv_driver_hadnle, [in] UINT32 sample_driver_handle,
++            [out] UINT32 *cuda_texture_handle);
++}
++
++[
++    object,
++    uuid(fd0bca13-5cb6-4c3a-987e-4750de2ca791),
++    local,
++    pointer_default(unique)
++]
++interface ID3D11VkExtContext : IUnknown
++{
++    void MultiDrawIndirect([in] UINT draw_count, [in] ID3D11Buffer *buffer_for_args, [in] UINT byte_offset_for_args,
++            [in] UINT byte_stride_for_args);
++    void MultiDrawIndexedIndirect([in] UINT draw_count, [in] ID3D11Buffer *buffer_for_args,
++            [in] UINT byte_offset_for_args, [in] UINT byte_stride_for_args);
++    void MultiDrawIndirectCount([in] UINT max_draw_count, [in] ID3D11Buffer *buffer_for_count,
++            [in] UINT byte_offset_for_count, [in] ID3D11Buffer *buffer_for_args,
++            [in] UINT byte_offset_for_args, [in] UINT byte_stride_for_args);
++    void MultiDrawIndexedIndirectCount([in] UINT max_draw_count, [in] ID3D11Buffer *buffer_for_count,
++            [in] UINT byte_offset_for_count, [in] ID3D11Buffer *buffer_for_args,
++            [in] UINT byte_offset_for_args, [in] UINT byte_stride_for_args);
++    void SetDepthBoundsTest([in] BOOL enable, [in] FLOAT min_depth_bounds, [in] FLOAT max_depth_bounds);
++    void SetBarrierControl([in] UINT control_flags);
++}
++
++[
++    object,
++    uuid(874b09b2-ae0b-41d8-8476-5f3b7a0e879d),
++    local,
++    pointer_default(unique)
++]
++interface ID3D11VkExtContext1 : ID3D11VkExtContext
++{
++    BOOL LaunchCubinShaderNVX([in] IUnknown *shader,[in] UINT32 grid_x, [in] UINT32 grid_y, [in] UINT32 grid_z,
++            [in] const void *params, [in] UINT32 param_size, [in] void * const *read_resources,
++            [in] UINT32 read_resource_count, [in] void* const *write_resources, [in] UINT32 write_resources_count);
++}
++
++[
++    object,
++    uuid(4c5e1b0d-b0c8-4131-bfd8-9b2476f7f408),
++    local,
++    pointer_default(unique)
++]
++interface IDXGIVkInteropFactory : IUnknown
++{
++    void GetVulkanInstance(
++          [out] VkInstance *pInstance,
++          [out] PFN_vkGetInstanceProcAddr *ppfnVkGetInstanceProcAddr);
++}
++
++[
++    object,
++    uuid(2a289dbd-2d0a-4a51-89f7-f2adce465cd6),
++    local,
++    pointer_default(unique)
++]
++interface IDXGIVkInteropFactory1 : IDXGIVkInteropFactory
++{
++  HRESULT GetGlobalHDRState(
++          [out] DXGI_COLOR_SPACE_TYPE   *pOutColorSpace,
++          [out] DXGI_HDR_METADATA_HDR10 *ppOutMetadata) = 0;
++
++  HRESULT SetGlobalHDRState(
++          [in] DXGI_COLOR_SPACE_TYPE    ColorSpace,
++    [in] const DXGI_HDR_METADATA_HDR10 *pMetadata) = 0;
++}
+diff --git a/dlls/amdxc64/main.c b/dlls/amdxc64/main.c
+new file mode 100644
+index 00000000000..754e22f914f
+--- /dev/null
++++ b/dlls/amdxc64/main.c
+@@ -0,0 +1,317 @@
++/*
++ * amdxc implementation
++ *
++ * Copyright 2023 Etaash Mathamsetty
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#include <stdarg.h>
++
++#include "ntstatus.h"
++#include "winerror.h"
++#define WIN32_NO_STATUS
++#include "windef.h"
++#include "winbase.h"
++#include "winternl.h"
++#include "wine/debug.h"
++#include "wine/heap.h"
++
++#include "wine/vulkan.h"
++#include "wine/asm.h"
++
++#define COBJMACROS
++#include "initguid.h"
++#include "d3d11.h"
++#include "d3d12.h"
++
++#include "dxgi1_6.h"
++
++#include "dxvk_interfaces.h"
++#include "amdxc_interfaces.h"
++
++#include <wingdi.h>
++
++WINE_DEFAULT_DEBUG_CHANNEL(amdxc);
++
++struct AMDFSR4FFX
++{
++    IAmdExtFfxApi IAmdExtFfxApi_iface;
++    LONG ref;
++};
++
++static struct AMDFSR4FFX* impl_from_IAmdExtFfxApi(IAmdExtFfxApi* iface)
++{
++    return CONTAINING_RECORD(iface, struct AMDFSR4FFX, IAmdExtFfxApi_iface);
++}
++
++ULONG STDMETHODCALLTYPE AMDFSR4FFX_AddRef(IAmdExtFfxApi *iface)
++{
++    struct AMDFSR4FFX* data = impl_from_IAmdExtFfxApi(iface);
++    return InterlockedIncrement(&data->ref);
++}
++
++ULONG STDMETHODCALLTYPE AMDFSR4FFX_Release(IAmdExtFfxApi *iface)
++{
++    struct AMDFSR4FFX* data = impl_from_IAmdExtFfxApi(iface);
++    ULONG ret = InterlockedDecrement(&data->ref);
++    if (!ret) free(data);
++    return ret;
++}
++
++HRESULT STDMETHODCALLTYPE AMDFSR4FFX_QueryInterface(IAmdExtFfxApi *iface, REFIID iid, void **obj)
++{
++    FIXME("%p %s %p", iface, debugstr_guid(iid), obj);
++
++    return E_NOINTERFACE;
++}
++
++typedef HRESULT (__stdcall *updateffxapi_pfn)(void*, unsigned int);
++
++HRESULT STDMETHODCALLTYPE AMDFSR4FFX_UpdateFfxApiProvider(IAmdExtFfxApi *iface, void* data, unsigned int size)
++{
++    updateffxapi_pfn pfn;
++    HMODULE amdffx = LoadLibraryA("amdxcffx64");
++
++    TRACE("%p %p %u\n", iface, data, size);
++
++    if (!amdffx)
++    {
++        ERR("Failed to load FSR4 dll (amdxcffx)!\n");
++        return E_NOINTERFACE;
++    }
++
++    pfn = (updateffxapi_pfn)GetProcAddress(amdffx, "UpdateFfxApiProvider");
++
++    if(pfn && getenv("FSR4_UPGRADE"))
++    {
++        FIXME("replaced fsr3 with fsr4!\n");
++        return pfn(data, size);
++    }
++
++    return E_NOINTERFACE;
++}
++
++static const struct IAmdExtFfxApiVtbl AMDFSR4FFX_vtable = {
++    AMDFSR4FFX_QueryInterface,
++    AMDFSR4FFX_AddRef,
++    AMDFSR4FFX_Release,
++    AMDFSR4FFX_UpdateFfxApiProvider
++};
++
++struct AMDAntiLag2
++{
++    IAmdExtAntiLagApi IAmdExtAntiLagApi_iface;
++    LONG ref;
++};
++
++static struct AMDAntiLag2* impl_from_IAmdExtAntiLagApi(IAmdExtAntiLagApi *iface)
++{
++    return CONTAINING_RECORD(iface, struct AMDAntiLag2, IAmdExtAntiLagApi_iface);
++}
++
++ULONG STDMETHODCALLTYPE AMDAntiLag2_AddRef(IAmdExtAntiLagApi *iface)
++{
++    struct AMDAntiLag2 *data = impl_from_IAmdExtAntiLagApi(iface);
++    return InterlockedIncrement(&data->ref);
++}
++
++ULONG STDMETHODCALLTYPE AMDAntiLag2_Release(IAmdExtAntiLagApi *iface)
++{
++    struct AMDAntiLag2 *data = impl_from_IAmdExtAntiLagApi(iface);
++    ULONG ret = InterlockedDecrement(&data->ref);
++    if (!ret) free(data);
++    return ret;
++}
++
++HRESULT STDMETHODCALLTYPE AMDAntiLag2_QueryInterface(IAmdExtAntiLagApi *iface, REFIID iid, void **out)
++{
++    FIXME("(%p %s %p) stub!\n", iface, debugstr_guid(iid), out);
++    return E_NOINTERFACE;
++}
++
++HRESULT STDMETHODCALLTYPE AMDAntiLag2_UpdateAntiLagState(IAmdExtAntiLagApi *iface, void* data)
++{
++    union {
++        struct APIData_v1 *v1;
++        struct APIData_v2 *v2;
++    } apidata = {data};
++    TRACE("(%p %p)!\n", iface, data);
++
++    if (!data) {
++        /* perform sleep */
++    } else if(apidata.v1->uiVersion == 1) {
++        /* access apidata v1 */
++        if(apidata.v1->uiSize != sizeof(struct APIData_v1)) return E_INVALIDARG;
++    } else if(apidata.v1->uiVersion == 2) {
++        /* access apidata v2 */
++        if(apidata.v2->uiSize != sizeof(struct APIData_v2)) return E_INVALIDARG;
++    }
++
++    return E_NOTIMPL;
++}
++
++static const struct IAmdExtAntiLagApiVtbl AMDANTILAG_vtable = {
++    AMDAntiLag2_QueryInterface,
++    AMDAntiLag2_AddRef,
++    AMDAntiLag2_Release,
++    AMDAntiLag2_UpdateAntiLagState
++};
++
++struct AMDExtStub2
++{
++    IAmdExtStub2 IAmdExtStub2_iface;
++    LONG ref;
++};
++
++struct AMDExtStub2* impl_from_IAMDExtStub2(IAmdExtStub2 *iface)
++{
++    return CONTAINING_RECORD(iface, struct AMDExtStub2, IAmdExtStub2_iface);
++}
++
++ULONG STDMETHODCALLTYPE AMDExtStub2_AddRef(IAmdExtStub2 *iface)
++{
++    struct AMDExtStub2 *this = impl_from_IAMDExtStub2(iface);
++    return InterlockedIncrement(&this->ref);
++}
++
++ULONG STDMETHODCALLTYPE AMDExtStub2_Release(IAmdExtStub2 *iface)
++{
++    struct AMDExtStub2 *this = impl_from_IAMDExtStub2(iface);
++    ULONG ret = InterlockedDecrement(&this->ref);
++    if (!ret) free(this);
++    return ret;
++}
++
++HRESULT STDMETHODCALLTYPE AMDExtStub2_QueryInterface(IAmdExtStub2 *iface, REFIID iid, void **out)
++{
++    FIXME("%p %s %p stub!\n", iface, debugstr_guid(iid), out);
++    return E_NOINTERFACE;
++}
++
++void STDMETHODCALLTYPE AMDExtStub2_stub1(IAmdExtStub2 *iface)
++{
++    FIXME("%p stub!\n", iface);
++}
++
++void STDMETHODCALLTYPE AMDExtStub2_stub2(IAmdExtStub2 *iface, unsigned int unk)
++{
++    FIXME("%p %u stub!\n", iface, unk);
++}
++
++void STDMETHODCALLTYPE AMDExtStub2_stub3(IAmdExtStub2 *iface)
++{
++    FIXME("%p stub!\n", iface);
++}
++
++const static struct IAmdExtStub2Vtbl AMDSTUB2_vtable = {
++    AMDExtStub2_QueryInterface,
++    AMDExtStub2_AddRef,
++    AMDExtStub2_Release,
++    AMDExtStub2_stub1,
++    AMDExtStub2_stub2,
++    AMDExtStub2_stub3
++};
++
++struct AMDExtStub1
++{
++    IAmdExtStub1 IAmdExtStub1_iface;
++    LONG ref;
++};
++
++struct AMDExtStub1* impl_from_IAMDExtStub1(IAmdExtStub1 *iface)
++{
++    return CONTAINING_RECORD(iface, struct AMDExtStub1, IAmdExtStub1_iface);
++}
++
++ULONG STDMETHODCALLTYPE AMDExtStub1_AddRef(IAmdExtStub1 *iface)
++{
++    struct AMDExtStub1 *this = impl_from_IAMDExtStub1(iface);
++    return InterlockedIncrement(&this->ref);
++}
++
++ULONG STDMETHODCALLTYPE AMDExtStub1_Release(IAmdExtStub1 *iface)
++{
++    struct AMDExtStub1 *this = impl_from_IAMDExtStub1(iface);
++    ULONG ret = InterlockedDecrement(&this->ref);
++    if (!ret) free(this);
++    return ret;
++}
++
++HRESULT STDMETHODCALLTYPE AmdExtStub1_QueryInterface2(IAmdExtStub1 *iface, void* unk, REFIID iid, void **out)
++{
++    TRACE("%p %p %s %p\n", iface, unk, debugstr_guid(iid), out);
++
++    if(IsEqualGUID(iid, &IID_IAmdExtStub2))
++    {
++        struct AMDExtStub2 *this = calloc(1, sizeof(struct AMDExtStub2));
++
++        this->IAmdExtStub2_iface.lpVtbl = &AMDSTUB2_vtable;
++        this->ref = 1;
++        *out = &this->IAmdExtStub2_iface;
++        return S_OK;
++    } else {
++        FIXME("unknown guid %s\n", debugstr_guid(iid));
++    }
++
++    return E_NOINTERFACE;
++}
++
++HRESULT STDMETHODCALLTYPE AmdExtStub1_QueryInterface(IAmdExtStub1 *iface, REFIID iid, void **out)
++{
++    return AmdExtStub1_QueryInterface2(iface, NULL, iid, out);
++}
++
++static const struct IAmdExtStub1Vtbl AMDSTUB1_vtable = {
++    AmdExtStub1_QueryInterface,
++    AMDExtStub1_AddRef,
++    AMDExtStub1_Release,
++    AmdExtStub1_QueryInterface2
++};
++
++HRESULT CDECL AmdExtD3DCreateInterface(IUnknown *outer, REFIID iid, void **obj)
++{
++    TRACE("outer %p, iid %s, obj %p\n", outer, debugstr_guid(iid), obj);
++
++    if (IsEqualGUID(iid, &IID_IAmdExtFfxApi))
++    {
++        struct AMDFSR4FFX* ffx = calloc(1, sizeof(struct AMDFSR4FFX));
++        ffx->IAmdExtFfxApi_iface.lpVtbl = &AMDFSR4FFX_vtable;
++        ffx->ref = 1;
++        *obj = &ffx->IAmdExtFfxApi_iface;
++        return S_OK;
++    } else if (IsEqualGUID(iid, &IID_IAmdExtAntiLagApi)) {
++        struct AMDAntiLag2 *out = calloc(1, sizeof(struct AMDAntiLag2));
++        out->IAmdExtAntiLagApi_iface.lpVtbl = &AMDANTILAG_vtable;
++        out->ref = 1;
++        *obj = &out->IAmdExtAntiLagApi_iface;
++        return S_OK;
++    } else if(IsEqualGUID(iid, &IID_IAmdExtStub1)) {
++        struct AMDExtStub1 *this = calloc(1, sizeof(struct AMDExtStub1));
++        this->IAmdExtStub1_iface.lpVtbl = &AMDSTUB1_vtable;
++        this->ref = 1;
++        *obj = &this->IAmdExtStub1_iface;
++        return S_OK;
++    } else {
++        FIXME("unknown guid: %s\n", debugstr_guid(iid));
++    }
++
++    return E_NOINTERFACE;
++}
++
++HMODULE WINAPI AmdGetDxcModuleHandle(void)
++{
++    return GetModuleHandleA(NULL);
++}
+-- 
+2.49.0
+
