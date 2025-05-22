@@ -1,0 +1,3768 @@
+From 880d667452314c7200ce81521617ff200b8c2f55 Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Thu, 15 May 2025 16:14:54 -0400
+Subject: [PATCH 7/9] winewayland: Implement touchpad scrolling support.
+
+I hate this so much, but it's the best we can do I think
+---
+ dlls/winewayland.drv/wayland_pointer.c | 74 ++++++++++++++++++--------
+ dlls/winewayland.drv/waylanddrv.h      |  2 +
+ 2 files changed, 53 insertions(+), 23 deletions(-)
+
+diff --git a/dlls/winewayland.drv/wayland_pointer.c b/dlls/winewayland.drv/wayland_pointer.c
+index ebd09d87b2a..86443e3fd75 100644
+--- a/dlls/winewayland.drv/wayland_pointer.c
++++ b/dlls/winewayland.drv/wayland_pointer.c
+@@ -270,6 +270,57 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
+ static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
+                                 uint32_t time, uint32_t axis, wl_fixed_t value)
+ {
++    HWND hwnd;
++    INPUT input = {0};
++    /*
++        We are given a distance in the surface local coordinate system.
++        However, we need to convert that into a WHEEL_DELTA which represents
++        physical mouse wheel motion. Using default settings on KDE Plasma,
++        I obtained a value of 15 for one mouse wheel click. So that is the
++        value I have chosen for now. However, what do other compositors default to?
++        Additionally, the system's scroll sensitivity now affects winewayland,
++        is that going to cause issues?
++
++        So many unknowns for such a seemingly trivial task :(
++        just because we are trying to support touchpads...
++    */
++    double scroll_value = (wl_fixed_to_double(value) / 15.0) * WHEEL_DELTA;
++    struct wayland_pointer *pointer = &process_wayland.pointer;
++
++    if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
++
++    input.type = INPUT_MOUSE;
++
++    /*
++        Truncation makes the most sense:
++        Imagine a infinite resolution scroll wheel
++        Assume that input axis value is some fraction of a tick
++        Accumulate input axis value * WHEEL_DELTA
++        Truncate to WHEEL_DELTA precision
++        Do subtraction on original value
++        Leftover accumulation is just leftover rotation on the wheel
++    */
++    switch (axis)
++    {
++        case WL_POINTER_AXIS_VERTICAL_SCROLL:
++            input.mi.dwFlags = MOUSEEVENTF_WHEEL;
++            pointer->accum_wheel += -scroll_value;
++            input.mi.mouseData = trunc(pointer->accum_wheel / WHEEL_DELTA) * WHEEL_DELTA;
++            pointer->accum_wheel -= (int)input.mi.mouseData;
++            break;
++        case WL_POINTER_AXIS_HORIZONTAL_SCROLL:
++            input.mi.dwFlags = MOUSEEVENTF_HWHEEL;
++            pointer->accum_wheelH += scroll_value;
++            input.mi.mouseData = trunc(pointer->accum_wheelH / WHEEL_DELTA) * WHEEL_DELTA;
++            pointer->accum_wheelH -= (int)input.mi.mouseData;
++            break;
++        default: break;
++    }
++
++    TRACE("hwnd=%p axis=%u value=%lf out=%d\n", hwnd, axis, scroll_value, (int)input.mi.mouseData);
++
++    if (input.mi.mouseData)
++        NtUserSendHardwareInput(hwnd, 0, &input, 0);
+ }
+ 
+ static void pointer_handle_frame(void *data, struct wl_pointer *wl_pointer)
+@@ -289,29 +340,6 @@ static void pointer_handle_axis_stop(void *data, struct wl_pointer *wl_pointer,
+ static void pointer_handle_axis_discrete(void *data, struct wl_pointer *wl_pointer,
+                                          uint32_t axis, int32_t discrete)
+ {
+-    INPUT input = {0};
+-    HWND hwnd;
+-
+-    if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
+-
+-    input.type = INPUT_MOUSE;
+-
+-    switch (axis)
+-    {
+-    case WL_POINTER_AXIS_VERTICAL_SCROLL:
+-        input.mi.dwFlags = MOUSEEVENTF_WHEEL;
+-        input.mi.mouseData = -WHEEL_DELTA * discrete;
+-        break;
+-    case WL_POINTER_AXIS_HORIZONTAL_SCROLL:
+-        input.mi.dwFlags = MOUSEEVENTF_HWHEEL;
+-        input.mi.mouseData = WHEEL_DELTA * discrete;
+-        break;
+-    default: break;
+-    }
+-
+-    TRACE("hwnd=%p axis=%u discrete=%d\n", hwnd, axis, discrete);
+-
+-    NtUserSendHardwareInput(hwnd, 0, &input, 0);
+ }
+ 
+ static const struct wl_pointer_listener pointer_listener =
+diff --git a/dlls/winewayland.drv/waylanddrv.h b/dlls/winewayland.drv/waylanddrv.h
+index b68a217004c..7a800c607ed 100644
+--- a/dlls/winewayland.drv/waylanddrv.h
++++ b/dlls/winewayland.drv/waylanddrv.h
+@@ -119,6 +119,8 @@ struct wayland_pointer
+     struct wayland_cursor cursor;
+     double accum_x;
+     double accum_y;
++    double accum_wheel;
++    double accum_wheelH;
+     pthread_mutex_t mutex;
+ };
+ 
+-- 
+2.49.0
+
+From a27a9d362297f96600ea34672355db9b0b319bec Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Thu, 15 May 2025 19:22:47 -0400
+Subject: [PATCH 8/9] winewayland: Use unaccelerated relative motion.
+
+---
+ dlls/winewayland.drv/wayland_pointer.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/dlls/winewayland.drv/wayland_pointer.c b/dlls/winewayland.drv/wayland_pointer.c
+index 86443e3fd75..f3e4c51a576 100644
+--- a/dlls/winewayland.drv/wayland_pointer.c
++++ b/dlls/winewayland.drv/wayland_pointer.c
+@@ -383,9 +383,10 @@ static void relative_pointer_v1_relative_motion(void *private,
+     if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
+     if (!(data = wayland_win_data_get(hwnd))) return;
+ 
++    /* Use "raw" input by default. However, it's not nessessarily raw */
+     wayland_motion_delta_to_window(data->wayland_surface,
+-                                   wl_fixed_to_double(dx),
+-                                   wl_fixed_to_double(dy),
++                                   wl_fixed_to_double(dx_unaccel),
++                                   wl_fixed_to_double(dy_unaccel),
+                                    &screen_x, &screen_y);
+     wayland_win_data_release(data);
+ 
+@@ -405,7 +406,7 @@ static void relative_pointer_v1_relative_motion(void *private,
+     pthread_mutex_unlock(&pointer->mutex);
+ 
+     TRACE("hwnd=%p wayland_dxdy=%.2f,%.2f accum_dxdy=%d,%d\n",
+-          hwnd, wl_fixed_to_double(dx), wl_fixed_to_double(dy),
++          hwnd, wl_fixed_to_double(dx_unaccel), wl_fixed_to_double(dy_unaccel),
+           input.mi.dx, input.mi.dy);
+ 
+     NtUserSendHardwareInput(hwnd, 0, &input, 0);
+-- 
+2.49.0
+
+From 3a126b17eed4631bfe0caa9d2ca07adc4e51f1ac Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Thu, 15 May 2025 19:55:01 -0400
+Subject: [PATCH 9/9] winewayland: Use discrete event when possible.
+
+---
+ dlls/winewayland.drv/wayland_pointer.c | 30 ++++++++++++++++++++++++++
+ dlls/winewayland.drv/waylanddrv.h      |  1 +
+ 2 files changed, 31 insertions(+)
+
+diff --git a/dlls/winewayland.drv/wayland_pointer.c b/dlls/winewayland.drv/wayland_pointer.c
+index f3e4c51a576..cc1941cece2 100644
+--- a/dlls/winewayland.drv/wayland_pointer.c
++++ b/dlls/winewayland.drv/wayland_pointer.c
+@@ -281,6 +281,9 @@ static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
+         Additionally, the system's scroll sensitivity now affects winewayland,
+         is that going to cause issues?
+ 
++        We can alleviate these issues for physical scroll wheels using the discrete
++        event at least.
++
+         So many unknowns for such a seemingly trivial task :(
+         just because we are trying to support touchpads...
+     */
+@@ -288,6 +291,7 @@ static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
+     struct wayland_pointer *pointer = &process_wayland.pointer;
+ 
+     if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
++    if (InterlockedCompareExchange(&pointer->discrete_event_handled, FALSE, TRUE)) return;
+ 
+     input.type = INPUT_MOUSE;
+ 
+@@ -340,6 +344,32 @@ static void pointer_handle_axis_stop(void *data, struct wl_pointer *wl_pointer,
+ static void pointer_handle_axis_discrete(void *data, struct wl_pointer *wl_pointer,
+                                          uint32_t axis, int32_t discrete)
+ {
++    INPUT input = {0};
++    HWND hwnd;
++    struct wayland_pointer *pointer = &process_wayland.pointer;
++
++    if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
++
++    InterlockedExchange(&pointer->discrete_event_handled, TRUE);
++
++    input.type = INPUT_MOUSE;
++
++    switch (axis)
++    {
++        case WL_POINTER_AXIS_VERTICAL_SCROLL:
++            input.mi.dwFlags = MOUSEEVENTF_WHEEL;
++            input.mi.mouseData = -WHEEL_DELTA * discrete;
++            break;
++        case WL_POINTER_AXIS_HORIZONTAL_SCROLL:
++            input.mi.dwFlags = MOUSEEVENTF_HWHEEL;
++            input.mi.mouseData = WHEEL_DELTA * discrete;
++            break;
++        default: break;
++    }
++
++    TRACE("hwnd=%p axis=%u discrete=%d\n", hwnd, axis, discrete);
++
++    NtUserSendHardwareInput(hwnd, 0, &input, 0);
+ }
+ 
+ static const struct wl_pointer_listener pointer_listener =
+diff --git a/dlls/winewayland.drv/waylanddrv.h b/dlls/winewayland.drv/waylanddrv.h
+index 7a800c607ed..26208dae23c 100644
+--- a/dlls/winewayland.drv/waylanddrv.h
++++ b/dlls/winewayland.drv/waylanddrv.h
+@@ -121,6 +121,7 @@ struct wayland_pointer
+     double accum_y;
+     double accum_wheel;
+     double accum_wheelH;
++    LONG discrete_event_handled;
+     pthread_mutex_t mutex;
+ };
+ 
+-- 
+2.49.0
+
+From cb400427c7fd6c80664f11b7bbaf128fc46fcd59 Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Sat, 17 May 2025 15:08:08 -0400
+Subject: [PATCH] winewayland: Handle rotated screens.
+
+Some win32u issues with vertical monitors? But works exactly the same as winex11 so I think this is a win
+---
+ dlls/winewayland.drv/wayland_output.c | 19 +++++++++++++++++++
+ dlls/winewayland.drv/waylanddrv.h     |  1 +
+ 2 files changed, 20 insertions(+)
+
+diff --git a/dlls/winewayland.drv/wayland_output.c b/dlls/winewayland.drv/wayland_output.c
+index f76881a1770..ce388d02f21 100644
+--- a/dlls/winewayland.drv/wayland_output.c
++++ b/dlls/winewayland.drv/wayland_output.c
+@@ -39,6 +39,7 @@ static uint32_t next_output_id = 0;
+ #define WAYLAND_OUTPUT_CHANGED_NAME       0x02
+ #define WAYLAND_OUTPUT_CHANGED_LOGICAL_XY 0x04
+ #define WAYLAND_OUTPUT_CHANGED_LOGICAL_WH 0x08
++#define WAYLAND_OUTPUT_CHANGED_TRANSFORM  0x10
+ 
+ /**********************************************************************
+  *          Output handling
+@@ -139,6 +140,14 @@ static void wayland_output_done(struct wayland_output *output)
+     {
+         RB_FOR_EACH_ENTRY(mode, &output->pending.modes, struct wayland_output_mode, entry)
+         {
++            /* Need to flip w,h when the output is transformed by 90 or 270 degrees */
++            if (output->pending.transform == WL_OUTPUT_TRANSFORM_270 ||
++                output->pending.transform == WL_OUTPUT_TRANSFORM_90)
++            {
++                const int32_t temp = mode->width;
++                mode->width = mode->height;
++                mode->height = temp;
++            }
+             wayland_output_state_add_mode(&output->current,
+                                           mode->width, mode->height, mode->refresh,
+                                           mode == output->pending.current_mode);
+@@ -167,6 +176,11 @@ static void wayland_output_done(struct wayland_output *output)
+         output->current.logical_h = output->pending.logical_h;
+     }
+ 
++    if (output->pending_flags & WAYLAND_OUTPUT_CHANGED_TRANSFORM)
++    {
++        output->current.transform = output->pending.transform;
++    }
++
+     output->pending_flags = 0;
+ 
+     /* Ensure the logical dimensions have sane values. */
+@@ -200,6 +214,11 @@ static void output_handle_geometry(void *data, struct wl_output *wl_output,
+                                    const char *make, const char *model,
+                                    int32_t output_transform)
+ {
++    struct wayland_output *output = data;
++
++    output->pending.transform = output_transform;
++
++    output->pending_flags |= WAYLAND_OUTPUT_CHANGED_TRANSFORM;
+ }
+ 
+ static void output_handle_mode(void *data, struct wl_output *wl_output,
+diff --git a/dlls/winewayland.drv/waylanddrv.h b/dlls/winewayland.drv/waylanddrv.h
+index 26208dae23c..b4afe72e1a7 100644
+--- a/dlls/winewayland.drv/waylanddrv.h
++++ b/dlls/winewayland.drv/waylanddrv.h
+@@ -209,6 +209,7 @@ struct wayland_output_state
+     char *name;
+     int logical_x, logical_y;
+     int logical_w, logical_h;
++    int transform;
+ };
+ 
+ struct wayland_output
+From 710aaa2add60ac6ce8a671b2d005852714065dec Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Tue, 6 May 2025 09:06:03 -0400
+Subject: [PATCH 28/44] hack: winewayland: handle fractional scaling
+
+---
+ dlls/winewayland.drv/Makefile.in             |   1 +
+ dlls/winewayland.drv/fractional-scale-v1.xml | 102 +++++++++++++++++++
+ dlls/winewayland.drv/wayland.c               |   8 ++
+ dlls/winewayland.drv/wayland_surface.c       |  39 +++++++
+ dlls/winewayland.drv/waylanddrv.h            |   5 +
+ dlls/winewayland.drv/window.c                |   2 +-
+ 6 files changed, 156 insertions(+), 1 deletion(-)
+ create mode 100644 dlls/winewayland.drv/fractional-scale-v1.xml
+
+diff --git a/dlls/winewayland.drv/Makefile.in b/dlls/winewayland.drv/Makefile.in
+index e7b1bfb90eb..f141c22ee36 100644
+--- a/dlls/winewayland.drv/Makefile.in
++++ b/dlls/winewayland.drv/Makefile.in
+@@ -7,6 +7,7 @@ IMPORTS = user32 win32u
+ SOURCES = \
+ 	display.c \
+ 	dllmain.c \
++	fractional-scale-v1.xml \
+ 	opengl.c \
+ 	pointer-constraints-unstable-v1.xml \
+ 	relative-pointer-unstable-v1.xml \
+diff --git a/dlls/winewayland.drv/fractional-scale-v1.xml b/dlls/winewayland.drv/fractional-scale-v1.xml
+new file mode 100644
+index 00000000000..350bfc01eaf
+--- /dev/null
++++ b/dlls/winewayland.drv/fractional-scale-v1.xml
+@@ -0,0 +1,102 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="fractional_scale_v1">
++  <copyright>
++    Copyright © 2022 Kenny Levinsen
++
++    Permission is hereby granted, free of charge, to any person obtaining a
++    copy of this software and associated documentation files (the "Software"),
++    to deal in the Software without restriction, including without limitation
++    the rights to use, copy, modify, merge, publish, distribute, sublicense,
++    and/or sell copies of the Software, and to permit persons to whom the
++    Software is furnished to do so, subject to the following conditions:
++
++    The above copyright notice and this permission notice (including the next
++    paragraph) shall be included in all copies or substantial portions of the
++    Software.
++
++    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++    DEALINGS IN THE SOFTWARE.
++  </copyright>
++
++  <description summary="Protocol for requesting fractional surface scales">
++    This protocol allows a compositor to suggest for surfaces to render at
++    fractional scales.
++
++    A client can submit scaled content by utilizing wp_viewport. This is done by
++    creating a wp_viewport object for the surface and setting the destination
++    rectangle to the surface size before the scale factor is applied.
++
++    The buffer size is calculated by multiplying the surface size by the
++    intended scale.
++
++    The wl_surface buffer scale should remain set to 1.
++
++    If a surface has a surface-local size of 100 px by 50 px and wishes to
++    submit buffers with a scale of 1.5, then a buffer of 150px by 75 px should
++    be used and the wp_viewport destination rectangle should be 100 px by 50 px.
++
++    For toplevel surfaces, the size is rounded halfway away from zero. The
++    rounding algorithm for subsurface position and size is not defined.
++  </description>
++
++  <interface name="wp_fractional_scale_manager_v1" version="1">
++    <description summary="fractional surface scale information">
++      A global interface for requesting surfaces to use fractional scales.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="unbind the fractional surface scale interface">
++        Informs the server that the client will not be using this protocol
++        object anymore. This does not affect any other objects,
++        wp_fractional_scale_v1 objects included.
++      </description>
++    </request>
++
++    <enum name="error">
++      <entry name="fractional_scale_exists" value="0"
++        summary="the surface already has a fractional_scale object associated"/>
++    </enum>
++
++    <request name="get_fractional_scale">
++      <description summary="extend surface interface for scale information">
++        Create an add-on object for the the wl_surface to let the compositor
++        request fractional scales. If the given wl_surface already has a
++        wp_fractional_scale_v1 object associated, the fractional_scale_exists
++        protocol error is raised.
++      </description>
++      <arg name="id" type="new_id" interface="wp_fractional_scale_v1"
++           summary="the new surface scale info interface id"/>
++      <arg name="surface" type="object" interface="wl_surface"
++           summary="the surface"/>
++    </request>
++  </interface>
++
++  <interface name="wp_fractional_scale_v1" version="1">
++    <description summary="fractional scale interface to a wl_surface">
++      An additional interface to a wl_surface object which allows the compositor
++      to inform the client of the preferred scale.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="remove surface scale information for surface">
++        Destroy the fractional scale object. When this object is destroyed,
++        preferred_scale events will no longer be sent.
++      </description>
++    </request>
++
++    <event name="preferred_scale">
++      <description summary="notify of new preferred scale">
++        Notification of a new preferred scale for this surface that the
++        compositor suggests that the client should use.
++
++        The sent scale is the numerator of a fraction with a denominator of 120.
++      </description>
++      <arg name="scale" type="uint" summary="the new preferred scale"/>
++    </event>
++  </interface>
++</protocol>
+diff --git a/dlls/winewayland.drv/wayland.c b/dlls/winewayland.drv/wayland.c
+index ba09d32ed89..08cbb8c6979 100644
+--- a/dlls/winewayland.drv/wayland.c
++++ b/dlls/winewayland.drv/wayland.c
+@@ -194,6 +194,11 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
+         process_wayland.xdg_toplevel_icon_manager_v1 =
+             wl_registry_bind(registry, id, &xdg_toplevel_icon_manager_v1_interface, 1);
+     }
++    else if (strcmp(interface, "wp_fractional_scale_manager_v1") == 0)
++    {
++        process_wayland.wp_fractional_scale_manager_v1 =
++            wl_registry_bind(registry, id, &wp_fractional_scale_manager_v1_interface, 1);
++    }
+ }
+ 
+ static void registry_handle_global_remove(void *data, struct wl_registry *registry,
+@@ -327,6 +332,9 @@ BOOL wayland_process_init(void)
+     if (!process_wayland.xdg_toplevel_icon_manager_v1)
+         ERR("Wayland compositor doesn't support xdg_toplevel_icon_manager_v1 (window icons will not be supported)\n");
+ 
++    if (!process_wayland.wp_fractional_scale_manager_v1)
++        ERR("Wayland compositor doesn't support wp_fractional_scale_manager_v1 (fractional scaling will be broken)\n");
++
+     process_wayland.initialized = TRUE;
+ 
+     return TRUE;
+diff --git a/dlls/winewayland.drv/wayland_surface.c b/dlls/winewayland.drv/wayland_surface.c
+index 4daf56d10b3..76469a3bce4 100644
+--- a/dlls/winewayland.drv/wayland_surface.c
++++ b/dlls/winewayland.drv/wayland_surface.c
+@@ -138,6 +138,25 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener =
+     xdg_toplevel_handle_close
+ };
+ 
++void wp_fractional_scale_handle_scale(void* data,
++        struct wp_fractional_scale_v1 *fractional_scale_v1, uint32_t scale)
++{
++    double *data_scale;
++
++    assert(data);
++    data_scale = data;
++
++    /* FIXME: handle locking! */
++    *data_scale = scale / 120.0;
++
++    TRACE("Got scale %lf\n", *data_scale);
++}
++
++static const struct wp_fractional_scale_v1_listener wp_fractional_scale_listener =
++{
++    wp_fractional_scale_handle_scale
++};
++
+ /**********************************************************************
+  *          wayland_surface_create
+  *
+@@ -174,8 +193,22 @@ struct wayland_surface *wayland_surface_create(HWND hwnd)
+         goto err;
+     }
+ 
++    /* in case we don't get notification */
++    surface->window.fractional_scale = 1.0;
+     surface->window.scale = 1.0;
+ 
++    if (process_wayland.wp_fractional_scale_manager_v1)
++    {
++        surface->wp_fractional_scale_v1 =
++            wp_fractional_scale_manager_v1_get_fractional_scale(
++                process_wayland.wp_fractional_scale_manager_v1,
++                surface->wl_surface);
++        wp_fractional_scale_v1_add_listener(
++            surface->wp_fractional_scale_v1,
++            &wp_fractional_scale_listener,
++            &surface->window.fractional_scale);
++    }
++
+     return surface;
+ 
+ err:
+@@ -207,6 +240,12 @@ void wayland_surface_destroy(struct wayland_surface *surface)
+ 
+     wayland_surface_clear_role(surface);
+ 
++    if (surface->wp_fractional_scale_v1)
++    {
++        wp_fractional_scale_v1_destroy(surface->wp_fractional_scale_v1);
++        surface->wp_fractional_scale_v1 = NULL;
++    }
++
+     if (surface->wp_viewport)
+     {
+         wp_viewport_destroy(surface->wp_viewport);
+diff --git a/dlls/winewayland.drv/waylanddrv.h b/dlls/winewayland.drv/waylanddrv.h
+index b3d3016174a..5e04b410202 100644
+--- a/dlls/winewayland.drv/waylanddrv.h
++++ b/dlls/winewayland.drv/waylanddrv.h
+@@ -37,6 +37,7 @@
+ #include "xdg-shell-client-protocol.h"
+ #include "wlr-data-control-unstable-v1-client-protocol.h"
+ #include "xdg-toplevel-icon-v1-client-protocol.h"
++#include "fractional-scale-v1-client-protocol.h"
+ 
+ #include "windef.h"
+ #include "winbase.h"
+@@ -166,6 +167,7 @@ struct wayland
+     struct wl_shm *wl_shm;
+     struct wp_viewporter *wp_viewporter;
+     struct wl_subcompositor *wl_subcompositor;
++    struct wp_fractional_scale_manager_v1 *wp_fractional_scale_manager_v1;
+     struct zwp_pointer_constraints_v1 *zwp_pointer_constraints_v1;
+     struct zwp_relative_pointer_manager_v1 *zwp_relative_pointer_manager_v1;
+     struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3;
+@@ -225,6 +227,8 @@ struct wayland_window_config
+     RECT rect;
+     RECT client_rect;
+     enum wayland_surface_config_state state;
++    /* The scaling reported by the compositor */
++    double fractional_scale;
+     /* The scale (i.e., normalized dpi) the window is rendering at. */
+     double scale;
+     BOOL visible;
+@@ -259,6 +263,7 @@ struct wayland_surface
+ 
+     struct wl_surface *wl_surface;
+     struct wp_viewport *wp_viewport;
++    struct wp_fractional_scale_v1 *wp_fractional_scale_v1;
+ 
+     enum wayland_surface_role role;
+     union
+diff --git a/dlls/winewayland.drv/window.c b/dlls/winewayland.drv/window.c
+index acc34a18218..648792616af 100644
+--- a/dlls/winewayland.drv/window.c
++++ b/dlls/winewayland.drv/window.c
+@@ -174,7 +174,7 @@ static void wayland_win_data_get_config(struct wayland_win_data *data,
+     }
+ 
+     conf->state = window_state;
+-    conf->scale = NtUserGetSystemDpiForProcess(0) / 96.0;
++    conf->scale = conf->fractional_scale * NtUserGetSystemDpiForProcess(0) / 96.0;
+     conf->visible = (style & WS_VISIBLE) == WS_VISIBLE;
+     conf->managed = data->managed;
+ }
+-- 
+2.49.0
+
+From 26e30521b6244207403a3efc1b5245d5accb2192 Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Tue, 6 May 2025 21:09:38 -0400
+Subject: [PATCH 29/44] cursor shape v1
+
+Co-Authored-By: afrantzis <495575+afrantzis@users.noreply.github.com>
+---
+ dlls/winewayland.drv/Makefile.in         |    2 +
+ dlls/winewayland.drv/cursor-shape-v1.xml |  162 +++
+ dlls/winewayland.drv/tablet-v2.xml       | 1297 ++++++++++++++++++++++
+ dlls/winewayland.drv/wayland.c           |    6 +
+ dlls/winewayland.drv/wayland_pointer.c   |  219 +++-
+ dlls/winewayland.drv/waylanddrv.h        |    5 +
+ dlls/winewayland.drv/waylanddrv_main.c   |  146 +++
+ 7 files changed, 1809 insertions(+), 28 deletions(-)
+ create mode 100644 dlls/winewayland.drv/cursor-shape-v1.xml
+ create mode 100644 dlls/winewayland.drv/tablet-v2.xml
+
+diff --git a/dlls/winewayland.drv/Makefile.in b/dlls/winewayland.drv/Makefile.in
+index f141c22ee36..92db5349568 100644
+--- a/dlls/winewayland.drv/Makefile.in
++++ b/dlls/winewayland.drv/Makefile.in
+@@ -5,12 +5,14 @@ UNIX_LIBS = -lwin32u $(WAYLAND_CLIENT_LIBS) $(WAYLAND_EGL_LIBS) $(XKBCOMMON_LIBS
+ IMPORTS = user32 win32u
+ 
+ SOURCES = \
++	cursor-shape-v1.xml \
+ 	display.c \
+ 	dllmain.c \
+ 	fractional-scale-v1.xml \
+ 	opengl.c \
+ 	pointer-constraints-unstable-v1.xml \
+ 	relative-pointer-unstable-v1.xml \
++	tablet-v2.xml \
+ 	text-input-unstable-v3.xml \
+ 	version.rc \
+ 	viewporter.xml \
+diff --git a/dlls/winewayland.drv/cursor-shape-v1.xml b/dlls/winewayland.drv/cursor-shape-v1.xml
+new file mode 100644
+index 00000000000..64b2f9b2c87
+--- /dev/null
++++ b/dlls/winewayland.drv/cursor-shape-v1.xml
+@@ -0,0 +1,162 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="cursor_shape_v1">
++  <copyright>
++    Copyright 2018 The Chromium Authors
++    Copyright 2023 Simon Ser
++
++    Permission is hereby granted, free of charge, to any person obtaining a
++    copy of this software and associated documentation files (the "Software"),
++    to deal in the Software without restriction, including without limitation
++    the rights to use, copy, modify, merge, publish, distribute, sublicense,
++    and/or sell copies of the Software, and to permit persons to whom the
++    Software is furnished to do so, subject to the following conditions:
++    The above copyright notice and this permission notice (including the next
++    paragraph) shall be included in all copies or substantial portions of the
++    Software.
++    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
++    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++    DEALINGS IN THE SOFTWARE.
++  </copyright>
++
++  <interface name="wp_cursor_shape_manager_v1" version="2">
++    <description summary="cursor shape manager">
++      This global offers an alternative, optional way to set cursor images. This
++      new way uses enumerated cursors instead of a wl_surface like
++      wl_pointer.set_cursor does.
++
++      Warning! The protocol described in this file is currently in the testing
++      phase. Backward compatible changes may be added together with the
++      corresponding interface version bump. Backward incompatible changes can
++      only be done by creating a new major version of the extension.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the manager">
++        Destroy the cursor shape manager.
++      </description>
++    </request>
++
++    <request name="get_pointer">
++      <description summary="manage the cursor shape of a pointer device">
++        Obtain a wp_cursor_shape_device_v1 for a wl_pointer object.
++
++        When the pointer capability is removed from the wl_seat, the
++        wp_cursor_shape_device_v1 object becomes inert.
++      </description>
++      <arg name="cursor_shape_device" type="new_id" interface="wp_cursor_shape_device_v1"/>
++      <arg name="pointer" type="object" interface="wl_pointer"/>
++    </request>
++
++    <request name="get_tablet_tool_v2">
++      <description summary="manage the cursor shape of a tablet tool device">
++        Obtain a wp_cursor_shape_device_v1 for a zwp_tablet_tool_v2 object.
++
++        When the zwp_tablet_tool_v2 is removed, the wp_cursor_shape_device_v1
++        object becomes inert.
++      </description>
++      <arg name="cursor_shape_device" type="new_id" interface="wp_cursor_shape_device_v1"/>
++      <arg name="tablet_tool" type="object" interface="zwp_tablet_tool_v2"/>
++    </request>
++  </interface>
++
++  <interface name="wp_cursor_shape_device_v1" version="2">
++    <description summary="cursor shape for a device">
++      This interface allows clients to set the cursor shape.
++    </description>
++
++    <enum name="shape">
++      <description summary="cursor shapes">
++        This enum describes cursor shapes.
++
++        The names are taken from the CSS W3C specification:
++        https://w3c.github.io/csswg-drafts/css-ui/#cursor
++        with a few additions.
++
++        Note that there are some groups of cursor shapes that are related:
++        The first group is drag-and-drop cursors which are used to indicate
++        the selected action during dnd operations. The second group is resize
++        cursors which are used to indicate resizing and moving possibilities
++        on window borders. It is recommended that the shapes in these groups
++        should use visually compatible images and metaphors.
++      </description>
++      <entry name="default" value="1" summary="default cursor"/>
++      <entry name="context_menu" value="2" summary="a context menu is available for the object under the cursor"/>
++      <entry name="help" value="3" summary="help is available for the object under the cursor"/>
++      <entry name="pointer" value="4" summary="pointer that indicates a link or another interactive element"/>
++      <entry name="progress" value="5" summary="progress indicator"/>
++      <entry name="wait" value="6" summary="program is busy, user should wait"/>
++      <entry name="cell" value="7" summary="a cell or set of cells may be selected"/>
++      <entry name="crosshair" value="8" summary="simple crosshair"/>
++      <entry name="text" value="9" summary="text may be selected"/>
++      <entry name="vertical_text" value="10" summary="vertical text may be selected"/>
++      <entry name="alias" value="11" summary="drag-and-drop: alias of/shortcut to something is to be created"/>
++      <entry name="copy" value="12" summary="drag-and-drop: something is to be copied"/>
++      <entry name="move" value="13" summary="drag-and-drop: something is to be moved"/>
++      <entry name="no_drop" value="14" summary="drag-and-drop: the dragged item cannot be dropped at the current cursor location"/>
++      <entry name="not_allowed" value="15" summary="drag-and-drop: the requested action will not be carried out"/>
++      <entry name="grab" value="16" summary="drag-and-drop: something can be grabbed"/>
++      <entry name="grabbing" value="17" summary="drag-and-drop: something is being grabbed"/>
++      <entry name="e_resize" value="18" summary="resizing: the east border is to be moved"/>
++      <entry name="n_resize" value="19" summary="resizing: the north border is to be moved"/>
++      <entry name="ne_resize" value="20" summary="resizing: the north-east corner is to be moved"/>
++      <entry name="nw_resize" value="21" summary="resizing: the north-west corner is to be moved"/>
++      <entry name="s_resize" value="22" summary="resizing: the south border is to be moved"/>
++      <entry name="se_resize" value="23" summary="resizing: the south-east corner is to be moved"/>
++      <entry name="sw_resize" value="24" summary="resizing: the south-west corner is to be moved"/>
++      <entry name="w_resize" value="25" summary="resizing: the west border is to be moved"/>
++      <entry name="ew_resize" value="26" summary="resizing: the east and west borders are to be moved"/>
++      <entry name="ns_resize" value="27" summary="resizing: the north and south borders are to be moved"/>
++      <entry name="nesw_resize" value="28" summary="resizing: the north-east and south-west corners are to be moved"/>
++      <entry name="nwse_resize" value="29" summary="resizing: the north-west and south-east corners are to be moved"/>
++      <entry name="col_resize" value="30" summary="resizing: that the item/column can be resized horizontally"/>
++      <entry name="row_resize" value="31" summary="resizing: that the item/row can be resized vertically"/>
++      <entry name="all_scroll" value="32" summary="something can be scrolled in any direction"/>
++      <entry name="zoom_in" value="33" summary="something can be zoomed in"/>
++      <entry name="zoom_out" value="34" summary="something can be zoomed out"/>
++      <entry name="dnd_ask" value="35" summary="drag-and-drop: the user will select which action will be carried out (non-css value)" since="2"/>
++      <entry name="all_resize" value="36" summary="resizing: something can be moved or resized in any direction (non-css value)" since="2"/>
++    </enum>
++
++    <enum name="error">
++      <entry name="invalid_shape" value="1"
++        summary="the specified shape value is invalid"/>
++    </enum>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the cursor shape device">
++        Destroy the cursor shape device.
++
++        The device cursor shape remains unchanged.
++      </description>
++    </request>
++
++    <request name="set_shape">
++      <description summary="set device cursor to the shape">
++        Sets the device cursor to the specified shape. The compositor will
++        change the cursor image based on the specified shape.
++
++        The cursor actually changes only if the input device focus is one of
++        the requesting client's surfaces. If any, the previous cursor image
++        (surface or shape) is replaced.
++
++        The "shape" argument must be a valid enum entry, otherwise the
++        invalid_shape protocol error is raised.
++
++        This is similar to the wl_pointer.set_cursor and
++        zwp_tablet_tool_v2.set_cursor requests, but this request accepts a
++        shape instead of contents in the form of a surface. Clients can mix
++        set_cursor and set_shape requests.
++
++        The serial parameter must match the latest wl_pointer.enter or
++        zwp_tablet_tool_v2.proximity_in serial number sent to the client.
++        Otherwise the request will be ignored.
++      </description>
++      <arg name="serial" type="uint" summary="serial number of the enter event"/>
++      <arg name="shape" type="uint" enum="shape"/>
++    </request>
++  </interface>
++</protocol>
+diff --git a/dlls/winewayland.drv/tablet-v2.xml b/dlls/winewayland.drv/tablet-v2.xml
+new file mode 100644
+index 00000000000..e2550435c79
+--- /dev/null
++++ b/dlls/winewayland.drv/tablet-v2.xml
+@@ -0,0 +1,1297 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="tablet_v2">
++
++  <copyright>
++    Copyright 2014 © Stephen "Lyude" Chandler Paul
++    Copyright 2015-2024 © Red Hat, Inc.
++
++    Permission is hereby granted, free of charge, to any person
++    obtaining a copy of this software and associated documentation files
++    (the "Software"), to deal in the Software without restriction,
++    including without limitation the rights to use, copy, modify, merge,
++    publish, distribute, sublicense, and/or sell copies of the Software,
++    and to permit persons to whom the Software is furnished to do so,
++    subject to the following conditions:
++
++    The above copyright notice and this permission notice (including the
++    next paragraph) shall be included in all copies or substantial
++    portions of the Software.
++
++    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++    NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++    BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++    ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++    SOFTWARE.
++  </copyright>
++
++  <description summary="Wayland protocol for graphics tablets">
++    This description provides a high-level overview of the interplay between
++    the interfaces defined this protocol. For details, see the protocol
++    specification.
++
++    More than one tablet may exist, and device-specifics matter. Tablets are
++    not represented by a single virtual device like wl_pointer. A client
++    binds to the tablet manager object which is just a proxy object. From
++    that, the client requests wp_tablet_manager.get_tablet_seat(wl_seat)
++    and that returns the actual interface that has all the tablets. With
++    this indirection, we can avoid merging wp_tablet into the actual Wayland
++    protocol, a long-term benefit.
++
++    The wp_tablet_seat sends a "tablet added" event for each tablet
++    connected. That event is followed by descriptive events about the
++    hardware; currently that includes events for name, vid/pid and
++    a wp_tablet.path event that describes a local path. This path can be
++    used to uniquely identify a tablet or get more information through
++    libwacom. Emulated or nested tablets can skip any of those, e.g. a
++    virtual tablet may not have a vid/pid. The sequence of descriptive
++    events is terminated by a wp_tablet.done event to signal that a client
++    may now finalize any initialization for that tablet.
++
++    Events from tablets require a tool in proximity. Tools are also managed
++    by the tablet seat; a "tool added" event is sent whenever a tool is new
++    to the compositor. That event is followed by a number of descriptive
++    events about the hardware; currently that includes capabilities,
++    hardware id and serial number, and tool type. Similar to the tablet
++    interface, a wp_tablet_tool.done event is sent to terminate that initial
++    sequence.
++
++    Any event from a tool happens on the wp_tablet_tool interface. When the
++    tool gets into proximity of the tablet, a proximity_in event is sent on
++    the wp_tablet_tool interface, listing the tablet and the surface. That
++    event is followed by a motion event with the coordinates. After that,
++    it's the usual motion, axis, button, etc. events. The protocol's
++    serialisation means events are grouped by wp_tablet_tool.frame events.
++
++    Two special events (that don't exist in X) are down and up. They signal
++    "tip touching the surface". For tablets without real proximity
++    detection, the sequence is: proximity_in, motion, down, frame.
++
++    When the tool leaves proximity, a proximity_out event is sent. If any
++    button is still down, a button release event is sent before this
++    proximity event. These button events are sent in the same frame as the
++    proximity event to signal to the client that the buttons were held when
++    the tool left proximity.
++
++    If the tool moves out of the surface but stays in proximity (i.e.
++    between windows), compositor-specific grab policies apply. This usually
++    means that the proximity-out is delayed until all buttons are released.
++
++    Moving a tool physically from one tablet to the other has no real effect
++    on the protocol, since we already have the tool object from the "tool
++    added" event. All the information is already there and the proximity
++    events on both tablets are all a client needs to reconstruct what
++    happened.
++
++    Some extra axes are normalized, i.e. the client knows the range as
++    specified in the protocol (e.g. [0, 65535]), the granularity however is
++    unknown. The current normalized axes are pressure, distance, and slider.
++
++    Other extra axes are in physical units as specified in the protocol.
++    The current extra axes with physical units are tilt, rotation and
++    wheel rotation.
++
++    Since tablets work independently of the pointer controlled by the mouse,
++    the focus handling is independent too and controlled by proximity.
++    The wp_tablet_tool.set_cursor request sets a tool-specific cursor.
++    This cursor surface may be the same as the mouse cursor, and it may be
++    the same across tools but it is possible to be more fine-grained. For
++    example, a client may set different cursors for the pen and eraser.
++
++    Tools are generally independent of tablets and it is
++    compositor-specific policy when a tool can be removed. Common approaches
++    will likely include some form of removing a tool when all tablets the
++    tool was used on are removed.
++  </description>
++
++  <interface name="zwp_tablet_manager_v2" version="2">
++    <description summary="controller object for graphic tablet devices">
++      An object that provides access to the graphics tablets available on this
++      system. All tablets are associated with a seat, to get access to the
++      actual tablets, use wp_tablet_manager.get_tablet_seat.
++    </description>
++
++    <request name="get_tablet_seat">
++      <description summary="get the tablet seat">
++	Get the wp_tablet_seat object for the given seat. This object
++	provides access to all graphics tablets in this seat.
++      </description>
++      <arg name="tablet_seat" type="new_id" interface="zwp_tablet_seat_v2"/>
++      <arg name="seat" type="object" interface="wl_seat" summary="The wl_seat object to retrieve the tablets for" />
++    </request>
++
++    <request name="destroy" type="destructor">
++      <description summary="release the memory for the tablet manager object">
++	Destroy the wp_tablet_manager object. Objects created from this
++	object are unaffected and should be destroyed separately.
++      </description>
++    </request>
++  </interface>
++
++  <interface name="zwp_tablet_seat_v2" version="2">
++    <description summary="controller object for graphic tablet devices of a seat">
++      An object that provides access to the graphics tablets available on this
++      seat. After binding to this interface, the compositor sends a set of
++      wp_tablet_seat.tablet_added and wp_tablet_seat.tool_added events.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="release the memory for the tablet seat object">
++	Destroy the wp_tablet_seat object. Objects created from this
++	object are unaffected and should be destroyed separately.
++      </description>
++    </request>
++
++    <event name="tablet_added">
++      <description summary="new device notification">
++	This event is sent whenever a new tablet becomes available on this
++	seat. This event only provides the object id of the tablet, any
++	static information about the tablet (device name, vid/pid, etc.) is
++	sent through the wp_tablet interface.
++      </description>
++      <arg name="id" type="new_id" interface="zwp_tablet_v2" summary="the newly added graphics tablet"/>
++    </event>
++
++    <event name="tool_added">
++      <description summary="a new tool has been used with a tablet">
++	This event is sent whenever a tool that has not previously been used
++	with a tablet comes into use. This event only provides the object id
++	of the tool; any static information about the tool (capabilities,
++	type, etc.) is sent through the wp_tablet_tool interface.
++      </description>
++      <arg name="id" type="new_id" interface="zwp_tablet_tool_v2" summary="the newly added tablet tool"/>
++    </event>
++
++    <event name="pad_added">
++      <description summary="new pad notification">
++	This event is sent whenever a new pad is known to the system. Typically,
++	pads are physically attached to tablets and a pad_added event is
++	sent immediately after the wp_tablet_seat.tablet_added.
++	However, some standalone pad devices logically attach to tablets at
++	runtime, and the client must wait for wp_tablet_pad.enter to know
++	the tablet a pad is attached to.
++
++	This event only provides the object id of the pad. All further
++	features (buttons, strips, rings) are sent through the wp_tablet_pad
++	interface.
++      </description>
++      <arg name="id" type="new_id" interface="zwp_tablet_pad_v2" summary="the newly added pad"/>
++    </event>
++  </interface>
++
++  <interface name="zwp_tablet_tool_v2" version="2">
++    <description summary="a physical tablet tool">
++      An object that represents a physical tool that has been, or is
++      currently in use with a tablet in this seat. Each wp_tablet_tool
++      object stays valid until the client destroys it; the compositor
++      reuses the wp_tablet_tool object to indicate that the object's
++      respective physical tool has come into proximity of a tablet again.
++
++      A wp_tablet_tool object's relation to a physical tool depends on the
++      tablet's ability to report serial numbers. If the tablet supports
++      this capability, then the object represents a specific physical tool
++      and can be identified even when used on multiple tablets.
++
++      A tablet tool has a number of static characteristics, e.g. tool type,
++      hardware_serial and capabilities. These capabilities are sent in an
++      event sequence after the wp_tablet_seat.tool_added event before any
++      actual events from this tool. This initial event sequence is
++      terminated by a wp_tablet_tool.done event.
++
++      Tablet tool events are grouped by wp_tablet_tool.frame events.
++      Any events received before a wp_tablet_tool.frame event should be
++      considered part of the same hardware state change.
++    </description>
++
++    <request name="set_cursor">
++      <description summary="set the tablet tool's surface">
++	Sets the surface of the cursor used for this tool on the given
++	tablet. This request only takes effect if the tool is in proximity
++	of one of the requesting client's surfaces or the surface parameter
++	is the current pointer surface. If there was a previous surface set
++	with this request it is replaced. If surface is NULL, the cursor
++	image is hidden.
++
++	The parameters hotspot_x and hotspot_y define the position of the
++	pointer surface relative to the pointer location. Its top-left corner
++	is always at (x, y) - (hotspot_x, hotspot_y), where (x, y) are the
++	coordinates of the pointer location, in surface-local coordinates.
++
++	On surface.attach requests to the pointer surface, hotspot_x and
++	hotspot_y are decremented by the x and y parameters passed to the
++	request. Attach must be confirmed by wl_surface.commit as usual.
++
++	The hotspot can also be updated by passing the currently set pointer
++	surface to this request with new values for hotspot_x and hotspot_y.
++
++	The current and pending input regions of the wl_surface are cleared,
++	and wl_surface.set_input_region is ignored until the wl_surface is no
++	longer used as the cursor. When the use as a cursor ends, the current
++	and pending input regions become undefined, and the wl_surface is
++	unmapped.
++
++	This request gives the surface the role of a wp_tablet_tool cursor. A
++	surface may only ever be used as the cursor surface for one
++	wp_tablet_tool. If the surface already has another role or has
++	previously been used as cursor surface for a different tool, a
++	protocol error is raised.
++      </description>
++      <arg name="serial" type="uint" summary="serial of the proximity_in event"/>
++      <arg name="surface" type="object" interface="wl_surface" allow-null="true"/>
++      <arg name="hotspot_x" type="int" summary="surface-local x coordinate"/>
++      <arg name="hotspot_y" type="int" summary="surface-local y coordinate"/>
++    </request>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the tool object">
++	This destroys the client's resource for this tool object.
++      </description>
++    </request>
++
++    <enum name="type">
++      <description summary="a physical tool type">
++	Describes the physical type of a tool. The physical type of a tool
++	generally defines its base usage.
++
++	The mouse tool represents a mouse-shaped tool that is not a relative
++	device but bound to the tablet's surface, providing absolute
++	coordinates.
++
++	The lens tool is a mouse-shaped tool with an attached lens to
++	provide precision focus.
++      </description>
++      <entry name="pen" value="0x140" summary="Pen"/>
++      <entry name="eraser" value="0x141" summary="Eraser"/>
++      <entry name="brush" value="0x142" summary="Brush"/>
++      <entry name="pencil" value="0x143" summary="Pencil"/>
++      <entry name="airbrush" value="0x144" summary="Airbrush"/>
++      <entry name="finger" value="0x145" summary="Finger"/>
++      <entry name="mouse" value="0x146" summary="Mouse"/>
++      <entry name="lens" value="0x147" summary="Lens"/>
++    </enum>
++
++    <event name="type">
++      <description summary="tool type">
++	The tool type is the high-level type of the tool and usually decides
++	the interaction expected from this tool.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_tool.done event.
++      </description>
++      <arg name="tool_type" type="uint" enum="type" summary="the physical tool type"/>
++    </event>
++
++    <event name="hardware_serial">
++      <description summary="unique hardware serial number of the tool">
++	If the physical tool can be identified by a unique 64-bit serial
++	number, this event notifies the client of this serial number.
++
++	If multiple tablets are available in the same seat and the tool is
++	uniquely identifiable by the serial number, that tool may move
++	between tablets.
++
++	Otherwise, if the tool has no serial number and this event is
++	missing, the tool is tied to the tablet it first comes into
++	proximity with. Even if the physical tool is used on multiple
++	tablets, separate wp_tablet_tool objects will be created, one per
++	tablet.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_tool.done event.
++      </description>
++      <arg name="hardware_serial_hi" type="uint" summary="the unique serial number of the tool, most significant bits"/>
++      <arg name="hardware_serial_lo" type="uint" summary="the unique serial number of the tool, least significant bits"/>
++    </event>
++
++    <event name="hardware_id_wacom">
++      <description summary="hardware id notification in Wacom's format">
++	This event notifies the client of a hardware id available on this tool.
++
++	The hardware id is a device-specific 64-bit id that provides extra
++	information about the tool in use, beyond the wl_tool.type
++	enumeration. The format of the id is specific to tablets made by
++	Wacom Inc. For example, the hardware id of a Wacom Grip
++	Pen (a stylus) is 0x802.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_tool.done event.
++      </description>
++      <arg name="hardware_id_hi" type="uint" summary="the hardware id, most significant bits"/>
++      <arg name="hardware_id_lo" type="uint" summary="the hardware id, least significant bits"/>
++    </event>
++
++    <enum name="capability">
++      <description summary="capability flags for a tool">
++	Describes extra capabilities on a tablet.
++
++	Any tool must provide x and y values, extra axes are
++	device-specific.
++      </description>
++      <entry name="tilt" value="1" summary="Tilt axes"/>
++      <entry name="pressure" value="2" summary="Pressure axis"/>
++      <entry name="distance" value="3" summary="Distance axis"/>
++      <entry name="rotation" value="4" summary="Z-rotation axis"/>
++      <entry name="slider" value="5" summary="Slider axis"/>
++      <entry name="wheel" value="6" summary="Wheel axis"/>
++    </enum>
++
++    <event name="capability">
++      <description summary="tool capability notification">
++	This event notifies the client of any capabilities of this tool,
++	beyond the main set of x/y axes and tip up/down detection.
++
++	One event is sent for each extra capability available on this tool.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_tool.done event.
++      </description>
++      <arg name="capability" type="uint" enum="capability" summary="the capability"/>
++    </event>
++
++    <event name="done">
++      <description summary="tool description events sequence complete">
++	This event signals the end of the initial burst of descriptive
++	events. A client may consider the static description of the tool to
++	be complete and finalize initialization of the tool.
++      </description>
++    </event>
++
++    <event name="removed">
++      <description summary="tool removed">
++	This event is sent when the tool is removed from the system and will
++	send no further events. Should the physical tool come back into
++	proximity later, a new wp_tablet_tool object will be created.
++
++	It is compositor-dependent when a tool is removed. A compositor may
++	remove a tool on proximity out, tablet removal or any other reason.
++	A compositor may also keep a tool alive until shutdown.
++
++	If the tool is currently in proximity, a proximity_out event will be
++	sent before the removed event. See wp_tablet_tool.proximity_out for
++	the handling of any buttons logically down.
++
++	When this event is received, the client must wp_tablet_tool.destroy
++	the object.
++      </description>
++    </event>
++
++    <event name="proximity_in">
++      <description summary="proximity in event">
++	Notification that this tool is focused on a certain surface.
++
++	This event can be received when the tool has moved from one surface to
++	another, or when the tool has come back into proximity above the
++	surface.
++
++	If any button is logically down when the tool comes into proximity,
++	the respective button event is sent after the proximity_in event but
++	within the same frame as the proximity_in event.
++      </description>
++      <arg name="serial" type="uint"/>
++      <arg name="tablet" type="object" interface="zwp_tablet_v2" summary="The tablet the tool is in proximity of"/>
++      <arg name="surface" type="object" interface="wl_surface" summary="The current surface the tablet tool is over"/>
++    </event>
++
++    <event name="proximity_out">
++      <description summary="proximity out event">
++	Notification that this tool has either left proximity, or is no
++	longer focused on a certain surface.
++
++	When the tablet tool leaves proximity of the tablet, button release
++	events are sent for each button that was held down at the time of
++	leaving proximity. These events are sent before the proximity_out
++	event but within the same wp_tablet.frame.
++
++	If the tool stays within proximity of the tablet, but the focus
++	changes from one surface to another, a button release event may not
++	be sent until the button is actually released or the tool leaves the
++	proximity of the tablet.
++      </description>
++    </event>
++
++    <event name="down">
++      <description summary="tablet tool is making contact">
++	Sent whenever the tablet tool comes in contact with the surface of the
++	tablet.
++
++	If the tool is already in contact with the tablet when entering the
++	input region, the client owning said region will receive a
++	wp_tablet.proximity_in event, followed by a wp_tablet.down
++	event and a wp_tablet.frame event.
++
++	Note that this event describes logical contact, not physical
++	contact. On some devices, a compositor may not consider a tool in
++	logical contact until a minimum physical pressure threshold is
++	exceeded.
++      </description>
++      <arg name="serial" type="uint"/>
++    </event>
++
++    <event name="up">
++      <description summary="tablet tool is no longer making contact">
++	Sent whenever the tablet tool stops making contact with the surface of
++	the tablet, or when the tablet tool moves out of the input region
++	and the compositor grab (if any) is dismissed.
++
++	If the tablet tool moves out of the input region while in contact
++	with the surface of the tablet and the compositor does not have an
++	ongoing grab on the surface, the client owning said region will
++	receive a wp_tablet.up event, followed by a wp_tablet.proximity_out
++	event and a wp_tablet.frame event. If the compositor has an ongoing
++	grab on this device, this event sequence is sent whenever the grab
++	is dismissed in the future.
++
++	Note that this event describes logical contact, not physical
++	contact. On some devices, a compositor may not consider a tool out
++	of logical contact until physical pressure falls below a specific
++	threshold.
++      </description>
++    </event>
++
++    <event name="motion">
++      <description summary="motion event">
++	Sent whenever a tablet tool moves.
++      </description>
++      <arg name="x" type="fixed" summary="surface-local x coordinate"/>
++      <arg name="y" type="fixed" summary="surface-local y coordinate"/>
++    </event>
++
++    <event name="pressure">
++      <description summary="pressure change event">
++	Sent whenever the pressure axis on a tool changes. The value of this
++	event is normalized to a value between 0 and 65535.
++
++	Note that pressure may be nonzero even when a tool is not in logical
++	contact. See the down and up events for more details.
++      </description>
++      <arg name="pressure" type="uint" summary="The current pressure value"/>
++    </event>
++
++    <event name="distance">
++      <description summary="distance change event">
++	Sent whenever the distance axis on a tool changes. The value of this
++	event is normalized to a value between 0 and 65535.
++
++	Note that distance may be nonzero even when a tool is not in logical
++	contact. See the down and up events for more details.
++      </description>
++      <arg name="distance" type="uint" summary="The current distance value"/>
++    </event>
++
++    <event name="tilt">
++      <description summary="tilt change event">
++	Sent whenever one or both of the tilt axes on a tool change. Each tilt
++	value is in degrees, relative to the z-axis of the tablet.
++	The angle is positive when the top of a tool tilts along the
++	positive x or y axis.
++      </description>
++      <arg name="tilt_x" type="fixed" summary="The current value of the X tilt axis"/>
++      <arg name="tilt_y" type="fixed" summary="The current value of the Y tilt axis"/>
++    </event>
++
++    <event name="rotation">
++      <description summary="z-rotation change event">
++	Sent whenever the z-rotation axis on the tool changes. The
++	rotation value is in degrees clockwise from the tool's
++	logical neutral position.
++      </description>
++      <arg name="degrees" type="fixed" summary="The current rotation of the Z axis"/>
++    </event>
++
++    <event name="slider">
++      <description summary="Slider position change event">
++	Sent whenever the slider position on the tool changes. The
++	value is normalized between -65535 and 65535, with 0 as the logical
++	neutral position of the slider.
++
++	The slider is available on e.g. the Wacom Airbrush tool.
++      </description>
++      <arg name="position" type="int" summary="The current position of slider"/>
++    </event>
++
++    <event name="wheel">
++      <description summary="Wheel delta event">
++	Sent whenever the wheel on the tool emits an event. This event
++	contains two values for the same axis change. The degrees value is
++	in the same orientation as the wl_pointer.vertical_scroll axis. The
++	clicks value is in discrete logical clicks of the mouse wheel. This
++	value may be zero if the movement of the wheel was less
++	than one logical click.
++
++	Clients should choose either value and avoid mixing degrees and
++	clicks. The compositor may accumulate values smaller than a logical
++	click and emulate click events when a certain threshold is met.
++	Thus, wl_tablet_tool.wheel events with non-zero clicks values may
++	have different degrees values.
++      </description>
++      <arg name="degrees" type="fixed" summary="The wheel delta in degrees"/>
++      <arg name="clicks" type="int" summary="The wheel delta in discrete clicks"/>
++    </event>
++
++    <enum name="button_state">
++      <description summary="physical button state">
++	Describes the physical state of a button that produced the button event.
++      </description>
++      <entry name="released" value="0" summary="button is not pressed"/>
++      <entry name="pressed" value="1" summary="button is pressed"/>
++    </enum>
++
++    <event name="button">
++      <description summary="button event">
++	Sent whenever a button on the tool is pressed or released.
++
++	If a button is held down when the tool moves in or out of proximity,
++	button events are generated by the compositor. See
++	wp_tablet_tool.proximity_in and wp_tablet_tool.proximity_out for
++	details.
++      </description>
++      <arg name="serial" type="uint"/>
++      <arg name="button" type="uint" summary="The button whose state has changed"/>
++      <arg name="state" type="uint" enum="button_state" summary="Whether the button was pressed or released"/>
++    </event>
++
++    <event name="frame">
++      <description summary="frame event">
++	Marks the end of a series of axis and/or button updates from the
++	tablet. The Wayland protocol requires axis updates to be sent
++	sequentially, however all events within a frame should be considered
++	one hardware event.
++      </description>
++      <arg name="time" type="uint" summary="The time of the event with millisecond granularity"/>
++    </event>
++
++    <enum name="error">
++      <entry name="role" value="0" summary="given wl_surface has another role"/>
++    </enum>
++  </interface>
++
++  <interface name="zwp_tablet_v2" version="2">
++    <description summary="graphics tablet device">
++      The wp_tablet interface represents one graphics tablet device. The
++      tablet interface itself does not generate events; all events are
++      generated by wp_tablet_tool objects when in proximity above a tablet.
++
++      A tablet has a number of static characteristics, e.g. device name and
++      pid/vid. These capabilities are sent in an event sequence after the
++      wp_tablet_seat.tablet_added event. This initial event sequence is
++      terminated by a wp_tablet.done event.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the tablet object">
++	This destroys the client's resource for this tablet object.
++      </description>
++    </request>
++
++    <event name="name">
++      <description summary="tablet device name">
++        A descriptive name for the tablet device.
++
++	If the device has no descriptive name, this event is not sent.
++
++	This event is sent in the initial burst of events before the
++        wp_tablet.done event.
++      </description>
++      <arg name="name" type="string" summary="the device name"/>
++    </event>
++
++    <event name="id">
++      <description summary="tablet device vendor/product id">
++	The vendor and product IDs for the tablet device.
++
++	The interpretation of the id depends on the wp_tablet.bustype.
++	Prior to version v2 of this protocol, the id was implied to be a USB
++	vendor and product ID. If no wp_tablet.bustype is sent, the ID
++	is to be interpreted as USB vendor and product ID.
++
++	If the device has no vendor/product ID, this event is not sent.
++	This can happen for virtual devices or non-USB devices, for instance.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet.done event.
++      </description>
++      <arg name="vid" type="uint" summary="vendor id"/>
++      <arg name="pid" type="uint" summary="product id"/>
++    </event>
++
++    <event name="path">
++      <description summary="path to the device">
++	A system-specific device path that indicates which device is behind
++	this wp_tablet. This information may be used to gather additional
++	information about the device, e.g. through libwacom.
++
++	A device may have more than one device path. If so, multiple
++	wp_tablet.path events are sent. A device may be emulated and not
++	have a device path, and in that case this event will not be sent.
++
++	The format of the path is unspecified, it may be a device node, a
++	sysfs path, or some other identifier. It is up to the client to
++	identify the string provided.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet.done event.
++      </description>
++      <arg name="path" type="string" summary="path to local device"/>
++    </event>
++
++    <event name="done">
++      <description summary="tablet description events sequence complete">
++	This event is sent immediately to signal the end of the initial
++	burst of descriptive events. A client may consider the static
++	description of the tablet to be complete and finalize initialization
++	of the tablet.
++      </description>
++    </event>
++
++    <event name="removed">
++      <description summary="tablet removed event">
++	Sent when the tablet has been removed from the system. When a tablet
++	is removed, some tools may be removed.
++
++	When this event is received, the client must wp_tablet.destroy
++	the object.
++      </description>
++    </event>
++
++    <!-- Version 2 additions -->
++
++    <enum name="bustype" since="2">
++      <description summary="bus type ">
++	Describes the bus types this tablet is connected to.
++      </description>
++      <entry name="usb" value="3" summary="USB"/>
++      <entry name="bluetooth" value="5" summary="Bluetooth"/>
++      <entry name="virtual" value="6" summary="Virtual"/>
++      <entry name="serial" value="17" summary="Serial"/>
++      <entry name="i2c" value="24" summary="I2C"/>
++    </enum>
++
++    <event name="bustype" since="2">
++      <description summary="tablet device bus type">
++	The bustype argument is one of the BUS_ defines in the Linux kernel's
++	linux/input.h
++
++	If the device has no known bustype or the bustype cannot be
++	queried, this event is not sent.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet.done event.
++      </description>
++      <arg name="bustype" type="uint" enum="bustype" summary="bus type"/>
++    </event>
++  </interface>
++
++  <interface name="zwp_tablet_pad_ring_v2" version="2">
++    <description summary="pad ring">
++      A circular interaction area, such as the touch ring on the Wacom Intuos
++      Pro series tablets.
++
++      Events on a ring are logically grouped by the wl_tablet_pad_ring.frame
++      event.
++    </description>
++
++    <request name="set_feedback">
++      <description summary="set compositor feedback">
++	Request that the compositor use the provided feedback string
++	associated with this ring. This request should be issued immediately
++	after a wp_tablet_pad_group.mode_switch event from the corresponding
++	group is received, or whenever the ring is mapped to a different
++	action. See wp_tablet_pad_group.mode_switch for more details.
++
++	Clients are encouraged to provide context-aware descriptions for
++	the actions associated with the ring; compositors may use this
++	information to offer visual feedback about the button layout
++	(eg. on-screen displays).
++
++	The provided string 'description' is a UTF-8 encoded string to be
++	associated with this ring, and is considered user-visible; general
++	internationalization rules apply.
++
++	The serial argument will be that of the last
++	wp_tablet_pad_group.mode_switch event received for the group of this
++	ring. Requests providing other serials than the most recent one will be
++	ignored.
++      </description>
++      <arg name="description" type="string" summary="ring description"/>
++      <arg name="serial" type="uint" summary="serial of the mode switch event"/>
++    </request>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the ring object">
++	This destroys the client's resource for this ring object.
++      </description>
++    </request>
++
++    <enum name="source">
++      <description summary="ring axis source">
++	Describes the source types for ring events. This indicates to the
++	client how a ring event was physically generated; a client may
++	adjust the user interface accordingly. For example, events
++	from a "finger" source may trigger kinetic scrolling.
++      </description>
++      <entry name="finger" value="1" summary="finger"/>
++    </enum>
++
++    <event name="source">
++      <description summary="ring event source">
++	Source information for ring events.
++
++	This event does not occur on its own. It is sent before a
++	wp_tablet_pad_ring.frame event and carries the source information
++	for all events within that frame.
++
++	The source specifies how this event was generated. If the source is
++	wp_tablet_pad_ring.source.finger, a wp_tablet_pad_ring.stop event
++	will be sent when the user lifts the finger off the device.
++
++	This event is optional. If the source is unknown for an interaction,
++	no event is sent.
++      </description>
++      <arg name="source" type="uint" enum="source" summary="the event source"/>
++    </event>
++
++    <event name="angle">
++      <description summary="angle changed">
++	Sent whenever the angle on a ring changes.
++
++	The angle is provided in degrees clockwise from the logical
++	north of the ring in the pad's current rotation.
++      </description>
++      <arg name="degrees" type="fixed" summary="the current angle in degrees"/>
++    </event>
++
++    <event name="stop">
++      <description summary="interaction stopped">
++	Stop notification for ring events.
++
++	For some wp_tablet_pad_ring.source types, a wp_tablet_pad_ring.stop
++	event is sent to notify a client that the interaction with the ring
++	has terminated. This enables the client to implement kinetic scrolling.
++	See the wp_tablet_pad_ring.source documentation for information on
++	when this event may be generated.
++
++	Any wp_tablet_pad_ring.angle events with the same source after this
++	event should be considered as the start of a new interaction.
++      </description>
++    </event>
++
++    <event name="frame">
++      <description summary="end of a ring event sequence">
++	Indicates the end of a set of ring events that logically belong
++	together. A client is expected to accumulate the data in all events
++	within the frame before proceeding.
++
++	All wp_tablet_pad_ring events before a wp_tablet_pad_ring.frame event belong
++	logically together. For example, on termination of a finger interaction
++	on a ring the compositor will send a wp_tablet_pad_ring.source event,
++	a wp_tablet_pad_ring.stop event and a wp_tablet_pad_ring.frame event.
++
++	A wp_tablet_pad_ring.frame event is sent for every logical event
++	group, even if the group only contains a single wp_tablet_pad_ring
++	event. Specifically, a client may get a sequence: angle, frame,
++	angle, frame, etc.
++      </description>
++      <arg name="time" type="uint" summary="timestamp with millisecond granularity"/>
++    </event>
++  </interface>
++
++  <interface name="zwp_tablet_pad_strip_v2" version="2">
++    <description summary="pad strip">
++      A linear interaction area, such as the strips found in Wacom Cintiq
++      models.
++
++      Events on a strip are logically grouped by the wl_tablet_pad_strip.frame
++      event.
++    </description>
++
++    <request name="set_feedback">
++      <description summary="set compositor feedback">
++	Requests the compositor to use the provided feedback string
++	associated with this strip. This request should be issued immediately
++	after a wp_tablet_pad_group.mode_switch event from the corresponding
++	group is received, or whenever the strip is mapped to a different
++	action. See wp_tablet_pad_group.mode_switch for more details.
++
++	Clients are encouraged to provide context-aware descriptions for
++	the actions associated with the strip, and compositors may use this
++	information to offer visual feedback about the button layout
++	(eg. on-screen displays).
++
++	The provided string 'description' is a UTF-8 encoded string to be
++	associated with this ring, and is considered user-visible; general
++	internationalization rules apply.
++
++	The serial argument will be that of the last
++	wp_tablet_pad_group.mode_switch event received for the group of this
++	strip. Requests providing other serials than the most recent one will be
++	ignored.
++      </description>
++      <arg name="description" type="string" summary="strip description"/>
++      <arg name="serial" type="uint" summary="serial of the mode switch event"/>
++    </request>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the strip object">
++	This destroys the client's resource for this strip object.
++      </description>
++    </request>
++
++    <enum name="source">
++      <description summary="strip axis source">
++	Describes the source types for strip events. This indicates to the
++	client how a strip event was physically generated; a client may
++	adjust the user interface accordingly. For example, events
++	from a "finger" source may trigger kinetic scrolling.
++      </description>
++      <entry name="finger" value="1" summary="finger"/>
++    </enum>
++
++    <event name="source">
++      <description summary="strip event source">
++	Source information for strip events.
++
++	This event does not occur on its own. It is sent before a
++	wp_tablet_pad_strip.frame event and carries the source information
++	for all events within that frame.
++
++	The source specifies how this event was generated. If the source is
++	wp_tablet_pad_strip.source.finger, a wp_tablet_pad_strip.stop event
++	will be sent when the user lifts their finger off the device.
++
++	This event is optional. If the source is unknown for an interaction,
++	no event is sent.
++      </description>
++      <arg name="source" type="uint" enum="source" summary="the event source"/>
++    </event>
++
++    <event name="position">
++      <description summary="position changed">
++	Sent whenever the position on a strip changes.
++
++	The position is normalized to a range of [0, 65535], the 0-value
++	represents the top-most and/or left-most position of the strip in
++	the pad's current rotation.
++      </description>
++      <arg name="position" type="uint" summary="the current position"/>
++    </event>
++
++    <event name="stop">
++      <description summary="interaction stopped">
++	Stop notification for strip events.
++
++	For some wp_tablet_pad_strip.source types, a wp_tablet_pad_strip.stop
++	event is sent to notify a client that the interaction with the strip
++	has terminated. This enables the client to implement kinetic
++	scrolling. See the wp_tablet_pad_strip.source documentation for
++	information on when this event may be generated.
++
++	Any wp_tablet_pad_strip.position events with the same source after this
++	event should be considered as the start of a new interaction.
++      </description>
++    </event>
++
++    <event name="frame">
++      <description summary="end of a strip event sequence">
++	Indicates the end of a set of events that represent one logical
++	hardware strip event. A client is expected to accumulate the data
++	in all events within the frame before proceeding.
++
++	All wp_tablet_pad_strip events before a wp_tablet_pad_strip.frame event belong
++	logically together. For example, on termination of a finger interaction
++	on a strip the compositor will send a wp_tablet_pad_strip.source event,
++	a wp_tablet_pad_strip.stop event and a wp_tablet_pad_strip.frame
++	event.
++
++	A wp_tablet_pad_strip.frame event is sent for every logical event
++	group, even if the group only contains a single wp_tablet_pad_strip
++	event. Specifically, a client may get a sequence: position, frame,
++	position, frame, etc.
++      </description>
++      <arg name="time" type="uint" summary="timestamp with millisecond granularity"/>
++    </event>
++  </interface>
++
++  <interface name="zwp_tablet_pad_group_v2" version="2">
++    <description summary="a set of buttons, rings and strips">
++      A pad group describes a distinct (sub)set of buttons, rings and strips
++      present in the tablet. The criteria of this grouping is usually positional,
++      eg. if a tablet has buttons on the left and right side, 2 groups will be
++      presented. The physical arrangement of groups is undisclosed and may
++      change on the fly.
++
++      Pad groups will announce their features during pad initialization. Between
++      the corresponding wp_tablet_pad.group event and wp_tablet_pad_group.done, the
++      pad group will announce the buttons, rings and strips contained in it,
++      plus the number of supported modes.
++
++      Modes are a mechanism to allow multiple groups of actions for every element
++      in the pad group. The number of groups and available modes in each is
++      persistent across device plugs. The current mode is user-switchable, it
++      will be announced through the wp_tablet_pad_group.mode_switch event both
++      whenever it is switched, and after wp_tablet_pad.enter.
++
++      The current mode logically applies to all elements in the pad group,
++      although it is at clients' discretion whether to actually perform different
++      actions, and/or issue the respective .set_feedback requests to notify the
++      compositor. See the wp_tablet_pad_group.mode_switch event for more details.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the pad object">
++	Destroy the wp_tablet_pad_group object. Objects created from this object
++	are unaffected and should be destroyed separately.
++      </description>
++    </request>
++
++    <event name="buttons">
++      <description summary="buttons announced">
++	Sent on wp_tablet_pad_group initialization to announce the available
++	buttons in the group. Button indices start at 0, a button may only be
++	in one group at a time.
++
++	This event is first sent in the initial burst of events before the
++	wp_tablet_pad_group.done event.
++
++	Some buttons are reserved by the compositor. These buttons may not be
++	assigned to any wp_tablet_pad_group. Compositors may broadcast this
++	event in the case of changes to the mapping of these reserved buttons.
++	If the compositor happens to reserve all buttons in a group, this event
++	will be sent with an empty array.
++      </description>
++      <arg name="buttons" type="array" summary="buttons in this group"/>
++    </event>
++
++    <event name="ring">
++      <description summary="ring announced">
++	Sent on wp_tablet_pad_group initialization to announce available rings.
++	One event is sent for each ring available on this pad group.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_pad_group.done event.
++      </description>
++      <arg name="ring" type="new_id" interface="zwp_tablet_pad_ring_v2"/>
++    </event>
++
++    <event name="strip">
++      <description summary="strip announced">
++	Sent on wp_tablet_pad initialization to announce available strips.
++	One event is sent for each strip available on this pad group.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_pad_group.done event.
++      </description>
++      <arg name="strip" type="new_id" interface="zwp_tablet_pad_strip_v2"/>
++    </event>
++
++    <event name="modes">
++      <description summary="mode-switch ability announced">
++	Sent on wp_tablet_pad_group initialization to announce that the pad
++	group may switch between modes. A client may use a mode to store a
++	specific configuration for buttons, rings and strips and use the
++	wl_tablet_pad_group.mode_switch event to toggle between these
++	configurations. Mode indices start at 0.
++
++	Switching modes is compositor-dependent. See the
++	wp_tablet_pad_group.mode_switch event for more details.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_pad_group.done event. This event is only sent when more than
++	more than one mode is available.
++      </description>
++      <arg name="modes" type="uint" summary="the number of modes"/>
++    </event>
++
++    <event name="done">
++      <description summary="tablet group description events sequence complete">
++	This event is sent immediately to signal the end of the initial
++	burst of descriptive events. A client may consider the static
++	description of the tablet to be complete and finalize initialization
++	of the tablet group.
++      </description>
++    </event>
++
++    <event name="mode_switch">
++      <description summary="mode switch event">
++	Notification that the mode was switched.
++
++	A mode applies to all buttons, rings, strips and dials in a group
++	simultaneously, but a client is not required to assign different actions
++	for each mode. For example, a client may have mode-specific button
++	mappings but map the ring to vertical scrolling in all modes. Mode
++	indices start at 0.
++
++	Switching modes is compositor-dependent. The compositor may provide
++	visual cues to the user about the mode, e.g. by toggling LEDs on
++	the tablet device. Mode-switching may be software-controlled or
++	controlled by one or more physical buttons. For example, on a Wacom
++	Intuos Pro, the button inside the ring may be assigned to switch
++	between modes.
++
++	The compositor will also send this event after wp_tablet_pad.enter on
++	each group in order to notify of the current mode. Groups that only
++	feature one mode will use mode=0 when emitting this event.
++
++	If a button action in the new mode differs from the action in the
++	previous mode, the client should immediately issue a
++	wp_tablet_pad.set_feedback request for each changed button.
++
++	If a ring, strip or dial action in the new mode differs from the action
++	in the previous mode, the client should immediately issue a
++	wp_tablet_ring.set_feedback, wp_tablet_strip.set_feedback or
++	wp_tablet_dial.set_feedback request for each changed ring, strip or dial.
++      </description>
++      <arg name="time" type="uint" summary="the time of the event with millisecond granularity"/>
++      <arg name="serial" type="uint"/>
++      <arg name="mode" type="uint" summary="the new mode of the pad"/>
++    </event>
++
++    <!-- Version 2 additions -->
++
++    <event name="dial" since="2">
++      <description summary="dial announced">
++	Sent on wp_tablet_pad initialization to announce available dials.
++	One event is sent for each dial available on this pad group.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_pad_group.done event.
++      </description>
++      <arg name="dial" type="new_id" interface="zwp_tablet_pad_dial_v2"/>
++    </event>
++  </interface>
++
++  <interface name="zwp_tablet_pad_v2" version="2">
++    <description summary="a set of buttons, rings, strips and dials">
++      A pad device is a set of buttons, rings, strips and dials
++      usually physically present on the tablet device itself. Some
++      exceptions exist where the pad device is physically detached, e.g. the
++      Wacom ExpressKey Remote.
++
++      Pad devices have no axes that control the cursor and are generally
++      auxiliary devices to the tool devices used on the tablet surface.
++
++      A pad device has a number of static characteristics, e.g. the number
++      of rings. These capabilities are sent in an event sequence after the
++      wp_tablet_seat.pad_added event before any actual events from this pad.
++      This initial event sequence is terminated by a wp_tablet_pad.done
++      event.
++
++      All pad features (buttons, rings, strips and dials) are logically divided into
++      groups and all pads have at least one group. The available groups are
++      notified through the wp_tablet_pad.group event; the compositor will
++      emit one event per group before emitting wp_tablet_pad.done.
++
++      Groups may have multiple modes. Modes allow clients to map multiple
++      actions to a single pad feature. Only one mode can be active per group,
++      although different groups may have different active modes.
++    </description>
++
++    <request name="set_feedback">
++      <description summary="set compositor feedback">
++	Requests the compositor to use the provided feedback string
++	associated with this button. This request should be issued immediately
++	after a wp_tablet_pad_group.mode_switch event from the corresponding
++	group is received, or whenever a button is mapped to a different
++	action. See wp_tablet_pad_group.mode_switch for more details.
++
++	Clients are encouraged to provide context-aware descriptions for
++	the actions associated with each button, and compositors may use
++	this information to offer visual feedback on the button layout
++	(e.g. on-screen displays).
++
++	Button indices start at 0. Setting the feedback string on a button
++	that is reserved by the compositor (i.e. not belonging to any
++	wp_tablet_pad_group) does not generate an error but the compositor
++	is free to ignore the request.
++
++	The provided string 'description' is a UTF-8 encoded string to be
++	associated with this ring, and is considered user-visible; general
++	internationalization rules apply.
++
++	The serial argument will be that of the last
++	wp_tablet_pad_group.mode_switch event received for the group of this
++	button. Requests providing other serials than the most recent one will
++	be ignored.
++      </description>
++      <arg name="button" type="uint" summary="button index"/>
++      <arg name="description" type="string" summary="button description"/>
++      <arg name="serial" type="uint" summary="serial of the mode switch event"/>
++    </request>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the pad object">
++	Destroy the wp_tablet_pad object. Objects created from this object
++	are unaffected and should be destroyed separately.
++      </description>
++    </request>
++
++    <event name="group">
++      <description summary="group announced">
++	Sent on wp_tablet_pad initialization to announce available groups.
++	One event is sent for each pad group available.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_pad.done event. At least one group will be announced.
++      </description>
++      <arg name="pad_group" type="new_id" interface="zwp_tablet_pad_group_v2"/>
++    </event>
++
++    <event name="path">
++      <description summary="path to the device">
++	A system-specific device path that indicates which device is behind
++	this wp_tablet_pad. This information may be used to gather additional
++	information about the device, e.g. through libwacom.
++
++	The format of the path is unspecified, it may be a device node, a
++	sysfs path, or some other identifier. It is up to the client to
++	identify the string provided.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_pad.done event.
++      </description>
++      <arg name="path" type="string" summary="path to local device"/>
++    </event>
++
++    <event name="buttons">
++      <description summary="buttons announced">
++	Sent on wp_tablet_pad initialization to announce the available
++	buttons.
++
++	This event is sent in the initial burst of events before the
++	wp_tablet_pad.done event. This event is only sent when at least one
++	button is available.
++      </description>
++      <arg name="buttons" type="uint" summary="the number of buttons"/>
++    </event>
++
++    <event name="done">
++      <description summary="pad description event sequence complete">
++	This event signals the end of the initial burst of descriptive
++	events. A client may consider the static description of the pad to
++	be complete and finalize initialization of the pad.
++      </description>
++    </event>
++
++    <enum name="button_state">
++      <description summary="physical button state">
++	Describes the physical state of a button that caused the button
++	event.
++      </description>
++      <entry name="released" value="0" summary="the button is not pressed"/>
++      <entry name="pressed" value="1" summary="the button is pressed"/>
++    </enum>
++
++    <event name="button">
++      <description summary="physical button state">
++	Sent whenever the physical state of a button changes.
++      </description>
++      <arg name="time" type="uint" summary="the time of the event with millisecond granularity"/>
++      <arg name="button" type="uint" summary="the index of the button that changed state"/>
++      <arg name="state" type="uint" enum="button_state"/>
++    </event>
++
++    <event name="enter">
++      <description summary="enter event">
++	Notification that this pad is focused on the specified surface.
++      </description>
++      <arg name="serial" type="uint" summary="serial number of the enter event"/>
++      <arg name="tablet" type="object" interface="zwp_tablet_v2" summary="the tablet the pad is attached to"/>
++      <arg name="surface" type="object" interface="wl_surface" summary="surface the pad is focused on"/>
++    </event>
++
++    <event name="leave">
++      <description summary="leave event">
++	Notification that this pad is no longer focused on the specified
++	surface.
++      </description>
++      <arg name="serial" type="uint" summary="serial number of the leave event"/>
++      <arg name="surface" type="object" interface="wl_surface" summary="surface the pad is no longer focused on"/>
++    </event>
++
++    <event name="removed">
++      <description summary="pad removed event">
++	Sent when the pad has been removed from the system. When a tablet
++	is removed its pad(s) will be removed too.
++
++	When this event is received, the client must destroy all rings, strips
++	and groups that were offered by this pad, and issue wp_tablet_pad.destroy
++	the pad itself.
++      </description>
++    </event>
++  </interface>
++
++  <interface name="zwp_tablet_pad_dial_v2" version="2">
++    <description summary="pad dial">
++      A rotary control, e.g. a dial or a wheel.
++
++      Events on a dial are logically grouped by the wl_tablet_pad_dial.frame
++      event.
++    </description>
++
++    <request name="set_feedback">
++      <description summary="set compositor feedback">
++	Requests the compositor to use the provided feedback string
++	associated with this dial. This request should be issued immediately
++	after a wp_tablet_pad_group.mode_switch event from the corresponding
++	group is received, or whenever the dial is mapped to a different
++	action. See wp_tablet_pad_group.mode_switch for more details.
++
++	Clients are encouraged to provide context-aware descriptions for
++	the actions associated with the dial, and compositors may use this
++	information to offer visual feedback about the button layout
++	(eg. on-screen displays).
++
++	The provided string 'description' is a UTF-8 encoded string to be
++	associated with this ring, and is considered user-visible; general
++	internationalization rules apply.
++
++	The serial argument will be that of the last
++	wp_tablet_pad_group.mode_switch event received for the group of this
++	dial. Requests providing other serials than the most recent one will be
++	ignored.
++      </description>
++      <arg name="description" type="string" summary="dial description"/>
++      <arg name="serial" type="uint" summary="serial of the mode switch event"/>
++    </request>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the dial object">
++	This destroys the client's resource for this dial object.
++      </description>
++    </request>
++
++    <event name="delta">
++      <description summary="delta movement">
++	Sent whenever the position on a dial changes.
++
++	This event carries the wheel delta as multiples or fractions
++	of 120 with each multiple of 120 representing one logical wheel detent.
++	For example, an axis_value120 of 30 is one quarter of
++	a logical wheel step in the positive direction, a value120 of
++	-240 are two logical wheel steps in the negative direction within the
++	same hardware event. See the wl_pointer.axis_value120 for more details.
++
++	The value120 must not be zero.
++      </description>
++      <arg name="value120" type="int" summary="rotation distance as fraction of 120"/>
++    </event>
++
++    <event name="frame">
++      <description summary="end of a dial event sequence">
++	Indicates the end of a set of events that represent one logical
++	hardware dial event. A client is expected to accumulate the data
++	in all events within the frame before proceeding.
++
++	All wp_tablet_pad_dial events before a wp_tablet_pad_dial.frame event belong
++	logically together.
++
++	A wp_tablet_pad_dial.frame event is sent for every logical event
++	group, even if the group only contains a single wp_tablet_pad_dial
++	event. Specifically, a client may get a sequence: delta, frame,
++	delta, frame, etc.
++      </description>
++      <arg name="time" type="uint" summary="timestamp with millisecond granularity"/>
++    </event>
++  </interface>
++</protocol>
+diff --git a/dlls/winewayland.drv/wayland.c b/dlls/winewayland.drv/wayland.c
+index 08cbb8c6979..45c768f7917 100644
+--- a/dlls/winewayland.drv/wayland.c
++++ b/dlls/winewayland.drv/wayland.c
+@@ -199,6 +199,12 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
+         process_wayland.wp_fractional_scale_manager_v1 =
+             wl_registry_bind(registry, id, &wp_fractional_scale_manager_v1_interface, 1);
+     }
++    else if (strcmp(interface, "wp_cursor_shape_manager_v1") == 0)
++    {
++        process_wayland.wp_cursor_shape_manager_v1 =
++            wl_registry_bind(registry, id, &wp_cursor_shape_manager_v1_interface,
++                             version < 2 ? version : 2);
++    }
+ }
+ 
+ static void registry_handle_global_remove(void *data, struct wl_registry *registry,
+diff --git a/dlls/winewayland.drv/wayland_pointer.c b/dlls/winewayland.drv/wayland_pointer.c
+index 257735dc909..ebd09d87b2a 100644
+--- a/dlls/winewayland.drv/wayland_pointer.c
++++ b/dlls/winewayland.drv/wayland_pointer.c
+@@ -29,11 +29,81 @@
+ #include <math.h>
+ #include <stdlib.h>
+ 
++#define OEMRESOURCE
++
+ #include "waylanddrv.h"
+ #include "wine/debug.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(waylanddrv);
+ 
++struct system_cursors
++{
++    WORD id;
++    enum wp_cursor_shape_device_v1_shape shape;
++};
++
++static const struct system_cursors user32_cursors[] =
++{
++    {OCR_NORMAL,      WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT},
++    {OCR_IBEAM,       WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT},
++    {OCR_WAIT,        WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT},
++    {OCR_CROSS,       WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR},
++    {OCR_SIZE,        WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_RESIZE},
++    {OCR_SIZENWSE,    WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NWSE_RESIZE},
++    {OCR_SIZENESW,    WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NESW_RESIZE},
++    {OCR_SIZEWE,      WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_EW_RESIZE},
++    {OCR_SIZENS,      WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NS_RESIZE},
++    {OCR_SIZEALL,     WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_RESIZE},
++    {OCR_NO,          WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NOT_ALLOWED},
++    {OCR_HAND,        WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER},
++    {OCR_APPSTARTING, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS},
++    {OCR_HELP,        WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_HELP},
++    {OCR_RDR2DIM,     WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_SCROLL},
++    {0}
++};
++
++static const struct system_cursors comctl32_cursors[] =
++{
++    {102, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE},
++    {104, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY},
++    {105, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT},
++    {106, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE},
++    {107, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE},
++    {108, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER},
++    {135, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ROW_RESIZE},
++    {0}
++};
++
++static const struct system_cursors ole32_cursors[] =
++{
++    {1, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP},
++    {2, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE},
++    {3, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY},
++    {4, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALIAS},
++    {0}
++};
++
++static const struct system_cursors riched20_cursors[] =
++{
++    {105, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER},
++    {109, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY},
++    {110, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE},
++    {111, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP},
++    {0}
++};
++
++static const struct
++{
++    const struct system_cursors *cursors;
++    WCHAR name[16];
++} module_cursors[] =
++{
++    {user32_cursors, {'u','s','e','r','3','2','.','d','l','l',0}},
++    {comctl32_cursors, {'c','o','m','c','t','l','3','2','.','d','l','l',0}},
++    {ole32_cursors, {'o','l','e','3','2','.','d','l','l',0}},
++    {riched20_cursors, {'r','i','c','h','e','d','2','0','.','d','l','l',0}}
++};
++
+ static HWND wayland_pointer_get_focused_hwnd(void)
+ {
+     struct wayland_pointer *pointer = &process_wayland.pointer;
+@@ -350,6 +420,11 @@ void wayland_pointer_deinit(void)
+         zwp_relative_pointer_v1_destroy(pointer->zwp_relative_pointer_v1);
+         pointer->zwp_relative_pointer_v1 = NULL;
+     }
++    if (pointer->wp_cursor_shape_device_v1)
++    {
++        wp_cursor_shape_device_v1_destroy(pointer->wp_cursor_shape_device_v1);
++        pointer->wp_cursor_shape_device_v1 = NULL;
++    }
+     wl_pointer_release(pointer->wl_pointer);
+     pointer->wl_pointer = NULL;
+     pointer->focused_hwnd = NULL;
+@@ -509,6 +584,27 @@ clear_cursor:
+     }
+ }
+ 
++static void wayland_pointer_clear_cursor_surface(void)
++{
++    struct wayland_cursor *cursor = &process_wayland.pointer.cursor;
++
++    if (cursor->wp_viewport)
++    {
++        wp_viewport_destroy(cursor->wp_viewport);
++        cursor->wp_viewport = NULL;
++    }
++    if (cursor->wl_surface)
++    {
++        wl_surface_destroy(cursor->wl_surface);
++        cursor->wl_surface = NULL;
++    }
++    if (cursor->shm_buffer)
++    {
++        wayland_shm_buffer_unref(cursor->shm_buffer);
++        cursor->shm_buffer = NULL;
++    }
++}
++
+ static void wayland_pointer_update_cursor_surface(double scale)
+ {
+     struct wayland_cursor *cursor = &process_wayland.pointer.cursor;
+@@ -557,21 +653,7 @@ static void wayland_pointer_update_cursor_surface(double scale)
+     return;
+ 
+ clear_cursor:
+-    if (cursor->shm_buffer)
+-    {
+-        wayland_shm_buffer_unref(cursor->shm_buffer);
+-        cursor->shm_buffer = NULL;
+-    }
+-    if (cursor->wp_viewport)
+-    {
+-        wp_viewport_destroy(cursor->wp_viewport);
+-        cursor->wp_viewport = NULL;
+-    }
+-    if (cursor->wl_surface)
+-    {
+-        wl_surface_destroy(cursor->wl_surface);
+-        cursor->wl_surface = NULL;
+-    }
++    wayland_pointer_clear_cursor_surface();
+ }
+ 
+ static void reapply_cursor_clipping(void)
+@@ -582,6 +664,77 @@ static void reapply_cursor_clipping(void)
+     NtUserSetThreadDpiAwarenessContext(context);
+ }
+ 
++static enum wp_cursor_shape_device_v1_shape cursor_shape_from_info(ICONINFOEXW *info,
++                                                                   uint32_t proto_version)
++{
++    const struct system_cursors *cursors;
++    const WCHAR *module;
++    unsigned int i;
++    enum wp_cursor_shape_device_v1_shape shape = 0;
++
++    if (!info->szModName[0]) return 0;
++    if ((module = wcsrchr(info->szModName, '\\'))) module++;
++    else module = info->szModName;
++    for (i = 0; i < ARRAY_SIZE(module_cursors); i++)
++        if (!wcsicmp(module, module_cursors[i].name)) break;
++    if (i == ARRAY_SIZE(module_cursors)) return 0;
++
++    cursors = module_cursors[i].cursors;
++    for (i = 0; cursors[i].id; i++)
++    {
++        if (cursors[i].id == info->wResID)
++        {
++            shape = cursors[i].shape;
++            break;
++        }
++    }
++
++    if (shape >= WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DND_ASK && proto_version < 2)
++        shape = 0;
++
++    return shape;
++}
++
++static BOOL wayland_pointer_set_cursor_shape(HCURSOR hcursor)
++{
++    struct wayland_pointer *pointer = &process_wayland.pointer;
++    ICONINFOEXW info = {0};
++    enum wp_cursor_shape_device_v1_shape shape = 0;
++    uint32_t proto_version;
++
++    if (!option_use_system_cursors) return FALSE;
++    if (!process_wayland.wp_cursor_shape_manager_v1) return FALSE;
++    if (!hcursor) return FALSE;
++    if (!get_icon_info(hcursor, &info)) return FALSE;
++    proto_version = wp_cursor_shape_manager_v1_get_version(
++        process_wayland.wp_cursor_shape_manager_v1);
++    if (!(shape = cursor_shape_from_info(&info, proto_version))) return FALSE;
++
++    if (!pointer->wp_cursor_shape_device_v1)
++    {
++        pointer->wp_cursor_shape_device_v1 =
++            wp_cursor_shape_manager_v1_get_pointer(
++                process_wayland.wp_cursor_shape_manager_v1, pointer->wl_pointer);
++        if (!pointer->wp_cursor_shape_device_v1) return FALSE;
++    }
++
++    wp_cursor_shape_device_v1_set_shape(pointer->wp_cursor_shape_device_v1,
++                                        pointer->enter_serial, shape);
++
++    return TRUE;
++}
++
++static void wayland_pointer_clear_cursor_shape(void)
++{
++    struct wayland_pointer *pointer = &process_wayland.pointer;
++
++    if (pointer->wp_cursor_shape_device_v1)
++    {
++        wp_cursor_shape_device_v1_destroy(pointer->wp_cursor_shape_device_v1);
++        pointer->wp_cursor_shape_device_v1 = NULL;
++    }
++}
++
+ static void wayland_set_cursor(HWND hwnd, HCURSOR hcursor, BOOL use_hcursor)
+ {
+     struct wayland_pointer *pointer = &process_wayland.pointer;
+@@ -611,13 +764,22 @@ static void wayland_set_cursor(HWND hwnd, HCURSOR hcursor, BOOL use_hcursor)
+     pthread_mutex_lock(&pointer->mutex);
+     if (pointer->focused_hwnd == hwnd)
+     {
+-        if (use_hcursor) wayland_pointer_update_cursor_buffer(hcursor, scale);
+-        wayland_pointer_update_cursor_surface(scale);
+-        wl_pointer_set_cursor(pointer->wl_pointer,
+-                              pointer->enter_serial,
+-                              pointer->cursor.wl_surface,
+-                              pointer->cursor.hotspot_x,
+-                              pointer->cursor.hotspot_y);
++        if ((!use_hcursor && pointer->wp_cursor_shape_device_v1) ||
++            (use_hcursor && hcursor && wayland_pointer_set_cursor_shape(hcursor)))
++        {
++            wayland_pointer_clear_cursor_surface();
++        }
++        else
++        {
++            if (use_hcursor) wayland_pointer_update_cursor_buffer(hcursor, scale);
++            wayland_pointer_update_cursor_surface(scale);
++            wl_pointer_set_cursor(pointer->wl_pointer,
++                                  pointer->enter_serial,
++                                  pointer->cursor.wl_surface,
++                                  pointer->cursor.hotspot_x,
++                                  pointer->cursor.hotspot_y);
++            wayland_pointer_clear_cursor_shape();
++        }
+         wl_display_flush(process_wayland.wl_display);
+         reapply_clip = TRUE;
+     }
+@@ -700,6 +862,7 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
+ {
+     struct wayland_pointer *pointer = &process_wayland.pointer;
+     BOOL needs_relative, needs_lock, needs_confine;
++    BOOL is_visible;
+     static unsigned int once;
+ 
+     if (!process_wayland.zwp_pointer_constraints_v1)
+@@ -709,11 +872,12 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
+         return;
+     }
+ 
+-    needs_lock = wl_surface && (((confine_rect || covers_vscreen) &&
+-                 !pointer->cursor.wl_surface) || force_lock) &&
++    is_visible = pointer->cursor.wl_surface || pointer->wp_cursor_shape_device_v1;
++    needs_lock = wl_surface &&
++                 (((confine_rect || covers_vscreen) && !is_visible) || force_lock) &&
+                  pointer->wl_pointer;
+-    needs_confine = wl_surface && confine_rect && pointer->cursor.wl_surface &&
+-                 !force_lock && pointer->wl_pointer;
++    needs_confine = wl_surface && confine_rect && is_visible && !force_lock &&
++                    pointer->wl_pointer;
+ 
+     if (!needs_confine && pointer->zwp_confined_pointer_v1)
+     {
+@@ -795,8 +959,7 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
+         return;
+     }
+ 
+-    needs_relative = !pointer->cursor.wl_surface &&
+-                     pointer->constraint_hwnd &&
++    needs_relative = !is_visible && pointer->constraint_hwnd &&
+                      pointer->constraint_hwnd == pointer->focused_hwnd;
+ 
+     if (needs_relative && !pointer->zwp_relative_pointer_v1)
+diff --git a/dlls/winewayland.drv/waylanddrv.h b/dlls/winewayland.drv/waylanddrv.h
+index 5e04b410202..0848d683ef7 100644
+--- a/dlls/winewayland.drv/waylanddrv.h
++++ b/dlls/winewayland.drv/waylanddrv.h
+@@ -38,6 +38,8 @@
+ #include "wlr-data-control-unstable-v1-client-protocol.h"
+ #include "xdg-toplevel-icon-v1-client-protocol.h"
+ #include "fractional-scale-v1-client-protocol.h"
++#include "tablet-v2-client-protocol.h"
++#include "cursor-shape-v1-client-protocol.h"
+ 
+ #include "windef.h"
+ #include "winbase.h"
+@@ -57,6 +59,7 @@
+ 
+ extern char *process_name;
+ extern struct wayland process_wayland;
++extern BOOL option_use_system_cursors;
+ 
+ /**********************************************************************
+  *          Definitions for wayland types
+@@ -107,6 +110,7 @@ struct wayland_pointer
+     struct zwp_confined_pointer_v1 *zwp_confined_pointer_v1;
+     struct zwp_locked_pointer_v1 *zwp_locked_pointer_v1;
+     struct zwp_relative_pointer_v1 *zwp_relative_pointer_v1;
++    struct wp_cursor_shape_device_v1 *wp_cursor_shape_device_v1;
+     HWND focused_hwnd;
+     HWND constraint_hwnd;
+     BOOL pending_warp;
+@@ -174,6 +178,7 @@ struct wayland
+     struct zwlr_data_control_manager_v1 *zwlr_data_control_manager_v1;
+     struct wl_data_device_manager *wl_data_device_manager;
+     struct xdg_toplevel_icon_manager_v1 *xdg_toplevel_icon_manager_v1;
++    struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
+     struct wayland_seat seat;
+     struct wayland_keyboard keyboard;
+     struct wayland_pointer pointer;
+diff --git a/dlls/winewayland.drv/waylanddrv_main.c b/dlls/winewayland.drv/waylanddrv_main.c
+index 5486cc934ef..60d2fc70ff9 100644
+--- a/dlls/winewayland.drv/waylanddrv_main.c
++++ b/dlls/winewayland.drv/waylanddrv_main.c
+@@ -31,7 +31,11 @@
+ 
+ #include "waylanddrv.h"
+ 
++#define IS_OPTION_TRUE(ch) \
++    ((ch) == 'y' || (ch) == 'Y' || (ch) == 't' || (ch) == 'T' || (ch) == '1')
++
+ char *process_name = NULL;
++BOOL option_use_system_cursors = TRUE;
+ 
+ static const struct user_driver_funcs waylanddrv_funcs =
+ {
+@@ -56,6 +60,147 @@ static const struct user_driver_funcs waylanddrv_funcs =
+     .pwine_get_wgl_driver = WAYLAND_wine_get_wgl_driver,
+ };
+ 
++static inline void ascii_to_unicode(WCHAR *dst, const char *src, size_t len)
++{
++    while (len--) *dst++ = (unsigned char)*src++;
++}
++
++static inline UINT asciiz_to_unicode(WCHAR *dst, const char *src)
++{
++    WCHAR *p = dst;
++    while ((*p++ = *src++));
++    return (p - dst) * sizeof(WCHAR);
++}
++
++static HKEY reg_open_key(HKEY root, const WCHAR *name, ULONG name_len)
++{
++    UNICODE_STRING nameW = {name_len, name_len, (WCHAR *)name};
++    OBJECT_ATTRIBUTES attr;
++    HANDLE ret;
++
++    attr.Length = sizeof(attr);
++    attr.RootDirectory = root;
++    attr.ObjectName = &nameW;
++    attr.Attributes = 0;
++    attr.SecurityDescriptor = NULL;
++    attr.SecurityQualityOfService = NULL;
++
++    return NtOpenKeyEx(&ret, MAXIMUM_ALLOWED, &attr, 0) ? 0 : ret;
++}
++
++static HKEY open_hkcu_key(const char *name)
++{
++    WCHAR bufferW[256];
++    static HKEY hkcu;
++
++    if (!hkcu)
++    {
++        char buffer[256];
++        DWORD_PTR sid_data[(sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE) / sizeof(DWORD_PTR)];
++        DWORD i, len = sizeof(sid_data);
++        SID *sid;
++
++        if (NtQueryInformationToken(GetCurrentThreadEffectiveToken(), TokenUser, sid_data, len, &len))
++            return 0;
++
++        sid = ((TOKEN_USER *)sid_data)->User.Sid;
++        len = sprintf(buffer, "\\Registry\\User\\S-%u-%lu", sid->Revision,
++               (unsigned long) MAKELONG(MAKEWORD(sid->IdentifierAuthority.Value[5],
++                                        sid->IdentifierAuthority.Value[4]),
++                               MAKEWORD(sid->IdentifierAuthority.Value[3],
++                                        sid->IdentifierAuthority.Value[2])));
++        for (i = 0; i < sid->SubAuthorityCount; i++)
++            len += sprintf(buffer + len, "-%lu", (unsigned long)sid->SubAuthority[i]);
++
++        ascii_to_unicode(bufferW, buffer, len);
++        hkcu = reg_open_key(NULL, bufferW, len * sizeof(WCHAR));
++    }
++
++    return reg_open_key(hkcu, bufferW, asciiz_to_unicode(bufferW, name) - sizeof(WCHAR));
++}
++
++static ULONG query_reg_value(HKEY hkey, const WCHAR *name,
++                             KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size)
++{
++    unsigned int name_size = name ? lstrlenW(name) * sizeof(WCHAR) : 0;
++    UNICODE_STRING nameW = {name_size, name_size, (WCHAR *)name};
++
++    if (NtQueryValueKey(hkey, &nameW, KeyValuePartialInformation,
++                        info, size, &size))
++        return 0;
++
++    return size - FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data);
++}
++
++static inline DWORD get_config_key(HKEY defkey, HKEY appkey, const char *name,
++                                   WCHAR *buffer, DWORD size)
++{
++    WCHAR nameW[128];
++    char buf[2048];
++    KEY_VALUE_PARTIAL_INFORMATION *info = (void *)buf;
++
++    asciiz_to_unicode(nameW, name);
++
++    if (appkey && query_reg_value(appkey, nameW, info, sizeof(buf)))
++    {
++        size = min(info->DataLength, size - sizeof(WCHAR));
++        memcpy(buffer, info->Data, size);
++        buffer[size / sizeof(WCHAR)] = 0;
++        return 0;
++    }
++
++    if (defkey && query_reg_value(defkey, nameW, info, sizeof(buf)))
++    {
++        size = min(info->DataLength, size - sizeof(WCHAR));
++        memcpy(buffer, info->Data, size);
++        buffer[size / sizeof(WCHAR)] = 0;
++        return 0;
++    }
++
++    return ERROR_FILE_NOT_FOUND;
++}
++
++static void wayland_init_options(void)
++{
++    static const WCHAR waylanddriverW[] = {'\\','W','a','y','l','a','n','d',' ','D','r','i','v','e','r',0};
++    WCHAR buffer[MAX_PATH+16], *p, *appname;
++    HKEY hkey, appkey = 0;
++    DWORD len;
++
++    /* @@ Wine registry key: HKCU\Software\Wine\Wayland Driver */
++    hkey = open_hkcu_key("Software\\Wine\\Wayland Driver");
++
++    /* open the app-specific key */
++    appname = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
++    if ((p = wcsrchr(appname, '/'))) appname = p + 1;
++    if ((p = wcsrchr(appname, '\\'))) appname = p + 1;
++    len = lstrlenW(appname);
++
++    if (len && len < MAX_PATH)
++    {
++        HKEY tmpkey;
++        int i;
++        for (i = 0; appname[i]; i++) buffer[i] = RtlDowncaseUnicodeChar(appname[i]);
++        buffer[i] = 0;
++        appname = buffer;
++        if ((process_name = malloc(len * 3 + 1)))
++            ntdll_wcstoumbs(appname, len + 1, process_name, len * 3 + 1, FALSE);
++        memcpy(appname + i, waylanddriverW, sizeof(waylanddriverW));
++        /* @@ Wine registry key: HKCU\Software\Wine\AppDefaults\app.exe\Wayland Driver */
++        if ((tmpkey = open_hkcu_key("Software\\Wine\\AppDefaults")))
++        {
++            appkey = reg_open_key(tmpkey, appname, lstrlenW(appname) * sizeof(WCHAR));
++            NtClose(tmpkey);
++        }
++    }
++
++    if (!get_config_key(hkey, appkey, "UseSystemCursors", buffer, sizeof(buffer)))
++        option_use_system_cursors = IS_OPTION_TRUE(buffer[0]);
++
++    NtClose(appkey);
++    NtClose(hkey);
++}
++
+ static void wayland_init_process_name(void)
+ {
+     WCHAR *p, *appname;
+@@ -91,6 +236,7 @@ static NTSTATUS waylanddrv_unix_init(void *arg)
+     __wine_set_user_driver(&waylanddrv_funcs, WINE_GDI_DRIVER_VERSION);
+ 
+     wayland_init_process_name();
++    wayland_init_options();
+ 
+     if (!wayland_process_init()) goto err;
+ 
+-- 
+2.49.0
+
+diff --git a/dlls/winewayland.drv/waylanddrv_main.c b/dlls/winewayland.drv/waylanddrv_main.c
+index 60d2fc70ff9..640a70be20e 100644
+--- a/dlls/winewayland.drv/waylanddrv_main.c
++++ b/dlls/winewayland.drv/waylanddrv_main.c
+@@ -104,13 +104,13 @@ static HKEY open_hkcu_key(const char *name)
+             return 0;
+ 
+         sid = ((TOKEN_USER *)sid_data)->User.Sid;
+-        len = sprintf(buffer, "\\Registry\\User\\S-%u-%lu", sid->Revision,
+-               (unsigned long) MAKELONG(MAKEWORD(sid->IdentifierAuthority.Value[5],
++        len = sprintf(buffer, "\\Registry\\User\\S-%u-%u", sid->Revision,
++                      MAKELONG(MAKEWORD(sid->IdentifierAuthority.Value[5],
+                                         sid->IdentifierAuthority.Value[4]),
+                                MAKEWORD(sid->IdentifierAuthority.Value[3],
+                                         sid->IdentifierAuthority.Value[2])));
+         for (i = 0; i < sid->SubAuthorityCount; i++)
+-            len += sprintf(buffer + len, "-%lu", (unsigned long)sid->SubAuthority[i]);
++            len += sprintf(buffer + len, "-%u", sid->SubAuthority[i]);
+ 
+         ascii_to_unicode(bufferW, buffer, len);
+         hkcu = reg_open_key(NULL, bufferW, len * sizeof(WCHAR));
+
+From c9e73db51be497bc1d62e4fcd3e0ad0492a9edf8 Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Fri, 9 May 2025 08:32:12 -0400
+Subject: [PATCH 32/44] winewayland: ensure egl_display is not
+ EGL_BAD_PARAMETER
+
+---
+ dlls/winewayland.drv/opengl.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/winewayland.drv/opengl.c b/dlls/winewayland.drv/opengl.c
+index 36989b9c745..0d7bf00ea0f 100644
+--- a/dlls/winewayland.drv/opengl.c
++++ b/dlls/winewayland.drv/opengl.c
+@@ -1383,7 +1383,7 @@ static void init_opengl(void)
+     egl_display = p_eglGetPlatformDisplay(EGL_PLATFORM_WAYLAND_KHR,
+                                           process_wayland.wl_display,
+                                           NULL);
+-    if (egl_display == EGL_NO_DISPLAY)
++    if (egl_display == EGL_NO_DISPLAY || egl_display == (void *)EGL_BAD_PARAMETER)
+     {
+         ERR("Failed to get EGLDisplay\n");
+         goto err;
+-- 
+2.49.0
+
+From a8ae4844c39ef31b3b7999d72cb7b2139a31b24d Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Fri, 9 May 2025 08:38:26 -0400
+Subject: [PATCH 33/44] Add amdxc implementation
+
+---
+ .gitignore                        |   1 +
+ configure.ac                      |   1 +
+ dlls/amdxc64/Makefile.in          |  10 +
+ dlls/amdxc64/amdxc64.spec         | 315 +++++++++++++++++++++++++++++
+ dlls/amdxc64/amdxc_interfaces.idl |  96 +++++++++
+ dlls/amdxc64/dxvk_interfaces.idl  | 153 ++++++++++++++
+ dlls/amdxc64/main.c               | 317 ++++++++++++++++++++++++++++++
+ 7 files changed, 893 insertions(+)
+ create mode 100644 dlls/amdxc64/Makefile.in
+ create mode 100644 dlls/amdxc64/amdxc64.spec
+ create mode 100644 dlls/amdxc64/amdxc_interfaces.idl
+ create mode 100644 dlls/amdxc64/dxvk_interfaces.idl
+ create mode 100644 dlls/amdxc64/main.c
+
+diff --git a/.gitignore b/.gitignore
+index 66d83f5f1d4..57c66ae4053 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,3 @@
+ .idea
+ compile_commands.json
++.cache
+diff --git a/configure.ac b/configure.ac
+index 9acc7ce2845..dff8f27cedc 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -2456,6 +2456,7 @@ WINE_CONFIG_MAKEFILE(dlls/advpack)
+ WINE_CONFIG_MAKEFILE(dlls/advpack)
+ WINE_CONFIG_MAKEFILE(dlls/advpack/tests)
+ WINE_CONFIG_MAKEFILE(dlls/amsi)
++WINE_CONFIG_MAKEFILE(dlls/amdxc64)
+ WINE_CONFIG_MAKEFILE(dlls/amstream)
+ WINE_CONFIG_MAKEFILE(dlls/amstream/tests)
+ WINE_CONFIG_MAKEFILE(dlls/apisetschema)
+diff --git a/dlls/amdxc64/Makefile.in b/dlls/amdxc64/Makefile.in
+new file mode 100644
+index 00000000000..999a7d043e1
+--- /dev/null
++++ b/dlls/amdxc64/Makefile.in
+@@ -0,0 +1,10 @@
++MODULE = amdxc64.dll
++IMPORTS = version vulkan-1 user32 gdi32
++IMPORTLIB = amdxc64
++
++EXTRADLLFLAGS = -mno-cygwin
++
++SOURCES = \
++	main.c \
++	dxvk_interfaces.idl \
++	amdxc_interfaces.idl \
+diff --git a/dlls/amdxc64/amdxc64.spec b/dlls/amdxc64/amdxc64.spec
+new file mode 100644
+index 00000000000..2daa1ddbc94
+--- /dev/null
++++ b/dlls/amdxc64/amdxc64.spec
+@@ -0,0 +1,315 @@
++1 stub ??0?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@boost@@QEAA@XZ
++2 stub ??0?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@boost@@QEAA@XZ
++3 stub ??0?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@boost@@QEAA@XZ
++4 stub ??0?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@boost@@QEAA@XZ
++5 stub ??0?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@boost@@QEAA@XZ
++6 stub ??0?$oserializer@Vsc_xml_oarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@boost@@QEAA@XZ
++7 stub ??0?$oserializer@Vsc_xml_oarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@boost@@QEAA@XZ
++8 stub ??0?$oserializer@Vsc_xml_oarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@boost@@QEAA@XZ
++9 stub ??0?$oserializer@Vsc_xml_oarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@boost@@QEAA@XZ
++10 stub ??0?$oserializer@Vsc_xml_oarchive@@USC_INPUT@@@detail@archive@boost@@QEAA@XZ
++11 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@boost@@QEAA@XZ
++12 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@boost@@QEAA@XZ
++13 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@boost@@QEAA@XZ
++14 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@boost@@QEAA@XZ
++15 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@boost@@QEAA@XZ
++16 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CBCONSTVALUES@@@detail@archive@boost@@QEAA@XZ
++17 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@boost@@QEAA@XZ
++18 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@boost@@QEAA@XZ
++19 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@boost@@QEAA@XZ
++20 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_CPS_CONFIG@@@detail@archive@boost@@QEAA@XZ
++21 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_FLOAT_CONST@@@detail@archive@boost@@QEAA@XZ
++22 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_INT_CONST@@@detail@archive@boost@@QEAA@XZ
++23 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@boost@@QEAA@XZ
++24 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@boost@@QEAA@XZ
++25 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@boost@@QEAA@XZ
++26 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@boost@@QEAA@XZ
++27 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SHADERSTATE@@@detail@archive@boost@@QEAA@XZ
++28 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@boost@@QEAA@XZ
++29 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@boost@@QEAA@XZ
++30 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@boost@@QEAA@XZ
++31 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@boost@@QEAA@XZ
++32 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@boost@@QEAA@XZ
++33 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@QEAA@XZ
++34 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@boost@@QEAA@XZ
++35 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@boost@@QEAA@XZ
++36 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@QEAA@XZ
++37 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@QEAA@XZ
++38 stub ??0?$oserializer@Vsc_xml_oarchive@@U_SC_TXCONSTVALUES@@@detail@archive@boost@@QEAA@XZ
++39 stub ??0?$oserializer@Vsc_xml_oarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@boost@@QEAA@XZ
++40 stub ??0?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++41 stub ??0?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++42 stub ??0?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_NPI_DISABLE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++43 stub ??0?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++44 stub ??0?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++45 stub ??0?$singleton@V?$extended_type_info_typeid@T_SC_COMPILE_FLAGS@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++46 stub ??0?$singleton@V?$extended_type_info_typeid@T_SC_LAUNCH_MODE_FLAGS@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++47 stub ??0?$singleton@V?$extended_type_info_typeid@T_SC_SI_GLC_CONTROL@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++48 stub ??0?$singleton@V?$extended_type_info_typeid@T_SC_SI_SLC_CONTROL@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++49 stub ??0?$singleton@V?$extended_type_info_typeid@USC_INPUT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++50 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY@serialization@boost@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++51 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_ATOMIC@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++52 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_CONTROL@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++53 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_READ@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++54 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_WRITE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++55 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CBCONSTVALUES@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++56 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CBRCONSTVALUES@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++57 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CI_TRANSFORM_SHADER_DESC@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++58 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CONSTANTUSAGE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++59 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_CPS_CONFIG@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++60 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_FLOAT_CONST@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++61 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_INT_CONST@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++62 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++63 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_CONTROL_FLAGS@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++64 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++65 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_PS_EXPORT_INFO@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++66 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SHADERSTATE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++67 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_DATA_IN_OUT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++68 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_DESCRIPTOR_VALUES@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++69 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_OPTIMIZATIONS@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++70 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_PSSHADERDCL_IN@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++71 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_PS_ATTR_CH_ENTRY@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++72 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_SHADERSTATE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++73 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_STREAMIODCL_OUT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++74 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SI_USER_DATA_ELEMENT@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++75 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SRCSHADER@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++76 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_SRC_PIPELINE@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++77 stub ??0?$singleton@V?$extended_type_info_typeid@U_SC_TXCONSTVALUES@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++78 stub ??0?$singleton@V?$extended_type_info_typeid@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@serialization@boost@@@serialization@boost@@IEAA@XZ
++79 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@23@XZ
++80 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@23@XZ
++81 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_NPI_DISABLE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_E_SC_SI_OPT_NPI_DISABLE@@@23@XZ
++82 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@23@XZ
++83 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@23@XZ
++84 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_SC_COMPILE_FLAGS@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_SC_COMPILE_FLAGS@@@23@XZ
++85 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_SC_LAUNCH_MODE_FLAGS@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_SC_LAUNCH_MODE_FLAGS@@@23@XZ
++86 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_SC_SI_GLC_CONTROL@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_SC_SI_GLC_CONTROL@@@23@XZ
++87 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@T_SC_SI_SLC_CONTROL@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@T_SC_SI_SLC_CONTROL@@@23@XZ
++88 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@USC_INPUT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@USC_INPUT@@@23@XZ
++89 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY@serialization@boost@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CACHE_POLICY@serialization@boost@@@23@XZ
++90 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_ATOMIC@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CACHE_POLICY_ATOMIC@@@23@XZ
++91 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_CONTROL@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CACHE_POLICY_CONTROL@@@23@XZ
++92 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_READ@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CACHE_POLICY_READ@@@23@XZ
++93 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CACHE_POLICY_WRITE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CACHE_POLICY_WRITE@@@23@XZ
++94 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CBCONSTVALUES@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CBCONSTVALUES@@@23@XZ
++95 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CBRCONSTVALUES@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CBRCONSTVALUES@@@23@XZ
++96 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CI_TRANSFORM_SHADER_DESC@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CI_TRANSFORM_SHADER_DESC@@@23@XZ
++97 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CONSTANTUSAGE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CONSTANTUSAGE@@@23@XZ
++98 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_CPS_CONFIG@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_CPS_CONFIG@@@23@XZ
++99 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_FLOAT_CONST@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_FLOAT_CONST@@@23@XZ
++100 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_INT_CONST@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_INT_CONST@@@23@XZ
++101 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@23@XZ
++102 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_CONTROL_FLAGS@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_PRIMSHADER_CONTROL_FLAGS@@@23@XZ
++103 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@23@XZ
++104 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_PS_EXPORT_INFO@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_PS_EXPORT_INFO@@@23@XZ
++105 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SHADERSTATE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SHADERSTATE@@@23@XZ
++106 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_DATA_IN_OUT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_DATA_IN_OUT@@@23@XZ
++107 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_DESCRIPTOR_VALUES@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_DESCRIPTOR_VALUES@@@23@XZ
++108 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_OPTIMIZATIONS@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_OPTIMIZATIONS@@@23@XZ
++109 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_PSSHADERDCL_IN@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_PSSHADERDCL_IN@@@23@XZ
++110 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_PS_ATTR_CH_ENTRY@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_PS_ATTR_CH_ENTRY@@@23@XZ
++111 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_SHADERSTATE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_SHADERSTATE@@@23@XZ
++112 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_STREAMIODCL_OUT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_STREAMIODCL_OUT@@@23@XZ
++113 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SI_USER_DATA_ELEMENT@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SI_USER_DATA_ELEMENT@@@23@XZ
++114 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SRCSHADER@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SRCSHADER@@@23@XZ
++115 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_SRC_PIPELINE@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_SRC_PIPELINE@@@23@XZ
++116 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@U_SC_TXCONSTVALUES@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@U_SC_TXCONSTVALUES@@@23@XZ
++117 stub ?get_const_instance@?$singleton@V?$extended_type_info_typeid@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@serialization@boost@@@serialization@boost@@SAAEBV?$extended_type_info_typeid@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@23@XZ
++118 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@3@XZ
++119 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@3@XZ
++120 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@3@XZ
++121 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@3@XZ
++122 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@3@XZ
++123 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@3@XZ
++124 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@3@XZ
++125 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@3@XZ
++126 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@3@XZ
++127 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@USC_INPUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@USC_INPUT@@@detail@archive@3@XZ
++128 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@3@XZ
++129 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@3@XZ
++130 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@3@XZ
++131 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@3@XZ
++132 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@3@XZ
++133 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CBCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CBCONSTVALUES@@@detail@archive@3@XZ
++134 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@3@XZ
++135 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@3@XZ
++136 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@3@XZ
++137 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_CPS_CONFIG@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_CPS_CONFIG@@@detail@archive@3@XZ
++138 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_FLOAT_CONST@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_FLOAT_CONST@@@detail@archive@3@XZ
++139 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_INT_CONST@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_INT_CONST@@@detail@archive@3@XZ
++140 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@3@XZ
++141 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@3@XZ
++142 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@3@XZ
++143 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@3@XZ
++144 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SHADERSTATE@@@detail@archive@3@XZ
++145 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@3@XZ
++146 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@3@XZ
++147 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@3@XZ
++148 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@3@XZ
++149 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@3@XZ
++150 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++151 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@3@XZ
++152 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@3@XZ
++153 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++154 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++155 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_TXCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@U_SC_TXCONSTVALUES@@@detail@archive@3@XZ
++156 stub ?get_const_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$iserializer@Vsc_xml_iarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@3@XZ
++157 stub ?get_const_instance@?$singleton@V?$map@Vsc_xml_iarchive@@@extra_detail@detail@archive@boost@@@serialization@boost@@SAAEBV?$map@Vsc_xml_iarchive@@@extra_detail@detail@archive@3@XZ
++158 stub ?get_const_instance@?$singleton@V?$multiset@PEBVextended_type_info@serialization@boost@@Ukey_compare@detail@23@V?$allocator@PEBVextended_type_info@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEBV?$multiset@PEBVextended_type_info@serialization@boost@@Ukey_compare@detail@23@V?$allocator@PEBVextended_type_info@serialization@boost@@@std@@@std@@XZ
++159 stub ?get_const_instance@?$singleton@V?$multiset@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@Utype_compare@234@V?$allocator@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEBV?$multiset@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@Utype_compare@234@V?$allocator@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@@std@@@std@@XZ
++160 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@3@XZ
++161 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@3@XZ
++162 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@3@XZ
++163 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@3@XZ
++164 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@3@XZ
++165 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@3@XZ
++166 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@3@XZ
++167 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@3@XZ
++168 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@3@XZ
++169 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@USC_INPUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@USC_INPUT@@@detail@archive@3@XZ
++170 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@3@XZ
++171 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@3@XZ
++172 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@3@XZ
++173 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@3@XZ
++174 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@3@XZ
++175 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CBCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CBCONSTVALUES@@@detail@archive@3@XZ
++176 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@3@XZ
++177 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@3@XZ
++178 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@3@XZ
++179 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_CPS_CONFIG@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_CPS_CONFIG@@@detail@archive@3@XZ
++180 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_FLOAT_CONST@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_FLOAT_CONST@@@detail@archive@3@XZ
++181 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_INT_CONST@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_INT_CONST@@@detail@archive@3@XZ
++182 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@3@XZ
++183 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@3@XZ
++184 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@3@XZ
++185 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@3@XZ
++186 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SHADERSTATE@@@detail@archive@3@XZ
++187 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@3@XZ
++188 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@3@XZ
++189 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@3@XZ
++190 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@3@XZ
++191 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@3@XZ
++192 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++193 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@3@XZ
++194 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@3@XZ
++195 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++196 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++197 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_TXCONSTVALUES@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@U_SC_TXCONSTVALUES@@@detail@archive@3@XZ
++198 stub ?get_const_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$oserializer@Vsc_xml_oarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@3@XZ
++199 stub ?get_const_instance@?$singleton@V?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++200 stub ?get_const_instance@?$singleton@V?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++201 stub ?get_const_instance@?$singleton@V?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++202 stub ?get_const_instance@?$singleton@V?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++203 stub ?get_const_instance@?$singleton@V?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++204 stub ?get_const_instance@?$singleton@V?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEBV?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++205 stub ?get_const_instance@?$singleton@V?$set@PEBVvoid_caster@void_cast_detail@serialization@boost@@Uvoid_caster_compare@234@V?$allocator@PEBVvoid_caster@void_cast_detail@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEBV?$set@PEBVvoid_caster@void_cast_detail@serialization@boost@@Uvoid_caster_compare@234@V?$allocator@PEBVvoid_caster@void_cast_detail@serialization@boost@@@std@@@std@@XZ
++206 stub ?get_lock@singleton_module@serialization@boost@@AEAAAEA_NXZ
++207 stub ?get_mutable_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++208 stub ?get_mutable_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++209 stub ?get_mutable_instance@?$singleton@V?$iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++210 stub ?get_mutable_instance@?$singleton@V?$map@Vsc_xml_iarchive@@@extra_detail@detail@archive@boost@@@serialization@boost@@SAAEAV?$map@Vsc_xml_iarchive@@@extra_detail@detail@archive@3@XZ
++211 stub ?get_mutable_instance@?$singleton@V?$map@Vsc_xml_oarchive@@@extra_detail@detail@archive@boost@@@serialization@boost@@SAAEAV?$map@Vsc_xml_oarchive@@@extra_detail@detail@archive@3@XZ
++212 stub ?get_mutable_instance@?$singleton@V?$multiset@PEBVextended_type_info@serialization@boost@@Ukey_compare@detail@23@V?$allocator@PEBVextended_type_info@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEAV?$multiset@PEBVextended_type_info@serialization@boost@@Ukey_compare@detail@23@V?$allocator@PEBVextended_type_info@serialization@boost@@@std@@@std@@XZ
++213 stub ?get_mutable_instance@?$singleton@V?$multiset@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@Utype_compare@234@V?$allocator@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEAV?$multiset@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@Utype_compare@234@V?$allocator@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@@std@@@std@@XZ
++214 stub ?get_mutable_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@3@XZ
++215 stub ?get_mutable_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@3@XZ
++216 stub ?get_mutable_instance@?$singleton@V?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@@serialization@boost@@SAAEAV?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@3@XZ
++217 stub ?get_mutable_instance@?$singleton@V?$set@PEBVvoid_caster@void_cast_detail@serialization@boost@@Uvoid_caster_compare@234@V?$allocator@PEBVvoid_caster@void_cast_detail@serialization@boost@@@std@@@std@@@serialization@boost@@SAAEAV?$set@PEBVvoid_caster@void_cast_detail@serialization@boost@@Uvoid_caster_compare@234@V?$allocator@PEBVvoid_caster@void_cast_detail@serialization@boost@@@std@@@std@@XZ
++218 stub ?is_destroyed@?$singleton@V?$map@Vsc_xml_iarchive@@@extra_detail@detail@archive@boost@@@serialization@boost@@SA_NXZ
++219 stub ?is_destroyed@?$singleton@V?$map@Vsc_xml_oarchive@@@extra_detail@detail@archive@boost@@@serialization@boost@@SA_NXZ
++220 stub ?is_destroyed@?$singleton@V?$multiset@PEBVextended_type_info@serialization@boost@@Ukey_compare@detail@23@V?$allocator@PEBVextended_type_info@serialization@boost@@@std@@@std@@@serialization@boost@@SA_NXZ
++221 stub ?is_destroyed@?$singleton@V?$multiset@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@Utype_compare@234@V?$allocator@PEBVextended_type_info_typeid_0@typeid_system@serialization@boost@@@std@@@std@@@serialization@boost@@SA_NXZ
++222 stub ?is_destroyed@?$singleton@V?$set@PEBVvoid_caster@void_cast_detail@serialization@boost@@Uvoid_caster_compare@234@V?$allocator@PEBVvoid_caster@void_cast_detail@serialization@boost@@@std@@@std@@@serialization@boost@@SA_NXZ
++223 stub ?is_locked@singleton_module@serialization@boost@@QEAA_NXZ
++224 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++225 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++226 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++227 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++228 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++229 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++230 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++231 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++232 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++233 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@USC_INPUT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++234 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++235 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++236 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++237 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++238 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++239 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CBCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++240 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++241 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++242 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++243 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_CPS_CONFIG@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++244 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_FLOAT_CONST@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++245 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_INT_CONST@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++246 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++247 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++248 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++249 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++250 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SHADERSTATE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++251 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++252 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++253 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++254 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++255 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++256 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++257 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++258 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++259 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++260 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++261 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@U_SC_TXCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++262 stub ?load_object_data@?$iserializer@Vsc_xml_iarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@boost@@UEBAXAEAVbasic_iarchive@234@PEAXI@Z
++263 stub ?load_object_ptr@?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@EEBAXAEAVbasic_iarchive@234@PEAXI@Z
++264 stub ?load_object_ptr@?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@EEBAXAEAVbasic_iarchive@234@PEAXI@Z
++265 stub ?load_object_ptr@?$pointer_iserializer@Vsc_xml_iarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@EEBAXAEAVbasic_iarchive@234@PEAXI@Z
++266 stub ?lock@?1??get_lock@singleton_module@serialization@boost@@AEAAAEA_NXZ@4_NA
++267 stub ?lock@singleton_module@serialization@boost@@QEAAXXZ
++268 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_IR_MODE_SELECTOR@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++269 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_MINIMIZE_VGPRS_STRATEGY@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++270 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_NPI_DISABLE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++271 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_THREAD_LATENCY_STRATEGY@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++272 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_E_SC_SI_OPT_USE_MORE_D16_SELECTOR@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++273 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_SC_COMPILE_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++274 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_SC_LAUNCH_MODE_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++275 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_SC_SI_GLC_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++276 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@T_SC_SI_SLC_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++277 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@USC_INPUT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++278 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY@serialization@boost@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++279 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_ATOMIC@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++280 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_CONTROL@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++281 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_READ@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++282 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CACHE_POLICY_WRITE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++283 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CBCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++284 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CBRCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++285 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CI_TRANSFORM_SHADER_DESC@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++286 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CONSTANTUSAGE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++287 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_CPS_CONFIG@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++288 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_FLOAT_CONST@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++289 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_INT_CONST@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++290 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CB_OFFSET_LUT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++291 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_CONTROL_FLAGS@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++292 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_PRIMSHADER_VPORT_CONTROLS_LUT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++293 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_PS_EXPORT_INFO@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++294 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SHADERSTATE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++295 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DATA_IN_OUT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++296 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_DESCRIPTOR_VALUES@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++297 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_OPTIMIZATIONS@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++298 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PSSHADERDCL_IN@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++299 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_PS_ATTR_CH_ENTRY@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++300 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++301 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_STREAMIODCL_OUT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++302 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SI_USER_DATA_ELEMENT@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++303 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++304 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++305 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@U_SC_TXCONSTVALUES@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++306 stub ?save_object_data@?$oserializer@Vsc_xml_oarchive@@V?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@@detail@archive@boost@@UEBAXAEAVbasic_oarchive@234@PEBX@Z
++307 stub ?save_object_ptr@?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SI_SHADERSTATE@@@detail@archive@boost@@EEBAXAEAVbasic_oarchive@234@PEBX@Z
++308 stub ?save_object_ptr@?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRCSHADER@@@detail@archive@boost@@EEBAXAEAVbasic_oarchive@234@PEBX@Z
++309 stub ?save_object_ptr@?$pointer_oserializer@Vsc_xml_oarchive@@U_SC_SRC_PIPELINE@@@detail@archive@boost@@EEBAXAEAVbasic_oarchive@234@PEBX@Z
++310 stub ?unlock@singleton_module@serialization@boost@@QEAAXXZ
++@ cdecl AmdExtD3DCreateInterface(ptr ptr ptr)
++@ stdcall AmdGetDxcModuleHandle()
++313 stub GetSettingsBlobsAll
++314 stub OpenAdapter12
++315 stub OpenShimInterface
+diff --git a/dlls/amdxc64/amdxc_interfaces.idl b/dlls/amdxc64/amdxc_interfaces.idl
+new file mode 100644
+index 00000000000..2c2f568df37
+--- /dev/null
++++ b/dlls/amdxc64/amdxc_interfaces.idl
+@@ -0,0 +1,96 @@
++/*
++ * Copyright 2025 Etaash Mathamsetty
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++#pragma makedep register
++
++import "wtypes.idl";
++import "unknwn.idl";
++
++/* Structure version 1 for Anti-Lag 2.0: */
++struct APIData_v1
++{
++    unsigned int    uiSize;
++    unsigned int    uiVersion;
++    unsigned int    eMode;
++    const char*     sControlStr;
++    unsigned int    uiControlStrLength;
++    unsigned int    maxFPS;
++};
++
++/* Structure version 2 for Anti-Lag 2.0: */
++struct APIData_v2
++{
++    unsigned int    uiSize;
++    unsigned int    uiVersion;
++    struct Flags
++    {
++        unsigned int unused0               : 1;
++        unsigned int unused1               : 1;
++
++        unsigned int signalFgFrameType     : 1;
++        unsigned int isInterpolatedFrame   : 1;
++
++        unsigned int signalGetUserInputIdx : 1;
++        unsigned int signalEndOfFrameIdx   : 1;
++
++        unsigned int reserved              :26;
++    }               flags;
++    unsigned __int64    iiFrameIdx;
++    unsigned __int64    uiiReserved[19];
++};
++
++[
++    object,
++    uuid(b58d6601-7401-4234-8180-6febfc0e484c),
++    local
++]
++interface IAmdExtFfxApi : IUnknown
++{
++    HRESULT UpdateFfxApiProvider([in, out] void* pData, [in] unsigned int dataSizeInBytes);
++}
++
++[
++    object,
++    uuid(44085fbe-e839-40c5-bf38-0ebc5ab4d0a6),
++    local
++]
++interface IAmdExtAntiLagApi : IUnknown
++{
++    HRESULT UpdateAntiLagState([in, out] void* pData);
++}
++
++[
++    object,
++    uuid(014937ec-9288-446f-a9ac-d75a8e3a984f),
++    local
++]
++interface IAmdExtStub1 : IUnknown
++{
++    HRESULT QueryInterface2([in, out] void* unk, [in] REFIID iid, [in, out] void** out);
++}
++
++[
++    object,
++    uuid(ba019d53-ccab-4cbd-b56a-7230ed4330ad),
++    local
++]
++interface IAmdExtStub2 : IUnknown
++{
++    void stub();
++    void stub2([in] unsigned int unk);
++    void stub3();
++}
+diff --git a/dlls/amdxc64/dxvk_interfaces.idl b/dlls/amdxc64/dxvk_interfaces.idl
+new file mode 100644
+index 00000000000..9e405a32a06
+--- /dev/null
++++ b/dlls/amdxc64/dxvk_interfaces.idl
+@@ -0,0 +1,153 @@
++/*
++ * Copyright 2023      Paul Gofman for CodeWeavers
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#pragma makedep register
++
++import "d3d11.idl";
++import "dxgi1_6.idl";
++
++typedef struct VkInstance_T *VkInstance;
++typedef void (__stdcall *PFN_vkVoidFunction)(void);
++typedef PFN_vkVoidFunction (__stdcall *PFN_vkGetInstanceProcAddr)(VkInstance instance, const char* pName);
++
++typedef enum D3D11_VK_EXTENSION
++{
++    D3D11_VK_EXT_MULTI_DRAW_INDIRECT,
++    D3D11_VK_EXT_MULTI_DRAW_INDIRECT_COUNT,
++    D3D11_VK_EXT_DEPTH_BOUNDS,
++    D3D11_VK_EXT_BARRIER_CONTROL,
++    D3D11_VK_NVX_BINARY_IMPORT,
++    D3D11_VK_NVX_IMAGE_VIEW_HANDLE,
++} D3D11_VK_EXTENSION;
++
++typedef enum D3D11_VK_BARRIER_CONTROL
++{
++    D3D11_VK_BARRIER_CONTROL_IGNORE_WRITE_AFTER_WRITE = 0x1,
++    D3D11_VK_BARRIER_CONTROL_IGNORE_GRAPHICS_UAV = 0x2,
++} D3D11_VK_BARRIER_CONTROL;
++
++[
++    object,
++    uuid(bb8a4fb9-3935-4762-b44b-35189a26414a),
++    local,
++    pointer_default(unique)
++]
++interface ID3D11VkExtShader : IUnknown
++{
++    HRESULT GetSpirvCode([in, out] SIZE_T *code_size, [out] void *code);
++}
++
++[
++    object,
++    uuid(8a6e3c42-f74c-45b7-8265-a231b677ca17),
++    local,
++    pointer_default(unique)
++]
++interface ID3D11VkExtDevice : IUnknown
++{
++    BOOL GetExtensionSupport([in] D3D11_VK_EXTENSION extension);
++}
++
++[
++    object,
++    uuid(cfcf64ef-9586-46d0-bca4-97cf2ca61b06),
++    local,
++    pointer_default(unique)
++]
++interface ID3D11VkExtDevice1 : ID3D11VkExtDevice
++{
++    BOOL GetResourceHandleGPUVirtualAddressAndSizeNVX([in] void *object, [out] UINT64 *gpu_va_start,
++            [out] UINT64 *gpu_va_size);
++    BOOL CreateUnorderedAccessViewAndGetDriverHandleNVX([in] ID3D11Resource *resource,
++            [in] const D3D11_UNORDERED_ACCESS_VIEW_DESC *desc, [out] ID3D11UnorderedAccessView **uav,
++            UINT32 *driver_handle);
++    BOOL CreateShaderResourceViewAndGetDriverHandleNVX([in] ID3D11Resource *resource,
++            [in] const D3D11_SHADER_RESOURCE_VIEW_DESC* desc, [out] ID3D11ShaderResourceView **srv,
++            UINT32 *dirver_handle);
++    BOOL CreateSamplerStateAndGetDriverHandleNVX([in] const D3D11_SAMPLER_DESC *sample_desc,
++            [out] ID3D11SamplerState **sample_state, UINT32 *driver_handle);
++    BOOL CreateCubinComputeShaderWithNameNVX([in] const void *cubin, [in] UINT32 size, [in] UINT32 block_x,
++            [in] UINT32 block_y, [in] UINT32 block_z, [in] const char *shader_name, [out] IUnknown **shader);
++    BOOL GetCudaTextureObjectNVX([in] UINT32 srv_driver_hadnle, [in] UINT32 sample_driver_handle,
++            [out] UINT32 *cuda_texture_handle);
++}
++
++[
++    object,
++    uuid(fd0bca13-5cb6-4c3a-987e-4750de2ca791),
++    local,
++    pointer_default(unique)
++]
++interface ID3D11VkExtContext : IUnknown
++{
++    void MultiDrawIndirect([in] UINT draw_count, [in] ID3D11Buffer *buffer_for_args, [in] UINT byte_offset_for_args,
++            [in] UINT byte_stride_for_args);
++    void MultiDrawIndexedIndirect([in] UINT draw_count, [in] ID3D11Buffer *buffer_for_args,
++            [in] UINT byte_offset_for_args, [in] UINT byte_stride_for_args);
++    void MultiDrawIndirectCount([in] UINT max_draw_count, [in] ID3D11Buffer *buffer_for_count,
++            [in] UINT byte_offset_for_count, [in] ID3D11Buffer *buffer_for_args,
++            [in] UINT byte_offset_for_args, [in] UINT byte_stride_for_args);
++    void MultiDrawIndexedIndirectCount([in] UINT max_draw_count, [in] ID3D11Buffer *buffer_for_count,
++            [in] UINT byte_offset_for_count, [in] ID3D11Buffer *buffer_for_args,
++            [in] UINT byte_offset_for_args, [in] UINT byte_stride_for_args);
++    void SetDepthBoundsTest([in] BOOL enable, [in] FLOAT min_depth_bounds, [in] FLOAT max_depth_bounds);
++    void SetBarrierControl([in] UINT control_flags);
++}
++
++[
++    object,
++    uuid(874b09b2-ae0b-41d8-8476-5f3b7a0e879d),
++    local,
++    pointer_default(unique)
++]
++interface ID3D11VkExtContext1 : ID3D11VkExtContext
++{
++    BOOL LaunchCubinShaderNVX([in] IUnknown *shader,[in] UINT32 grid_x, [in] UINT32 grid_y, [in] UINT32 grid_z,
++            [in] const void *params, [in] UINT32 param_size, [in] void * const *read_resources,
++            [in] UINT32 read_resource_count, [in] void* const *write_resources, [in] UINT32 write_resources_count);
++}
++
++[
++    object,
++    uuid(4c5e1b0d-b0c8-4131-bfd8-9b2476f7f408),
++    local,
++    pointer_default(unique)
++]
++interface IDXGIVkInteropFactory : IUnknown
++{
++    void GetVulkanInstance(
++          [out] VkInstance *pInstance,
++          [out] PFN_vkGetInstanceProcAddr *ppfnVkGetInstanceProcAddr);
++}
++
++[
++    object,
++    uuid(2a289dbd-2d0a-4a51-89f7-f2adce465cd6),
++    local,
++    pointer_default(unique)
++]
++interface IDXGIVkInteropFactory1 : IDXGIVkInteropFactory
++{
++  HRESULT GetGlobalHDRState(
++          [out] DXGI_COLOR_SPACE_TYPE   *pOutColorSpace,
++          [out] DXGI_HDR_METADATA_HDR10 *ppOutMetadata) = 0;
++
++  HRESULT SetGlobalHDRState(
++          [in] DXGI_COLOR_SPACE_TYPE    ColorSpace,
++    [in] const DXGI_HDR_METADATA_HDR10 *pMetadata) = 0;
++}
+diff --git a/dlls/amdxc64/main.c b/dlls/amdxc64/main.c
+new file mode 100644
+index 00000000000..754e22f914f
+--- /dev/null
++++ b/dlls/amdxc64/main.c
+@@ -0,0 +1,317 @@
++/*
++ * amdxc implementation
++ *
++ * Copyright 2023 Etaash Mathamsetty
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#include <stdarg.h>
++
++#include "ntstatus.h"
++#include "winerror.h"
++#define WIN32_NO_STATUS
++#include "windef.h"
++#include "winbase.h"
++#include "winternl.h"
++#include "wine/debug.h"
++#include "wine/heap.h"
++
++#include "wine/vulkan.h"
++#include "wine/asm.h"
++
++#define COBJMACROS
++#include "initguid.h"
++#include "d3d11.h"
++#include "d3d12.h"
++
++#include "dxgi1_6.h"
++
++#include "dxvk_interfaces.h"
++#include "amdxc_interfaces.h"
++
++#include <wingdi.h>
++
++WINE_DEFAULT_DEBUG_CHANNEL(amdxc);
++
++struct AMDFSR4FFX
++{
++    IAmdExtFfxApi IAmdExtFfxApi_iface;
++    LONG ref;
++};
++
++static struct AMDFSR4FFX* impl_from_IAmdExtFfxApi(IAmdExtFfxApi* iface)
++{
++    return CONTAINING_RECORD(iface, struct AMDFSR4FFX, IAmdExtFfxApi_iface);
++}
++
++ULONG STDMETHODCALLTYPE AMDFSR4FFX_AddRef(IAmdExtFfxApi *iface)
++{
++    struct AMDFSR4FFX* data = impl_from_IAmdExtFfxApi(iface);
++    return InterlockedIncrement(&data->ref);
++}
++
++ULONG STDMETHODCALLTYPE AMDFSR4FFX_Release(IAmdExtFfxApi *iface)
++{
++    struct AMDFSR4FFX* data = impl_from_IAmdExtFfxApi(iface);
++    ULONG ret = InterlockedDecrement(&data->ref);
++    if (!ret) free(data);
++    return ret;
++}
++
++HRESULT STDMETHODCALLTYPE AMDFSR4FFX_QueryInterface(IAmdExtFfxApi *iface, REFIID iid, void **obj)
++{
++    FIXME("%p %s %p", iface, debugstr_guid(iid), obj);
++
++    return E_NOINTERFACE;
++}
++
++typedef HRESULT (__stdcall *updateffxapi_pfn)(void*, unsigned int);
++
++HRESULT STDMETHODCALLTYPE AMDFSR4FFX_UpdateFfxApiProvider(IAmdExtFfxApi *iface, void* data, unsigned int size)
++{
++    updateffxapi_pfn pfn;
++    HMODULE amdffx = LoadLibraryA("amdxcffx64");
++
++    TRACE("%p %p %u\n", iface, data, size);
++
++    if (!amdffx)
++    {
++        ERR("Failed to load FSR4 dll (amdxcffx)!\n");
++        return E_NOINTERFACE;
++    }
++
++    pfn = (updateffxapi_pfn)GetProcAddress(amdffx, "UpdateFfxApiProvider");
++
++    if(pfn && getenv("FSR4_UPGRADE"))
++    {
++        FIXME("replaced fsr3 with fsr4!\n");
++        return pfn(data, size);
++    }
++
++    return E_NOINTERFACE;
++}
++
++static const struct IAmdExtFfxApiVtbl AMDFSR4FFX_vtable = {
++    AMDFSR4FFX_QueryInterface,
++    AMDFSR4FFX_AddRef,
++    AMDFSR4FFX_Release,
++    AMDFSR4FFX_UpdateFfxApiProvider
++};
++
++struct AMDAntiLag2
++{
++    IAmdExtAntiLagApi IAmdExtAntiLagApi_iface;
++    LONG ref;
++};
++
++static struct AMDAntiLag2* impl_from_IAmdExtAntiLagApi(IAmdExtAntiLagApi *iface)
++{
++    return CONTAINING_RECORD(iface, struct AMDAntiLag2, IAmdExtAntiLagApi_iface);
++}
++
++ULONG STDMETHODCALLTYPE AMDAntiLag2_AddRef(IAmdExtAntiLagApi *iface)
++{
++    struct AMDAntiLag2 *data = impl_from_IAmdExtAntiLagApi(iface);
++    return InterlockedIncrement(&data->ref);
++}
++
++ULONG STDMETHODCALLTYPE AMDAntiLag2_Release(IAmdExtAntiLagApi *iface)
++{
++    struct AMDAntiLag2 *data = impl_from_IAmdExtAntiLagApi(iface);
++    ULONG ret = InterlockedDecrement(&data->ref);
++    if (!ret) free(data);
++    return ret;
++}
++
++HRESULT STDMETHODCALLTYPE AMDAntiLag2_QueryInterface(IAmdExtAntiLagApi *iface, REFIID iid, void **out)
++{
++    FIXME("(%p %s %p) stub!\n", iface, debugstr_guid(iid), out);
++    return E_NOINTERFACE;
++}
++
++HRESULT STDMETHODCALLTYPE AMDAntiLag2_UpdateAntiLagState(IAmdExtAntiLagApi *iface, void* data)
++{
++    union {
++        struct APIData_v1 *v1;
++        struct APIData_v2 *v2;
++    } apidata = {data};
++    TRACE("(%p %p)!\n", iface, data);
++
++    if (!data) {
++        /* perform sleep */
++    } else if(apidata.v1->uiVersion == 1) {
++        /* access apidata v1 */
++        if(apidata.v1->uiSize != sizeof(struct APIData_v1)) return E_INVALIDARG;
++    } else if(apidata.v1->uiVersion == 2) {
++        /* access apidata v2 */
++        if(apidata.v2->uiSize != sizeof(struct APIData_v2)) return E_INVALIDARG;
++    }
++
++    return E_NOTIMPL;
++}
++
++static const struct IAmdExtAntiLagApiVtbl AMDANTILAG_vtable = {
++    AMDAntiLag2_QueryInterface,
++    AMDAntiLag2_AddRef,
++    AMDAntiLag2_Release,
++    AMDAntiLag2_UpdateAntiLagState
++};
++
++struct AMDExtStub2
++{
++    IAmdExtStub2 IAmdExtStub2_iface;
++    LONG ref;
++};
++
++struct AMDExtStub2* impl_from_IAMDExtStub2(IAmdExtStub2 *iface)
++{
++    return CONTAINING_RECORD(iface, struct AMDExtStub2, IAmdExtStub2_iface);
++}
++
++ULONG STDMETHODCALLTYPE AMDExtStub2_AddRef(IAmdExtStub2 *iface)
++{
++    struct AMDExtStub2 *this = impl_from_IAMDExtStub2(iface);
++    return InterlockedIncrement(&this->ref);
++}
++
++ULONG STDMETHODCALLTYPE AMDExtStub2_Release(IAmdExtStub2 *iface)
++{
++    struct AMDExtStub2 *this = impl_from_IAMDExtStub2(iface);
++    ULONG ret = InterlockedDecrement(&this->ref);
++    if (!ret) free(this);
++    return ret;
++}
++
++HRESULT STDMETHODCALLTYPE AMDExtStub2_QueryInterface(IAmdExtStub2 *iface, REFIID iid, void **out)
++{
++    FIXME("%p %s %p stub!\n", iface, debugstr_guid(iid), out);
++    return E_NOINTERFACE;
++}
++
++void STDMETHODCALLTYPE AMDExtStub2_stub1(IAmdExtStub2 *iface)
++{
++    FIXME("%p stub!\n", iface);
++}
++
++void STDMETHODCALLTYPE AMDExtStub2_stub2(IAmdExtStub2 *iface, unsigned int unk)
++{
++    FIXME("%p %u stub!\n", iface, unk);
++}
++
++void STDMETHODCALLTYPE AMDExtStub2_stub3(IAmdExtStub2 *iface)
++{
++    FIXME("%p stub!\n", iface);
++}
++
++const static struct IAmdExtStub2Vtbl AMDSTUB2_vtable = {
++    AMDExtStub2_QueryInterface,
++    AMDExtStub2_AddRef,
++    AMDExtStub2_Release,
++    AMDExtStub2_stub1,
++    AMDExtStub2_stub2,
++    AMDExtStub2_stub3
++};
++
++struct AMDExtStub1
++{
++    IAmdExtStub1 IAmdExtStub1_iface;
++    LONG ref;
++};
++
++struct AMDExtStub1* impl_from_IAMDExtStub1(IAmdExtStub1 *iface)
++{
++    return CONTAINING_RECORD(iface, struct AMDExtStub1, IAmdExtStub1_iface);
++}
++
++ULONG STDMETHODCALLTYPE AMDExtStub1_AddRef(IAmdExtStub1 *iface)
++{
++    struct AMDExtStub1 *this = impl_from_IAMDExtStub1(iface);
++    return InterlockedIncrement(&this->ref);
++}
++
++ULONG STDMETHODCALLTYPE AMDExtStub1_Release(IAmdExtStub1 *iface)
++{
++    struct AMDExtStub1 *this = impl_from_IAMDExtStub1(iface);
++    ULONG ret = InterlockedDecrement(&this->ref);
++    if (!ret) free(this);
++    return ret;
++}
++
++HRESULT STDMETHODCALLTYPE AmdExtStub1_QueryInterface2(IAmdExtStub1 *iface, void* unk, REFIID iid, void **out)
++{
++    TRACE("%p %p %s %p\n", iface, unk, debugstr_guid(iid), out);
++
++    if(IsEqualGUID(iid, &IID_IAmdExtStub2))
++    {
++        struct AMDExtStub2 *this = calloc(1, sizeof(struct AMDExtStub2));
++
++        this->IAmdExtStub2_iface.lpVtbl = &AMDSTUB2_vtable;
++        this->ref = 1;
++        *out = &this->IAmdExtStub2_iface;
++        return S_OK;
++    } else {
++        FIXME("unknown guid %s\n", debugstr_guid(iid));
++    }
++
++    return E_NOINTERFACE;
++}
++
++HRESULT STDMETHODCALLTYPE AmdExtStub1_QueryInterface(IAmdExtStub1 *iface, REFIID iid, void **out)
++{
++    return AmdExtStub1_QueryInterface2(iface, NULL, iid, out);
++}
++
++static const struct IAmdExtStub1Vtbl AMDSTUB1_vtable = {
++    AmdExtStub1_QueryInterface,
++    AMDExtStub1_AddRef,
++    AMDExtStub1_Release,
++    AmdExtStub1_QueryInterface2
++};
++
++HRESULT CDECL AmdExtD3DCreateInterface(IUnknown *outer, REFIID iid, void **obj)
++{
++    TRACE("outer %p, iid %s, obj %p\n", outer, debugstr_guid(iid), obj);
++
++    if (IsEqualGUID(iid, &IID_IAmdExtFfxApi))
++    {
++        struct AMDFSR4FFX* ffx = calloc(1, sizeof(struct AMDFSR4FFX));
++        ffx->IAmdExtFfxApi_iface.lpVtbl = &AMDFSR4FFX_vtable;
++        ffx->ref = 1;
++        *obj = &ffx->IAmdExtFfxApi_iface;
++        return S_OK;
++    } else if (IsEqualGUID(iid, &IID_IAmdExtAntiLagApi)) {
++        struct AMDAntiLag2 *out = calloc(1, sizeof(struct AMDAntiLag2));
++        out->IAmdExtAntiLagApi_iface.lpVtbl = &AMDANTILAG_vtable;
++        out->ref = 1;
++        *obj = &out->IAmdExtAntiLagApi_iface;
++        return S_OK;
++    } else if(IsEqualGUID(iid, &IID_IAmdExtStub1)) {
++        struct AMDExtStub1 *this = calloc(1, sizeof(struct AMDExtStub1));
++        this->IAmdExtStub1_iface.lpVtbl = &AMDSTUB1_vtable;
++        this->ref = 1;
++        *obj = &this->IAmdExtStub1_iface;
++        return S_OK;
++    } else {
++        FIXME("unknown guid: %s\n", debugstr_guid(iid));
++    }
++
++    return E_NOINTERFACE;
++}
++
++HMODULE WINAPI AmdGetDxcModuleHandle(void)
++{
++    return GetModuleHandleA(NULL);
++}
+-- 
+2.49.0
+
+From ae0c3b9e9c7b1a837534715ef64950e24b27c9f3 Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Sun, 11 May 2025 21:38:39 -0400
+Subject: [PATCH 40/44] check if FSR4_UPGRADE env is nonzero
+
+---
+ dlls/amdxc64/main.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/amdxc64/main.c b/dlls/amdxc64/main.c
+index 754e22f914f..d4dd071b0e0 100644
+--- a/dlls/amdxc64/main.c
++++ b/dlls/amdxc64/main.c
+@@ -82,6 +82,7 @@ typedef HRESULT (__stdcall *updateffxapi_pfn)(void*, unsigned int);
+ 
+ HRESULT STDMETHODCALLTYPE AMDFSR4FFX_UpdateFfxApiProvider(IAmdExtFfxApi *iface, void* data, unsigned int size)
+ {
++    const char *env;
+     updateffxapi_pfn pfn;
+     HMODULE amdffx = LoadLibraryA("amdxcffx64");
+ 
+@@ -94,10 +95,11 @@ HRESULT STDMETHODCALLTYPE AMDFSR4FFX_UpdateFfxApiProvider(IAmdExtFfxApi *iface,
+     }
+ 
+     pfn = (updateffxapi_pfn)GetProcAddress(amdffx, "UpdateFfxApiProvider");
++    env = getenv("FSR4_UPGRADE");
+ 
+-    if(pfn && getenv("FSR4_UPGRADE"))
++    if(pfn && env && env[0] != '0')
+     {
+-        FIXME("replaced fsr3 with fsr4!\n");
++        FIXME("Replaced FSR3 with FSR4!\n");
+         return pfn(data, size);
+     }
+ 
+-- 
+2.49.0
+
+From 53ed4d20792bcb96a400e756831a14f89437b1ea Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Sun, 11 May 2025 23:10:42 -0400
+Subject: [PATCH 41/44] fixup! winewayland: handle locking with fractional
+ scale notification
+
+ruh roh I started using fixup lmao
+---
+ dlls/winewayland.drv/wayland_surface.c | 25 +++++++++++++++++--------
+ 1 file changed, 17 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/winewayland.drv/wayland_surface.c b/dlls/winewayland.drv/wayland_surface.c
+index 24913df3234..589016cfb8b 100644
+--- a/dlls/winewayland.drv/wayland_surface.c
++++ b/dlls/winewayland.drv/wayland_surface.c
+@@ -138,18 +138,27 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener =
+     xdg_toplevel_handle_close
+ };
+ 
+-void wp_fractional_scale_handle_scale(void* data,
++void wp_fractional_scale_handle_scale(void* user_data,
+         struct wp_fractional_scale_v1 *fractional_scale_v1, uint32_t scale)
+ {
+-    double *data_scale;
++    struct wayland_win_data *data;
++    struct wayland_surface *surface;
++    HWND hwnd = user_data;
++    assert(hwnd);
+ 
+-    assert(data);
+-    data_scale = data;
++    if ((data = wayland_win_data_get(hwnd)))
++    {
++        if((surface = data->wayland_surface))
++        {
++            surface->window.fractional_scale = scale / 120.0;
++            surface->window.scale =
++                surface->window.fractional_scale * NtUserGetSystemDpiForProcess(0) / 96.0;
+ 
+-    /* FIXME: handle locking! */
+-    *data_scale = scale / 120.0;
++            TRACE("Got scale %lf\n", surface->window.fractional_scale);
++        }
+ 
+-    TRACE("Got scale %lf\n", *data_scale);
++        wayland_win_data_release(data);
++    }
+ }
+ 
+ static const struct wp_fractional_scale_v1_listener wp_fractional_scale_listener =
+@@ -206,7 +215,7 @@ struct wayland_surface *wayland_surface_create(HWND hwnd)
+         wp_fractional_scale_v1_add_listener(
+             surface->wp_fractional_scale_v1,
+             &wp_fractional_scale_listener,
+-            &surface->window.fractional_scale);
++            hwnd);
+     }
+ 
+     return surface;
+-- 
+2.49.0
+
+From 7117bad6d14eb6aa1075d0a34ace551dcf0d6d37 Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Mon, 12 May 2025 08:52:18 -0400
+Subject: [PATCH 44/44] minor formatting fix
+
+---
+ dlls/winewayland.drv/wayland_surface.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/winewayland.drv/wayland_surface.c b/dlls/winewayland.drv/wayland_surface.c
+index 5fce2b5aa1c..bbf307b982f 100644
+--- a/dlls/winewayland.drv/wayland_surface.c
++++ b/dlls/winewayland.drv/wayland_surface.c
+@@ -138,7 +138,7 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener =
+     xdg_toplevel_handle_close
+ };
+ 
+-void wp_fractional_scale_handle_scale(void* user_data,
++void wp_fractional_scale_handle_scale(void *user_data,
+         struct wp_fractional_scale_v1 *fractional_scale_v1, uint32_t scale)
+ {
+     struct wayland_win_data *data;
+-- 
+2.49.0
+
