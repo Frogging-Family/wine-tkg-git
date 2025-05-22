@@ -3627,16 +3627,16 @@ index 08635c047b2..8f1a68acd7f 100644
 --- a/server/queue.c
 +++ b/server/queue.c
 @@ -137,6 +137,7 @@ struct msg_queue
-     int                    keystate_lock;   /* owns an input keystate lock */
      queue_shm_t           *shared;          /* queue in session shared memory */
+     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
      int                    esync_fd;        /* esync file descriptor (signalled on message) */
 +    int                    esync_in_msgwait; /* our thread is currently waiting on us */
  };
  
  struct hotkey
 @@ -321,6 +322,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
+         queue->ignore_post_msg = 0;
          queue->esync_fd        = -1;
 +        queue->esync_in_msgwait = 0;
          list_init( &queue->send_result );
@@ -4998,7 +4998,7 @@ index f59902d5607..36645a2a8d2 100644
 -- 
 2.35.1
 
-From 50f9168ed92d261de21615b250dfac115160cc2e Mon Sep 17 00:00:00 2001
+From 5f5cfac7099cf4e5be912f07a66665f8217f57f3 Mon Sep 17 00:00:00 2001
 From: Zebediah Figura <zfigura@codeweavers.com>
 Date: Mon, 6 Jul 2020 17:17:31 -0500
 Subject: [PATCH] ntdll, server: Implement alertable waits.
@@ -5015,10 +5015,10 @@ Subject: [PATCH] ntdll, server: Implement alertable waits.
  8 files changed, 109 insertions(+), 9 deletions(-)
 
 diff --git a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
-index f805af251bb..a80019b76dd 100644
+index 2844f9f760c..aeeea1731ce 100644
 --- a/dlls/ntdll/unix/esync.c
 +++ b/dlls/ntdll/unix/esync.c
-@@ -601,17 +601,42 @@ static void update_grabbed_object( struct esync *obj )
+@@ -599,17 +599,42 @@ static void update_grabbed_object( struct esync *obj )
  static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
                               BOOLEAN alertable, const LARGE_INTEGER *timeout )
  {
@@ -5062,7 +5062,7 @@ index f805af251bb..a80019b76dd 100644
      NtQuerySystemTime( &now );
      if (timeout)
      {
-@@ -650,6 +675,8 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
+@@ -648,6 +673,8 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
  
          if (msgwait)
              TRACE(" or driver events");
@@ -5071,7 +5071,7 @@ index f805af251bb..a80019b76dd 100644
  
          if (!timeout)
              TRACE(", timeout = INFINITE.\n");
-@@ -686,12 +713,27 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
+@@ -684,12 +711,27 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
              fds[i].fd = obj ? obj->fd : -1;
              fds[i].events = POLLIN;
          }
@@ -5100,7 +5100,7 @@ index f805af251bb..a80019b76dd 100644
                  /* Find out which object triggered the wait. */
                  for (i = 0; i < count; i++)
                  {
-@@ -765,6 +807,14 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
+@@ -763,6 +805,14 @@ static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEA
  tryagain:
              /* First step: try to poll on each object in sequence. */
              fds[0].events = POLLIN;
@@ -5115,7 +5115,7 @@ index f805af251bb..a80019b76dd 100644
              for (i = 0; i < count; i++)
              {
                  struct esync *obj = objs[i];
-@@ -780,9 +830,11 @@ tryagain:
+@@ -778,9 +828,11 @@ tryagain:
                          continue;
                  }
  
@@ -5128,7 +5128,7 @@ index f805af251bb..a80019b76dd 100644
  
                  if (fds[0].revents & (POLLHUP | POLLERR | POLLNVAL))
                  {
-@@ -798,10 +850,12 @@ tryagain:
+@@ -796,10 +848,12 @@ tryagain:
                  fds[i].fd = objs[i] ? objs[i]->fd : -1;
                  fds[i].events = POLLIN;
              }
@@ -5143,7 +5143,7 @@ index f805af251bb..a80019b76dd 100644
              {
                  /* Quick, grab everything. */
                  for (i = 0; i < count; i++)
-@@ -867,6 +921,19 @@ err:
+@@ -865,6 +919,19 @@ err:
          ERR("ppoll failed: %s\n", strerror(errno));
          return errno_to_status( errno );
      }
@@ -5164,22 +5164,22 @@ index f805af251bb..a80019b76dd 100644
  
  /* We need to let the server know when we are doing a message wait, and when we
 diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
-index b9043351d57..283fd7d7ff6 100644
+index b278ab8df84..a3f0368b731 100644
 --- a/dlls/ntdll/unix/unix_private.h
 +++ b/dlls/ntdll/unix/unix_private.h
-@@ -105,6 +105,7 @@ struct ntdll_thread_data
+@@ -93,6 +93,7 @@ struct ntdll_thread_data
+     void                     *cpu_data[16];  /* 1d4/02f0 reserved for CPU-specific data */
      SYSTEM_SERVICE_TABLE     *syscall_table; /* 214/0370 syscall table */
      struct syscall_frame     *syscall_frame; /* 218/0378 current syscall frame */
-     int                       syscall_trace; /* 21c/0380 syscall trace flag */
 +    int                       esync_apc_fd;  /* fd to wait on for user APCs */
      int                       request_fd;    /* fd for sending server requests */
      int                       reply_fd;      /* fd for receiving server replies */
      int                       wait_fd[2];    /* fd for sleeping server requests */
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index c797c89952f..0778ad73984 100644
+index 2116b677adb..a7d0bb7e8c8 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
-@@ -4014,6 +4014,7 @@ static TEB *init_teb( void *ptr, BOOL is_wow )
+@@ -3646,6 +3646,7 @@ static TEB *init_teb( void *ptr, BOOL is_wow )
      teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
      teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
      thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
@@ -5244,10 +5244,10 @@ index 689d8569b73..e1588d205d9 100644
  void esync_clear( int fd );
  
 diff --git a/server/protocol.def b/server/protocol.def
-index 807298b6bab..a2dcdd37204 100644
+index 8c728080d05..3ea700054c6 100644
 --- a/server/protocol.def
 +++ b/server/protocol.def
-@@ -4148,3 +4148,7 @@ enum esync_type
+@@ -3935,3 +3935,7 @@ enum esync_type
  @REPLY
      int enable;                /* previous state of auto-repeat enable */
  @END
@@ -5256,10 +5256,10 @@ index 807298b6bab..a2dcdd37204 100644
 +@REQ(get_esync_apc_fd)
 +@END
 diff --git a/server/thread.c b/server/thread.c
-index 11c36e49ae4..3a771838a98 100644
+index fd6b91b228a..8d7c520ced7 100644
 --- a/server/thread.c
 +++ b/server/thread.c
-@@ -400,6 +400,7 @@ static inline void init_thread_structure( struct thread *thread )
+@@ -232,6 +232,7 @@ static inline void init_thread_structure( struct thread *thread )
      thread->teb             = 0;
      thread->entry_point     = 0;
      thread->esync_fd        = -1;
@@ -5267,7 +5267,7 @@ index 11c36e49ae4..3a771838a98 100644
      thread->system_regs     = 0;
      thread->queue           = NULL;
      thread->wait            = NULL;
-@@ -550,7 +551,10 @@ struct thread *create_thread( int fd, struct process *process, const struct secu
+@@ -380,7 +381,10 @@ struct thread *create_thread( int fd, struct process *process, const struct secu
      }
  
      if (do_esync())
@@ -5278,7 +5278,7 @@ index 11c36e49ae4..3a771838a98 100644
  
      set_fd_events( thread->request_fd, POLLIN );  /* start listening to events */
      add_process_thread( thread->process, thread );
-@@ -1384,8 +1388,13 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
+@@ -1174,8 +1178,13 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
      grab_object( apc );
      list_add_tail( queue, &apc->entry );
      if (!list_prev( queue, &apc->entry ))  /* first one */
@@ -5292,7 +5292,7 @@ index 11c36e49ae4..3a771838a98 100644
      return 1;
  }
  
-@@ -1431,6 +1440,10 @@ static struct thread_apc *thread_dequeue_apc( struct thread *thread, int system
+@@ -1221,6 +1230,10 @@ static struct thread_apc *thread_dequeue_apc( struct thread *thread, int system
          apc = LIST_ENTRY( ptr, struct thread_apc, entry );
          list_remove( ptr );
      }
@@ -5304,10 +5304,10 @@ index 11c36e49ae4..3a771838a98 100644
  }
  
 diff --git a/server/thread.h b/server/thread.h
-index e826a7a25de..c320ac83af7 100644
+index 9129e473ba9..10e9e28b432 100644
 --- a/server/thread.h
 +++ b/server/thread.h
-@@ -57,6 +57,7 @@ struct thread
+@@ -56,6 +56,7 @@ struct thread
      thread_id_t            id;            /* thread id */
      struct list            mutex_list;    /* list of currently owned mutexes */
      int                    esync_fd;      /* esync file descriptor (signalled on exit) */
@@ -5316,7 +5316,7 @@ index e826a7a25de..c320ac83af7 100644
      struct msg_queue      *queue;         /* message queue */
      struct thread_wait    *wait;          /* current wait condition if sleeping */
 -- 
-2.47.2
+2.43.0
 
 From d00c4483de7260cae76a82291d179e8c33e5b732 Mon Sep 17 00:00:00 2001
 From: Zebediah Figura <z.figura12@gmail.com>
