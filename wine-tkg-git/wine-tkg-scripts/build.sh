@@ -82,6 +82,8 @@ _prebuild_common() {
 		# Wayland driver
 		if [ "$_wayland_driver" = "true" ]; then
 			_configure_args+=(--with-wayland --with-vulkan)
+		else
+			_configure_args+=(--without-wayland)
 		fi
 	fi
 
