@@ -1013,6 +1013,7 @@ _prepare() {
                    "$_where/wine-tkg-patches/misc/nvidia-hate/nvidia-hate"
                    "$_where/wine-tkg-patches/misc/kernelbase-reverts/kernelbase-reverts"
                    "$_where/wine-tkg-patches/proton/LAA/LAA"
+		   "$_where/wine-tkg-patches/proton/proton-winevulkan/proton-winevulkan"
                    "$_where/wine-tkg-patches/proton-tkg-specific/proton-staging/proton-staging_winex11-MWM_Decorations"
                    "$_where/wine-tkg-patches/proton-tkg-specific/proton-tkg-steamclient-swap/proton-tkg-steamclient-swap"
 		   "$_where/wine-tkg-patches/misc/winewayland/winewayland") && _patchpathloader
