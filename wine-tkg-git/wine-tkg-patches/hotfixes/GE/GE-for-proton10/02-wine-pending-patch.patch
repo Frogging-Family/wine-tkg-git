@@ -1,0 +1,1329 @@
+--- a/dlls/dxgi/dxgi_main.c	
++++ a/dlls/dxgi/dxgi_main.c
+@@ -268,8 +268,6 @@ HRESULT WINAPI DXGID3D10RegisterLayers(const struct dxgi_device_layer *layers, UINT layer_count)
+ 
+ HRESULT WINAPI DXGIGetDebugInterface1(UINT flags, REFIID iid, void **debug)
+ {
+-    TRACE("flags %#x, iid %s, debug %p.\n", flags, debugstr_guid(iid), debug);
+-
+     WARN("Returning DXGI_ERROR_SDK_COMPONENT_MISSING.\n");
+     return DXGI_ERROR_SDK_COMPONENT_MISSING;
+ }
+
+
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 870c5e39271..3162d36a803 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -1511,16 +1511,20 @@ static BOOL append_entry( struct dir_data *data, const char *long_name,
+     if (long_len == ARRAY_SIZE(long_nameW)) return TRUE;
+     long_nameW[long_len] = 0;
+ 
+-    if (short_name)
+-    {
+-        short_len = ntdll_umbstowcs( short_name, strlen(short_name),
+-                                     short_nameW, ARRAY_SIZE( short_nameW ) - 1 );
+-    }
+-    else  /* generate a short name if necessary */
++    short_len = 0;
++
++    if (!disable_sfn)
+     {
+-        short_len = 0;
+-        if (!is_legal_8dot3_name( long_nameW, long_len ))
+-            short_len = hash_short_file_name( long_nameW, long_len, short_nameW );
++        if (short_name)
++        {
++            short_len = ntdll_umbstowcs( short_name, strlen(short_name),
++                                        short_nameW, ARRAY_SIZE( short_nameW ) - 1 );
++        }
++        else  /* generate a short name if necessary */
++        {
++            if (!is_legal_8dot3_name( long_nameW, long_len ))
++                short_len = hash_short_file_name( long_nameW, long_len, short_nameW );
++        }
+     }
+     short_nameW[short_len] = 0;
+     wcsupr( short_nameW );
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 5f7f114b286..cbea0dc5d2d 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -2152,6 +2152,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
+     debugstr_pc,
+ };
+ 
++BOOL disable_sfn;
+ BOOL ac_odyssey;
+ BOOL fsync_simulate_sched_quantum;
+ BOOL alert_simulate_sched_quantum;
+@@ -2175,6 +2176,12 @@ static void hacks_init(void)
+         ERR( "HACK: ram_reporting_bias %lldMB.\n", ram_reporting_bias / (1024 * 1024) );
+     }
+ 
++    env_str = getenv("WINE_DISABLE_SFN");
++    if (env_str)
++        disable_sfn = !!atoi(env_str);
++    else if (main_argc > 1 && (strstr(main_argv[1], "Yakuza5.exe") ))
++        disable_sfn = TRUE;
++
+     env_str = getenv("WINE_SIMULATE_ASYNC_READ");
+     if (env_str)
+         ac_odyssey = !!atoi(env_str);
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index cae15947bbd..6403dad858d 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -182,6 +182,7 @@ extern SYSTEM_CPU_INFORMATION cpu_info;
+ extern struct ldt_copy __wine_ldt_copy;
+ #endif
+ 
++extern BOOL disable_sfn;
+ extern BOOL ac_odyssey;
+ extern BOOL fsync_simulate_sched_quantum;
+ extern BOOL alert_simulate_sched_quantum;
+diff --git a/dlls/ncrypt/main.c b/dlls/ncrypt/main.c
+index 3511f8f2d3f..656c80a5cb9 100644
+--- a/dlls/ncrypt/main.c
++++ b/dlls/ncrypt/main.c
+@@ -212,9 +212,22 @@ SECURITY_STATUS WINAPI NCryptCreatePersistedKey(NCRYPT_PROV_HANDLE provider, NCR
+ SECURITY_STATUS WINAPI NCryptDecrypt(NCRYPT_KEY_HANDLE key, BYTE *input, DWORD insize, void *padding,
+                                      BYTE *output, DWORD outsize, DWORD *result, DWORD flags)
+ {
+-    FIXME("(%#Ix, %p, %lu, %p, %p, %lu, %p, %#lx): stub\n", key, input, insize, padding,
++    struct object *key_object = (struct object *)key;
++
++    FIXME("(%#Ix, %p, %lu, %p, %p, %lu, %p, %#lx):\n", key, input, insize, padding,
+           output, outsize, result, flags);
+-    return NTE_NOT_SUPPORTED;
++
++    if (flags & ~(NCRYPT_NO_PADDING_FLAG | NCRYPT_PAD_OAEP_FLAG
++        | NCRYPT_PAD_PKCS1_FLAG | NCRYPT_SILENT_FLAG))
++    {
++        FIXME("Flags %lx not supported\n", flags);
++        return NTE_BAD_FLAGS;
++    }
++
++    if (key_object->type != KEY) return NTE_INVALID_HANDLE;
++
++    return map_ntstatus(BCryptDecrypt(key_object->key.bcrypt_key, input, insize, padding,
++                                      NULL, 0, output, outsize, result, flags));
+ }
+ 
+ SECURITY_STATUS WINAPI NCryptDeleteKey(NCRYPT_KEY_HANDLE key, DWORD flags)
+From b413308e61398c42d7fae7e926348ad965fc3479 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Bernhard=20K=C3=B6lbl?= <bkoelbl@codeweavers.com>
+Date: Thu, 12 Dec 2024 15:41:56 +0100
+Subject: [PATCH 1/2] embeddedbrowserwebview: Add stub dll.
+
+---
+ configure.ac                                  |  1 +
+ dlls/embeddedbrowserwebview/Makefile.in       |  3 +++
+ .../embeddedbrowserwebview.rc                 |  2 ++
+ .../embeddedbrowserwebview.rgs                | 22 +++++++++++++++++++
+ .../embeddedbrowserwebview.spec               |  8 +++++++
+ loader/wine.inf.in                            |  2 ++
+ 6 files changed, 38 insertions(+)
+ create mode 100644 dlls/embeddedbrowserwebview/Makefile.in
+ create mode 100644 dlls/embeddedbrowserwebview/embeddedbrowserwebview.rc
+ create mode 100644 dlls/embeddedbrowserwebview/embeddedbrowserwebview.rgs
+ create mode 100644 dlls/embeddedbrowserwebview/embeddedbrowserwebview.spec
+
+diff --git a/configure.ac b/configure.ac
+index 6596f653fb1..4467b547552 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -2655,6 +2655,7 @@ WINE_CONFIG_MAKEFILE(dlls/dxgi/tests)
+ WINE_CONFIG_MAKEFILE(dlls/dxtrans)
+ WINE_CONFIG_MAKEFILE(dlls/dxva2)
+ WINE_CONFIG_MAKEFILE(dlls/dxva2/tests)
++WINE_CONFIG_MAKEFILE(dlls/embeddedbrowserwebview)
+ WINE_CONFIG_MAKEFILE(dlls/esent)
+ WINE_CONFIG_MAKEFILE(dlls/evr)
+ WINE_CONFIG_MAKEFILE(dlls/evr/tests)
+diff --git a/dlls/embeddedbrowserwebview/Makefile.in b/dlls/embeddedbrowserwebview/Makefile.in
+new file mode 100644
+index 00000000000..b410d4689d7
+--- /dev/null
++++ b/dlls/embeddedbrowserwebview/Makefile.in
+@@ -0,0 +1,3 @@
++MODULE  = embeddedbrowserwebview.dll
++
++EXTRADLLFLAGS = -Wb,--prefer-native
+diff --git a/dlls/embeddedbrowserwebview/embeddedbrowserwebview.rc b/dlls/embeddedbrowserwebview/embeddedbrowserwebview.rc
+new file mode 100644
+index 00000000000..7568b996ffa
+--- /dev/null
++++ b/dlls/embeddedbrowserwebview/embeddedbrowserwebview.rc
+@@ -0,0 +1,2 @@
++/* @makedep: embeddedbrowserwebview.rgs */
++1 WINE_REGISTRY embeddedbrowserwebview.rgs
+diff --git a/dlls/embeddedbrowserwebview/embeddedbrowserwebview.rgs b/dlls/embeddedbrowserwebview/embeddedbrowserwebview.rgs
+new file mode 100644
+index 00000000000..50c17ab41d0
+--- /dev/null
++++ b/dlls/embeddedbrowserwebview/embeddedbrowserwebview.rgs
+@@ -0,0 +1,22 @@
++HKLM
++{
++    NoRemove Software
++    {
++        NoRemove Wow6432Node
++        {
++            NoRemove Microsoft
++            {
++                NoRemove EdgeUpdate
++                {
++                    NoRemove ClientState
++                    {
++                        NoRemove {F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}
++                        {
++                            val EBWebView = s 'C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\131.0.2903.86'
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/dlls/embeddedbrowserwebview/embeddedbrowserwebview.spec b/dlls/embeddedbrowserwebview/embeddedbrowserwebview.spec
+new file mode 100644
+index 00000000000..b6d42ec0b82
+--- /dev/null
++++ b/dlls/embeddedbrowserwebview/embeddedbrowserwebview.spec
+@@ -0,0 +1,8 @@
++1 stub ??0IDataFieldVisitor@telemetry_client@@QEAA@AEBV01@@Z
++2 stub ??0IDataFieldVisitor@telemetry_client@@QEAA@XZ
++3 stub ??1IDataFieldVisitor@telemetry_client@@UEAA@XZ
++4 stub ??4IDataFieldVisitor@telemetry_client@@QEAAAEAV01@AEBV01@@Z
++5 stub ??_7IDataFieldVisitor@telemetry_client@@6B@
++6 stub CreateWebViewEnvironmentWithOptionsInternal
++7 stub DllCanUnloadNow
++8 stub GetHandleVerifier
+diff --git a/loader/wine.inf.in b/loader/wine.inf.in
+index e3426b7ec95..95631142b5c 100644
+--- a/loader/wine.inf.in
++++ b/loader/wine.inf.in
+@@ -2155,11 +2155,13 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
+ 11,,start.exe
+ 11,,winhlp32.exe
+ 52,win40\0,wineps16.drv,wineps16.drv16
++16426,Microsoft\EdgeWebView\Application\131.0.2903.86\EBWebView\x32,embeddedbrowserwebview.dll
+ 
+ ; 64bit-only fake dlls
+ [FakeDllsWin64]
+ 10,twain_64,sane.ds
+ 10,twain_64,gphoto2.ds
++16426,Microsoft\EdgeWebView\Application\131.0.2903.86\EBWebView\x64,embeddedbrowserwebview.dll
+ 
+ ; Wow64-only fake dlls
+ [FakeDllsWow64]
+-- 
+GitLab
+
+
+From f783de7ce89a246991f21d3833f3c393eaff63ff Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Bernhard=20K=C3=B6lbl?= <bkoelbl@codeweavers.com>
+Date: Thu, 12 Dec 2024 19:51:41 +0100
+Subject: [PATCH 2/2] embeddedbrowserwebview: Create
+ CreateWebViewEnvironmentWithOptionsInternal stub.
+
+With all needed interface definitions and their dependencies.
+---
+ dlls/embeddedbrowserwebview/Makefile.in       |   4 +
+ .../embeddedbrowserwebview.rgs                |   2 +-
+ .../embeddedbrowserwebview.spec               |   2 +-
+ dlls/embeddedbrowserwebview/main.c            |  43 +
+ include/Makefile.in                           |   1 +
+ include/webview2.idl                          | 953 ++++++++++++++++++
+ 6 files changed, 1003 insertions(+), 2 deletions(-)
+ create mode 100644 dlls/embeddedbrowserwebview/main.c
+ create mode 100644 include/webview2.idl
+
+diff --git a/dlls/embeddedbrowserwebview/Makefile.in b/dlls/embeddedbrowserwebview/Makefile.in
+index b410d4689d7..1be0d07dd03 100644
+--- a/dlls/embeddedbrowserwebview/Makefile.in
++++ b/dlls/embeddedbrowserwebview/Makefile.in
+@@ -1,3 +1,7 @@
+ MODULE  = embeddedbrowserwebview.dll
+ 
+ EXTRADLLFLAGS = -Wb,--prefer-native
++
++SOURCES = \
++        embeddedbrowserwebview.rc \
++        main.c \
+diff --git a/dlls/embeddedbrowserwebview/embeddedbrowserwebview.rgs b/dlls/embeddedbrowserwebview/embeddedbrowserwebview.rgs
+index 50c17ab41d0..6b001dff8d8 100644
+--- a/dlls/embeddedbrowserwebview/embeddedbrowserwebview.rgs
++++ b/dlls/embeddedbrowserwebview/embeddedbrowserwebview.rgs
+@@ -12,7 +12,7 @@ HKLM
+                     {
+                         NoRemove {F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}
+                         {
+-                            val EBWebView = s 'C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\131.0.2903.86'
++                            val EBWebView = s 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application\131.0.2903.86'
+                         }
+                     }
+                 }
+diff --git a/dlls/embeddedbrowserwebview/embeddedbrowserwebview.spec b/dlls/embeddedbrowserwebview/embeddedbrowserwebview.spec
+index b6d42ec0b82..8ab241743c2 100644
+--- a/dlls/embeddedbrowserwebview/embeddedbrowserwebview.spec
++++ b/dlls/embeddedbrowserwebview/embeddedbrowserwebview.spec
+@@ -3,6 +3,6 @@
+ 3 stub ??1IDataFieldVisitor@telemetry_client@@UEAA@XZ
+ 4 stub ??4IDataFieldVisitor@telemetry_client@@QEAAAEAV01@AEBV01@@Z
+ 5 stub ??_7IDataFieldVisitor@telemetry_client@@6B@
+-6 stub CreateWebViewEnvironmentWithOptionsInternal
++6 stdcall CreateWebViewEnvironmentWithOptionsInternal (long wstr wstr ptr ptr)
+ 7 stub DllCanUnloadNow
+ 8 stub GetHandleVerifier
+diff --git a/dlls/embeddedbrowserwebview/main.c b/dlls/embeddedbrowserwebview/main.c
+new file mode 100644
+index 00000000000..d5f130d6923
+--- /dev/null
++++ b/dlls/embeddedbrowserwebview/main.c
+@@ -0,0 +1,43 @@
++/*
++ * WebView2 entry point
++ * Copyright (C) 2024 Bernhard Kölbl for Codeweavers
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include <stdarg.h>
++
++#include "windef.h"
++
++#include "initguid.h"
++#define COBJMACROS
++#include "objbase.h"
++
++#include "webview2.h"
++
++#include "wine/debug.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(webview2);
++
++/******************************************************************
++ *      CreateWebViewEnvironmentWithOptionsInternal (EMBEDDEDBROWSERWEBVIEW.6)
++ */
++HRESULT WINAPI CreateWebViewEnvironmentWithOptionsInternal ( UINT unk_arg1, PCWSTR browserExecutableFolder, PCWSTR userDataFolder,
++    ICoreWebView2EnvironmentOptions* environmentOptions, ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler* environmentCreatedHandler )
++{
++    FIXME("unk_arg1 %u, browserExecutableFolder %s, userDataFolder %s, environmentOptions %p, environmentCreatedHandler %p stub!\n",
++        unk_arg1, debugstr_w(browserExecutableFolder), debugstr_w(userDataFolder), environmentOptions, environmentCreatedHandler);
++
++    return E_NOTIMPL;
++}
+diff --git a/include/Makefile.in b/include/Makefile.in
+index d56bc5182d8..c5fa5980ccf 100644
+--- a/include/Makefile.in
++++ b/include/Makefile.in
+@@ -817,6 +817,7 @@ SOURCES = \
+ 	wdbgexts.h \
+ 	weakreference.idl \
+ 	webservices.h \
++	webview2.idl \
+ 	websocket.h \
+ 	werapi.h \
+ 	wfext.h 
+diff --git a/include/webview2.idl b/include/webview2.idl
+new file mode 100644
+index 00000000000..2c715b649c9
+--- /dev/null
++++ b/include/webview2.idl
+@@ -0,0 +1,953 @@
++/*
++ * WebView2 interface definitions
++ * Copyright (C) 2024 Bernhard Kölbl for Codeweavers
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma makedep header
++
++import "objidl.idl";
++import "oaidl.idl";
++import "eventtoken.idl";
++
++[
++    uuid(26d34152-879f-4065-bea2-3daa2cfadfb8),
++    version(1.0)
++]
++library WebView2
++{
++
++interface ICoreWebView2;
++interface ICoreWebView2Controller;
++interface ICoreWebView2Deferral;
++interface ICoreWebView2Settings;
++interface ICoreWebView2ProcessFailedEventArgs;
++interface ICoreWebView2ProcessFailedEventHandler;
++interface ICoreWebView2ZoomFactorChangedEventHandler;
++interface ICoreWebView2HttpHeadersCollectionIterator;
++interface ICoreWebView2HttpRequestHeaders;
++interface ICoreWebView2HttpResponseHeaders;
++interface ICoreWebView2WebResourceRequest;
++interface ICoreWebView2WebResourceResponse;
++interface ICoreWebView2NavigationStartingEventArgs;
++interface ICoreWebView2NavigationStartingEventHandler;
++interface ICoreWebView2ContentLoadingEventArgs;
++interface ICoreWebView2ContentLoadingEventHandler;
++interface ICoreWebView2SourceChangedEventArgs;
++interface ICoreWebView2SourceChangedEventHandler;
++interface ICoreWebView2HistoryChangedEventHandler;
++interface ICoreWebView2ScriptDialogOpeningEventArgs;
++interface ICoreWebView2ScriptDialogOpeningEventHandler;
++interface ICoreWebView2NavigationCompletedEventArgs;
++interface ICoreWebView2NavigationCompletedEventHandler;
++interface ICoreWebView2PermissionRequestedEventArgs;
++interface ICoreWebView2PermissionRequestedEventHandler;
++interface ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler;
++interface ICoreWebView2ExecuteScriptCompletedHandler;
++interface ICoreWebView2WebResourceRequestedEventArgs;
++interface ICoreWebView2WebResourceRequestedEventHandler;
++interface ICoreWebView2CapturePreviewCompletedHandler;
++interface ICoreWebView2FocusChangedEventHandler;
++interface ICoreWebView2MoveFocusRequestedEventArgs;
++interface ICoreWebView2MoveFocusRequestedEventHandler;
++interface ICoreWebView2WebMessageReceivedEventArgs;
++interface ICoreWebView2WebMessageReceivedEventHandler;
++interface ICoreWebView2DevToolsProtocolEventReceivedEventArgs;
++interface ICoreWebView2DevToolsProtocolEventReceivedEventHandler;
++interface ICoreWebView2CallDevToolsProtocolMethodCompletedHandler;
++interface ICoreWebView2CreateCoreWebView2ControllerCompletedHandler;
++interface ICoreWebView2NewWindowRequestedEventArgs;
++interface ICoreWebView2WindowFeatures;
++interface ICoreWebView2NewWindowRequestedEventHandler;
++interface ICoreWebView2DocumentTitleChangedEventHandler;
++interface ICoreWebView2AcceleratorKeyPressedEventArgs;
++interface ICoreWebView2AcceleratorKeyPressedEventHandler;
++interface ICoreWebView2NewBrowserVersionAvailableEventHandler;
++interface ICoreWebView2ContainsFullScreenElementChangedEventHandler;
++interface ICoreWebView2WindowCloseRequestedEventHandler;
++interface ICoreWebView2Environment;
++interface ICoreWebView2EnvironmentOptions;
++interface ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler;
++interface ICoreWebView2DevToolsProtocolEventReceiver;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT
++{
++    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
++    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG,
++} COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_SCRIPT_DIALOG_KIND
++{
++    COREWEBVIEW2_SCRIPT_DIALOG_KIND_ALERT,
++    COREWEBVIEW2_SCRIPT_DIALOG_KIND_CONFIRM,
++    COREWEBVIEW2_SCRIPT_DIALOG_KIND_PROMPT,
++    COREWEBVIEW2_SCRIPT_DIALOG_KIND_BEFOREUNLOAD,
++} COREWEBVIEW2_SCRIPT_DIALOG_KIND;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_PROCESS_FAILED_KIND
++{
++    COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
++    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
++    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE,
++    COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED,
++    COREWEBVIEW2_PROCESS_FAILED_KIND_UTILITY_PROCESS_EXITED,
++    COREWEBVIEW2_PROCESS_FAILED_KIND_SANDBOX_HELPER_PROCESS_EXITED,
++    COREWEBVIEW2_PROCESS_FAILED_KIND_GPU_PROCESS_EXITED,
++    COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_PLUGIN_PROCESS_EXITED,
++    COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_BROKER_PROCESS_EXITED,
++    COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED,
++} COREWEBVIEW2_PROCESS_FAILED_KIND;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_PERMISSION_KIND
++{
++    COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION,
++    COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
++    COREWEBVIEW2_PERMISSION_KIND_CAMERA,
++    COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION,
++    COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS,
++    COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS,
++    COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
++} COREWEBVIEW2_PERMISSION_KIND;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_PERMISSION_STATE
++{
++    COREWEBVIEW2_PERMISSION_STATE_DEFAULT,
++    COREWEBVIEW2_PERMISSION_STATE_ALLOW,
++    COREWEBVIEW2_PERMISSION_STATE_DENY,
++} COREWEBVIEW2_PERMISSION_STATE;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_WEB_ERROR_STATUS
++{
++    COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN,
++    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_COMMON_NAME_IS_INCORRECT,
++    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED,
++    COREWEBVIEW2_WEB_ERROR_STATUS_CLIENT_CERTIFICATE_CONTAINS_ERRORS,
++    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED,
++    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID,
++    COREWEBVIEW2_WEB_ERROR_STATUS_SERVER_UNREACHABLE,
++    COREWEBVIEW2_WEB_ERROR_STATUS_TIMEOUT,
++    COREWEBVIEW2_WEB_ERROR_STATUS_ERROR_HTTP_INVALID_SERVER_RESPONSE,
++    COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_ABORTED,
++    COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_RESET,
++    COREWEBVIEW2_WEB_ERROR_STATUS_DISCONNECTED,
++    COREWEBVIEW2_WEB_ERROR_STATUS_CANNOT_CONNECT,
++    COREWEBVIEW2_WEB_ERROR_STATUS_HOST_NAME_NOT_RESOLVED,
++    COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
++    COREWEBVIEW2_WEB_ERROR_STATUS_REDIRECT_FAILED,
++    COREWEBVIEW2_WEB_ERROR_STATUS_UNEXPECTED_ERROR,
++} COREWEBVIEW2_WEB_ERROR_STATUS;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_WEB_RESOURCE_CONTEXT
++{
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MEDIA,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FETCH,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_TEXT_TRACK,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_EVENT_SOURCE,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_WEBSOCKET,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MANIFEST,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SIGNED_EXCHANGE,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_PING,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_CSP_VIOLATION_REPORT,
++    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_OTHER,
++} COREWEBVIEW2_WEB_RESOURCE_CONTEXT;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_MOVE_FOCUS_REASON
++{
++    COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC,
++    COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT,
++    COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS,
++} COREWEBVIEW2_MOVE_FOCUS_REASON;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_KEY_EVENT_KIND
++{
++    COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
++    COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP,
++    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
++    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP,
++} COREWEBVIEW2_KEY_EVENT_KIND;
++
++typedef struct COREWEBVIEW2_PHYSICAL_KEY_STATUS
++{
++    UINT32 RepeatCount;
++    UINT32 ScanCode;
++    BOOL IsExtendedKey;
++    BOOL IsMenuKeyDown;
++    BOOL WasKeyDown;
++    BOOL IsKeyReleased;
++} COREWEBVIEW2_PHYSICAL_KEY_STATUS;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_MOUSE_EVENT_KIND
++{
++    COREWEBVIEW2_MOUSE_EVENT_KIND_HORIZONTAL_WHEEL                          = 0x020E,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOUBLE_CLICK                  = 0x0203,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOWN                          = 0x0201,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP                            = 0x0202,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE                                     = 0x02A3,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOUBLE_CLICK                = 0x0209,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOWN                        = 0x0207,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_UP                          = 0x0208,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE                                      = 0x0200,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOUBLE_CLICK                 = 0x0206,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOWN                         = 0x0204,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_UP                           = 0x0205,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL                                     = 0x020A,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_DOUBLE_CLICK                     = 0x020D,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_DOWN                             = 0x020B,
++    COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_UP                               = 0x020C,
++} COREWEBVIEW2_MOUSE_EVENT_KIND;
++
++[v1_enum]
++typedef enum COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS {
++    COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE                              = 0x0,
++    COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_LEFT_BUTTON                       = 0x0001,
++    COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_RIGHT_BUTTON                      = 0x0002,
++    COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_SHIFT                             = 0x0004,
++    COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_CONTROL                           = 0x0008,
++    COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_MIDDLE_BUTTON                     = 0x0010,
++    COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_X_BUTTON1                         = 0x0020,
++    COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_X_BUTTON2                         = 0x0040,
++} COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS;
++cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS);")
++
++[v1_enum]
++typedef enum COREWEBVIEW2_POINTER_EVENT_KIND {
++    COREWEBVIEW2_POINTER_EVENT_KIND_ACTIVATE                                = 0x024B,
++    COREWEBVIEW2_POINTER_EVENT_KIND_DOWN                                    = 0x0246,
++    COREWEBVIEW2_POINTER_EVENT_KIND_ENTER                                   = 0x0249,
++    COREWEBVIEW2_POINTER_EVENT_KIND_LEAVE                                   = 0x024A,
++    COREWEBVIEW2_POINTER_EVENT_KIND_UP                                      = 0x0247,
++    COREWEBVIEW2_POINTER_EVENT_KIND_UPDATE                                  = 0x0245,
++} COREWEBVIEW2_POINTER_EVENT_KIND;
++
++[
++    uuid(76eceacb-0462-4d94-ac83-423a6793775e),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2 : IUnknown
++{
++    [propget] HRESULT Settings( [out, retval] ICoreWebView2Settings **settings );
++    [propget] HRESULT Source( [out, retval] LPWSTR *uri );
++    HRESULT Navigate( [in] LPCWSTR uri );
++    HRESULT NavigateToString( [in] LPCWSTR htmlContent );
++    HRESULT add_NavigationStarting( [in] ICoreWebView2NavigationStartingEventHandler *eventHandler, [out] EventRegistrationToken *token );
++    HRESULT remove_NavigationStarting( [in] EventRegistrationToken token );
++    HRESULT add_ContentLoading( [in] ICoreWebView2ContentLoadingEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_ContentLoading( [in] EventRegistrationToken token );
++    HRESULT add_SourceChanged( [in] ICoreWebView2SourceChangedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_SourceChanged( [in] EventRegistrationToken token );
++    HRESULT add_HistoryChanged( [in] ICoreWebView2HistoryChangedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_HistoryChanged( [in] EventRegistrationToken token );
++    HRESULT add_NavigationCompleted( [in] ICoreWebView2NavigationCompletedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_NavigationCompleted( [in] EventRegistrationToken token );
++    HRESULT add_FrameNavigationStarting( [in] ICoreWebView2NavigationStartingEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_FrameNavigationStarting( [in] EventRegistrationToken token );
++    HRESULT add_FrameNavigationCompleted( [in] ICoreWebView2NavigationCompletedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_FrameNavigationCompleted( [in] EventRegistrationToken token );
++    HRESULT add_ScriptDialogOpening( [in] ICoreWebView2ScriptDialogOpeningEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_ScriptDialogOpening( [in] EventRegistrationToken token );
++    HRESULT add_PermissionRequested( [in] ICoreWebView2PermissionRequestedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_PermissionRequested( [in] EventRegistrationToken token );
++    HRESULT add_ProcessFailed( [in] ICoreWebView2ProcessFailedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_ProcessFailed( [in] EventRegistrationToken token );
++    HRESULT AddScriptToExecuteOnDocumentCreated( [in] LPCWSTR javaScript,[in] ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler *handler );
++    HRESULT RemoveScriptToExecuteOnDocumentCreated( [in] LPCWSTR id );
++    HRESULT ExecuteScript( [in] LPCWSTR javaScript,[in] ICoreWebView2ExecuteScriptCompletedHandler *handler );
++    HRESULT CapturePreview( [in] COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT imageFormat,[in] IStream *imageStream,[in] ICoreWebView2CapturePreviewCompletedHandler *handler );
++    HRESULT Reload( );
++    HRESULT PostWebMessageAsJson( [in] LPCWSTR webMessageAsJson );
++    HRESULT PostWebMessageAsString( [in] LPCWSTR webMessageAsString );
++    HRESULT add_WebMessageReceived( [in] ICoreWebView2WebMessageReceivedEventHandler *handler,[out] EventRegistrationToken *token );
++    HRESULT remove_WebMessageReceived( [in] EventRegistrationToken token );
++    HRESULT CallDevToolsProtocolMethod( [in] LPCWSTR methodName,[in] LPCWSTR parametersAsJson,[in] ICoreWebView2CallDevToolsProtocolMethodCompletedHandler *handler );
++    [propget] HRESULT BrowserProcessId( [out, retval] UINT32 *value );
++    [propget] HRESULT CanGoBack( [out, retval] BOOL *canGoBack );
++    [propget] HRESULT CanGoForward( [out, retval] BOOL *canGoForward );
++    HRESULT GoBack( );
++    HRESULT GoForward( );
++    HRESULT GetDevToolsProtocolEventReceiver( [in] LPCWSTR eventName,[out, retval] ICoreWebView2DevToolsProtocolEventReceiver **receiver );
++    HRESULT Stop( );
++    HRESULT add_NewWindowRequested( [in] ICoreWebView2NewWindowRequestedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_NewWindowRequested( [in] EventRegistrationToken token );
++    HRESULT add_DocumentTitleChanged( [in] ICoreWebView2DocumentTitleChangedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_DocumentTitleChanged( [in] EventRegistrationToken token );
++    [propget] HRESULT DocumentTitle( [out, retval] LPWSTR *title );
++    HRESULT AddHostObjectToScript( [in] LPCWSTR name, [in] VARIANT *object );
++    HRESULT RemoveHostObjectFromScript( [in] LPCWSTR name );
++    HRESULT OpenDevToolsWindow( );
++    HRESULT add_ContainsFullScreenElementChanged( [in] ICoreWebView2ContainsFullScreenElementChangedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_ContainsFullScreenElementChanged( [in] EventRegistrationToken token );
++    [propget] HRESULT ContainsFullScreenElement( [out, retval] BOOL *containsFullScreenElement );
++    HRESULT add_WebResourceRequested( [in] ICoreWebView2WebResourceRequestedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_WebResourceRequested( [in] EventRegistrationToken token );
++    HRESULT AddWebResourceRequestedFilter( [in] LPCWSTR const uri,[in] COREWEBVIEW2_WEB_RESOURCE_CONTEXT const resourceContext );
++    HRESULT RemoveWebResourceRequestedFilter( [in] LPCWSTR const uri,[in] COREWEBVIEW2_WEB_RESOURCE_CONTEXT const resourceContext );
++    HRESULT add_WindowCloseRequested( [in] ICoreWebView2WindowCloseRequestedEventHandler *eventHandler,[out] EventRegistrationToken *token );
++    HRESULT remove_WindowCloseRequested( [in] EventRegistrationToken token );
++}
++
++[
++    uuid(4d00c0d1-9434-4eb6-8078-8697a560334f), 
++    object, 
++    pointer_default(unique)
++]
++interface ICoreWebView2Controller : IUnknown
++{
++    [propget] HRESULT IsVisible( [out, retval] BOOL *isVisible );
++    [propput] HRESULT IsVisible( [in] BOOL isVisible );
++    [propget] HRESULT Bounds( [out, retval] RECT *bounds );
++    [propput] HRESULT Bounds( [in] RECT bounds );
++    [propget] HRESULT ZoomFactor( [out, retval] double *zoomFactor );
++    [propput] HRESULT ZoomFactor( [in] double zoomFactor );
++    HRESULT add_ZoomFactorChanged( [in] ICoreWebView2ZoomFactorChangedEventHandler *eventHandler, [out] EventRegistrationToken *token );
++    HRESULT remove_ZoomFactorChanged( [in] EventRegistrationToken token );
++    HRESULT SetBoundsAndZoomFactor( [in] RECT bounds, [in] double zoomFactor );
++    HRESULT MoveFocus( [in] COREWEBVIEW2_MOVE_FOCUS_REASON reason );
++    HRESULT add_MoveFocusRequested( [in] ICoreWebView2MoveFocusRequestedEventHandler *eventHandler, [out] EventRegistrationToken *token );
++    HRESULT remove_MoveFocusRequested([in] EventRegistrationToken token);
++    HRESULT add_GotFocus( [in] ICoreWebView2FocusChangedEventHandler *eventHandler, [out] EventRegistrationToken *token );
++    HRESULT remove_GotFocus( [in] EventRegistrationToken token );
++    HRESULT add_LostFocus( [in] ICoreWebView2FocusChangedEventHandler *eventHandler, [out] EventRegistrationToken *token );
++    HRESULT remove_LostFocus( [in] EventRegistrationToken token );
++    HRESULT add_AcceleratorKeyPressed( [in] ICoreWebView2AcceleratorKeyPressedEventHandler *eventHandler, [out] EventRegistrationToken *token);
++    HRESULT remove_AcceleratorKeyPressed( [in] EventRegistrationToken token );
++    [propget] HRESULT ParentWindow( [out, retval] HWND *parentWindow );
++    [propput] HRESULT ParentWindow( [in] HWND parentWindow );
++    HRESULT NotifyParentWindowPositionChanged( );
++    HRESULT Close( );
++    [propget] HRESULT CoreWebView2( [out, retval] ICoreWebView2 **coreWebView2 );
++}
++
++[
++    uuid(c10e7f7b-b585-46f0-a623-8befbf3e4ee0),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2Deferral : IUnknown
++{
++    HRESULT Complete( );
++}
++
++[
++    uuid(e562e4f0-d7fa-43ac-8d71-c05150499f00),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2Settings : IUnknown 
++{
++    [propget] HRESULT IsScriptEnabled( [out, retval] BOOL *isScriptEnabled );
++    [propput] HRESULT IsScriptEnabled( [in] BOOL isScriptEnabled );
++    [propget] HRESULT IsWebMessageEnabled( [out, retval] BOOL *isWebMessageEnabled );
++    [propput] HRESULT IsWebMessageEnabled( [in] BOOL isWebMessageEnabled );
++    [propget] HRESULT AreDefaultScriptDialogsEnabled( [out, retval] BOOL *areDefaultScriptDialogsEnabled );
++    [propput] HRESULT AreDefaultScriptDialogsEnabled( [in] BOOL areDefaultScriptDialogsEnabled );
++    [propget] HRESULT IsStatusBarEnabled( [out, retval] BOOL *isStatusBarEnabled );
++    [propput] HRESULT IsStatusBarEnabled( [in] BOOL isStatusBarEnabled );
++    [propget] HRESULT AreDevToolsEnabled( [out, retval] BOOL *areDevToolsEnabled );
++    [propput] HRESULT AreDevToolsEnabled( [in] BOOL areDevToolsEnabled );
++    [propget] HRESULT AreDefaultContextMenusEnabled( [out, retval] BOOL *enabled );
++    [propput] HRESULT AreDefaultContextMenusEnabled( [in] BOOL enabled );
++    [propget] HRESULT AreHostObjectsAllowed( [out, retval] BOOL *allowed );
++    [propput] HRESULT AreHostObjectsAllowed( [in] BOOL allowed );
++    [propget] HRESULT IsZoomControlEnabled( [out, retval] BOOL *enabled );
++    [propput] HRESULT IsZoomControlEnabled( [in] BOOL enabled );
++    [propget] HRESULT IsBuiltInErrorPageEnabled( [out, retval] BOOL *enabled );
++    [propput] HRESULT IsBuiltInErrorPageEnabled( [in] BOOL enabled );
++}
++
++[
++    uuid(8155a9a4-1474-4a86-8cae-151b0fa6b8ca),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2ProcessFailedEventArgs : IUnknown
++{
++    [propget] HRESULT ProcessFailedKind( [out, retval] COREWEBVIEW2_PROCESS_FAILED_KIND *processFailedKind );
++}
++
++[
++    uuid(79e0aea4-990b-42d9-aa1d-0fcc2e5bc7f1),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2ProcessFailedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender,[in] ICoreWebView2ProcessFailedEventArgs *args );
++}
++
++[
++    uuid(b52d71d6-c4df-4543-a90c-64a3e60f38cb),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2ZoomFactorChangedEventHandler : IUnknown
++{
++    HRESULT Invoke([in] ICoreWebView2Controller *sender, [in] IUnknown *args);
++}
++
++[
++    uuid(0702fc30-f43b-47bb-ab52-a42cb552ad9f),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2HttpHeadersCollectionIterator : IUnknown
++{
++    HRESULT GetCurrentHeader( [out] LPWSTR *name, [out] LPWSTR *value );
++    [propget] HRESULT HasCurrentHeader( [out, retval] BOOL *hasCurrent );
++    HRESULT MoveNext( [out, retval] BOOL *hasNext );
++}
++
++[
++    uuid(e86cac0e-5523-465c-b536-8fb9fc8c8c60),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2HttpRequestHeaders : IUnknown
++{
++    HRESULT GetHeader( [in] LPCWSTR name, [out, retval] LPWSTR *value );
++    HRESULT GetHeaders( [in] LPCWSTR name, [out, retval] ICoreWebView2HttpHeadersCollectionIterator **iterator );
++    HRESULT Contains( [in] LPCWSTR name, [out, retval] BOOL *contains );
++    HRESULT SetHeader( [in] LPCWSTR name, [in] LPCWSTR value );
++    HRESULT RemoveHeader( [in] LPCWSTR name );
++    HRESULT GetIterator( [out, retval] ICoreWebView2HttpHeadersCollectionIterator **iterator );
++}
++
++[
++    uuid(03c5ff5a-9b45-4a88-881c-89a9f328619c),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2HttpResponseHeaders : IUnknown
++{
++    HRESULT AppendHeader( [in] LPCWSTR name, [in] LPCWSTR value );
++    HRESULT Contains( [in] LPCWSTR name, [out, retval] BOOL *contains );
++    HRESULT GetHeader( [in] LPCWSTR name, [out, retval] LPWSTR *value );
++    HRESULT GetHeaders( [in] LPCWSTR name, [out, retval] ICoreWebView2HttpHeadersCollectionIterator **iterator );
++    HRESULT GetIterator( [out, retval] ICoreWebView2HttpHeadersCollectionIterator **iterator );
++}
++
++[
++    uuid(97055cd4-512c-4264-8b5f-e3f446cea6a5),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2WebResourceRequest : IUnknown
++{
++    [propget] HRESULT Uri( [out, retval] LPWSTR *uri );
++    [propput] HRESULT Uri( [in] LPCWSTR uri );
++    [propget] HRESULT Method( [out, retval] LPWSTR *method );
++    [propput] HRESULT Method( [in] LPCWSTR method );
++    [propget] HRESULT Content( [out, retval] IStream **content );
++    [propput] HRESULT Content( [in] IStream *content );
++    [propget] HRESULT Headers( [out, retval] ICoreWebView2HttpRequestHeaders **headers );
++}
++
++[
++    uuid(aafcc94f-fa27-48fd-97df-830ef75aaec9),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2WebResourceResponse : IUnknown
++{
++    [propget] HRESULT Content( [out, retval] IStream **content );
++    [propput] HRESULT Content( [in] IStream *content );
++    [propget] HRESULT Headers( [out, retval] ICoreWebView2HttpResponseHeaders **headers );
++    [propget] HRESULT StatusCode( [out, retval] int *statusCode );
++    [propput] HRESULT StatusCode( [in] int statusCode );
++    [propget] HRESULT ReasonPhrase( [out, retval] LPWSTR *reasonPhrase );
++    [propput] HRESULT ReasonPhrase( [in] LPCWSTR reasonPhrase );
++}
++
++[
++    uuid(5b495469-e119-438a-9b18-7604f25f2e49),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2NavigationStartingEventArgs : IUnknown
++{
++    [propget] HRESULT Uri( [out, retval] LPWSTR *uri );
++    [propget] HRESULT IsUserInitiated( [out, retval] BOOL *isUserInitiated );
++    [propget] HRESULT IsRedirected( [out, retval] BOOL *isRedirected );
++    [propget] HRESULT RequestHeaders( [out, retval] ICoreWebView2HttpRequestHeaders **requestHeaders );
++    [propget] HRESULT Cancel( [out, retval] BOOL *cancel );
++    [propput] HRESULT Cancel( [in] BOOL cancel );
++    [propget] HRESULT NavigationId( [out, retval] UINT64 *navigationId );
++}
++
++[
++    uuid(9adbe429-f36d-432b-9ddc-f8881fbd76e3),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2NavigationStartingEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender,[in] ICoreWebView2NavigationStartingEventArgs *args );
++}
++
++[
++    uuid(0c8a1275-9b6b-4901-87ad-70df25bafa6e),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2ContentLoadingEventArgs : IUnknown
++{
++    [propget] HRESULT IsErrorPage( [out, retval] BOOL *isErrorPage );
++    [propget] HRESULT NavigationId( [out, retval] UINT64 *navigationId );
++}
++
++[
++    uuid(364471e7-f2be-4910-bdba-d72077d51c4b),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2ContentLoadingEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender, [in] ICoreWebView2ContentLoadingEventArgs *args );
++}
++
++[
++    uuid(31e0e545-1dba-4266-8914-f63848a1f7d7),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2SourceChangedEventArgs : IUnknown
++{
++    [propget] HRESULT IsNewDocument( [out, retval] BOOL *isNewDocument );
++}
++
++[
++    uuid(3c067f9f-5388-4772-8b48-79f7ef1ab37c),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2SourceChangedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender, [in] ICoreWebView2SourceChangedEventArgs *args );
++}
++
++[
++    uuid(c79a420c-efd9-4058-9295-3e8b4bcab645),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2HistoryChangedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender, [in] IUnknown *args );
++}
++
++[
++    uuid(7390bb70-abe0-4843-9529-f143b31b03d6),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2ScriptDialogOpeningEventArgs : IUnknown
++{
++    [propget] HRESULT Uri([out, retval] LPWSTR *uri);
++    [propget] HRESULT Kind([out, retval] COREWEBVIEW2_SCRIPT_DIALOG_KIND *kind);
++    [propget] HRESULT Message([out, retval] LPWSTR *message);
++    HRESULT Accept( );
++    [propget] HRESULT DefaultText([out, retval] LPWSTR *defaultText);
++    [propget] HRESULT ResultText([out, retval] LPWSTR *resultText);
++    [propput] HRESULT ResultText([in] LPCWSTR resultText);
++    HRESULT GetDeferral( [out, retval] ICoreWebView2Deferral **deferral );
++}
++
++[
++    uuid(ef381bf9-afa8-4e37-91c4-8ac48524bdfb),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2ScriptDialogOpeningEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender,[in] ICoreWebView2ScriptDialogOpeningEventArgs* args );
++}
++
++[
++    uuid(30d68b7d-20d9-4752-a9ca-ec8448fbb5c1),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2NavigationCompletedEventArgs : IUnknown
++{
++    [propget] HRESULT IsSuccess( [out, retval] BOOL *isSuccess );
++    [propget] HRESULT WebErrorStatus( [out, retval] COREWEBVIEW2_WEB_ERROR_STATUS *webErrorStatus );
++    [propget] HRESULT NavigationId( [out, retval] UINT64 *navigationId );
++}
++
++[
++    uuid(d33a35bf-1c49-4f98-93ab-006e0533fe1c),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2NavigationCompletedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender,[in] ICoreWebView2NavigationCompletedEventArgs *args );
++}
++
++[
++    uuid(973ae2ef-ff18-4894-8fb2-3c758f046810),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2PermissionRequestedEventArgs : IUnknown
++{
++    [propget] HRESULT Uri( [out, retval] LPWSTR *uri );
++    [propget] HRESULT PermissionKind( [out, retval] COREWEBVIEW2_PERMISSION_KIND *permissionKind);
++    [propget] HRESULT IsUserInitiated( [out, retval] BOOL *isUserInitiated);
++    [propget] HRESULT State( [out, retval] COREWEBVIEW2_PERMISSION_STATE *state);
++    [propput] HRESULT State( [in] COREWEBVIEW2_PERMISSION_STATE state);
++    HRESULT GetDeferral( [out, retval] ICoreWebView2Deferral **deferral);
++}
++
++[
++    uuid(15e1c6a3-c72a-4df3-91d7-d097fbec6bfd),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2PermissionRequestedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender,[in] ICoreWebView2PermissionRequestedEventArgs *args );
++}
++
++[
++    uuid(b99369f3-9b11-47b5-bc6f-8e7895fcea17),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler : IUnknown
++{
++    HRESULT Invoke( [in] HRESULT errorCode, [in] LPCWSTR id );
++}
++
++[
++    uuid(49511172-cc67-4bca-9923-137112f4c4cc),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2ExecuteScriptCompletedHandler : IUnknown
++{
++    HRESULT Invoke( [in] HRESULT errorCode, [in] LPCWSTR resultObjectAsJson );
++}
++
++[
++    uuid(453e667f-12c7-49d4-be6d-ddbe7956f57a),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2WebResourceRequestedEventArgs : IUnknown
++{
++    [propget] HRESULT Request( [out, retval] ICoreWebView2WebResourceRequest **request );
++    [propget] HRESULT Response( [out, retval] ICoreWebView2WebResourceResponse **response );
++    [propput] HRESULT Response( [in] ICoreWebView2WebResourceResponse *response );
++    HRESULT GetDeferral( [out, retval] ICoreWebView2Deferral **deferral );
++    [propget] HRESULT ResourceContext( [out, retval] COREWEBVIEW2_WEB_RESOURCE_CONTEXT *context );
++}
++
++[
++    uuid(ab00b74c-15f1-4646-80e8-e76341d25d71),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2WebResourceRequestedEventHandler : IUnknown
++{
++    HRESULT Invoke([in] ICoreWebView2 *sender,[in] ICoreWebView2WebResourceRequestedEventArgs *args);
++}
++
++[
++    uuid(697e05e9-3d8f-45fa-96f4-8ffe1ededaf5),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2CapturePreviewCompletedHandler : IUnknown
++{
++    HRESULT Invoke( [in] HRESULT errorCode );
++}
++
++[
++    uuid(05ea24bd-6452-4926-9014-4b82b498135d),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2FocusChangedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2Controller *sender, [in] IUnknown *args );
++}
++
++[
++    uuid(2d6aa13b-3839-4a15-92fc-d88b3c0d9c9d),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2MoveFocusRequestedEventArgs : IUnknown
++{
++    [propget] HRESULT Reason( [out, retval] COREWEBVIEW2_MOVE_FOCUS_REASON *reason );
++    [propget] HRESULT Handled( [out, retval] BOOL *value );
++    [propput] HRESULT Handled( [in] BOOL value );
++}
++
++[
++    uuid(9f760f8a-fb79-42be-9990-7b56900fa9c7),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2AcceleratorKeyPressedEventArgs : IUnknown
++{
++    [propget] HRESULT KeyEventKind( [out, retval] COREWEBVIEW2_KEY_EVENT_KIND *keyEventKind );
++    [propget] HRESULT VirtualKey( [out, retval] UINT *virtualKey );
++    [propget] HRESULT KeyEventLParam([ out, retval] INT *lParam );
++    [propget] HRESULT PhysicalKeyStatus( [out, retval] COREWEBVIEW2_PHYSICAL_KEY_STATUS *physicalKeyStatus );
++    [propget] HRESULT Handled( [out, retval] BOOL *handled );
++    [propput] HRESULT Handled( [in] BOOL handled );
++}
++
++[
++    uuid(69035451-6dc7-4cb8-9bce-b2bd70ad289f),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2MoveFocusRequestedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2Controller *sender, [in] ICoreWebView2MoveFocusRequestedEventArgs *args );
++}
++
++[
++    uuid(0f99a40c-e962-4207-9e92-e3d542eff849),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2WebMessageReceivedEventArgs : IUnknown
++{
++    [propget] HRESULT Source( [out, retval] LPWSTR *source );
++    [propget] HRESULT WebMessageAsJson( [out, retval] LPWSTR *webMessageAsJson );
++    HRESULT TryGetWebMessageAsString( [out, retval] LPWSTR *webMessageAsString );
++}
++
++[
++    uuid(57213f19-00e6-49fa-8e07-898ea01ecbd2),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2WebMessageReceivedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender, [in] ICoreWebView2WebMessageReceivedEventArgs *args );
++}
++
++[
++    uuid(653c2959-bb3a-4377-8632-b58ada4e66c4),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2DevToolsProtocolEventReceivedEventArgs : IUnknown
++{
++    [propget] HRESULT ParameterObjectAsJson( [out, retval] LPWSTR *parameterObjectAsJson );
++}
++
++[
++    uuid(e2fda4be-5456-406c-a261-3d452138362c),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2DevToolsProtocolEventReceivedEventHandler : IUnknown
++{
++  HRESULT Invoke( [in] ICoreWebView2 *sender, [in] ICoreWebView2DevToolsProtocolEventReceivedEventArgs *args);
++}
++
++[
++    uuid(5c4889f0-5ef6-4c5a-952c-d8f1b92d0574),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2CallDevToolsProtocolMethodCompletedHandler : IUnknown
++{
++    HRESULT Invoke( [in] HRESULT errorCode, [in] LPCWSTR returnObjectAsJson );
++}
++
++[
++    uuid(6c4819f3-c9b7-4260-8127-c9f5bde7f68c),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2CreateCoreWebView2ControllerCompletedHandler : IUnknown
++{
++    HRESULT Invoke( HRESULT errorCode, ICoreWebView2Controller *createdController );
++}
++
++[
++    uuid(34acb11c-fc37-4418-9132-f9c21d1eafb9),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2NewWindowRequestedEventArgs : IUnknown
++{
++    [propget] HRESULT Uri( [out, retval] LPWSTR *uri);
++    [propput] HRESULT NewWindow( [in] ICoreWebView2 *newWindow);
++    [propget] HRESULT NewWindow( [out, retval] ICoreWebView2 **newWindow);
++    [propput] HRESULT Handled( [in] BOOL handled);
++    [propget] HRESULT Handled( [out, retval] BOOL *handled);
++    [propget] HRESULT IsUserInitiated( [out, retval] BOOL *isUserInitiated);
++    HRESULT GetDeferral( [out, retval] ICoreWebView2Deferral **deferral);
++    [propget] HRESULT WindowFeatures( [out, retval] ICoreWebView2WindowFeatures **value);
++}
++
++[
++    uuid(5eaf559f-b46e-4397-8860-e422f287ff1e),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2WindowFeatures : IUnknown
++{
++    [propget] HRESULT HasPosition( [out, retval] BOOL *value);
++    [propget] HRESULT HasSize( [out, retval] BOOL *value);
++    [propget] HRESULT Left( [out, retval] UINT32 *value);
++    [propget] HRESULT Top( [out, retval] UINT32 *value);
++    [propget] HRESULT Height( [out, retval] UINT32 *value);
++    [propget] HRESULT Width( [out, retval] UINT32 *value);
++    [propget] HRESULT ShouldDisplayMenuBar( [out, retval] BOOL *value);
++    [propget] HRESULT ShouldDisplayStatus( [out, retval] BOOL *value);
++    [propget] HRESULT ShouldDisplayToolbar( [out, retval] BOOL *value);
++    [propget] HRESULT ShouldDisplayScrollBars( [out, retval] BOOL *value);
++}
++
++[
++    uuid(d4c185fe-c81c-4989-97af-2d3fa7ab5651),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2NewWindowRequestedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender,[in] ICoreWebView2NewWindowRequestedEventArgs *args );
++}
++
++[
++    uuid(f5f2b923-953e-4042-9f95-f3a118e1afd4),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2DocumentTitleChangedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender, [in] IUnknown *args );
++}
++
++[
++    uuid(b29c7e28-fa79-41a8-8e44-65811c76dcb2),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2AcceleratorKeyPressedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2Controller *sender, [in] ICoreWebView2AcceleratorKeyPressedEventArgs *args );
++}
++
++[
++    uuid(f9a2976e-d34e-44fc-adee-81b6b57ca914),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2NewBrowserVersionAvailableEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2Environment *sender, [in] IUnknown *args );
++}
++
++[
++    uuid(e45d98b1-afef-45be-8baf-6c7728867f73),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2ContainsFullScreenElementChangedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender, [in] IUnknown *args );
++}
++
++[
++    uuid(5c19e9e0-092f-486b-affa-ca8231913039),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2WindowCloseRequestedEventHandler : IUnknown
++{
++    HRESULT Invoke( [in] ICoreWebView2 *sender, [in] IUnknown *args );
++}
++
++[
++    uuid(b96d755e-0319-4e92-a296-23436f46a1fc),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2Environment : IUnknown
++{
++    HRESULT CreateCoreWebView2Controller(HWND parentWindow, ICoreWebView2CreateCoreWebView2ControllerCompletedHandler *handler);
++    HRESULT CreateWebResourceResponse([in] IStream *content, [in] int statusCode,
++                                      [in] LPCWSTR reasonPhrase, [in] LPCWSTR headers, [out, retval] ICoreWebView2WebResourceResponse **response); 
++    [propget] HRESULT BrowserVersionString([out, retval] LPWSTR *versionInfo);
++    HRESULT add_NewBrowserVersionAvailable([in] ICoreWebView2NewBrowserVersionAvailableEventHandler *eventHandler, [out] EventRegistrationToken *token);
++    HRESULT remove_NewBrowserVersionAvailable([in] EventRegistrationToken token);
++}
++
++[
++    uuid(2fde08a8-1e9a-4766-8c05-95a9ceb9d1c5),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2EnvironmentOptions : IUnknown
++{
++    [propget] HRESULT AdditionalBrowserArguments([out, retval] LPWSTR *value);
++    [propput] HRESULT AdditionalBrowserArguments([in] LPCWSTR value);
++    [propget] HRESULT Language([out, retval] LPWSTR *value);
++    [propput] HRESULT Language([in] LPCWSTR value);
++    [propget] HRESULT TargetCompatibleBrowserVersion([out, retval] LPWSTR *value);
++    [propput] HRESULT TargetCompatibleBrowserVersion([in] LPCWSTR value);
++    [propget] HRESULT AllowSingleSignOnUsingOSPrimaryAccount([out, retval] BOOL *allow);
++    [propput] HRESULT AllowSingleSignOnUsingOSPrimaryAccount([in] BOOL allow);
++}
++
++[
++    uuid(4e8a3389-c9d8-4bd2-b6b5-124fee6cc14d),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler : IUnknown
++{
++    HRESULT Invoke( HRESULT errorCode, ICoreWebView2Environment* createdEnvironment );
++}
++
++[
++    uuid(b32ca51a-8371-45e9-9317-af021d080367),
++    object,
++    pointer_default(unique)
++]
++interface ICoreWebView2DevToolsProtocolEventReceiver : IUnknown
++{
++    HRESULT add_DevToolsProtocolEventReceived( [in] ICoreWebView2DevToolsProtocolEventReceivedEventHandler *handler,[out] EventRegistrationToken *token );
++    HRESULT remove_DevToolsProtocolEventReceived( [in] EventRegistrationToken token );
++}
++
++}
+-- 
+GitLab
+
+From 0e6f1802f6d67f0d191b2f1c6a9dc8ceae977b51 Mon Sep 17 00:00:00 2001
+From: Matthias Gorzellik <matthias.gorzellik@gmail.com>
+Date: Mon, 3 Feb 2025 21:36:49 +0100
+Subject: [PATCH 2/2] hidraw: add function to identify fanatec wheel-bases and
+ enable hidraw for them
+
+---
+diff --git a/dlls/winebus.sys/main.c b/dlls/winebus.sys/main.c
+index 19fe986a674..ec4abb5b755 100644
+--- a/dlls/winebus.sys/main.c
++++ b/dlls/winebus.sys/main.c
+@@ -514,6 +514,15 @@ static BOOL is_hidraw_enabled(WORD vid, WORD pid, const USAGE_AND_PAGE *usages,
+     case 0x0eb7:
+         if (pid == 0x183b) prefer_hidraw = TRUE; /* Fanatec ClubSport Pedals v3 */
+         if (pid == 0x1839) prefer_hidraw = TRUE; /* Fanatec ClubSport Pedals v1/v2 */
++        if (pid == 0x0e03) prefer_hidraw = TRUE; /* Fanatec CSL Elite */
++        if (pid == 0x0005) prefer_hidraw = TRUE; /* Fanatec CSL Elite PS4 */
++        if (pid == 0x0020) prefer_hidraw = TRUE; /* Fanatec CSL DD / DD Pro / ClubSport DD */
++        if (pid == 0x0001) prefer_hidraw = TRUE; /* Fanatec ClubSport V2 */
++        if (pid == 0x0004) prefer_hidraw = TRUE; /* Fanatec ClubSport V2.5 */
++        if (pid == 0x0006) prefer_hidraw = TRUE; /* Fanatec Podium DD1 */
++        if (pid == 0x0007) prefer_hidraw = TRUE; /* Fanatec Podium DD2 */
++        if (pid == 0x0011) prefer_hidraw = TRUE; /* Fanatec CSR Elite / Forza Motorsport */
++        if (pid == 0xe0fe) prefer_hidraw = TRUE; /* CS-WB-DD (FW update mode) */
+         break;
+     case 0x231d:
+         /* comes with 128 buttons in the default configuration */

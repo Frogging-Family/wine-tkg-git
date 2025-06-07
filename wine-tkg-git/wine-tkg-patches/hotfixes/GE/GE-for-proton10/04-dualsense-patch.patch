@@ -1,0 +1,645 @@
+From 8c4cecec10307a1b6787d6fcaa9726b821f0a6bf Mon Sep 17 00:00:00 2001
+From: Harald Sitter <sitter@kde.org>
+Date: Sun, 19 Jan 2025 15:05:15 +0100
+Subject: [PATCH 1/3] mmdevapi: correctly read and write containerid as clsid
+ blob
+
+ContainerId on Windows is a bit special. It actually gets stored in the
+registry as a blob of data that starts with the variant type and ends
+with the GUID. The bits inbetween have no immediately obvious meaning
+and aren't used for the time being.
+---
+ dlls/mmdevapi/devenum.c | 43 ++++++++++++++++++++++++++++++++---------
+ 1 file changed, 34 insertions(+), 9 deletions(-)
+
+diff --git a/dlls/mmdevapi/devenum.c b/dlls/mmdevapi/devenum.c
+index c32e85ea5e8..b1e7e2e7eaa 100644
+--- a/dlls/mmdevapi/devenum.c
++++ b/dlls/mmdevapi/devenum.c
+@@ -47,6 +47,13 @@ DEFINE_GUID(GUID_NULL,0,0,0,0,0,0,0,0,0,0,0);
+ static HKEY key_render;
+ static HKEY key_capture;
+ 
++struct clsid_blob {
++    BYTE vt;
++    BYTE wReserved0[3]; // Unknown metadata, maybe flags?
++    DWORD wReserved1; // Possibly a version of some sort?
++    GUID puuid;
++};
++
+ typedef struct MMDevPropStoreImpl
+ {
+     IPropertyStore IPropertyStore_iface;
+@@ -196,15 +203,28 @@ static HRESULT MMDevice_GetPropValue(const GUID *devguid, DWORD flow, REFPROPERT
+             RegGetValueW(regkey, NULL, buffer, RRF_RT_REG_DWORD, NULL, (BYTE*)&pv->ulVal, &size);
+             break;
+         }
+-        case REG_BINARY:
+-        {
+-            pv->vt = VT_BLOB;
+-            pv->blob.cbSize = size;
+-            pv->blob.pBlobData = CoTaskMemAlloc(size);
+-            if (!pv->blob.pBlobData)
+-                hr = E_OUTOFMEMORY;
+-            else
+-                RegGetValueW(regkey, NULL, buffer, RRF_RT_REG_BINARY, NULL, (BYTE*)pv->blob.pBlobData, &size);
++        case REG_BINARY: {
++            if (IsEqualPropertyKey(*key, DEVPKEY_Device_ContainerId)) {
++                struct clsid_blob blob;
++                DWORD size = sizeof(blob);
++
++                RegGetValueW(regkey, NULL, buffer, RRF_RT_REG_BINARY, NULL, (BYTE *)&blob, &size);
++
++                pv->vt = VT_CLSID;
++                pv->puuid = CoTaskMemAlloc(sizeof(GUID));
++                if (!pv->puuid)
++                    hr = E_OUTOFMEMORY;
++                else
++                    *pv->puuid = blob.puuid;
++            } else {
++                pv->vt = VT_BLOB;
++                pv->blob.cbSize = size;
++                pv->blob.pBlobData = CoTaskMemAlloc(size);
++                if (!pv->blob.pBlobData)
++                    hr = E_OUTOFMEMORY;
++                else
++                    RegGetValueW(regkey, NULL, buffer, RRF_RT_REG_BINARY, NULL, (BYTE *)pv->blob.pBlobData, &size);
++            }
+             break;
+         }
+         default:
+@@ -249,6 +269,11 @@ static HRESULT MMDevice_SetPropValue(const GUID *devguid, DWORD flow, REFPROPERT
+             ret = RegSetValueExW(regkey, buffer, 0, REG_SZ, (const BYTE*)pv->pwszVal, sizeof(WCHAR)*(1+lstrlenW(pv->pwszVal)));
+             break;
+         }
++        case VT_CLSID: {
++            struct clsid_blob blob = {.vt = VT_CLSID, .wReserved0 = {0, 0, 0}, .wReserved1 = 0, .puuid = *pv->puuid};
++            ret = RegSetValueExW(regkey, buffer, 0, REG_BINARY, (const BYTE *)&blob, sizeof(blob));
++            break;
++        }
+         default:
+             ret = 0;
+             FIXME("Unhandled type %u\n", pv->vt);
+-- 
+2.49.0
+
+From 5e1c421b19367e7005c1676664ac65b59670b23c Mon Sep 17 00:00:00 2001
+From: Harald Sitter <sitter@kde.org>
+Date: Mon, 17 Feb 2025 23:18:33 +0100
+Subject: [PATCH 2/3] containerid: helper to generate a containerid from a
+ sysfs path
+
+TBD
+---
+ dlls/mmdevapi/devenum.c       |   2 +
+ dlls/ntdll/Makefile.in        |   1 +
+ dlls/ntdll/unix/containerid.c | 196 ++++++++++++++++++++++++++++++++++
+ dlls/winebus.sys/bus_udev.c   |  27 +++++
+ dlls/winebus.sys/main.c       |  22 ++++
+ dlls/winebus.sys/unixlib.h    |   1 +
+ dlls/winepulse.drv/pulse.c    |  23 ++++
+ include/Makefile.in           |   1 +
+ include/wine/containerid.h    |  28 +++++
+ 9 files changed, 301 insertions(+)
+ create mode 100644 dlls/ntdll/unix/containerid.c
+ create mode 100644 include/wine/containerid.h
+
+diff --git a/dlls/mmdevapi/devenum.c b/dlls/mmdevapi/devenum.c
+index b1e7e2e7eaa..2bbcdbfa8fa 100644
+--- a/dlls/mmdevapi/devenum.c
++++ b/dlls/mmdevapi/devenum.c
+@@ -441,6 +441,8 @@ static MMDevice *MMDevice_Create(const WCHAR *name, GUID *id, EDataFlow flow, DW
+             pv.pwszVal = guidstr;
+             MMDevice_SetPropValue(id, flow, &deviceinterface_key, &pv);
+ 
++            set_driver_prop_value(id, flow, (const PROPERTYKEY*)&DEVPKEY_Device_ContainerId);
++
+             if (FAILED(set_driver_prop_value(id, flow, &PKEY_AudioEndpoint_FormFactor)))
+             {
+                 pv.vt = VT_UI4;
+diff --git a/dlls/ntdll/Makefile.in b/dlls/ntdll/Makefile.in
+index 457ae577399..6d77ff4a0c9 100644
+--- a/dlls/ntdll/Makefile.in
++++ b/dlls/ntdll/Makefile.in
+@@ -46,6 +46,7 @@ SOURCES = \
+ 	threadpool.c \
+ 	time.c \
+ 	unix/cdrom.c \
++	unix/containerid.c \
+ 	unix/debug.c \
+ 	unix/env.c \
+ 	unix/esync.c \
+diff --git a/dlls/ntdll/unix/containerid.c b/dlls/ntdll/unix/containerid.c
+new file mode 100644
+index 00000000000..61fa5896049
+--- /dev/null
++++ b/dlls/ntdll/unix/containerid.c
+@@ -0,0 +1,196 @@
++/*
++ * ContainerID helper functions
++ *
++ * Copyright 2025 Harald Sitter <sitter@kde.org>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#if 0
++#pragma makedep unix
++#endif
++
++#include "config.h"
++
++#include <dirent.h>
++#include <errno.h>
++#include <fcntl.h> /* Definition of AT_* constants */
++#include <libgen.h>
++#include <limits.h>
++#include <stdlib.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <unistd.h>
++
++#include "ntstatus.h"
++#define WIN32_NO_STATUS
++#include "windef.h"
++#include "winternl.h"
++#include "wine/containerid.h"
++#include "wine/debug.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(containerid);
++
++// Find the directory with a 'removeble' file. Mutates sysfs_path in place.
++static BOOL find_removable_file_dir(char *sysfs_path)
++{
++    DIR *device_dir = NULL;
++    struct stat st;
++    for (;;) {
++        if (strcmp("/sys/devices", sysfs_path) == 0) {
++            TRACE("Device is not removable (could not find removable file)\n");
++            return FALSE;
++        }
++        device_dir = opendir(sysfs_path);
++        if (fstatat(dirfd(device_dir), "removable", &st, 0) == 0) {
++            closedir(device_dir);
++            return TRUE;
++        }
++        closedir(device_dir);
++        dirname(sysfs_path); // mutates in place
++    }
++    return FALSE;
++}
++
++// Checks if the device at sysfs_path is removable by checking the contents of the 'removable' file.
++static BOOL is_device_removable(char *sysfs_path)
++{
++    char is_removable_str[MAX_PATH];
++    char removable[] = "removable";
++    DIR *device_dir = opendir(sysfs_path);
++    int fd = openat(dirfd(device_dir), "removable", O_RDONLY | O_CLOEXEC);
++    int err = errno;
++
++    closedir(device_dir);
++
++    if (fd != -1) {
++        read(fd, is_removable_str, sizeof(is_removable_str));
++        close(fd);
++        if (strncmp(is_removable_str, removable, strlen(removable)) == 0) {
++            // Perfect, it's removable, so let's expose the sysfs path and by extension generate a container id.
++            return TRUE;
++        } else {
++            return FALSE;
++            TRACE("Device is not removable, not exposing sysfs path\n");
++        }
++    }
++
++    WARN("Failed to open %s/removable: %s\n", sysfs_path, strerror(err));
++    return FALSE;
++}
++
++static BOOL get_device_sysfs_path_from_sys_path(char const *sysfs_path, char device_path[MAX_PATH])
++{
++    char resolved_sysfs_path[MAX_PATH];
++    // Resolve all parts.
++    if (realpath(sysfs_path, resolved_sysfs_path) == NULL) {
++        WARN("realpath failed: %s\n", strerror(errno));
++        return FALSE;
++    }
++    // Then walk up until we find a removable file marker.
++    if (find_removable_file_dir(resolved_sysfs_path)) {
++        // resolved_sysfs_path is now pointing at the device directory containing a removable file.
++        // Next let's figure out if this device is actually removable.
++        if (is_device_removable(resolved_sysfs_path)) {
++            strcpy(device_path, resolved_sysfs_path);
++            return TRUE;
++        }
++    }
++    return FALSE;
++}
++
++static void container_id_from_inputs(char const **inputs, unsigned inputs_count, GUID *container_id)
++{
++    UINT8 hash[sizeof(GUID)] = {0};
++    UINT8 hash_index = 0;
++
++    // Trivialistic hash function. XOR all the bytes of all the inputs together.
++    for (int i = 0; i < inputs_count; i++) {
++        for (int j = 0; j < strlen(inputs[i]); j++) {
++            hash[hash_index] ^= inputs[i][j];
++            hash_index = (hash_index + 1) % ARRAY_SIZE(hash);
++        }
++    }
++
++    memcpy(container_id, hash, sizeof(GUID));
++}
++
++static  NTSTATUS fill_container_id(char const device_path[MAX_PATH], char const id_product[7], char const id_vendor[7], GUID *container_id)
++{
++    char const *inputs[] = {device_path, id_product, id_vendor};
++
++    // When sysfs_path is empty it means something has gone horribly wrong.
++    if (device_path[0] == 0) {
++        return STATUS_INVALID_PARAMETER;
++    }
++
++    container_id_from_inputs(inputs, ARRAY_SIZE(inputs), container_id);
++    TRACE("Generated container id: %s\n", wine_dbgstr_guid(container_id));
++
++    return STATUS_SUCCESS;
++}
++
++static BOOL read_id_file(char const *sysfs_path, char const *file, char *buffer, size_t buffer_size)
++{
++    DIR *device_dir = opendir(sysfs_path);
++    int fd = openat(dirfd(device_dir), file, O_RDONLY | O_CLOEXEC);
++    int err = errno;
++    off_t offset = 0;
++
++    closedir(device_dir);
++
++    if (fd == -1) {
++        WARN("Failed to open %s/%s: %s\n", sysfs_path, file, strerror(err));
++        return FALSE;
++    }
++
++    for (;;) {
++        ssize_t len = read(fd, buffer + offset, buffer_size - offset);
++        if (len == 0)
++            break;
++        if (len == -1) {
++            if (errno == EINTR)
++                continue;
++            WARN("Failed to read %s/%s: %s\n", sysfs_path, file, strerror(errno));
++            close(fd);
++            return FALSE;
++        }
++    }
++    close(fd);
++    return TRUE;
++
++}
++
++BOOL container_id_for_sysfs(char const *sysfs_path, GUID *container_id)
++{
++    char device_path[MAX_PATH] = {0};
++    char id_product[7] = {0}; // 7 = strlen(0x0b05)+1
++    char id_vendor[7] = {0};
++
++    if (!get_device_sysfs_path_from_sys_path(sysfs_path, device_path)) {
++        return FALSE;
++    }
++
++    if (!read_id_file(device_path, "idProduct", id_product, sizeof(id_product))) {
++        return FALSE;
++    }
++
++    if (!read_id_file(device_path, "idVendor", id_vendor, sizeof(id_vendor))) {
++        return FALSE;
++    }
++
++    fill_container_id(device_path, id_product, id_vendor, container_id);
++    return TRUE;
++}
+diff --git a/dlls/winebus.sys/bus_udev.c b/dlls/winebus.sys/bus_udev.c
+index 332e79e3ae5..694e0732b68 100644
+--- a/dlls/winebus.sys/bus_udev.c
++++ b/dlls/winebus.sys/bus_udev.c
+@@ -73,6 +73,7 @@
+ #include "ddk/hidtypes.h"
+ #include "ddk/hidsdi.h"
+ 
++#include "wine/containerid.h"
+ #include "wine/debug.h"
+ #include "wine/hid.h"
+ #include "wine/unixlib.h"
+@@ -1563,6 +1564,30 @@ static void get_device_subsystem_info(struct udev_device *dev, const char *subsy
+     }
+ }
+ 
++static const char *get_device_syspath(struct udev_device *dev)
++{
++    struct udev_device *parent;
++
++    if ((parent = udev_device_get_parent_with_subsystem_devtype(dev, "hid", NULL)))
++        return udev_device_get_syspath(parent);
++
++    if ((parent = udev_device_get_parent_with_subsystem_devtype(dev, "usb", "usb_device")))
++        return udev_device_get_syspath(parent);
++
++    return udev_device_get_syspath(dev);
++}
++
++void get_container_id(struct udev_device *dev, struct device_desc *desc)
++{
++    const char *sysfs_path = get_device_syspath(dev);
++
++    memset(&desc->container_id, 0, sizeof(GUID));
++    if (!sysfs_path || sysfs_path[0] == 0) {
++        return;
++    }
++    container_id_for_sysfs(sysfs_path, &desc->container_id);
++}
++
+ static void udev_add_device(struct udev_device *dev, int fd)
+ {
+     struct device_desc desc =
+@@ -1588,6 +1613,8 @@ static void udev_add_device(struct udev_device *dev, int fd)
+ 
+     TRACE("udev %s syspath %s\n", debugstr_a(devnode), udev_device_get_syspath(dev));
+ 
++    get_container_id(dev, &desc);
++
+     get_device_subsystem_info(dev, "hid", NULL, &desc, &bus);
+     get_device_subsystem_info(dev, "input", NULL, &desc, &bus);
+     get_device_subsystem_info(dev, "usb", "usb_device", &desc, &bus);
+diff --git a/dlls/winebus.sys/main.c b/dlls/winebus.sys/main.c
+index 858c89d7d5a..8b38e90497d 100644
+--- a/dlls/winebus.sys/main.c
++++ b/dlls/winebus.sys/main.c
+@@ -40,6 +40,9 @@
+ 
+ #include "unixlib.h"
+ 
++#include "initguid.h"
++DEFINE_GUID(GUID_NULL,0,0,0,0,0,0,0,0,0,0,0);
++
+ WINE_DEFAULT_DEBUG_CHANNEL(hid);
+ 
+ static DRIVER_OBJECT *driver_obj;
+@@ -198,6 +201,21 @@ static WCHAR *get_instance_id(DEVICE_OBJECT *device)
+     return dst;
+ }
+ 
++static WCHAR *get_container_id(DEVICE_OBJECT *device)
++{
++    struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
++    UNICODE_STRING dst;
++
++    if (IsEqualGUID(&ext->desc.container_id, &GUID_NULL)) {
++        return NULL;
++    }
++
++    RtlZeroMemory(&dst, sizeof(dst));
++    RtlStringFromGUID(&ext->desc.container_id, &dst);
++
++    return dst.Buffer;
++}
++
+ static WCHAR *get_device_id(DEVICE_OBJECT *device)
+ {
+     static const WCHAR input_format[] = L"&MI_%02u";
+@@ -740,6 +758,10 @@ static NTSTATUS handle_IRP_MN_QUERY_ID(DEVICE_OBJECT *device, IRP *irp)
+             TRACE("BusQueryInstanceID\n");
+             irp->IoStatus.Information = (ULONG_PTR)get_instance_id(device);
+             break;
++        case BusQueryContainerID:
++            TRACE("BusQueryContainerID\n");
++            irp->IoStatus.Information = (ULONG_PTR)get_container_id(device);
++            break;
+         default:
+             WARN("Unhandled type %08x\n", type);
+             return status;
+diff --git a/dlls/winebus.sys/unixlib.h b/dlls/winebus.sys/unixlib.h
+index 02e7a1c6953..0b898da5e50 100644
+--- a/dlls/winebus.sys/unixlib.h
++++ b/dlls/winebus.sys/unixlib.h
+@@ -45,6 +45,7 @@ struct device_desc
+     WCHAR manufacturer[MAX_PATH];
+     WCHAR product[MAX_PATH];
+     WCHAR serialnumber[MAX_PATH];
++    GUID container_id;
+ };
+ 
+ struct sdl_bus_options
+diff --git a/dlls/winepulse.drv/pulse.c b/dlls/winepulse.drv/pulse.c
+index 9cb29be21b6..77dafb2fb2f 100644
+--- a/dlls/winepulse.drv/pulse.c
++++ b/dlls/winepulse.drv/pulse.c
+@@ -38,10 +38,14 @@
+ #include "initguid.h"
+ #include "audioclient.h"
+ 
++#include "wine/containerid.h"
+ #include "wine/debug.h"
+ #include "wine/list.h"
+ #include "wine/unixlib.h"
+ 
++#include "initguid.h"
++#include "devpkey.h"
++
+ #include "../mmdevapi/unixlib.h"
+ 
+ #include "mult.h"
+@@ -105,6 +109,7 @@ typedef struct _PhysDevice {
+     UINT index;
+     REFERENCE_TIME min_period, def_period;
+     WAVEFORMATEXTENSIBLE fmt;
++    GUID container_id;
+     char pulse_name[0];
+ } PhysDevice;
+ 
+@@ -550,6 +555,7 @@ static void fill_device_info(PhysDevice *dev, pa_proplist *p)
+     dev->bus_type = phys_device_bus_invalid;
+     dev->vendor_id = 0;
+     dev->product_id = 0;
++    memset(&dev->container_id, 0, sizeof(GUID));
+ 
+     if (!p)
+         return;
+@@ -566,6 +572,13 @@ static void fill_device_info(PhysDevice *dev, pa_proplist *p)
+ 
+     if ((buffer = pa_proplist_gets(p, PA_PROP_DEVICE_PRODUCT_ID)))
+         dev->product_id = strtol(buffer, NULL, 16);
++
++    if ((buffer = pa_proplist_gets(p, "sysfs.path"))) {
++        // The syspath is of the audio device. Resolve it up to the device level.
++        char sysfs_path[MAX_PATH];
++        snprintf(sysfs_path, sizeof(sysfs_path), "/sys%s/device", buffer);
++        container_id_for_sysfs(sysfs_path, &dev->container_id);
++    }
+ }
+ 
+ static void pulse_add_device(struct list *list, pa_proplist *proplist, int index, EndpointFormFactor form,
+@@ -2622,6 +2635,16 @@ static NTSTATUS pulse_get_prop_value(void *args)
+                 params->result = S_OK;
+                 return STATUS_SUCCESS;
+             }
++        } else if (IsEqualGUID(&params->prop->fmtid, &DEVPKEY_Device_ContainerId)) {
++            params->value->vt = VT_CLSID;
++            params->value->puuid = malloc(sizeof(GUID));
++            if (!params->value->puuid)
++                params->result = E_OUTOFMEMORY;
++            else {
++                params->result = S_OK;
++                *params->value->puuid = dev->container_id;
++            }
++            return STATUS_SUCCESS;
+         }
+ 
+         params->result = E_NOTIMPL;
+diff --git a/include/Makefile.in b/include/Makefile.in
+index d56bc5182d8..6271c62d5d5 100644
+--- a/include/Makefile.in
++++ b/include/Makefile.in
+@@ -918,6 +918,7 @@ SOURCES = \
+ 	wine/afd.h \
+ 	wine/asm.h \
+ 	wine/atsvc.idl \
++	wine/containerid.h \
+ 	wine/condrv.h \
+ 	wine/dcetypes.idl \
+ 	wine/debug.h \
+diff --git a/include/wine/containerid.h b/include/wine/containerid.h
+new file mode 100644
+index 00000000000..0a5b84794ff
+--- /dev/null
++++ b/include/wine/containerid.h
+@@ -0,0 +1,28 @@
++/*
++ * ContainerID helper functions
++ *
++ * Copyright 2025 Harald Sitter <sitter@kde.org>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#ifndef _WINE_CONTAINERID
++#define _WINE_CONTAINERID
++
++#include "winternl.h"
++
++NTSYSAPI BOOL container_id_for_sysfs(char const *sysfs_path, GUID *container_id);
++
++#endif /* _WINE_CONTAINERID */
+-- 
+2.49.0
+
+From 2b94858cd4f02c0e557535b90d2fb386d0779f6a Mon Sep 17 00:00:00 2001
+From: Claire <claire.github-309c@sitedethib.com>
+Date: Tue, 29 Nov 2022 17:37:44 +0100
+Subject: [PATCH 3/3] Implement SetupDiGetDeviceInterfacePropertyW for
+ DEVPKEY_Device_InstanceId
+
+Fixes a crash in Marvel's Spider-Man
+---
+ dlls/setupapi/devinst.c     | 49 +++++++++++++++++++++++++++++++++++++
+ dlls/setupapi/setupapi.spec |  1 +
+ 2 files changed, 50 insertions(+)
+
+diff --git a/dlls/setupapi/devinst.c b/dlls/setupapi/devinst.c
+index f6675ee7840..72c990b39f6 100644
+--- a/dlls/setupapi/devinst.c
++++ b/dlls/setupapi/devinst.c
+@@ -3121,6 +3121,55 @@ BOOL WINAPI SetupDiDestroyDeviceInfoList(HDEVINFO devinfo)
+     return TRUE;
+ }
+ 
++/***********************************************************************
++ *              SetupDiGetDeviceInterfacePropertyW (SETUPAPI.@)
++ */
++BOOL WINAPI SetupDiGetDeviceInterfacePropertyW(HDEVINFO devinfo, SP_DEVICE_INTERFACE_DATA *iface_data,
++                const DEVPROPKEY *prop_key, DEVPROPTYPE *prop_type, BYTE *prop_buff,
++                DWORD prop_buff_size, DWORD *required_size, DWORD flags) {
++
++    // TODO: should probably use DEVPKEY_Device_InstanceId
++    static const DEVPROPKEY device_instanceid_key = {
++        {0x78c34fc8, 0x104a, 0x4aca, {0x9e, 0xa4, 0x52, 0x4d, 0x52, 0x99, 0x6e, 0x57}}, 256
++    };
++
++    TRACE("%p, %p, (%s, %04lx), %p, %p, %ld, %p, %#lx\n", devinfo, iface_data, wine_dbgstr_guid(&prop_key->fmtid), prop_key->pid, prop_type, prop_buff, prop_buff_size,
++          required_size, flags);
++
++    // Special case for InstanceID
++    if (IsEqualDevPropKey(*prop_key, device_instanceid_key)) {
++        struct device *device;
++        struct device_iface *iface;
++
++        if (!(iface = get_device_iface(devinfo, iface_data)))
++            return FALSE;
++
++        if (!(device = iface->device))
++            return FALSE;
++
++        TRACE("instance ID: %s\n", debugstr_w(device->instanceId));
++        if (prop_buff_size < lstrlenW(device->instanceId) + 1)
++        {
++            SetLastError(ERROR_INSUFFICIENT_BUFFER);
++            if (required_size)
++                *required_size = lstrlenW(device->instanceId) + 1;
++            return FALSE;
++        }
++
++        lstrcpyW((WCHAR *) prop_buff, device->instanceId);
++        if (required_size)
++            *required_size = lstrlenW(device->instanceId) + 1;
++        *prop_type = DEVPROP_TYPE_STRING;
++
++        return TRUE;
++    } else {
++        // TODO: maybe fall back as SetupDiGetDevicePropertyW?
++        FIXME("stub\n");
++    }
++
++    return FALSE;
++}
++
+ /***********************************************************************
+  *		SetupDiGetDeviceInterfaceDetailA (SETUPAPI.@)
+  */
+diff --git a/dlls/setupapi/setupapi.spec b/dlls/setupapi/setupapi.spec
+index 1c93a1f3b9b..ce0d0b5813e 100644
+--- a/dlls/setupapi/setupapi.spec
++++ b/dlls/setupapi/setupapi.spec
+@@ -358,6 +358,7 @@
+ @ stdcall SetupDiGetDeviceInterfaceDetailA(long ptr ptr long ptr ptr)
+ @ stdcall SetupDiGetDeviceInterfaceDetailW(long ptr ptr long ptr ptr)
+ @ stdcall SetupDiGetDevicePropertyKeys(ptr ptr ptr long ptr long)
++@ stdcall SetupDiGetDeviceInterfacePropertyW(ptr ptr ptr ptr ptr long ptr long)
+ @ stdcall SetupDiGetDevicePropertyW(ptr ptr ptr ptr ptr long ptr long)
+ @ stdcall SetupDiGetDeviceRegistryPropertyA(long ptr long ptr ptr long ptr)
+ @ stdcall SetupDiGetDeviceRegistryPropertyW(long ptr long ptr ptr long ptr)
+-- 
+2.49.0
