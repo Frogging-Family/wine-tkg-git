@@ -1,0 +1,1939 @@
+From b9bb042502857bf088bdde3cdb0f998b6fbdcedc Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Tue, 13 Jun 2017 12:35:56 -0500
+Subject: [PATCH] HACK: steam: ntdll: Append C:/Program Files (x86)/Steam to
+ PATH.
+
+---
+ dlls/ntdll/loader.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index bf072af84ac..15d6dde0377 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -84,7 +84,7 @@ const WCHAR system_dir[] = L"C:\\windows\\system32\\";
+ HMODULE kernel32_handle = 0;
+
+ /* system search path */
+-static const WCHAR system_path[] = L"C:\\windows\\system32;C:\\windows\\system;C:\\windows";
++static const WCHAR system_path[] = L"C:\\windows\\system32;C:\\windows\\system;C:\\windows;C:\\Program Files (x86)\\Steam";
+
+ static BOOL is_prefix_bootstrap;  /* are we bootstrapping the prefix? */
+ static BOOL imports_fixup_done = FALSE;  /* set once the imports have been fixed up, before attaching them */
+From 38e8f39bda73a48a5aa5153e29ed2a32c635d342 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 22 Nov 2022 11:02:52 +0100
+Subject: [PATCH 0019/1564] HACK: steam: ntdll: Setup steamclient trampolines
+ to lsteamclient.
+
+This uses exec page faults to jump from native steamclient into our
+lsteamclient entry points.
+---
+ dlls/ntdll/loader.c             |  23 ++++++
+ dlls/ntdll/unix/loader.c        | 130 ++++++++++++++++++++++++++++++++
+ dlls/ntdll/unix/signal_i386.c   |   7 ++
+ dlls/ntdll/unix/signal_x86_64.c |   7 ++
+ dlls/ntdll/unix/unix_private.h  |   1 +
+ dlls/ntdll/unixlib.h            |   7 ++
+ 6 files changed, 175 insertions(+)
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 0c25fe14133..c659684e307 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -2206,12 +2206,16 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+                               DWORD flags, BOOL system, WINE_MODREF **pwm )
+ {
+     static const char builtin_signature[] = "Wine builtin DLL";
++    static HMODULE lsteamclient = NULL;
+     char *signature = (char *)((IMAGE_DOS_HEADER *)*module + 1);
++    UNICODE_STRING lsteamclient_us;
+     BOOL is_builtin;
+     IMAGE_NT_HEADERS *nt;
+     WINE_MODREF *wm;
+     NTSTATUS status;
+     SIZE_T map_size;
++    WCHAR *basename, *tmp;
++    ULONG basename_len;
+ 
+     if (!(nt = RtlImageNtHeader( *module ))) return STATUS_INVALID_IMAGE_FORMAT;
+ 
+@@ -2232,6 +2236,25 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+ 
+     update_load_config( *module );
+ 
++    basename = nt_name->Buffer;
++    if ((tmp = wcsrchr(basename, '\\'))) basename = tmp + 1;
++    if ((tmp = wcsrchr(basename, '/'))) basename = tmp + 1;
++    basename_len = wcslen(basename);
++    if (basename_len >= 4 && !wcscmp(basename + basename_len - 4, L".dll")) basename_len -= 4;
++
++    if ((!RtlCompareUnicodeStrings(basename, basename_len, L"steamclient", 11, TRUE) ||
++         !RtlCompareUnicodeStrings(basename, basename_len, L"steamclient64", 13, TRUE) ||
++         !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer", 19, TRUE) ||
++         !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer64", 21, TRUE)) &&
++        RtlCreateUnicodeStringFromAsciiz(&lsteamclient_us, "lsteamclient.dll") &&
++        (lsteamclient || LdrLoadDll(load_path, 0, &lsteamclient_us, &lsteamclient) == STATUS_SUCCESS))
++    {
++        struct steamclient_setup_trampolines_params params = {.src_mod = *module, .tgt_mod = lsteamclient};
++        WINE_UNIX_CALL( unix_steamclient_setup_trampolines, &params );
++        wm->ldr.Flags |= LDR_DONT_RESOLVE_REFS;
++        flags |= DONT_RESOLVE_DLL_REFERENCES;
++    }
++
+     /* fixup imports */
+ 
+     if (!(flags & DONT_RESOLVE_DLL_REFERENCES) &&
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 68cd4f50420..f57b16c548a 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1181,21 +1181,6 @@
+ 
+ #endif /* SO_DLLS_SUPPORTED */
+ 
+-
+-static const unixlib_entry_t unix_call_funcs[] =
+-{
+-    load_so_dll,
+-    unwind_builtin_dll,
+-    unixcall_wine_dbg_write,
+-    unixcall_wine_needs_override_large_address_aware,
+-    unixcall_wine_server_call,
+-    unixcall_wine_server_fd_to_handle,
+-    unixcall_wine_server_handle_to_fd,
+-    unixcall_wine_spawnvp,
+-    system_time_precise,
+-};
+-
+-
+ #ifdef _WIN64
+ 
+ static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
+@@ -1181,25 +1181,6 @@
+ 
+ #endif /* SO_DLLS_SUPPORTED */
+ 
+-#ifdef _WIN64
+-
+-static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
+-static NTSTATUS wow64_unwind_builtin_dll( void *args ) { return STATUS_UNSUCCESSFUL; }
+-
+-const unixlib_entry_t unix_call_wow64_funcs[] =
+-{
+-    wow64_load_so_dll,
+-    wow64_unwind_builtin_dll,
+-    wow64_wine_dbg_write,
+-    wow64_wine_server_call,
+-    wow64_wine_server_fd_to_handle,
+-    wow64_wine_server_handle_to_fd,
+-    wow64_wine_spawnvp,
+-    system_time_precise,
+-};
+-
+-#endif  /* _WIN64 */
+-
+ 
+ static inline char *prepend( char *buffer, const char *str, size_t len )
+ {
+@@ -1684,6 +1684,169 @@
+     return get_rva( module, data->VirtualAddress );
+ }
+ 
++static void *steamclient_srcs[128];
++static void *steamclient_tgts[128];
++static int steamclient_count;
++
++void *steamclient_handle_fault( LPCVOID addr, DWORD err )
++{
++    int i;
++
++    if (!(err & EXCEPTION_EXECUTE_FAULT)) return NULL;
++
++    for (i = 0; i < steamclient_count; ++i)
++    {
++        if (addr == steamclient_srcs[i])
++            return steamclient_tgts[i];
++    }
++
++    return NULL;
++}
++
++static void steamclient_write_jump_x64(void *src_addr, ULONGLONG tgt_addr)
++{
++    static const char mov[] = {0x48, 0xb8};
++    static const char jmp[] = {0xff, 0xe0};
++    memcpy(src_addr, mov, sizeof(mov));
++    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
++    memcpy((char *)src_addr + sizeof(mov) + sizeof(tgt_addr), jmp, sizeof(jmp));
++}
++
++static void steamclient_write_jump_x86(void *src_addr, ULONG tgt_addr)
++{
++    static const char mov[] = {0xb8};
++    static const char jmp[] = {0xff, 0xe0};
++    memcpy(src_addr, mov, sizeof(mov));
++    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
++    memcpy((char *)src_addr + sizeof(mov) + sizeof(tgt_addr), jmp, sizeof(jmp));
++}
++
++static NTSTATUS steamclient_setup_trampolines( void *args )
++{
++    static int noexec_cached = -1;
++
++    struct steamclient_setup_trampolines_params *params = args;
++    HMODULE src_mod = params->src_mod, tgt_mod = params->tgt_mod;
++    SYSTEM_BASIC_INFORMATION info;
++    IMAGE_NT_HEADERS *src_nt = get_rva( src_mod, ((IMAGE_DOS_HEADER *)src_mod)->e_lfanew );
++    IMAGE_NT_HEADERS *tgt_nt = get_rva( tgt_mod, ((IMAGE_DOS_HEADER *)tgt_mod)->e_lfanew );
++    IMAGE_SECTION_HEADER *src_sec = IMAGE_FIRST_SECTION( src_nt );
++    BOOL x64 = src_nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC;
++    const IMAGE_EXPORT_DIRECTORY *src_exp, *tgt_exp;
++    const DWORD *names;
++    SIZE_T size;
++    void *addr, *src_addr, *tgt_addr;
++    char *name, *wsne;
++    UINT_PTR page_mask;
++    int i;
++
++    if (noexec_cached == -1)
++        noexec_cached = (wsne = getenv("WINESTEAMNOEXEC")) && atoi(wsne);
++
++    virtual_get_system_info( &info, !!NtCurrentTeb()->WowTebOffset );
++    page_mask = info.PageSize - 1;
++
++    for (i = 0; i < src_nt->FileHeader.NumberOfSections; ++i)
++    {
++        if (memcmp(src_sec[i].Name, ".text", 5)) continue;
++        addr = (void *)(((UINT_PTR)src_mod + src_sec[i].VirtualAddress) & ~page_mask);
++        size = (src_sec[i].Misc.VirtualSize + page_mask) & ~page_mask;
++        if (noexec_cached) mprotect(addr, size, PROT_READ);
++        else mprotect(addr, size, PROT_READ|PROT_WRITE|PROT_EXEC);
++    }
++
++    src_exp = get_module_data_dir( src_mod, IMAGE_FILE_EXPORT_DIRECTORY, NULL );
++    tgt_exp = get_module_data_dir( tgt_mod, IMAGE_FILE_EXPORT_DIRECTORY, NULL );
++    names = (const DWORD *)((UINT_PTR)src_mod + src_exp->AddressOfNames);
++    for (i = 0; i < src_exp->NumberOfNames; ++i)
++    {
++        if (!names[i] || !(name = (char *)((UINT_PTR)src_mod + names[i]))) continue;
++        if (!(src_addr = (void *)find_named_export(src_mod, src_exp, name))) continue;
++        if (!(tgt_addr = (void *)find_named_export(tgt_mod, tgt_exp, name))) continue;
++        assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
++        steamclient_srcs[steamclient_count] = src_addr;
++        steamclient_tgts[steamclient_count] = tgt_addr;
++        if (!noexec_cached)
++        {
++            if (x64) steamclient_write_jump_x64( src_addr, (ULONG_PTR)tgt_addr );
++            else steamclient_write_jump_x86( src_addr, PtrToUlong(tgt_addr) );
++        }
++        else steamclient_count++;
++    }
++
++    if (x64)
++    {
++        IMAGE_NT_HEADERS64 *src_nt64 = (IMAGE_NT_HEADERS64 *)src_nt, *tgt_nt64 = (IMAGE_NT_HEADERS64 *)tgt_nt;
++        src_addr = (void *)((UINT_PTR)src_mod + src_nt64->OptionalHeader.AddressOfEntryPoint);
++        tgt_addr = (void *)((UINT_PTR)tgt_mod + tgt_nt64->OptionalHeader.AddressOfEntryPoint);
++    }
++    else
++    {
++        IMAGE_NT_HEADERS32 *src_nt32 = (IMAGE_NT_HEADERS32 *)src_nt, *tgt_nt32 = (IMAGE_NT_HEADERS32 *)tgt_nt;
++        src_addr = (void *)((UINT_PTR)src_mod + src_nt32->OptionalHeader.AddressOfEntryPoint);
++        tgt_addr = (void *)((UINT_PTR)tgt_mod + tgt_nt32->OptionalHeader.AddressOfEntryPoint);
++    }
++
++    assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
++    steamclient_srcs[steamclient_count] = src_addr;
++    steamclient_tgts[steamclient_count] = tgt_addr;
++    if (!noexec_cached)
++    {
++        if (x64) steamclient_write_jump_x64( src_addr, (ULONG_PTR)tgt_addr );
++        else steamclient_write_jump_x86( src_addr, PtrToUlong(tgt_addr) );
++    }
++    else steamclient_count++;
++
++    return STATUS_SUCCESS;
++}
++
++static const unixlib_entry_t unix_call_funcs[] =
++{
++    load_so_dll,
++    unwind_builtin_dll,
++    unixcall_wine_dbg_write,
++    unixcall_wine_needs_override_large_address_aware,
++    unixcall_wine_server_call,
++    unixcall_wine_server_fd_to_handle,
++    unixcall_wine_server_handle_to_fd,
++    unixcall_wine_spawnvp,
++    system_time_precise,
++    steamclient_setup_trampolines,
++};
++
++#ifdef _WIN64
++
++static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
++static NTSTATUS wow64_unwind_builtin_dll( void *args ) { return STATUS_UNSUCCESSFUL; }
++
++static NTSTATUS wow64_steamclient_setup_trampolines( void *args )
++{
++    struct
++    {
++        ULONG src_mod;
++        ULONG tgt_mod;
++    } const *params32 = args;
++    struct steamclient_setup_trampolines_params params;
++    params.src_mod = (HMODULE)(UINT_PTR)params32->src_mod;
++    params.tgt_mod = (HMODULE)(UINT_PTR)params32->tgt_mod;
++    return steamclient_setup_trampolines( &params );
++}
++
++const unixlib_entry_t unix_call_wow64_funcs[] =
++{
++    wow64_load_so_dll,
++    wow64_unwind_builtin_dll,
++    wow64_wine_dbg_write,
++    wow64_wine_server_call,
++    wow64_wine_server_fd_to_handle,
++    wow64_wine_server_handle_to_fd,
++    wow64_wine_spawnvp,
++    system_time_precise,
++    wow64_steamclient_setup_trampolines,
++};
++
++#endif  /* _WIN64 */
++
+ /***********************************************************************
+  *           load_ntdll_functions
+  */
+diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
+index 8ae7afc769e..a4345a5b589 100644
+--- a/dlls/ntdll/unix/signal_i386.c
++++ b/dlls/ntdll/unix/signal_i386.c
+@@ -1905,6 +1905,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+     struct xcontext xcontext;
+     ucontext_t *ucontext = sigcontext;
+     void *stack = setup_exception_record( sigcontext, &rec, &xcontext );
++    void *steamclient_addr = NULL;
+ 
+     switch (TRAP_sig(ucontext))
+     {
+@@ -1939,6 +1940,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+         }
+         break;
+     case TRAP_x86_PAGEFLT:  /* Page fault */
++        if ((steamclient_addr = steamclient_handle_fault( siginfo->si_addr, (ERROR_sig(ucontext) >> 1) & 0x09 )))
++        {
++            EIP_sig(ucontext) = (intptr_t)steamclient_addr;
++            return;
++        }
++
+         rec.NumberParameters = 2;
+         rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
+         rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index caa85249896..aace1b59b03 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -1977,6 +1977,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+     ucontext_t *ucontext = init_handler( sigcontext );
+     EXCEPTION_RECORD rec = { 0 };
+     struct xcontext context;
++    void *steamclient_addr = NULL;
+ 
+     rec.ExceptionAddress = (void *)RIP_sig(ucontext);
+     save_context( &context, ucontext );
+@@ -2247,6 +2247,13 @@
+         }
+         break;
+     case TRAP_x86_PAGEFLT:  /* Page fault */
++
++        if ((steamclient_addr = steamclient_handle_fault( siginfo->si_addr, (ERROR_sig(ucontext) >> 1) & 0x09 )))
++        {
++            RIP_sig(ucontext) = (intptr_t)steamclient_addr;
++            return;
++        }
++
+         rec.NumberParameters = 2;
+         rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
+         rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index f840045f841..2f956af6966 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -264,6 +264,7 @@ extern unsigned int alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, stru
+                                              data_size_t *ret_len );
+ extern NTSTATUS system_time_precise( void *args );
+ 
++extern void *steamclient_handle_fault( LPCVOID addr, DWORD err );
+ extern void *anon_mmap_fixed( void *start, size_t size, int prot, int flags );
+ extern void *anon_mmap_alloc( size_t size, int prot );
+ extern void virtual_init(void);
+diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
+index 9cb444342fe..475e532b8cf 100644
+--- a/dlls/ntdll/unixlib.h
++++ b/dlls/ntdll/unixlib.h
+@@ -66,6 +66,12 @@ struct unwind_builtin_dll_params
+     CONTEXT                    *context;
+ };
+ 
++struct steamclient_setup_trampolines_params
++{
++    HMODULE src_mod;
++    HMODULE tgt_mod;
++};
++
+ enum ntdll_unix_funcs
+ {
+     unix_load_so_dll,
+@@ -76,6 +82,7 @@ enum ntdll_unix_funcs
+     unix_wine_server_handle_to_fd,
+     unix_wine_spawnvp,
+     unix_system_time_precise,
++    unix_steamclient_setup_trampolines,
+ };
+ 
+ extern unixlib_handle_t __wine_unixlib_handle;
+-- 
+2.49.0
+From 08290ccabc137d205ceec261706d78b021d14fa4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 22 Nov 2022 11:08:22 +0100
+Subject: [PATCH] HACK: proton: ntdll: Export a function to set a Unix
+ environment variable
+
+---
+ dlls/ntdll/ntdll.spec          |   1 +
+ dlls/ntdll/unix/env.c          |  10 +++
+ dlls/ntdll/unix/loader.c       |   1 +
+ dlls/ntdll/unix/unix_private.h |   1 +
+ tools/gdbinit.py               | 113 +++++++++++++++++++++++++++++++++
+ 5 files changed, 126 insertions(+)
+ create mode 100644 tools/gdbinit.py
+
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index b41e29c0ff5..05999131fc5 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -1696,6 +1696,7 @@
+ @ extern -private __wine_syscall_dispatcher
+ @ extern -private __wine_unix_call_dispatcher
+ @ extern -private __wine_unixlib_handle
++@ stdcall -syscall __wine_set_unix_env(ptr ptr)
+
+ # Debugging
+ @ stdcall -syscall -norelay __wine_dbg_write(ptr long)
+diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
+index 6f1709f4713..3c387ba9027 100644
+--- a/dlls/ntdll/unix/env.c
++++ b/dlls/ntdll/unix/env.c
+@@ -2418,3 +2418,13 @@ void WINAPI RtlSetLastWin32Error( DWORD err )
+ #endif
+     teb->LastErrorValue = err;
+ }
++
++
++/**********************************************************************
++ *      __wine_set_unix_env  (ntdll.so)
++ */
++ULONG WINAPI __wine_set_unix_env( const char *var, const char *val )
++{
++    setenv(var, val, 1);
++    return 0;
++}
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 975ac0b334f..a723ae3c5b9 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -294,6 +294,7 @@ extern NTSTATUS call_user_apc_dispatcher( CONTEXT *context_ptr, ULONG_PTR arg1,
+                                           PNTAPCFUNC func, NTSTATUS status );
+ extern NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context );
+ extern void call_raise_user_exception_dispatcher(void);
++extern ULONG WINAPI __wine_set_unix_env( const char *var, const char *val );
+
+ #define IMAGE_DLLCHARACTERISTICS_PREFER_NATIVE 0x0010 /* Wine extension */
+
+diff --git a/dlls/wow64/syscall.c b/dlls/wow64/syscall.c
+index 764f5fb2c05..dca651ee770 100644
+--- a/dlls/wow64/syscall.c
++++ b/dlls/wow64/syscall.c
+@@ -1335,3 +1335,11 @@ NTSTATUS WINAPI Wow64RaiseException( int code, EXCEPTION_RECORD *rec )
+     __ENDTRY
+     return STATUS_SUCCESS;
+ }
++
++/**********************************************************************
++ *           wow64___wine_set_unix_env  (wow64.@)
++ */
++NTSTATUS WINAPI wow64___wine_set_unix_env( UINT *args )
++{
++    return __wine_set_unix_env();
++}
+
+diff --git a/tools/gdbinit.py b/tools/gdbinit.py
+new file mode 100644
+index 00000000000..ba3b7d003ac
+--- /dev/null
++++ b/tools/gdbinit.py
+@@ -0,0 +1,113 @@
++#!/bin/env python3
++
++# Copyright 2021 Rémi Bernon for CodeWeavers
++#
++# This library is free software; you can redistribute it and/or
++# modify it under the terms of the GNU Lesser General Public
++# License as published by the Free Software Foundation; either
++# version 2.1 of the License, or (at your option) any later version.
++#
++# This library is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++# Lesser General Public License for more details.
++#
++# You should have received a copy of the GNU Lesser General Public
++# License along with this library; if not, write to the Free Software
++# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++
++from __future__ import print_function
++
++import gdb
++import re
++import subprocess
++import sys
++
++class LoadSymbolFiles(gdb.Command):
++  'Command to load symbol files directly from /proc/<pid>/maps.'
++
++  def __init__(self):
++    sup = super(LoadSymbolFiles, self)
++    sup.__init__('load-symbol-files', gdb.COMMAND_FILES, gdb.COMPLETE_NONE,
++                 False)
++
++    self.libs = {}
++    gdb.execute('alias -a lsf = load-symbol-files', True)
++
++  def invoke(self, arg, from_tty):
++    pid = gdb.selected_inferior().pid
++    if not pid in self.libs: self.libs[pid] = {}
++
++    def command(cmd, confirm=from_tty, to_string=not from_tty):
++      gdb.execute(cmd, from_tty=confirm, to_string=to_string)
++
++    def execute(cmd):
++      return subprocess.check_output(cmd, stderr=subprocess.STDOUT) \
++                       .decode('utf-8')
++
++    # load mappings addresses
++    libs = {}
++    with open('/proc/{}/maps'.format(pid), 'r') as maps:
++      for line in maps:
++        addr, _, _, _, node, path = re.split(r'\s+', line, 5)
++        path = path.strip()
++        if node == '0': continue
++        if path in libs: continue
++        libs[path] = int(addr.split('-')[0], 16)
++
++    # unload symbol file if address changed
++    for k in set(libs) & set(self.libs[pid]):
++      if libs[k] != self.libs[pid][k]:
++        command('remove-symbol-file "{}"'.format(k), confirm=False)
++        del self.libs[k]
++
++    # load symbol file for new mappings
++    for k in set(libs) - set(self.libs[pid]):
++        if arg is not None and re.search(arg, k) is None: continue
++        addr = self.libs[pid][k] = libs[k]
++        has_debug = False
++        offs = None
++
++        try:
++          out = execute(['file', k])
++        except:
++          continue
++
++        # try loading mapping as ELF
++        try:
++          out = execute(['readelf', '-l', k])
++          for line in out.split('\n'):
++            if not 'LOAD' in line: continue
++            base = int(line.split()[2], 16)
++            break
++        except:
++          # assume mapping is PE
++          base = -1
++
++        try:
++          name = None
++          cmd = 'add-symbol-file "{}"'.format(k)
++          out = execute(['objdump', '-h', k])
++          for line in out.split('\n'):
++            if '2**' in line:
++              _, name, _, vma, _, off, _ = line.split(maxsplit=6)
++              if base < 0: offs = int(off, 16)
++              else: offs = int(vma, 16) - base
++            if 'ALLOC' in line:
++              cmd += ' -s {} 0x{:x}'.format(name, addr + offs)
++            elif name in ['.gnu_debuglink', '.debug_info']:
++              has_debug = True
++            elif 'DEBUGGING' in line:
++              has_debug = True
++        except:
++          continue
++
++        if not has_debug:
++          print('no debugging info found in {}'.format(k))
++          continue
++
++        print('loading symbols for {}'.format(k))
++        command(cmd, confirm=False, to_string=True)
++
++
++LoadSymbolFiles()
+
+From 7aa2679cea3e6edb206da42d23d9d12cb0f1e937 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 21 May 2021 21:54:39 +0200
+Subject: [PATCH] ntdll: Set RLIMIT_NICE to its hard limit and inform the
+ server.
+
+---
+ dlls/ntdll/unix/loader.c |  3 +++
+ dlls/ntdll/unix/server.c | 14 ++++++++++++++
+ server/process.h         |  1 +
+ server/protocol.def      |  1 +
+ server/thread.c          |  7 +++++++
+ 5 files changed, 26 insertions(+)
+
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index 56a110882ed..321b91d20e0 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -53,6 +53,9 @@
+ # include <sys/prctl.h>
+ #endif
+ #include <sys/stat.h>
++#ifdef HAVE_SYS_RESOURCE_H
++# include <sys/resource.h>
++#endif
+ #ifdef HAVE_SYS_SYSCALL_H
+ # include <sys/syscall.h>
+ #endif
+@@ -1455,6 +1458,8 @@ size_t server_init_process(void)
+     struct sigaction sig_act;
+     size_t info_size;
+     DWORD pid, tid;
++    struct rlimit rlimit;
++    int nice_limit = 0;
+
+     server_pid = -1;
+     if (env_socket)
+@@ -1516,10 +1521,19 @@ size_t server_init_process(void)
+
+     reply_pipe = init_thread_pipe();
+
++#ifdef RLIMIT_NICE
++    if (!getrlimit( RLIMIT_NICE, &rlimit ))
++    {
++        if (rlimit.rlim_cur <= 40) nice_limit = 20 - rlimit.rlim_cur;
++        else if (rlimit.rlim_cur == -1 /* RLIMIT_INFINITY */) nice_limit = -20;
++    }
++#endif
++
+     SERVER_START_REQ( init_first_thread )
+     {
+         req->unix_pid    = getpid();
+         req->unix_tid    = get_unix_tid();
++        req->nice_limit  = nice_limit;
+         req->reply_fd    = reply_pipe;
+         req->wait_fd     = ntdll_get_thread_data()->wait_fd[1];
+         req->debug_level = (TRACE_ON(server) != 0);
+diff --git a/server/process.h b/server/process.h
+index a0a071d8f88..d073e9e285f 100644
+--- a/server/process.h
++++ b/server/process.h
+@@ -50,6 +50,7 @@ struct process
+     timeout_t            sigkill_delay;   /* delay before final SIGKILL */
+     unsigned short       machine;         /* client machine type */
+     int                  unix_pid;        /* Unix pid for final SIGKILL */
++    int                  nice_limit;      /* RLIMIT_NICE of the process */
+     int                  exit_code;       /* process exit code */
+     int                  running_threads; /* number of threads running in this process */
+     timeout_t            start_time;      /* absolute time at process start */
+diff --git a/server/protocol.def b/server/protocol.def
+index 880ad794982..42eae1db9f3 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -941,6 +941,7 @@ typedef struct
+     int          debug_level;  /* new debug level */
+     int          reply_fd;     /* fd for reply pipe */
+     int          wait_fd;      /* fd for blocking calls pipe */
++    char         nice_limit;   /* RLIMIT_NICE of new thread */
+ @REPLY
+     process_id_t pid;          /* process id of the new thread's process */
+     thread_id_t  tid;          /* thread id of the new thread */
+diff --git a/server/thread.c b/server/thread.c
+index 2cb45e2bf76..7efa00312bb 100644
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -37,6 +37,12 @@
+ #define _WITH_CPU_SET_T
+ #include <sched.h>
+ #endif
++#ifdef HAVE_SYS_TIME_H
++#include <sys/time.h>
++#endif
++#ifdef HAVE_SYS_RESOURCE_H
++#include <sys/resource.h>
++#endif
+
+ #include "ntstatus.h"
+ #define WIN32_NO_STATUS
+@@ -1489,6 +1495,7 @@ DECL_HANDLER(init_first_thread)
+
+     current->unix_pid = process->unix_pid = req->unix_pid;
+     current->unix_tid = req->unix_tid;
++    process->nice_limit = req->nice_limit;
+
+     if (!process->parent_id)
+         process->affinity = current->affinity = get_thread_affinity( current );
+
+From 4fd446bd2e3e289ff792c5315d8291fbcad7aca5 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Mon, 23 May 2022 13:17:32 -0500
+Subject: [PATCH] ntdll: Disable 16-bit TIB hack
+
+MechWarrior Online (342200) writes directly to the SubSystemTib field,
+which Wine would interpret to mean it's a 16-bit executable and then
+crash. We're unlikely to run into any real 16-bit applications in Proton
+(they won't work on modern Windows, anyway), so let's just disable that
+hack entirely.
+
+CW-Bug-Id: #20673
+---
+ dlls/kernelbase/loader.c | 2 +-
+ dlls/ntdll/env.c         | 2 +-
+ dlls/ntdll/path.c        | 6 +++---
+ 3 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/dlls/kernelbase/loader.c b/dlls/kernelbase/loader.c
+index 0fd2d7b7c99..af3c193f331 100644
+--- a/dlls/kernelbase/loader.c
++++ b/dlls/kernelbase/loader.c
+@@ -302,7 +302,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetModuleFileNameW( HMODULE module, LPWSTR filena
+     UNICODE_STRING name;
+     NTSTATUS status;
+
+-    if (!module && ((win16_tib = NtCurrentTeb()->Tib.SubSystemTib)) && win16_tib->exe_name)
++    if (!module && (0 && (win16_tib = NtCurrentTeb()->Tib.SubSystemTib)) && win16_tib->exe_name)
+     {
+         len = min( size, win16_tib->exe_name->Length / sizeof(WCHAR) );
+         memcpy( filename, win16_tib->exe_name->Buffer, len * sizeof(WCHAR) );
+diff --git a/dlls/ntdll/env.c b/dlls/ntdll/env.c
+index 6db6cee17cd..7d993cd799c 100644
+--- a/dlls/ntdll/env.c
++++ b/dlls/ntdll/env.c
+@@ -589,7 +589,7 @@ NTSTATUS WINAPI RtlCreateProcessParametersEx( RTL_USER_PROCESS_PARAMETERS **resu
+     if (!DllPath) DllPath = &null_str;
+     if (!CurrentDirectoryName)
+     {
+-        if (NtCurrentTeb()->Tib.SubSystemTib)  /* FIXME: hack */
++        if (0 && NtCurrentTeb()->Tib.SubSystemTib)  /* FIXME: hack */
+             curdir = ((WIN16_SUBSYSTEM_TIB *)NtCurrentTeb()->Tib.SubSystemTib)->curdir.DosPath;
+         else
+             curdir = cur_params->CurrentDirectory.DosPath;
+diff --git a/dlls/ntdll/path.c b/dlls/ntdll/path.c
+index da6f55ddb83..dda6ba4ee53 100644
+--- a/dlls/ntdll/path.c
++++ b/dlls/ntdll/path.c
+@@ -528,7 +528,7 @@ static ULONG get_full_path_helper(LPCWSTR name, LPWSTR buffer, ULONG size)
+
+     RtlAcquirePebLock();
+
+-    if (NtCurrentTeb()->Tib.SubSystemTib)  /* FIXME: hack */
++    if (0 && NtCurrentTeb()->Tib.SubSystemTib)  /* FIXME: hack */
+         cd = &((WIN16_SUBSYSTEM_TIB *)NtCurrentTeb()->Tib.SubSystemTib)->curdir.DosPath;
+     else
+         cd = &NtCurrentTeb()->Peb->ProcessParameters->CurrentDirectory.DosPath;
+@@ -883,7 +883,7 @@ ULONG WINAPI RtlGetCurrentDirectory_U(ULONG buflen, LPWSTR buf)
+
+     RtlAcquirePebLock();
+
+-    if (NtCurrentTeb()->Tib.SubSystemTib)  /* FIXME: hack */
++    if (0 && NtCurrentTeb()->Tib.SubSystemTib)  /* FIXME: hack */
+         us = &((WIN16_SUBSYSTEM_TIB *)NtCurrentTeb()->Tib.SubSystemTib)->curdir.DosPath;
+     else
+         us = &NtCurrentTeb()->Peb->ProcessParameters->CurrentDirectory.DosPath;
+@@ -927,7 +927,7 @@ NTSTATUS WINAPI RtlSetCurrentDirectory_U(const UNICODE_STRING* dir)
+
+     RtlAcquirePebLock();
+
+-    if (NtCurrentTeb()->Tib.SubSystemTib)  /* FIXME: hack */
++    if (0 && NtCurrentTeb()->Tib.SubSystemTib)  /* FIXME: hack */
+         curdir = &((WIN16_SUBSYSTEM_TIB *)NtCurrentTeb()->Tib.SubSystemTib)->curdir;
+     else
+         curdir = &NtCurrentTeb()->Peb->ProcessParameters->CurrentDirectory;
+From 498f70e9ca11d5bba6cbd855c559fc6e15d4c63f Mon Sep 17 00:00:00 2001
+From: Paul Gofman <gofmanp@gmail.com>
+Date: Thu, 29 Dec 2022 11:30:18 -0600
+Subject: [PATCH] ntdll: HACK: Load Unix libs at once in
+ load_builtin_unixlib().
+
+CW-Bug-Id: #21736
+---
+ dlls/ntdll/unix/virtual.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 707eb513a54..787f12f1615 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -689,6 +689,7 @@ NTSTATUS load_builtin_unixlib( void *module, const char *name )
+         if (builtin->module != module) continue;
+         if (!builtin->unix_path) builtin->unix_path = strdup( name );
+         else status = STATUS_IMAGE_ALREADY_LOADED;
++        if (!builtin->unix_handle) builtin->unix_handle = dlopen( builtin->unix_path, RTLD_NOW );
+         break;
+     }
+     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
+
+From f4629dc339010a21a3d89aecdb00076c048a02ec Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 1 May 2023 21:19:09 -0600
+Subject: [PATCH] ntdll: HACK: Set thread teb earlier in start_main_thread().
+
+CW-Bug-Id: #22218
+---
+ dlls/ntdll/unix/loader.c        | 5 +++++
+ dlls/ntdll/unix/signal_i386.c   | 6 ++++++
+ dlls/ntdll/unix/signal_x86_64.c | 4 ++++
+ dlls/ntdll/unix/unix_private.h  | 1 +
+ 4 files changed, 16 insertions(+)
+
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 8194ad64d00..a8064f8ff89 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -2238,6 +2238,11 @@ static void start_main_thread(void)
+     virtual_map_user_shared_data();
+     init_cpu_info();
+     init_files();
++
++#if defined(__x86_64__) || defined(__i386__)
++    set_thread_teb( teb );
++#endif
++
+     init_startup_info();
+     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
+     set_load_order_app_name( main_wargv[0] );
+diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
+index fedff965743..33958f76ee9 100644
+--- a/dlls/ntdll/unix/signal_i386.c
++++ b/dlls/ntdll/unix/signal_i386.c
+@@ -2415,6 +2415,12 @@ void signal_init_threading(void)
+ #endif
+ }
+ 
++void set_thread_teb( TEB *teb )
++{
++    struct x86_thread_data *thread_data = (struct x86_thread_data *)&teb->GdiTebBatch;
++
++    ldt_set_fs( thread_data->fs, teb );
++}
+ 
+ /**********************************************************************
+  *		signal_alloc_thread
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index aae2b3007bd..b749e147c1b 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -2923,6 +2923,10 @@ void signal_init_process(void)
+     exit(1);
+ }
+ 
++void set_thread_teb( TEB *teb )
++{
++    arch_prctl( ARCH_SET_GS, teb );
++}
+ 
+ /***********************************************************************
+  *           call_init_thunk
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 1287be0744b..cfc49914c34 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -327,6 +327,7 @@ extern BOOL get_thread_times( int unix_pid, int unix_tid, LARGE_INTEGER *kernel_
+                               LARGE_INTEGER *user_time );
+ extern void signal_init_threading(void);
+ extern NTSTATUS signal_alloc_thread( TEB *teb );
++extern void set_thread_teb( TEB *teb );
+ extern void signal_free_thread( TEB *teb );
+ extern void signal_init_process(void);
+ extern void DECLSPEC_NORETURN signal_start_thread( PRTL_THREAD_START_ROUTINE entry, void *arg,
+-- 
+2.49.0
+
+From d33ddb5cc4a2c282e4d1102b1cf75971c8641d39 Mon Sep 17 00:00:00 2001
+From: Sven Baars <sbaars@codeweavers.com>
+Date: Thu, 5 Dec 2019 13:48:38 +0100
+Subject: [PATCH 0036/1564] HACK: proton: ntdll: Return a handle to kernel32
+ when being asked for mfc42.
+
+For some applications mfc42 is loaded, but never actually used. We can
+add Steam game IDs when we find more of such applications.
+---
+ dlls/ntdll/loader.c | 58 +++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 58 insertions(+)
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 0dd5c686ecf..eccdcb1e070 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -3198,6 +3198,44 @@ done:
+     return status;
+ }
+ 
++
++static WCHAR *strstriW( const WCHAR *str, const WCHAR *sub )
++{
++    while (*str)
++    {
++        const WCHAR *p1 = str, *p2 = sub;
++        while (*p1 && *p2 && tolower(*p1) == tolower(*p2)) { p1++; p2++; }
++        if (!*p2) return (WCHAR *)str;
++        str++;
++    }
++    return NULL;
++}
++
++static WCHAR *get_env( const WCHAR *var )
++{
++    UNICODE_STRING name, value;
++
++    RtlInitUnicodeString( &name, var );
++    value.Length = 0;
++    value.MaximumLength = 0;
++    value.Buffer = NULL;
++
++    if (RtlQueryEnvironmentVariable_U( NULL, &name, &value ) == STATUS_BUFFER_TOO_SMALL) {
++
++        value.Buffer = RtlAllocateHeap( GetProcessHeap(), 0, value.Length + sizeof(WCHAR) );
++        value.MaximumLength = value.Length;
++
++        if (RtlQueryEnvironmentVariable_U( NULL, &name, &value ) == STATUS_SUCCESS) {
++            value.Buffer[value.Length / sizeof(WCHAR)] = 0;
++            return value.Buffer;
++        }
++
++        RtlFreeHeap( GetProcessHeap(), 0, value.Buffer );
++    }
++
++    return NULL;
++}
++
+ /***********************************************************************
+  *	find_dll_file
+  *
+@@ -3261,6 +3299,26 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname, UNI
+ done:
+     RtlFreeHeap( GetProcessHeap(), 0, fullname );
+     if (wow64_old_value) RtlWow64EnableFsRedirectionEx( 1, &wow64_old_value );
++
++    if (status != STATUS_SUCCESS)
++    {
++        /* HACK for Proton issue #17
++         *
++         * Some games try to load mfc42.dll, but then proceed to not use it.
++         * Just return a handle to kernel32 in that case.
++         */
++        WCHAR *sgi = get_env( L"SteamGameId" );
++        if (sgi)
++        {
++            if (!wcscmp( sgi, L"105450") &&
++                    strstriW( libname, L"mfc42" ))
++            {
++                WARN_(loaddll)( "Using a fake mfc42 handle\n" );
++                status = find_dll_file( load_path, L"kernel32.dll", nt_name, pwm, mapping, image_info, id, TRUE );
++            }
++            RtlFreeHeap(GetProcessHeap(), 0, sgi);
++        }
++    }
+     return status;
+ }
+ 
+-- 
+2.49.0
+
+From 2af0f80a80543b90bee37750a3a4faed63a1fee1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 18 Dec 2019 13:49:00 +0100
+Subject: [PATCH 0037/1564] HACK: proton: ntdll: Strip gameoverlayrenderer.so
+ from LD_PRELOAD before executing explorer.exe.
+
+Work around a bug in gameoverlayrenderer which introduces 50ms hangs
+during XCheckIfEvent after approx 40 minutes of gameplay.
+
+The original user32 hack broke Steam overlay in Origin games, and Steam
+Input consequently. This ntdll implementation should be safer as it'll
+modify the environment after the new process has started forking.
+
+Link: https://github.com/ValveSoftware/Proton/issues/3316
+CW-Bug-Id: #18946
+---
+ dlls/ntdll/unix/loader.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index de2666aff89..96697314856 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -581,11 +581,42 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_image_info
+     WORD machine = pe_info->machine;
+     ULONGLONG res_start = pe_info->base;
+     ULONGLONG res_end = pe_info->base + pe_info->map_size;
++    const char *ld_preload = getenv( "LD_PRELOAD" );
+     char preloader_reserve[64], socket_env[64];
+ 
+     if (pe_info->wine_fakedll) res_start = res_end = 0;
+     if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady) machine = native_machine;
+ 
++    /* HACK: Unset LD_PRELOAD before executing explorer.exe to disable buggy gameoverlayrenderer.so */
++    if (ld_preload && argv[2] && !strcmp( argv[2], "C:\\windows\\system32\\explorer.exe" ) &&
++        argv[3] && !strcmp( argv[3], "/desktop" ))
++    {
++        static char const gorso[] = "gameoverlayrenderer.so";
++        static int gorso_len = sizeof(gorso) - 1;
++        int len = strlen( ld_preload );
++        char *next, *tmp, *env = malloc( sizeof("LD_PRELOAD=") + len );
++
++        if (!env) return STATUS_NO_MEMORY;
++        strcpy( env, "LD_PRELOAD=" );
++        strcat( env, ld_preload );
++
++        tmp = env + 11;
++        do
++        {
++            if (!(next = strchr( tmp, ':' ))) next = tmp + strlen( tmp );
++            if (next - tmp >= gorso_len && strncmp( next - gorso_len, gorso, gorso_len ) == 0)
++            {
++                if (*next) memmove( tmp, next + 1, strlen(next) );
++                else *tmp = 0;
++                next = tmp;
++            }
++            else tmp = next + 1;
++        }
++        while (*next);
++
++        putenv( env );
++    }
++
+     signal( SIGPIPE, SIG_DFL );
+ 
+     snprintf( socket_env, sizeof(socket_env), "WINESERVERSOCKET=%u", socketfd );
+-- 
+2.49.0
+
+From e3c9be6c2bc9d1b25737238436adb3bb4978fba1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 11 Jan 2023 18:42:15 +0100
+Subject: [PATCH 0038/1564] HACK: ntdll: Ignore unsupported Unix locales and
+ initialize regardless.
+
+We shouldn't rely very much on Unix locale anymore, and not having the
+Unix locale configured shouldn't prevent us from running applications
+in a localized Windows environment if they need it.
+
+CW-Bug-Id: #21346
+---
+ dlls/ntdll/unix/env.c | 23 +++++++++++++++++------
+ 1 file changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
+index 0e49b6f2d06..0158d56a4f4 100644
+--- a/dlls/ntdll/unix/env.c
++++ b/dlls/ntdll/unix/env.c
+@@ -63,6 +63,7 @@
+ #include "error.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(environ);
++WINE_DECLARE_DEBUG_CHANNEL(nls);
+ 
+ PEB *peb = NULL;
+ WOW_PEB *wow_peb = NULL;
+@@ -278,13 +279,14 @@ static const struct { const char *name; UINT cp; } charset_names[] =
+ 
+ static void init_unix_codepage(void)
+ {
++    const char *name, *ctype;
+     char charset_name[16];
+-    const char *name;
+     size_t i, j;
+     int min = 0, max = ARRAY_SIZE(charset_names) - 1;
+ 
+-    setlocale( LC_CTYPE, "" );
+-    if (!(name = nl_langinfo( CODESET ))) return;
++    if (!(ctype = setlocale( LC_CTYPE, "" ))) name = "UTF-8";
++    else if (!(name = nl_langinfo( CODESET ))) return;
++    TRACE_(nls)( "Unix LC_CTYPE %s, using %s codeset\n", debugstr_a(ctype), debugstr_a(name) );
+ 
+     /* remove punctuation characters from charset name */
+     for (i = j = 0; name[i] && j < sizeof(charset_name)-1; i++)
+@@ -801,13 +803,22 @@ static const NLS_LOCALE_DATA *get_win_locale( const NLS_LOCALE_HEADER *header, c
+ static void init_locale(void)
+ {
+     struct locale_nls_header *header;
++    const char *all, *ctype, *messages;
+     const NLS_LOCALE_HEADER *locale_table;
+     const NLS_LOCALE_DATA *locale;
+     char *p;
+ 
+-    setlocale( LC_ALL, "" );
+-    if (!unix_to_win_locale( setlocale( LC_CTYPE, NULL ), system_locale )) system_locale[0] = 0;
+-    if (!unix_to_win_locale( setlocale( LC_MESSAGES, NULL ), user_locale )) user_locale[0] = 0;
++    if (!(all = setlocale( LC_ALL, "" )) && (all = getenv( "LC_ALL" )))
++        FIXME_(nls)( "Failed to set LC_ALL to %s, is the locale supported?\n", debugstr_a(all) );
++    if (!(ctype = setlocale( LC_CTYPE, "" )) && (ctype = getenv( "LC_CTYPE" )))
++        FIXME_(nls)( "Failed to set LC_CTYPE to %s, is the locale supported?\n", debugstr_a(ctype) );
++    if (!(messages = setlocale( LC_MESSAGES, "" )) && (messages = getenv( "LC_MESSAGES" )))
++        FIXME_(nls)( "Failed to set LC_MESSAGES to %s, is the locale supported?\n", debugstr_a(messages) );
++
++    if (!unix_to_win_locale( ctype, system_locale )) system_locale[0] = 0;
++    TRACE_(nls)( "Unix LC_CTYPE is %s, setting system locale to %s\n", debugstr_a(ctype), debugstr_a(user_locale) );
++    if (!unix_to_win_locale( messages, user_locale )) user_locale[0] = 0;
++    TRACE_(nls)( "Unix LC_MESSAGES is %s, user system locale to %s\n", debugstr_a(messages), debugstr_a(user_locale) );
+ 
+ #ifdef __APPLE__
+     if (!system_locale[0])
+-- 
+2.49.0
+
+From 741a2b52b40fb752df3a0218cd93add4449c4cb8 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Thu, 10 Sep 2020 11:07:01 -0500
+Subject: [PATCH 0039/1564] HACK: ntdll: Don't let applications change
+ permissions on wine's files
+
+The 2019 VCRuntime installer will chmod a+w on files that it can't open
+for writing, which would leak through the library symlinks and modify
+the global installation.
+---
+ dlls/ntdll/unix/file.c | 33 ++++++++++++++++++++++++++++-----
+ 1 file changed, 28 insertions(+), 5 deletions(-)
+
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 8bc69557057..4a2c3a84b6f 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -1698,9 +1698,24 @@ static int fd_set_dos_attrib( int fd, UINT attr, BOOL force_set )
+     else return xattr_fremove( fd, SAMBA_XATTR_DOS_ATTRIB );
+ }
+ 
++static unsigned int server_get_unix_name( HANDLE handle, char **unix_name );
++
++/* return TRUE if this is a file owned by Wine which applications should not try to mess with. */
++static BOOL is_wine_file( HANDLE handle )
++{
++    char *unix_name;
++    BOOL ret;
++
++    if (server_get_unix_name( handle, &unix_name ))
++        return FALSE;
++    ret = strstr(unix_name, "/lib/wine/" ) || strstr( unix_name, "/lib64/wine/" ) ||strstr( unix_name, "/share/wine/" );
++    free(unix_name);
++    return ret;
++}
++
+ 
+ /* set the stat info and file attributes for a file (by file descriptor) */
+-static NTSTATUS fd_set_file_info( int fd, UINT attr, BOOL force_set_xattr )
++static NTSTATUS fd_set_file_info( int fd, HANDLE handle, UINT attr, BOOL force_set_xattr )
+ {
+     struct stat st;
+ 
+@@ -1714,8 +1729,16 @@ static NTSTATUS fd_set_file_info( int fd, UINT attr, BOOL force_set_xattr )
+     }
+     else
+     {
+-        /* add write permission only where we already have read permission */
+-        st.st_mode |= (0600 | ((st.st_mode & 044) >> 1)) & (~start_umask);
++        if (is_wine_file( handle ))
++        {
++            TRACE("HACK: Not giving write permission to wine file!\n");
++            return STATUS_ACCESS_DENIED;
++        }
++        else
++        {
++            /* add write permission only where we already have read permission */
++            st.st_mode |= (0600 | ((st.st_mode & 044) >> 1)) & (~start_umask);
++        }
+     }
+     if (fchmod( fd, st.st_mode ) == -1) return errno_to_status( errno );
+ 
+@@ -4659,8 +4682,8 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
+                 status = set_file_times( fd, &mtime, &atime );
+ 
+             if (status == STATUS_SUCCESS)
+-                status = fd_set_file_info( fd, info->FileAttributes,
+-                                           unix_name && is_hidden_file( unix_name ));
++                status = fd_set_file_info( fd, handle, info->FileAttributes,
++                                           unix_name && is_hidden_file( unix_name ) );
+ 
+             if (needs_close) close( fd );
+             free( unix_name );
+-- 
+2.49.0
+
+From 3e95eab6896540c8c2328aca7b994c8ee5f52b85 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 8 Jan 2024 14:35:42 +0100
+Subject: [PATCH 0096/1564] HACK: ntdll: Emulate Steam Input native hooks.
+
+CW-Bug-Id: #23185
+---
+ dlls/ntdll/unix/file.c | 68 +++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 67 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 4a2c3a84b6f..6d8a81e7f4f 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -2925,6 +2925,67 @@ not_found:
+     return STATUS_OBJECT_NAME_NOT_FOUND;
+ }
+ 
++/* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++static BOOL replace_steam_input_path( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
++{
++    static const WCHAR pipe_prefixW[] =
++    {
++        '\\','?','?','\\','p','i','p','e','\\','H','I','D','#','V','I','D','_','0','4','5','E',
++        '&','P','I','D','_','0','2','8','E','&','I','G','_','0','0',
++    };
++    static const WCHAR hid_prefixW[] =
++    {
++        '\\','?','?','\\','h','i','d','#','v','i','d','_','2','8','d','e',
++        '&','p','i','d','_','1','1','f','f','&','i','g','_','0'
++    };
++    static const WCHAR hid_midW[] =
++    {
++        '#','0',
++    };
++    static const WCHAR hid_tailW[] =
++    {
++        '&','0','&','0','&','1','#','{','4','d','1','e','5','5','b','2','-','f','1','6','f','-',
++        '1','1','c','f','-','8','8','c','b','-','0','0','1','1','1','1','0','0','0','0','3','0','}'
++    };
++    UNICODE_STRING *path = attr->ObjectName;
++    const WCHAR *slot = NULL, *slot_end = NULL, *serial, *serial_end = NULL;
++    UINT len = 0;
++
++    if (!path || !path->Buffer || path->Length <= sizeof(pipe_prefixW)) return FALSE;
++    if (wcsnicmp( path->Buffer, pipe_prefixW, ARRAY_SIZE(pipe_prefixW) )) return FALSE;
++
++    serial = path->Buffer + path->Length / sizeof(WCHAR);
++    while (serial > path->Buffer && *serial != '&')
++    {
++        if (*serial == '#')
++        {
++            slot_end = serial_end;
++            serial_end = serial;
++            slot = serial_end + 1;
++        }
++        serial--;
++    }
++    if (serial == path->Buffer || *serial != '&' || !slot_end || !serial_end) return FALSE;
++
++    redir->Length = sizeof(hid_prefixW) + sizeof(hid_midW) + sizeof(hid_tailW);
++    redir->Length += (serial_end - serial + slot_end - slot) * sizeof(WCHAR);
++    redir->MaximumLength = redir->Length + sizeof(WCHAR);
++    if (!(redir->Buffer = malloc( redir->MaximumLength ))) return FALSE;
++
++    memcpy( redir->Buffer, hid_prefixW, sizeof(hid_prefixW) );
++    len += ARRAY_SIZE(hid_prefixW);
++    memcpy( redir->Buffer + len, slot, (slot_end - slot) * sizeof(WCHAR) );
++    len += slot_end - slot;
++    memcpy( redir->Buffer + len, hid_midW, sizeof(hid_midW) );
++    len += ARRAY_SIZE(hid_midW);
++    memcpy( redir->Buffer + len, serial, (serial_end - serial) * sizeof(WCHAR) );
++    len += serial_end - serial;
++    memcpy( redir->Buffer + len, hid_tailW, sizeof(hid_tailW) );
++
++    TRACE( "HACK: %s -> %s\n", debugstr_us(attr->ObjectName), debugstr_us(redir) );
++    attr->ObjectName = redir;
++    return TRUE;
++}
+ 
+ #ifndef _WIN64
+ 
+@@ -3026,6 +3087,10 @@ BOOL get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
+     unsigned int i, prefix_len = 0, len = attr->ObjectName->Length / sizeof(WCHAR);
+ 
+     redir->Buffer = NULL;
++
++    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++    if (replace_steam_input_path( attr, redir )) return TRUE;
++
+     if (!NtCurrentTeb64()) return FALSE;
+     if (!len) return FALSE;
+ 
+@@ -3085,7 +3150,8 @@ BOOL get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
+ BOOL get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
+ {
+     redir->Buffer = NULL;
+-    return FALSE;
++    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++    return replace_steam_input_path( attr, redir );
+ }
+ 
+ #endif
+-- 
+2.49.0
+
+From 06bacde7a47a7b4f31f1d71a9b9ebd508b3f0721 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 24 May 2021 14:37:35 +0300
+Subject: [PATCH 0597/1564] ntdll: Update cached debug registers in
+ call_init_thunk().
+
+CW-Bug-Id: #18957
+---
+ dlls/ntdll/unix/signal_i386.c   |  9 +++++++++
+ dlls/ntdll/unix/signal_x86_64.c | 14 +++++++++++++-
+ 2 files changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
+index a4345a5b589..eba05d1a958 100644
+--- a/dlls/ntdll/unix/signal_i386.c
++++ b/dlls/ntdll/unix/signal_i386.c
+@@ -2536,6 +2536,15 @@ void call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB
+     {
+         context.ContextFlags |= CONTEXT_EXCEPTION_REPORTING | CONTEXT_EXCEPTION_ACTIVE;
+         wait_suspend( &context );
++        if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS & ~CONTEXT_i386)
++        {
++            x86_thread_data()->dr0 = context.Dr0;
++            x86_thread_data()->dr1 = context.Dr1;
++            x86_thread_data()->dr2 = context.Dr2;
++            x86_thread_data()->dr3 = context.Dr3;
++            x86_thread_data()->dr6 = context.Dr6;
++            x86_thread_data()->dr7 = context.Dr7;
++        }
+     }
+ 
+     ctx = (CONTEXT *)((ULONG_PTR)context.Esp & ~3) - 1;
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index 3c71fc4b4fc..874a80201ec 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -2907,7 +2907,19 @@ void call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB
+         *(XSAVE_FORMAT *)wow_context->ExtendedRegisters = context.FltSave;
+     }
+ 
+-    if (suspend) wait_suspend( &context );
++    if (suspend)
++    {
++        wait_suspend( &context );
++        if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64)
++        {
++            amd64_thread_data()->dr0 = context.Dr0;
++            amd64_thread_data()->dr1 = context.Dr1;
++            amd64_thread_data()->dr2 = context.Dr2;
++            amd64_thread_data()->dr3 = context.Dr3;
++            amd64_thread_data()->dr6 = context.Dr6;
++            amd64_thread_data()->dr7 = context.Dr7;
++        }
++    }
+ 
+     ctx = (CONTEXT *)((ULONG_PTR)context.Rsp & ~15) - 1;
+     *ctx = context;
+-- 
+2.49.0
+
+From 2720232baa36901277c580854095de4e26b9ea40 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Sat, 22 May 2021 03:08:55 +0300
+Subject: [PATCH 0598/1564] ntdll: Use cached debug registers in
+ NtGetContextThread() if hw debug breakpoints are disabled.
+
+CW-Bug-Id: #18957
+---
+ dlls/ntdll/unix/signal_i386.c   | 37 ++++++++++++++++++++++++---------
+ dlls/ntdll/unix/signal_x86_64.c | 37 ++++++++++++++++++++++++---------
+ 2 files changed, 54 insertions(+), 20 deletions(-)
+
+diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
+index eba05d1a958..4bb518fe6cb 100644
+--- a/dlls/ntdll/unix/signal_i386.c
++++ b/dlls/ntdll/unix/signal_i386.c
+@@ -1034,10 +1034,15 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
+     struct syscall_frame *frame = x86_thread_data()->syscall_frame;
+     DWORD needed_flags = context->ContextFlags & ~CONTEXT_i386;
+     BOOL self = (handle == GetCurrentThread());
++    BOOL use_cached_debug_regs = FALSE;
+     NTSTATUS ret;
+ 
+-    /* debug registers require a server call */
+-    if (needed_flags & CONTEXT_DEBUG_REGISTERS) self = FALSE;
++    if (self && needed_flags & CONTEXT_DEBUG_REGISTERS)
++    {
++        /* debug registers require a server call if hw breakpoints are enabled */
++        if (x86_thread_data()->dr7 & 0xff) self = FALSE;
++        else use_cached_debug_regs = TRUE;
++    }
+ 
+     if (!self)
+     {
+@@ -1149,15 +1154,27 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
+                 frame->restore_flags |= CONTEXT_XSTATE;
+             }
+         }
+-        /* update the cached version of the debug registers */
+-        if (needed_flags & CONTEXT_DEBUG_REGISTERS)
++        if (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_i386))
+         {
+-            x86_thread_data()->dr0 = context->Dr0;
+-            x86_thread_data()->dr1 = context->Dr1;
+-            x86_thread_data()->dr2 = context->Dr2;
+-            x86_thread_data()->dr3 = context->Dr3;
+-            x86_thread_data()->dr6 = context->Dr6;
+-            x86_thread_data()->dr7 = context->Dr7;
++            if (use_cached_debug_regs)
++            {
++                context->Dr0 = x86_thread_data()->dr0;
++                context->Dr1 = x86_thread_data()->dr1;
++                context->Dr2 = x86_thread_data()->dr2;
++                context->Dr3 = x86_thread_data()->dr3;
++                context->Dr6 = x86_thread_data()->dr6;
++                context->Dr7 = x86_thread_data()->dr7;
++            }
++            else
++            {
++                /* update the cached version of the debug registers */
++                x86_thread_data()->dr0 = context->Dr0;
++                x86_thread_data()->dr1 = context->Dr1;
++                x86_thread_data()->dr2 = context->Dr2;
++                x86_thread_data()->dr3 = context->Dr3;
++                x86_thread_data()->dr6 = context->Dr6;
++                x86_thread_data()->dr7 = context->Dr7;
++            }
+         }
+         set_context_exception_reporting_flags( &context->ContextFlags, CONTEXT_SERVICE_ACTIVE );
+     }
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index 874a80201ec..6a454e8cec6 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -1101,10 +1101,15 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
+ {
+     struct syscall_frame *frame = amd64_thread_data()->syscall_frame;
+     DWORD needed_flags = context->ContextFlags & ~CONTEXT_AMD64;
++    BOOL use_cached_debug_regs = FALSE;
+     BOOL self = (handle == GetCurrentThread());
+ 
+-    /* debug registers require a server call */
+-    if (needed_flags & CONTEXT_DEBUG_REGISTERS) self = FALSE;
++    if (self && needed_flags & CONTEXT_DEBUG_REGISTERS)
++    {
++        /* debug registers require a server call if hw breakpoints are enabled */
++        if (amd64_thread_data()->dr7 & 0xff) self = FALSE;
++        else use_cached_debug_regs = TRUE;
++    }
+ 
+     if (!self)
+     {
+@@ -1207,15 +1212,27 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
+             frame->restore_flags |= CONTEXT_XSTATE;
+         }
+     }
+-    /* update the cached version of the debug registers */
+-    if (needed_flags & CONTEXT_DEBUG_REGISTERS)
++    if (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64))
+     {
+-        amd64_thread_data()->dr0 = context->Dr0;
+-        amd64_thread_data()->dr1 = context->Dr1;
+-        amd64_thread_data()->dr2 = context->Dr2;
+-        amd64_thread_data()->dr3 = context->Dr3;
+-        amd64_thread_data()->dr6 = context->Dr6;
+-        amd64_thread_data()->dr7 = context->Dr7;
++        if (use_cached_debug_regs)
++        {
++            context->Dr0 = amd64_thread_data()->dr0;
++            context->Dr1 = amd64_thread_data()->dr1;
++            context->Dr2 = amd64_thread_data()->dr2;
++            context->Dr3 = amd64_thread_data()->dr3;
++            context->Dr6 = amd64_thread_data()->dr6;
++            context->Dr7 = amd64_thread_data()->dr7;
++        }
++        else
++        {
++            /* update the cached version of the debug registers */
++            amd64_thread_data()->dr0 = context->Dr0;
++            amd64_thread_data()->dr1 = context->Dr1;
++            amd64_thread_data()->dr2 = context->Dr2;
++            amd64_thread_data()->dr3 = context->Dr3;
++            amd64_thread_data()->dr6 = context->Dr6;
++            amd64_thread_data()->dr7 = context->Dr7;
++        }
+     }
+     set_context_exception_reporting_flags( &context->ContextFlags, CONTEXT_SERVICE_ACTIVE );
+     return STATUS_SUCCESS;
+-- 
+2.49.0
+
+From 47b8a12deada6900cdcc6b773218f2eac1fb5286 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 21 May 2021 15:10:07 +0300
+Subject: [PATCH 0599/1564] ntdll: Read process memory on the client side in
+ NtReadVirtualMemory().
+
+CW-Bug-Id: 18957
+---
+ dlls/ntdll/unix/server.c  |  2 +-
+ dlls/ntdll/unix/virtual.c | 54 +++++++++++++++++++++++++++++++++++++++
+ server/process.c          |  2 ++
+ server/protocol.def       |  1 +
+ 4 files changed, 58 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index a5f603c1bbd..b2ff82f181e 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -1601,7 +1601,7 @@ size_t server_init_process(void)
+                                (version > SERVER_PROTOCOL_VERSION) ? "wine" : "wineserver" );
+ #if defined(__linux__) && defined(HAVE_PRCTL)
+     /* work around Ubuntu's ptrace breakage */
+-    if (server_pid != -1) prctl( 0x59616d61 /* PR_SET_PTRACER */, server_pid );
++    if (server_pid != -1) prctl( 0x59616d61 /* PR_SET_PTRACER */, PR_SET_PTRACER_ANY );
+ #endif
+ 
+     /* ignore SIGPIPE so that we get an EPIPE error instead  */
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 604e7fede00..0248f67aac5 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -70,6 +70,8 @@
+ #undef host_page_size
+ #endif
+ 
++#include <sys/uio.h>
++
+ #include "ntstatus.h"
+ #define WIN32_NO_STATUS
+ #include "windef.h"
+@@ -6544,7 +6546,58 @@ NTSTATUS WINAPI NtReadVirtualMemory( HANDLE process, const void *addr, void *buf
+                                      SIZE_T size, SIZE_T *bytes_read )
+ {
+     unsigned int status;
++#ifdef linux
++    struct iovec local, remote;
++    int unix_pid;
++    ssize_t ret;
++
++    if (process == NtCurrentProcess())
++    {
++        unix_pid = getpid();
++        status = STATUS_SUCCESS;
++    }
++    else
++    {
++        SERVER_START_REQ( read_process_memory )
++        {
++            req->handle = wine_server_obj_handle( process );
++            status = wine_server_call( req );
++            unix_pid = reply->unix_pid;
++        }
++        SERVER_END_REQ;
++    }
++
++    if (status)
++    {
++        WARN( "Could not get unix_pid for process %p, status %#x.\n", process, status );
++        size = 0;
++        goto done;
++    }
++
++    local.iov_base = buffer;
++    local.iov_len = size;
++
++    remote.iov_base = (void *)addr;
++    remote.iov_len = size;
+ 
++    if ((ret = process_vm_readv( unix_pid, &local, 1, &remote, 1, 0 )) != size)
++    {
++        WARN( "Error reading memory from process %p, addr %p, size %p, buffer %p, ret %p, errno %d.\n",
++              process, addr, (void *)size, buffer, (void *)ret, errno );
++
++        if (ret == -1)
++        {
++            status = errno == ESRCH ? STATUS_PARTIAL_COPY : errno_to_status( errno );
++            size = 0;
++        }
++        else
++        {
++            status = STATUS_PARTIAL_COPY;
++            size = ret;
++        }
++    }
++done:
++#else
+     if (!virtual_check_buffer_for_write( buffer, size ))
+     {
+         status = STATUS_ACCESS_VIOLATION;
+@@ -6575,6 +6628,7 @@ NTSTATUS WINAPI NtReadVirtualMemory( HANDLE process, const void *addr, void *buf
+         }
+         SERVER_END_REQ;
+     }
++#endif
+     if (bytes_read) *bytes_read = size;
+     return status;
+ }
+diff --git a/server/process.c b/server/process.c
+index d350948d999..8e37b6a7221 100644
+--- a/server/process.c
++++ b/server/process.c
+@@ -1716,6 +1716,8 @@ DECL_HANDLER(read_process_memory)
+ 
+     if (!(process = get_process_from_handle( req->handle, PROCESS_VM_READ ))) return;
+ 
++    reply->unix_pid = process->unix_pid;
++
+     if (len)
+     {
+         char *buffer = mem_alloc( len );
+diff --git a/server/protocol.def b/server/protocol.def
+index 6f7a2e559d9..570a6c1c954 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -1961,6 +1961,7 @@ struct process_info
+     obj_handle_t handle;       /* process handle */
+     client_ptr_t addr;         /* addr to read from */
+ @REPLY
++    int unix_pid;              /* Unix pid of new process */
+     VARARG(data,bytes);        /* result data */
+ @END
+ 
+-- 
+2.49.0
+
+From fcaa86e81e25fc21f78490e1a182c3b196c305bf Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 15 Mar 2021 13:10:16 -0500
+Subject: [PATCH 0653/1564] ntdll: HACK: Add WINE_HEAP_DELAY_FREE variable to
+ force the use of pending free buffer.
+
+CW-Bug-Id: #20334
+---
+ dlls/ntdll/heap.c       |  8 +++---
+ dlls/ntdll/loader.c     | 57 +++++++++++++++++++++--------------------
+ dlls/ntdll/ntdll_misc.h |  2 ++
+ 3 files changed, 36 insertions(+), 31 deletions(-)
+
+diff --git a/dlls/ntdll/heap.c b/dlls/ntdll/heap.c
+index f999fcbadf2..67592ebd56e 100644
+--- a/dlls/ntdll/heap.c
++++ b/dlls/ntdll/heap.c
+@@ -328,6 +328,8 @@ C_ASSERT( HEAP_MIN_LARGE_BLOCK_SIZE <= HEAP_INITIAL_GROW_SIZE );
+ #define HEAP_VALIDATE_PARAMS  0x40000000
+ #define HEAP_CHECKING_ENABLED 0x80000000
+ 
++BOOL delay_heap_free = FALSE;
++
+ static struct heap *process_heap;  /* main process heap */
+ 
+ static NTSTATUS heap_free_block_lfh( struct heap *heap, ULONG flags, struct block *block );
+@@ -1481,8 +1483,8 @@ static void heap_set_debug_flags( HANDLE handle )
+         }
+     }
+ 
+-    if ((heap->flags & HEAP_GROWABLE) && !heap->pending_free &&
+-        ((flags & HEAP_FREE_CHECKING_ENABLED) || RUNNING_ON_VALGRIND))
++    if (delay_heap_free || ((heap->flags & HEAP_GROWABLE) && !heap->pending_free &&
++        ((flags & HEAP_FREE_CHECKING_ENABLED) || RUNNING_ON_VALGRIND)))
+     {
+         heap->pending_free = RtlAllocateHeap( handle, HEAP_ZERO_MEMORY,
+                                               MAX_FREE_PENDING * sizeof(*heap->pending_free) );
+@@ -2601,7 +2603,7 @@ NTSTATUS WINAPI RtlSetHeapInformation( HANDLE handle, HEAP_INFORMATION_CLASS inf
+             FIXME( "HeapCompatibilityInformation %lu not implemented!\n", compat_info );
+             return STATUS_UNSUCCESSFUL;
+         }
+-        if (InterlockedCompareExchange( &heap->compat_info, compat_info, HEAP_STD ) != HEAP_STD)
++        if (!delay_heap_free && InterlockedCompareExchange( &heap->compat_info, compat_info, HEAP_STD ) != HEAP_STD)
+             return STATUS_UNSUCCESSFUL;
+         return STATUS_SUCCESS;
+     }
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 11debacd9b1..eee21406e61 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -202,6 +202,21 @@ static inline BOOL contains_path( LPCWSTR name )
+     return ((*name && (name[1] == ':')) || wcschr(name, '/') || wcschr(name, '\\'));
+ }
+ 
++static BOOL get_env( const WCHAR *var, WCHAR *val, unsigned int len )
++{
++    UNICODE_STRING name, value;
++
++    name.Length = wcslen( var ) * sizeof(WCHAR);
++    name.MaximumLength = name.Length + sizeof(WCHAR);
++    name.Buffer = (WCHAR *)var;
++
++    value.Length = 0;
++    value.MaximumLength = len;
++    value.Buffer = val;
++
++    return !RtlQueryEnvironmentVariable_U( NULL, &name, &value );
++}
++
+ #define RTL_UNLOAD_EVENT_TRACE_NUMBER 64
+ 
+ typedef struct _RTL_UNLOAD_EVENT_TRACE
+@@ -3211,31 +3226,6 @@ static WCHAR *strstriW( const WCHAR *str, const WCHAR *sub )
+     return NULL;
+ }
+ 
+-static WCHAR *get_env( const WCHAR *var )
+-{
+-    UNICODE_STRING name, value;
+-
+-    RtlInitUnicodeString( &name, var );
+-    value.Length = 0;
+-    value.MaximumLength = 0;
+-    value.Buffer = NULL;
+-
+-    if (RtlQueryEnvironmentVariable_U( NULL, &name, &value ) == STATUS_BUFFER_TOO_SMALL) {
+-
+-        value.Buffer = RtlAllocateHeap( GetProcessHeap(), 0, value.Length + sizeof(WCHAR) );
+-        value.MaximumLength = value.Length;
+-
+-        if (RtlQueryEnvironmentVariable_U( NULL, &name, &value ) == STATUS_SUCCESS) {
+-            value.Buffer[value.Length / sizeof(WCHAR)] = 0;
+-            return value.Buffer;
+-        }
+-
+-        RtlFreeHeap( GetProcessHeap(), 0, value.Buffer );
+-    }
+-
+-    return NULL;
+-}
+-
+ /***********************************************************************
+  *	find_dll_file
+  *
+@@ -3307,8 +3297,9 @@ done:
+          * Some games try to load mfc42.dll, but then proceed to not use it.
+          * Just return a handle to kernel32 in that case.
+          */
+-        WCHAR *sgi = get_env( L"SteamGameId" );
+-        if (sgi)
++        WCHAR sgi[32];
++
++        if (get_env( L"SteamGameId", sgi, sizeof(sgi) ))
+         {
+             if (!wcscmp( sgi, L"105450") &&
+                     strstriW( libname, L"mfc42" ))
+@@ -3316,7 +3307,6 @@ done:
+                 WARN_(loaddll)( "Using a fake mfc42 handle\n" );
+                 status = find_dll_file( load_path, L"kernel32.dll", nt_name, pwm, mapping, image_info, id, TRUE );
+             }
+-            RtlFreeHeap(GetProcessHeap(), 0, sgi);
+         }
+     }
+     return status;
+@@ -4421,6 +4411,7 @@ void loader_init( CONTEXT *context, void **entry )
+         ANSI_STRING ctrl_routine = RTL_CONSTANT_STRING( "CtrlRoutine" );
+         WINE_MODREF *kernel32;
+         PEB *peb = NtCurrentTeb()->Peb;
++        WCHAR env_str[16];
+         unsigned int i;
+ 
+         peb->LdrData            = &ldr;
+@@ -4428,6 +4419,16 @@ void loader_init( CONTEXT *context, void **entry )
+         peb->TlsBitmap          = &tls_bitmap;
+         peb->TlsExpansionBitmap = &tls_expansion_bitmap;
+         peb->LoaderLock         = &loader_section;
++
++        if (get_env( L"WINE_HEAP_DELAY_FREE", env_str, sizeof(env_str)) )
++        {
++            if (env_str[0] == L'1')
++            {
++                ERR( "Enabling heap free delay hack.\n" );
++                delay_heap_free = TRUE;
++            }
++        }
++
+         peb->ProcessHeap        = RtlCreateHeap( HEAP_GROWABLE, NULL, 0, 0, NULL, NULL );
+ 
+         RtlInitializeBitMap( &tls_bitmap, peb->TlsBitmapBits, sizeof(peb->TlsBitmapBits) * 8 );
+diff --git a/dlls/ntdll/ntdll_misc.h b/dlls/ntdll/ntdll_misc.h
+index fb5fb311646..154c530ad06 100644
+--- a/dlls/ntdll/ntdll_misc.h
++++ b/dlls/ntdll/ntdll_misc.h
+@@ -53,6 +53,8 @@ static const UINT_PTR page_size = 0x1000;
+ extern UINT_PTR page_size;
+ #endif
+ 
++extern BOOL delay_heap_free;
++
+ /* exceptions */
+ extern NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *context );
+ extern NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context );
+-- 
+2.49.0
+
+From c4bfe9c9d7aa6a06fc390634a5ea6fbd9fa2d6a8 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 10 Apr 2023 21:07:10 -0600
+Subject: [PATCH 0676/1564] ntdll: Add PROTON_DISABLE_LSTEAMCLIENT config
+ option.
+
+CW-Bug-Id: #22126
+---
+ dlls/ntdll/loader.c | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 0951a74dd17..a07c4809873 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -2218,6 +2218,18 @@ static NTSTATUS perform_relocations( void *module, IMAGE_NT_HEADERS *nt, SIZE_T
+     return STATUS_SUCCESS;
+ }
+ 
++static int use_lsteamclient(void)
++{
++    WCHAR env[32];
++    static int use = -1;
++
++    if (use != -1) return use;
++
++    use = !get_env( L"PROTON_DISABLE_LSTEAMCLIENT", env, sizeof(env) ) || *env == '0';
++    if (!use)
++        ERR("lsteamclient disabled.\n");
++    return use;
++}
+ 
+ /*************************************************************************
+  *		build_module
+@@ -2265,7 +2277,7 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+     basename_len = wcslen(basename);
+     if (basename_len >= 4 && !wcscmp(basename + basename_len - 4, L".dll")) basename_len -= 4;
+ 
+-    if ((!RtlCompareUnicodeStrings(basename, basename_len, L"steamclient", 11, TRUE) ||
++    if (use_lsteamclient() && (!RtlCompareUnicodeStrings(basename, basename_len, L"steamclient", 11, TRUE) ||
+          !RtlCompareUnicodeStrings(basename, basename_len, L"steamclient64", 13, TRUE) ||
+          !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer", 19, TRUE) ||
+          !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer64", 21, TRUE)) &&
+-- 
+2.49.0
+
+From d76866470bc03457bf8c6e91e2f02396e97ad2f6 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 3 Jul 2024 19:30:46 -0600
+Subject: [PATCH 0814/1564] HACK: ntdll: Fixup OptionalHeader.ImageBase back in
+ steamclient.dll.
+
+CW-Bug-Id: #23139
+---
+ dlls/ntdll/loader.c | 28 +++++++++++++++++++++++++++-
+ 1 file changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 1b1c4d2d039..200b40e5349 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -2251,6 +2251,7 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+     SIZE_T map_size;
+     WCHAR *basename, *tmp;
+     ULONG basename_len;
++    BOOL is_steamclient32;
+ 
+     if (!(nt = RtlImageNtHeader( *module ))) return STATUS_INVALID_IMAGE_FORMAT;
+ 
+@@ -2277,7 +2278,7 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+     basename_len = wcslen(basename);
+     if (basename_len >= 4 && !wcscmp(basename + basename_len - 4, L".dll")) basename_len -= 4;
+ 
+-    if (use_lsteamclient() && (!RtlCompareUnicodeStrings(basename, basename_len, L"steamclient", 11, TRUE) ||
++    if (use_lsteamclient() && ((is_steamclient32 = !RtlCompareUnicodeStrings(basename, basename_len, L"steamclient", 11, TRUE)) ||
+          !RtlCompareUnicodeStrings(basename, basename_len, L"steamclient64", 13, TRUE) ||
+          !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer", 19, TRUE) ||
+          !RtlCompareUnicodeStrings(basename, basename_len, L"gameoverlayrenderer64", 21, TRUE)) &&
+@@ -2288,6 +2289,31 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+         WINE_UNIX_CALL( unix_steamclient_setup_trampolines, &params );
+         wm->ldr.Flags |= LDR_DONT_RESOLVE_REFS;
+         flags |= DONT_RESOLVE_DLL_REFERENCES;
++        if (is_steamclient32)
++        {
++            OBJECT_ATTRIBUTES attr;
++            void *addr = *module;
++            SIZE_T size = 0x1000;
++            LARGE_INTEGER offset;
++            IO_STATUS_BLOCK io;
++            DWORD protect_old;
++            HANDLE file;
++
++            NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, PAGE_READWRITE, &protect_old );
++            memset( &attr, 0, sizeof(attr) );
++            attr.Length = sizeof(attr);
++            attr.Attributes = OBJ_CASE_INSENSITIVE;
++            attr.ObjectName = (UNICODE_STRING *)nt_name;
++            NtOpenFile( &file, GENERIC_READ | SYNCHRONIZE, &attr, &io,
++                        FILE_SHARE_READ | FILE_SHARE_DELETE,
++                        FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE );
++            offset.QuadPart = (ULONG_PTR)&nt->OptionalHeader.ImageBase - (ULONG_PTR)addr;
++            NtReadFile( file, 0, NULL, NULL, &io, &nt->OptionalHeader.ImageBase,
++                        sizeof(nt->OptionalHeader.ImageBase), &offset, NULL );
++            NtClose( file );
++            TRACE( "steamclient ImageBase %#Ix.\n", nt->OptionalHeader.ImageBase );
++            NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, protect_old, &protect_old );
++        }
+     }
+ 
+     /* fixup imports */
+-- 
+2.49.0
+
+From 40af052fe02c8ede492823853edfb96b5fc87f0d Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Wed, 28 Aug 2024 11:58:36 -0600
+Subject: [PATCH 0815/1564] ntdll: HACK: Partially fixup imports for Win Steam
+ libs.
+
+CW-Bug-Id: #24174
+---
+ dlls/ntdll/loader.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 200b40e5349..a6fdf00c72b 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -1141,6 +1141,14 @@ static BOOL import_dll( HMODULE module, const IMAGE_IMPORT_DESCRIPTOR *descr, LP
+         return TRUE;
+     }
+ 
++    if ((!strcmp(name, "tier0_s64.dll") || !strcmp(name, "vstdlib_s64.dll")) && get_modref(module)->ldr.BaseDllName.Buffer
++        && (!wcscmp(get_modref(module)->ldr.BaseDllName.Buffer, L"steamclient64.dll")
++            || !wcscmp(get_modref(module)->ldr.BaseDllName.Buffer, L"gameoverlayrenderer64.dll")))
++    {
++        TRACE("%s -> ntdll.\n", name);
++        name = "ntdll.dll";
++    }
++
+     status = build_import_name( wm, buffer, name, len );
+     if (!status) status = load_dll( load_path, buffer, 0, &wmImp, system );
+ 
+@@ -2314,6 +2322,11 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+             TRACE( "steamclient ImageBase %#Ix.\n", nt->OptionalHeader.ImageBase );
+             NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, protect_old, &protect_old );
+         }
++        else
++        {
++            fixup_imports( wm, load_path );
++            wm->ldr.Flags |= LDR_DONT_RESOLVE_REFS;
++        }
+     }
+ 
+     /* fixup imports */
+-- 
+2.49.0
