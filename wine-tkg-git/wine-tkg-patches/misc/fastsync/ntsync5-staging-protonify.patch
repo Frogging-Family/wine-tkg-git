@@ -1,3 +1,676 @@
+diff --git b/server/completion.c a/server/completion.c
+index a2028a89823..fd623b36d5a 100644
+--- b/server/completion.c
++++ a/server/completion.c
+@@ -72,11 +72,11 @@ struct completion_wait
+ 
+ struct completion
+ {
+-    struct object       obj;
+-    struct event_sync  *sync;
+-    struct list         queue;
+-    struct list         wait_queue;
+-    unsigned int        depth;
++    struct object  obj;
++    struct list    queue;
++    struct list    wait_queue;
++    unsigned int   depth;
++    int            closed;
+ };
+ 
+ static void completion_wait_dump( struct object*, int );
+@@ -155,7 +155,7 @@ static void completion_wait_satisfied( struct object *obj, struct wait_queue_ent
+ }
+ 
+ static void completion_dump( struct object*, int );
+-static struct object *completion_get_sync( struct object * );
++static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static int completion_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
+ static void completion_destroy( struct object * );
+ 
+@@ -164,13 +164,13 @@ static const struct object_ops completion_ops =
+     sizeof(struct completion), /* size */
+     &completion_type,          /* type */
+     completion_dump,           /* dump */
+-    NULL,                      /* add_queue */
+-    NULL,                      /* remove_queue */
+-    NULL,                      /* signaled */
+-    NULL,                      /* satisfied */
++    add_queue,                 /* add_queue */
++    remove_queue,              /* remove_queue */
++    completion_signaled,       /* signaled */
++    no_satisfied,              /* satisfied */
+     no_signal,                 /* signal */
+     no_get_fd,                 /* get_fd */
+-    completion_get_sync,       /* get_sync */
++    default_get_sync,          /* get_sync */
+     default_map_access,        /* map_access */
+     default_get_sd,            /* get_sd */
+     default_set_sd,            /* set_sd */
+@@ -193,8 +193,6 @@ static void completion_destroy( struct object *obj)
+     {
+         free( tmp );
+     }
+-
+-    if (completion->sync) release_object( completion->sync );
+ }
+ 
+ static void completion_dump( struct object *obj, int verbose )
+@@ -205,11 +203,11 @@ static void completion_dump( struct object *obj, int verbose )
+     fprintf( stderr, "Completion depth=%u\n", completion->depth );
+ }
+ 
+-static struct object *completion_get_sync( struct object *obj )
++static int completion_signaled( struct object *obj, struct wait_queue_entry *entry )
+ {
+     struct completion *completion = (struct completion *)obj;
+-    assert( obj->ops == &completion_ops );
+-    return grab_object( completion->sync );
++
++    return !list_empty( &completion->queue ) || completion->closed;
+ }
+ 
+ static int completion_close_handle( struct object *obj, struct process *process, obj_handle_t handle )
+@@ -230,7 +228,8 @@ static int completion_close_handle( struct object *obj, struct process *process,
+             cleanup_thread_completion( wait->thread );
+         }
+     }
+-    signal_sync( completion->sync );
++    completion->closed = 1;
++    wake_up( obj, 0 );
+     return 1;
+ }
+ 
+@@ -274,16 +273,10 @@ static struct completion *create_completion( struct object *root, const struct u
+     {
+         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
+         {
+-            completion->sync = NULL;
+             list_init( &completion->queue );
+             list_init( &completion->wait_queue );
+             completion->depth = 0;
+-
+-            if (!(completion->sync = create_event_sync( 1, 0 )))
+-            {
+-                release_object( completion );
+-                return NULL;
+-            }
++            completion->closed = 0;
+         }
+     }
+ 
+@@ -316,7 +309,7 @@ void add_completion( struct completion *completion, apc_param_t ckey, apc_param_
+         wake_up( &wait->obj, 1 );
+         if (list_empty( &completion->queue )) return;
+     }
+-    if (!list_empty( &completion->queue )) signal_sync( completion->sync );
++    if (!list_empty( &completion->queue )) wake_up( &completion->obj, 0 );
+ }
+ 
+ /* create a completion */
+@@ -417,7 +410,6 @@ DECL_HANDLER(remove_completion)
+         reply->information = msg->information;
+         free( msg );
+         reply->wait_handle = 0;
+-        if (list_empty( &completion->queue )) reset_sync( completion->sync );
+     }
+ 
+     release_object( completion );
+diff --git b/server/debugger.c a/server/debugger.c
+index 2956ee17b8e..43d01fbf246 100644
+--- b/server/debugger.c
++++ a/server/debugger.c
+@@ -43,7 +43,6 @@ enum debug_event_state { EVENT_QUEUED, EVENT_SENT, EVENT_DELAYED, EVENT_CONTINUE
+ struct debug_event
+ {
+     struct object          obj;       /* object header */
+-    struct event_sync     *sync;      /* sync object for wait/signal */
+     struct list            entry;     /* entry in event queue */
+     struct thread         *sender;    /* thread which sent this event */
+     struct file           *file;      /* file object for events that need one */
+@@ -70,14 +69,13 @@ struct type_descr debug_obj_type =
+ struct debug_obj
+ {
+     struct object        obj;         /* object header */
+-    struct event_sync   *sync;       /* sync object for wait/signal */
+     struct list          event_queue; /* pending events queue */
+     unsigned int         flags;       /* debug flags */
+ };
+ 
+ 
+ static void debug_event_dump( struct object *obj, int verbose );
+-static struct object *debug_event_get_sync( struct object *obj );
++static int debug_event_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static void debug_event_destroy( struct object *obj );
+ 
+ static const struct object_ops debug_event_ops =
+@@ -85,13 +83,13 @@ static const struct object_ops debug_event_ops =
+     sizeof(struct debug_event),    /* size */
+     &no_type,                      /* type */
+     debug_event_dump,              /* dump */
+-    NULL,                          /* add_queue */
+-    NULL,                          /* remove_queue */
+-    NULL,                          /* signaled */
+-    NULL,                          /* satisfied */
++    add_queue,                     /* add_queue */
++    remove_queue,                  /* remove_queue */
++    debug_event_signaled,          /* signaled */
++    no_satisfied,                  /* satisfied */
+     no_signal,                     /* signal */
+     no_get_fd,                     /* get_fd */
+-    debug_event_get_sync,          /* get_sync */
++    default_get_sync,              /* get_sync */
+     default_map_access,            /* map_access */
+     default_get_sd,                /* get_sd */
+     default_set_sd,                /* set_sd */
+@@ -106,7 +104,7 @@ static const struct object_ops debug_event_ops =
+ };
+ 
+ static void debug_obj_dump( struct object *obj, int verbose );
+-static struct object *debug_obj_get_sync( struct object *obj );
++static int debug_obj_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static void debug_obj_destroy( struct object *obj );
+ 
+ static const struct object_ops debug_obj_ops =
+@@ -114,13 +112,13 @@ static const struct object_ops debug_obj_ops =
+     sizeof(struct debug_obj),      /* size */
+     &debug_obj_type,               /* type */
+     debug_obj_dump,                /* dump */
+-    NULL,                          /* add_queue */
+-    NULL,                          /* remove_queue */
+-    NULL,                          /* signaled */
+-    NULL,                          /* satisfied */
++    add_queue,                     /* add_queue */
++    remove_queue,                  /* remove_queue */
++    debug_obj_signaled,            /* signaled */
++    no_satisfied,                  /* satisfied */
+     no_signal,                     /* signal */
+     no_get_fd,                     /* get_fd */
+-    debug_obj_get_sync,            /* get_sync */
++    default_get_sync,              /* get_sync */
+     default_map_access,            /* map_access */
+     default_get_sd,                /* get_sd */
+     default_set_sd,                /* set_sd */
+@@ -256,7 +254,7 @@ static void link_event( struct debug_obj *debug_obj, struct debug_event *event )
+     {
+         /* grab reference since debugger could be killed while trying to wake up */
+         grab_object( debug_obj );
+-        signal_sync( debug_obj->sync );
++        wake_up( &debug_obj->obj, 0 );
+         release_object( debug_obj );
+     }
+ }
+@@ -265,11 +263,10 @@ static void link_event( struct debug_obj *debug_obj, struct debug_event *event )
+ static void resume_event( struct debug_obj *debug_obj, struct debug_event *event )
+ {
+     event->state = EVENT_QUEUED;
+-    reset_sync( event->sync );
+     if (!event->sender->process->debug_event)
+     {
+         grab_object( debug_obj );
+-        signal_sync( debug_obj->sync );
++        wake_up( &debug_obj->obj, 0 );
+         release_object( debug_obj );
+     }
+ }
+@@ -278,7 +275,6 @@ static void resume_event( struct debug_obj *debug_obj, struct debug_event *event
+ static void delay_event( struct debug_obj *debug_obj, struct debug_event *event )
+ {
+     event->state = EVENT_DELAYED;
+-    reset_sync( event->sync );
+     if (event->sender->process->debug_event == event) event->sender->process->debug_event = NULL;
+ }
+ 
+@@ -305,11 +301,11 @@ static void debug_event_dump( struct object *obj, int verbose )
+              debug_event->sender, debug_event->data.code, debug_event->state );
+ }
+ 
+-static struct object *debug_event_get_sync( struct object *obj )
++static int debug_event_signaled( struct object *obj, struct wait_queue_entry *entry )
+ {
+     struct debug_event *debug_event = (struct debug_event *)obj;
+     assert( obj->ops == &debug_event_ops );
+-    return grab_object( debug_event->sync );
++    return debug_event->state == EVENT_CONTINUED;
+ }
+ 
+ static void debug_event_destroy( struct object *obj )
+@@ -317,7 +313,6 @@ static void debug_event_destroy( struct object *obj )
+     struct debug_event *event = (struct debug_event *)obj;
+     assert( obj->ops == &debug_event_ops );
+ 
+-    if (event->sync) release_object( event->sync );
+     if (event->file) release_object( event->file );
+     release_object( event->sender );
+ }
+@@ -330,11 +325,11 @@ static void debug_obj_dump( struct object *obj, int verbose )
+              debug_obj->event_queue.next, debug_obj->event_queue.prev );
+ }
+ 
+-static struct object *debug_obj_get_sync( struct object *obj )
++static int debug_obj_signaled( struct object *obj, struct wait_queue_entry *entry )
+ {
+     struct debug_obj *debug_obj = (struct debug_obj *)obj;
+     assert( obj->ops == &debug_obj_ops );
+-    return grab_object( debug_obj->sync );
++    return find_event_to_send( debug_obj ) != NULL;
+ }
+ 
+ static void debug_obj_destroy( struct object *obj )
+@@ -349,8 +344,6 @@ static void debug_obj_destroy( struct object *obj )
+     /* free all pending events */
+     while ((ptr = list_head( &debug_obj->event_queue )))
+         unlink_event( debug_obj, LIST_ENTRY( ptr, struct debug_event, entry ));
+-
+-    if (debug_obj->sync) release_object( debug_obj->sync );
+ }
+ 
+ struct debug_obj *get_debug_obj( struct process *process, obj_handle_t handle, unsigned int access )
+@@ -368,15 +361,8 @@ static struct debug_obj *create_debug_obj( struct object *root, const struct uni
+     {
+         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
+         {
+-            debug_obj->sync  = NULL;
+             debug_obj->flags = flags;
+             list_init( &debug_obj->event_queue );
+-
+-            if (!(debug_obj->sync = create_event_sync( 1, 0 )))
+-            {
+-                release_object( debug_obj );
+-                return NULL;
+-            }
+         }
+     }
+     return debug_obj;
+@@ -422,7 +408,7 @@ static int continue_debug_event( struct debug_obj *debug_obj, struct process *pr
+                 assert( event->sender->process->debug_event == event );
+                 event->status = status;
+                 event->state  = EVENT_CONTINUED;
+-                signal_sync( event->sync );
++                wake_up( &event->obj, 0 );
+                 unlink_event( debug_obj, event );
+                 resume_process( process );
+                 return 1;
+@@ -443,20 +429,12 @@ static struct debug_event *alloc_debug_event( struct thread *thread, int code, c
+ 
+     /* build the event */
+     if (!(event = alloc_object( &debug_event_ops ))) return NULL;
+-    event->sync      = NULL;
+     event->state     = EVENT_QUEUED;
+     event->sender    = (struct thread *)grab_object( thread );
+     event->file      = NULL;
+     memset( &event->data, 0, sizeof(event->data) );
+     fill_debug_event[code - DbgCreateThreadStateChange]( event, arg );
+     event->data.code = code;
+-
+-    if (!(event->sync = create_event_sync( 1, 0 )))
+-    {
+-        release_object( event );
+-        return NULL;
+-    }
+-
+     return event;
+ }
+ 
+@@ -542,7 +520,7 @@ void debugger_detach( struct process *process, struct debug_obj *debug_obj )
+         assert( event->state != EVENT_CONTINUED );
+         event->status = DBG_CONTINUE;
+         event->state  = EVENT_CONTINUED;
+-        signal_sync( event->sync );
++        wake_up( &event->obj, 0 );
+         unlink_event( debug_obj, event );
+         /* from queued debug event */
+         resume_process( process );
+@@ -588,13 +566,11 @@ DECL_HANDLER(wait_debug_event)
+     if ((event = find_event_to_send( debug_obj )))
+     {
+         event->state = EVENT_SENT;
+-        reset_sync( event->sync );
+         event->sender->process->debug_event = event;
+         reply->pid = get_process_id( event->sender->process );
+         reply->tid = get_thread_id( event->sender );
+         alloc_event_handles( event, current->process );
+         set_reply_data( &event->data, min( get_reply_max_size(), sizeof(event->data) ));
+-        if (!find_event_to_send( debug_obj )) reset_sync( debug_obj->sync );
+     }
+     else
+     {
+diff --git b/server/device.c a/server/device.c
+index f4b3f19028b..892ec98c44f 100644
+--- b/server/device.c
++++ a/server/device.c
+@@ -89,7 +89,6 @@ static const struct object_ops irp_call_ops =
+ struct device_manager
+ {
+     struct object          obj;            /* object header */
+-    struct event_sync     *sync;           /* sync object for wait/signal */
+     struct list            devices;        /* list of devices */
+     struct list            requests;       /* list of pending irps across all devices */
+     struct irp_call       *current_call;   /* call currently executed on client side */
+@@ -97,7 +96,7 @@ struct device_manager
+ };
+ 
+ static void device_manager_dump( struct object *obj, int verbose );
+-static struct object *device_manager_get_sync( struct object *obj );
++static int device_manager_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static void device_manager_destroy( struct object *obj );
+ 
+ static const struct object_ops device_manager_ops =
+@@ -105,13 +104,13 @@ static const struct object_ops device_manager_ops =
+     sizeof(struct device_manager),    /* size */
+     &no_type,                         /* type */
+     device_manager_dump,              /* dump */
+-    NULL,                             /* add_queue */
+-    NULL,                             /* remove_queue */
+-    NULL,                             /* signaled */
+-    NULL,                             /* satisfied */
++    add_queue,                        /* add_queue */
++    remove_queue,                     /* remove_queue */
++    device_manager_signaled,          /* signaled */
++    no_satisfied,                     /* satisfied */
+     no_signal,                        /* signal */
+     no_get_fd,                        /* get_fd */
+-    device_manager_get_sync,          /* get_sync */
++    default_get_sync,                 /* get_sync */
+     default_map_access,               /* map_access */
+     default_get_sd,                   /* get_sd */
+     default_set_sd,                   /* set_sd */
+@@ -423,7 +422,7 @@ static void add_irp_to_queue( struct device_manager *manager, struct irp_call *i
+     irp->thread = thread ? (struct thread *)grab_object( thread ) : NULL;
+     if (irp->file) list_add_tail( &irp->file->requests, &irp->dev_entry );
+     list_add_tail( &manager->requests, &irp->mgr_entry );
+-    if (list_head( &manager->requests ) == &irp->mgr_entry) signal_sync( manager->sync );
++    if (list_head( &manager->requests ) == &irp->mgr_entry) wake_up( &manager->obj, 0 );  /* first one */
+ }
+ 
+ static struct object *device_open_file( struct object *obj, unsigned int access,
+@@ -753,7 +752,6 @@ struct object *create_unix_device( struct object *root, const struct unicode_str
+ /* terminate requests when the underlying device is deleted */
+ static void delete_file( struct device_file *file )
+ {
+-    struct device_manager *manager = file->device->manager;
+     struct irp_call *irp, *next;
+ 
+     /* the pending requests may be the only thing holding a reference to the file */
+@@ -766,7 +764,6 @@ static void delete_file( struct device_file *file )
+         set_irp_result( irp, STATUS_FILE_DELETED, NULL, 0, 0 );
+     }
+ 
+-    if (list_empty( &manager->requests )) reset_sync( manager->sync );
+     release_object( file );
+ }
+ 
+@@ -791,11 +788,11 @@ static void device_manager_dump( struct object *obj, int verbose )
+     fprintf( stderr, "Device manager\n" );
+ }
+ 
+-static struct object *device_manager_get_sync( struct object *obj )
++static int device_manager_signaled( struct object *obj, struct wait_queue_entry *entry )
+ {
+     struct device_manager *manager = (struct device_manager *)obj;
+-    assert( obj->ops == &device_manager_ops );
+-    return grab_object( manager->sync );
++
++    return !list_empty( &manager->requests );
+ }
+ 
+ static void device_manager_destroy( struct object *obj )
+@@ -832,8 +829,6 @@ static void device_manager_destroy( struct object *obj )
+         assert( !irp->file && !irp->async );
+         release_object( irp );
+     }
+-
+-    if (manager->sync) release_object( manager->sync );
+ }
+ 
+ static struct device_manager *create_device_manager(void)
+@@ -842,17 +837,10 @@ static struct device_manager *create_device_manager(void)
+ 
+     if ((manager = alloc_object( &device_manager_ops )))
+     {
+-        manager->sync         = NULL;
+         manager->current_call = NULL;
+         list_init( &manager->devices );
+         list_init( &manager->requests );
+         wine_rb_init( &manager->kernel_objects, compare_kernel_object );
+-
+-        if (!(manager->sync = create_event_sync( 1, 0 )))
+-        {
+-            release_object( manager );
+-            return NULL;
+-        }
+     }
+     return manager;
+ }
+@@ -1039,8 +1027,6 @@ DECL_HANDLER(get_next_device_request)
+                 }
+                 list_remove( &irp->mgr_entry );
+                 list_init( &irp->mgr_entry );
+-                if (list_empty( &manager->requests )) reset_sync( manager->sync );
+-
+                 /* we already own the object if it's only on manager queue */
+                 if (irp->file) grab_object( irp );
+                 manager->current_call = irp;
+diff --git b/server/fd.c a/server/fd.c
+index 6c71336247f..7054dc17d30 100644
+--- b/server/fd.c
++++ a/server/fd.c
+@@ -273,7 +273,6 @@ static const struct object_ops inode_ops =
+ struct file_lock
+ {
+     struct object       obj;         /* object header */
+-    struct event_sync  *sync;        /* sync object for wait/signal */
+     struct fd          *fd;          /* fd owning this lock */
+     struct list         fd_entry;    /* entry in list of locks on a given fd */
+     struct list         inode_entry; /* entry in inode list of locks */
+@@ -285,21 +284,20 @@ struct file_lock
+ };
+ 
+ static void file_lock_dump( struct object *obj, int verbose );
+-static struct object *file_lock_get_sync( struct object *obj );
+-static void file_lock_destroy( struct object *obj );
++static int file_lock_signaled( struct object *obj, struct wait_queue_entry *entry );
+ 
+ static const struct object_ops file_lock_ops =
+ {
+     sizeof(struct file_lock),   /* size */
+     &no_type,                   /* type */
+     file_lock_dump,             /* dump */
+-    NULL,                       /* add_queue */
+-    NULL,                       /* remove_queue */
+-    NULL,                       /* signaled */
+-    NULL,                       /* satisfied */
++    add_queue,                  /* add_queue */
++    remove_queue,               /* remove_queue */
++    file_lock_signaled,         /* signaled */
++    no_satisfied,               /* satisfied */
+     no_signal,                  /* signal */
+     no_get_fd,                  /* get_fd */
+-    file_lock_get_sync,         /* get_sync */
++    default_get_sync,           /* get_sync */
+     default_map_access,         /* map_access */
+     default_get_sd,             /* get_sd */
+     default_set_sd,             /* set_sd */
+@@ -310,7 +308,7 @@ static const struct object_ops file_lock_ops =
+     no_open_file,               /* open_file */
+     no_kernel_obj_list,         /* get_kernel_obj_list */
+     no_close_handle,            /* close_handle */
+-    file_lock_destroy,          /* destroy */
++    no_destroy                  /* destroy */
+ };
+ 
+ 
+@@ -1243,18 +1241,11 @@ static void file_lock_dump( struct object *obj, int verbose )
+     fprintf( stderr, "\n" );
+ }
+ 
+-static struct object *file_lock_get_sync( struct object *obj )
++static int file_lock_signaled( struct object *obj, struct wait_queue_entry *entry )
+ {
+     struct file_lock *lock = (struct file_lock *)obj;
+-    assert( obj->ops == &file_lock_ops );
+-    return grab_object( lock->sync );
+-}
+-
+-static void file_lock_destroy( struct object *obj )
+-{
+-    struct file_lock *lock = (struct file_lock *)obj;
+-    assert( obj->ops == &file_lock_ops );
+-    if (lock->sync) release_object( lock->sync );
++    /* lock is signaled if it has lost its owner */
++    return !lock->process;
+ }
+ 
+ /* set (or remove) a Unix lock if possible for the given range */
+@@ -1436,24 +1427,22 @@ static struct file_lock *add_lock( struct fd *fd, int shared, file_pos_t start,
+     struct file_lock *lock;
+ 
+     if (!(lock = alloc_object( &file_lock_ops ))) return NULL;
+-    lock->sync    = NULL;
+     lock->shared  = shared;
+     lock->start   = start;
+     lock->end     = end;
+     lock->fd      = fd;
+     lock->process = current->process;
+ 
+-    if (!(lock->sync = create_event_sync( 1, 0 ))) goto error;
+     /* now try to set a Unix lock */
+-    if (!set_unix_lock( lock->fd, lock->start, lock->end, lock->shared ? F_RDLCK : F_WRLCK )) goto error;
++    if (!set_unix_lock( lock->fd, lock->start, lock->end, lock->shared ? F_RDLCK : F_WRLCK ))
++    {
++        release_object( lock );
++        return NULL;
++    }
+     list_add_tail( &fd->locks, &lock->fd_entry );
+     list_add_tail( &fd->inode->locks, &lock->inode_entry );
+     list_add_tail( &lock->process->locks, &lock->proc_entry );
+     return lock;
+-
+-error:
+-    release_object( lock );
+-    return NULL;
+ }
+ 
+ /* remove an existing lock */
+@@ -1467,7 +1456,7 @@ static void remove_lock( struct file_lock *lock, int remove_unix )
+     if (remove_unix) remove_unix_locks( lock->fd, lock->start, lock->end );
+     if (list_empty( &inode->locks )) inode_close_pending( inode, 1 );
+     lock->process = NULL;
+-    signal_sync( lock->sync );
++    wake_up( &lock->obj, 0 );
+     release_object( lock );
+ }
+ 
+diff --git b/server/timer.c a/server/timer.c
+index 6357569ccba..4ad4ca19072 100644
+--- b/server/timer.c
++++ a/server/timer.c
+@@ -53,7 +53,6 @@ struct type_descr timer_type =
+ struct timer
+ {
+     struct object        obj;       /* object header */
+-    struct event_sync   *sync;      /* sync object for wait/signal */
+     int                  manual;    /* manual reset */
+     int                  signaled;  /* current signaled state */
+     unsigned int         period;    /* timer period in ms */
+@@ -65,7 +64,8 @@ struct timer
+ };
+ 
+ static void timer_dump( struct object *obj, int verbose );
+-static struct object *timer_get_sync( struct object *obj );
++static int timer_signaled( struct object *obj, struct wait_queue_entry *entry );
++static void timer_satisfied( struct object *obj, struct wait_queue_entry *entry );
+ static void timer_destroy( struct object *obj );
+ 
+ static const struct object_ops timer_ops =
+@@ -73,13 +73,13 @@ static const struct object_ops timer_ops =
+     sizeof(struct timer),      /* size */
+     &timer_type,               /* type */
+     timer_dump,                /* dump */
+-    NULL,                      /* add_queue */
+-    NULL,                      /* remove_queue */
+-    NULL,                      /* signaled */
+-    NULL,                      /* satisfied */
++    add_queue,                 /* add_queue */
++    remove_queue,              /* remove_queue */
++    timer_signaled,            /* signaled */
++    timer_satisfied,           /* satisfied */
+     no_signal,                 /* signal */
+     no_get_fd,                 /* get_fd */
+-    timer_get_sync,            /* get_sync */
++    default_get_sync,          /* get_sync */
+     default_map_access,        /* map_access */
+     default_get_sd,            /* get_sd */
+     default_set_sd,            /* set_sd */
+@@ -105,19 +105,12 @@ static struct timer *create_timer( struct object *root, const struct unicode_str
+         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
+         {
+             /* initialize it if it didn't already exist */
+-            timer->sync     = NULL;
+             timer->manual   = manual;
+             timer->signaled = 0;
+             timer->when     = 0;
+             timer->period   = 0;
+             timer->timeout  = NULL;
+             timer->thread   = NULL;
+-
+-            if (!(timer->sync = create_event_sync( manual, 0 )))
+-            {
+-                release_object( timer );
+-                return NULL;
+-            }
+         }
+     }
+     return timer;
+@@ -156,8 +149,9 @@ static void timer_callback( void *private )
+     }
+     else timer->timeout = NULL;
+ 
++    /* wake up waiters */
+     timer->signaled = 1;
+-    signal_sync( timer->sync );
++    wake_up( &timer->obj, 0 );
+ }
+ 
+ /* cancel a running timer */
+@@ -188,7 +182,6 @@ static int set_timer( struct timer *timer, timeout_t expire, unsigned int period
+     {
+         period = 0;  /* period doesn't make any sense for a manual timer */
+         timer->signaled = 0;
+-        reset_sync( timer->sync );
+     }
+     timer->when     = (expire <= 0) ? expire - monotonic_time : max( expire, current_time );
+     timer->period   = period;
+@@ -209,11 +202,18 @@ static void timer_dump( struct object *obj, int verbose )
+              timer->manual, get_timeout_str(timeout), timer->period );
+ }
+ 
+-static struct object *timer_get_sync( struct object *obj )
++static int timer_signaled( struct object *obj, struct wait_queue_entry *entry )
++{
++    struct timer *timer = (struct timer *)obj;
++    assert( obj->ops == &timer_ops );
++    return timer->signaled;
++}
++
++static void timer_satisfied( struct object *obj, struct wait_queue_entry *entry )
+ {
+     struct timer *timer = (struct timer *)obj;
+     assert( obj->ops == &timer_ops );
+-    return grab_object( timer->sync );
++    if (!timer->manual) timer->signaled = 0;
+ }
+ 
+ static void timer_destroy( struct object *obj )
+@@ -223,7 +223,6 @@ static void timer_destroy( struct object *obj )
+ 
+     if (timer->timeout) remove_timeout_user( timer->timeout );
+     if (timer->thread) release_object( timer->thread );
+-    if (timer->sync) release_object( timer->sync );
+ }
+ 
+ /* create a timer */
+
 diff --git b/server/process.c a/server/process.c
 index 9b3b0b8fc6c..b169b412253 100644
 --- b/server/process.c
