@@ -741,10 +741,14 @@ _prepare() {
 	echo "" >> "$_where"/last_build_config.log
 	echo -e "*.patch\n*.orig\n*~\n.gitignore\nautom4te.cache/*" > "${srcdir}"/"${_winesrcdir}"/.gitignore
 
-	# Disable local Esync on 553986f
+	# Disable local Esync on 553986f 3e94d12465c0ed9f6ce1bec742ae779a0932813c
 	if [ "$_use_staging" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
-	  if git merge-base --is-ancestor 553986fdfb111914f793ff1487d53af022e4be19 HEAD; then # eventfd_synchronization: Add patch set.
+      if git merge-base --is-ancestor 3e94d12465c0ed9f6ce1bec742ae779a0932813c HEAD; then
+	    _use_esync="true"
+	    _staging_esync="true"
+	    echo "Re-enable esync patches since Staging impl is disabled." >> "$_where"/last_build_config.log
+	  elif ( git merge-base --is-ancestor 553986fdfb111914f793ff1487d53af022e4be19 HEAD) && ( ! git merge-base --is-ancestor 3e94d12465c0ed9f6ce1bec742ae779a0932813c HEAD); then # eventfd_synchronization: Add patch set.
 	    _use_esync="false"
 	    _staging_esync="true"
 	    echo "Disabled the local Esync patchset to use Staging impl instead." >> "$_where"/last_build_config.log
