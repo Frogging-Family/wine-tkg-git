@@ -1,7 +1,37 @@
 #!/bin/bash
 
+	check_ntsync_header() {
+	  # check Linux headers
+	  # check if gcc installed
+	  if command -v gcc >/dev/null 2>&1; then
+	    ntsync_header_check_gcc=$(echo '#include <linux/ntsync.h>' | gcc -H -E -fsyntax-only - 2>&1 | head -n1 | cut -d' ' -f2-)
+	  fi
+	  # then check if clang installed
+	  if command -v clang >/dev/null 2>&1; then
+	    ntsync_header_check_llvm=$(echo '#include <linux/ntsync.h>' | clang -H -E - 2>&1 | head -n1 | cut -d' ' -f2-)
+	  fi
+	  if [[ ! -s $ntsync_header_check_gcc ]] && [[ ! -s $ntsync_header_check_llvm ]]; then
+	    error "GCC - ${ntsync_header_check_gcc}"
+	    error "LLVM - ${ntsync_header_check_llvm}"
+	    error "NTsync header was not found. Build is forcibly prevented."
+	    error 'Please use linux-tkg build with _ntsync="true" or https://aur.archlinux.org/packages/ntsync-dkms/'
+	    exit 1
+	  fi
+	  }
+
+	check_esync_and_fsync() {
+	  if [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
+		error "NTsync conflicts with _use_esync and _use_fsync. Build is forcibly prevented. Please disable them in your .cfg to use ntsync"
+		exit 1
+	  fi
+
+	  if [ "$_use_fastsync" = "true" ]; then
+		error "NTsync conflicts with _use_fastsync. Build is forcibly prevented. Please disable _use_fastsync in your .cfg to use ntsync"
+		exit 1
+	  fi
+	}
 	# fastsync / winesync
-	if [ "$_use_fastsync" = "true" ] || [ "$_use_ntsync" = "true" ] && [[ "$_custom_wine_source" = *"ValveSoftware"* ]]; then # not allowed on Valve tree
+	if [ "$_use_fastsync" = "true" ] || [ "$_use_ntsync" != "false" ] && [[ "$_custom_wine_source" = *"ValveSoftware"* ]]; then # not allowed on Valve tree
 	  error "NTsync/Winesync is not currently supported on Valve trees. It'll be forcibly disabled."
 	elif [ "$_use_fastsync" = "true" ]; then
 	  warning "fastsync/Winesync is deprecated and unmaintained and thus its use is discouraged - You're invited to move to its newer NTsync iteration"
@@ -14,7 +44,7 @@
 	    exit 1
 	  fi
 
-	  if [ "$_use_ntsync" = "true" ]; then
+	  if [ "$_use_ntsync" != "false" ]; then
 		error "fastsync conflicts with _use_ntsync. Build is forcibly prevented. Please disable _use_ntsync in your .cfg to use fastsync"
 		exit 1
 	  fi
@@ -74,36 +104,11 @@
 
 	elif [ "$_use_ntsync" = "true" ]; then
 
-	  # check Linux headers
-	  # check if gcc installed
-	  if command -v gcc >/dev/null 2>&1; then
-	    ntsync_header_check_gcc=$(echo '#include <linux/ntsync.h>' | gcc -H -E -fsyntax-only - 2>&1 | head -n1 | cut -d' ' -f2-)
-	  fi
-	  # then check if clang installed
-	  if command -v clang >/dev/null 2>&1; then
-	    ntsync_header_check_llvm=$(echo '#include <linux/ntsync.h>' | clang -H -E - 2>&1 | head -n1 | cut -d' ' -f2-)
-	  fi
-	  if [[ ! -s $ntsync_header_check_gcc ]] && [[ ! -s $ntsync_header_check_llvm ]]; then
-	    error "GCC - ${ntsync_header_check_gcc}"
-	    error "LLVM - ${ntsync_header_check_llvm}"
-	    error "NTsync header was not found. Build is forcibly prevented."
-	    error 'Please use linux-tkg build with _ntsync="true" or https://aur.archlinux.org/packages/ntsync-dkms/'
-	    exit 1
-	  fi
-
-	  if [ "$_staging_esync" = "true" ] && [ "$_use_fsync" = "true" ]; then
-		error "NTsync conflicts with _use_esync and _use_fsync. Build is forcibly prevented. Please disable them in your .cfg to use ntsync"
-		exit 1
-	  fi
-
-	  if [ "$_use_fastsync" = "true" ]; then
-		error "NTsync conflicts with _use_fastsync. Build is forcibly prevented. Please disable _use_fastsync in your .cfg to use ntsync"
-		exit 1
-	  fi
-
-      if [ "$_use_staging" = "true" ]; then
-        # Check config.h.in to ensure what patch is need
-        if ( grep "Define to 1 if you have the 'ppoll' function." "${srcdir}"/"${_winesrcdir}"/include/config.h.in >> /dev/null ); then
+	  check_ntsync_header
+	  check_esync_and_fsync
+	  if [ "$_use_staging" = "true" ]; then
+	  # Check config.h.in to ensure what patch is need
+	    if ( grep "Define to 1 if you have the 'ppoll' function." "${srcdir}"/"${_winesrcdir}"/include/config.h.in >> /dev/null ); then
 		  # Check config.h.in for a difference with the repository
 		  if ( grep "Define to 1 if you have the \`prctl' function." "${srcdir}"/"${_winesrcdir}"/include/config.h.in >> /dev/null ); then
 		    _patchname='ntsync-config.h.in-org.patch' && _patchmsg="Using original config.h.in patchset for ntsync5" && nonuser_patcher
@@ -112,7 +117,7 @@
 		  fi
 	    fi
 
-        if [ "$_protonify" = "true" ]; then
+		if [ "$_protonify" = "true" ]; then
 		  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 991bf42f1052db41bb9b2e178b8af7a51be95ca7 HEAD ); then
 	      _patchname='ntsync5-staging-protonify.patch' && _patchmsg="Using ntsync patchset" && nonuser_patcher
 		  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor ddc15b268365533cae7cc8108cb7114c00f41657 HEAD ); then
@@ -174,7 +179,7 @@
 	      elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 59485f00c917061c097c1805d7fa7f61c380c749 HEAD ); then
 	      _patchname='ntsync5-staging-protonify-7eb72b7b.patch' && _patchmsg="Using ntsync patchset" && nonuser_patcher
 	      fi
-        else
+	    else
 		  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 991bf42f1052db41bb9b2e178b8af7a51be95ca7 HEAD ); then
 	      _patchname='ntsync5-staging.patch' && _patchmsg="Using ntsync patchset" && nonuser_patcher
 		  elif ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor ddc15b268365533cae7cc8108cb7114c00f41657 HEAD ); then
@@ -363,5 +368,13 @@
 	      _patchname='ntsync5-mainline-7eb72b7b.patch' && _patchmsg="Using ntsync patchset" && nonuser_patcher
 		  fi
 		fi
+	  fi
+	elif  [ "$_use_ntsync" = "inproc" ]; then
+
+	  check_ntsync_header
+	  check_esync_and_fsync
+
+	  if ( cd "${srcdir}"/"${_winesrcdir}" && git merge-base --is-ancestor 991bf42f1052db41bb9b2e178b8af7a51be95ca7 HEAD ); then
+	    _patchname='inproc-sync.patch' && _patchmsg="Using inproc sync patchset" && nonuser_patcher
 	  fi
 	fi
