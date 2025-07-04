@@ -2314,9 +2314,9 @@ index cae0ac1e395..ed030af8d8f 100644
  extern int default_fd_signaled( struct object *obj, struct wait_queue_entry *entry );
  extern int default_fd_get_esync_fd( struct object *obj, enum esync_type *type );
 +extern unsigned int default_fd_get_fsync_idx( struct object *obj, enum fsync_type *type );
- extern WCHAR *default_fd_get_full_name( struct object *obj, data_size_t max, data_size_t *ret_len );
  extern int default_fd_get_poll_events( struct fd *fd );
  extern void default_poll_event( struct fd *fd, int event );
+ extern void fd_queue_async( struct fd *fd, struct async *async, int type );
 diff --git a/server/fsync.c b/server/fsync.c
 new file mode 100644
 index 00000000000..0a88ecdd3f6
@@ -3594,14 +3594,14 @@ index 1a245c58396..1fb3603f2a7 100644
          esync_clear( thread->esync_apc_fd );
  
 @@ -1327,6 +1356,8 @@ void kill_thread( struct thread *thread, int violent_death )
+     }
      kill_console_processes( thread, 0 );
      abandon_mutexes( thread );
-     wake_up( &thread->obj, 0 );
 +    if (do_fsync())
 +        fsync_abandon_mutexes( thread );
      if (do_esync())
          esync_abandon_mutexes( thread );
-     if (violent_death) send_thread_signal( thread, SIGQUIT );
+     if (violent_death)
 diff --git a/server/thread.h b/server/thread.h
 index 0f6108b684a..53627631343 100644
 --- a/server/thread.h
