@@ -7926,6 +7926,68 @@ index 65fab78d427..f3eb7f9222e 100644
 -- 
 2.49.0
 
+From 144dcbbc40cab72c45f427e783b3732a0f210466 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 6 Sep 2022 22:01:26 +0200
+Subject: [PATCH 0237/1564] mf: Discard end of presentation on
+ IMFMediaSession_Stop.
+
+MR !607 was trying to fix an issue with Life Is Strange Remastered, but
+although it fixed some race conditions with presentation end, the issue
+it was trying to fix is still there.
+
+The game calls IMFMediaSession_Stop while the presentation is ending,
+expects that command to quickly execute, interrupting the presentation
+end and emitting a MESessionStopped event instead of the MESessionEnded.
+
+Delaying the Stop command and emitting the MESessionEnded event breaks
+the game assumptions and it crashes.
+
+CW-Bug-Id: #20916
+---
+ dlls/mf/session.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/mf/session.c b/dlls/mf/session.c
+index b4297581800..c9d003cf3e8 100644
+--- a/dlls/mf/session.c
++++ b/dlls/mf/session.c
+@@ -2791,6 +2791,13 @@ static HRESULT WINAPI session_commands_callback_Invoke(IMFAsyncCallback *iface,
+ 
+     EnterCriticalSection(&session->cs);
+ 
++    if ((session->presentation.flags & SESSION_FLAG_END_OF_PRESENTATION) && op->command != SESSION_CMD_STOP)
++    {
++        WARN("session %p command is ending, waiting for it to complete.\n", session);
++        LeaveCriticalSection(&session->cs);
++        return S_OK;
++    }
++
+     if (session->presentation.flags & SESSION_FLAG_PENDING_COMMAND)
+     {
+         WARN("session %p command is in progress, waiting for it to complete.\n", session);
+@@ -2817,6 +2824,9 @@ static HRESULT WINAPI session_commands_callback_Invoke(IMFAsyncCallback *iface,
+             session_pause(session);
+             break;
+         case SESSION_CMD_STOP:
++            if (session->presentation.flags & SESSION_FLAG_END_OF_PRESENTATION)
++                session_set_topo_status(session, S_OK, MF_TOPOSTATUS_ENDED);
++            session_clear_end_of_presentation(session);
+             session_stop(session);
+             break;
+         case SESSION_CMD_CLOSE:
+@@ -4134,7 +4144,7 @@ static void session_raise_end_of_presentation(struct media_session *session)
+     {
+         if (session_nodes_is_mask_set(session, MF_TOPOLOGY_MAX, SOURCE_FLAG_END_OF_PRESENTATION))
+         {
+-            session->presentation.flags |= SESSION_FLAG_END_OF_PRESENTATION | SESSION_FLAG_PENDING_COMMAND;
++            session->presentation.flags |= SESSION_FLAG_END_OF_PRESENTATION;
+             IMFMediaEventQueue_QueueEventParamVar(session->event_queue, MEEndOfPresentation, &GUID_NULL, S_OK, NULL);
+         }
+     }
+-- 
+2.49.0
+
 From 454b8a6088fc8db7bcf64cd126c3e541a79fb113 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Mon, 31 Oct 2022 10:34:38 +0100
@@ -7955,6 +8017,35 @@ index c9d003cf3e8..a5c60334321 100644
      if (FAILED(hr = create_session_op(SESSION_CMD_SET_RATE, &op)))
          return hr;
  
+-- 
+2.49.0
+
+From 099e6e15aa665e905dc5137cd829afe4e312c41c Mon Sep 17 00:00:00 2001
+From: Santino Mazza <smazza@codeweavers.com>
+Date: Fri, 9 Jun 2023 16:59:27 -0300
+Subject: [PATCH 0239/1564] mf: Clear end of presentation if topo_status is not
+ invalid.
+
+Cw-Bug-Id: #22719
+Cw-Bug-Id: #21809
+---
+ dlls/mf/session.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/mf/session.c b/dlls/mf/session.c
+index a5c60334321..8ceb7c3e88c 100644
+--- a/dlls/mf/session.c
++++ b/dlls/mf/session.c
+@@ -2826,7 +2826,8 @@ static HRESULT WINAPI session_commands_callback_Invoke(IMFAsyncCallback *iface,
+         case SESSION_CMD_STOP:
+             if (session->presentation.flags & SESSION_FLAG_END_OF_PRESENTATION)
+                 session_set_topo_status(session, S_OK, MF_TOPOSTATUS_ENDED);
+-            session_clear_end_of_presentation(session);
++            if (session->presentation.topo_status != MF_TOPOSTATUS_INVALID)
++                session_clear_end_of_presentation(session);
+             session_stop(session);
+             break;
+         case SESSION_CMD_CLOSE:
 -- 
 2.49.0
 
@@ -8730,6 +8821,48 @@ index d1d35197f81..7fb43bdbc93 100644
      {
          align->padding_right = max(align->padding_right, video_info->dwWidth - aperture->OffsetX.value - aperture->Area.cx);
          align->padding_bottom = max(align->padding_bottom, video_info->dwHeight - aperture->OffsetY.value - aperture->Area.cy);
+-- 
+2.49.0
+
+From 0304a425fd7832e1692d224388e411ae253a70fe Mon Sep 17 00:00:00 2001
+From: Brendan McGrath <bmcgrath@codeweavers.com>
+Date: Thu, 18 Jul 2024 17:55:53 +1000
+Subject: [PATCH 0259/1564] winegstreamer: Remove 'au' alignment for h264.
+
+h264parse does not correctly determine 'nal' alignment if this caps is
+provided.
+
+CW-Bug-Id: #23226
+CW-Bug-Id: #23425
+---
+ dlls/winegstreamer/wg_format.c     | 1 -
+ dlls/winegstreamer/wg_media_type.c | 1 -
+ 2 files changed, 2 deletions(-)
+
+diff --git a/dlls/winegstreamer/wg_format.c b/dlls/winegstreamer/wg_format.c
+index fd8f99c256b..afbc8eab137 100644
+--- a/dlls/winegstreamer/wg_format.c
++++ b/dlls/winegstreamer/wg_format.c
+@@ -884,7 +884,6 @@ static GstCaps *wg_format_to_caps_video_h264(const struct wg_format *format)
+     if (!(caps = gst_caps_new_empty_simple("video/x-h264")))
+         return NULL;
+     gst_caps_set_simple(caps, "stream-format", G_TYPE_STRING, "byte-stream", NULL);
+-    gst_caps_set_simple(caps, "alignment", G_TYPE_STRING, "au", NULL);
+ 
+     if (format->u.video.width)
+         gst_caps_set_simple(caps, "width", G_TYPE_INT, format->u.video.width, NULL);
+diff --git a/dlls/winegstreamer/wg_media_type.c b/dlls/winegstreamer/wg_media_type.c
+index 3e0effcbe66..c26a6518a02 100644
+--- a/dlls/winegstreamer/wg_media_type.c
++++ b/dlls/winegstreamer/wg_media_type.c
+@@ -296,7 +296,6 @@ static void init_caps_from_video_h264(GstCaps *caps, const MFVIDEOFORMAT *format
+     gst_structure_remove_field(gst_caps_get_structure(caps, 0), "format");
+     gst_structure_set_name(gst_caps_get_structure(caps, 0), "video/x-h264");
+     gst_caps_set_simple(caps, "stream-format", G_TYPE_STRING, "byte-stream", NULL);
+-    gst_caps_set_simple(caps, "alignment", G_TYPE_STRING, "au", NULL);
+ 
+     if (format_size > sizeof(*format) && (buffer = gst_buffer_new_and_alloc(format_size - sizeof(*format))))
+     {
 -- 
 2.49.0
 
