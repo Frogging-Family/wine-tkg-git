@@ -28,7 +28,7 @@
   git reset --hard HEAD
   git clean -xdf
   git pull origin master
-  git checkout c947731
+#  git checkout c947731
   cd ..
 
   if [ "$_build_faudio" = "true" ]; then
@@ -63,7 +63,7 @@
 
   if [ "$_build_ffmpeg" = "true" ]; then
 	mkdir -p "$_nowhere"/Proton/build/FFmpeg64 && cd "$_nowhere"/Proton/build/FFmpeg64
-	( cd "$_nowhere"/external-resources/FFmpeg && patch -Np1 < "$_nowhere"/proton_template/ffmpeg_binutils.patch )
+#	( cd "$_nowhere"/external-resources/FFmpeg && patch -Np1 < "$_nowhere"/proton_template/ffmpeg_binutils.patch )
 
 	"$_nowhere"/Proton/FFmpeg/configure \
 		--prefix="$_nowhere/gst" \
@@ -108,11 +108,10 @@
     -D gpl=enabled
     -D gst-examples=disabled
     -D libnice=disabled
-    -D vaapi=disabled
     -D introspection=disabled
     -D orc-source=auto
     -D gstreamer:dbghelp=disabled
-    -D gstreamer:gobject-cast-checks=disabled
+    -D gstreamer:glib_debug=disabled
     -D gstreamer:ptp-helper-permissions=capabilities
     -D gstreamer:introspection=disabled
     -D gstreamer:gst_parse=false
@@ -121,10 +120,10 @@
     -D gstreamer:bash-completion=disabled
     -D gstreamer:examples=disabled
     -D gstreamer:tests=disabled
-    -D gstreamer:glib-asserts=disabled
-    -D gstreamer:glib-checks=disabled
+    -D gstreamer:glib_assert=false
+    -D gstreamer:glib_checks=false
     -D gstreamer:nls=disabled
-    -D gst-plugins-base:gobject-cast-checks=disabled
+    -D gst-plugins-base:glib_debug=disabled
     -D gst-plugins-base:tremor=disabled
     -D gst-plugins-base:theora=disabled
 	-D gst-plugins-base:alsa=disabled
@@ -152,11 +151,11 @@
 	-D gst-plugins-base:examples=disabled
 	-D gst-plugins-base:tests=disabled
 	-D gst-plugins-base:introspection=disabled
-	-D gst-plugins-base:gobject-cast-checks=disabled
-	-D gst-plugins-base:glib-asserts=disabled
-	-D gst-plugins-base:glib-checks=disabled
+	-D gst-plugins-base:glib_debug=disabled
+	-D gst-plugins-base:glib_assert=false
+	-D gst-plugins-base:glib_checks=false
 	-D gst-plugins-base:nls=disabled
-    -D gst-plugins-good:gobject-cast-checks=disabled
+    -D gst-plugins-good:glib_debug=disabled
     -D gst-plugins-good:rpicamsrc=disabled
 	-D gst-plugins-good:aalib=disabled
 	-D gst-plugins-good:alpha=disabled
@@ -206,7 +205,7 @@
 	-D gst-plugins-good:y4m=disabled
     -D gst-plugins-bad:directfb=disabled
     -D gst-plugins-bad:flite=disabled
-    -D gst-plugins-bad:gobject-cast-checks=disabled
+    -D gst-plugins-bad:glib_debug=disabled
     -D gst-plugins-bad:gs=disabled
     -D gst-plugins-bad:iqa=disabled
     -D gst-plugins-bad:isac=disabled
@@ -237,8 +236,8 @@
 	-D gst-plugins-bad:x265=disabled
 	-D gst-plugins-bad:openexr=disabled
 	-D gst-plugins-bad:lc3=disabled
-    -D gst-plugins-ugly:gobject-cast-checks=disabled
-    -D gst-rtsp-server:gobject-cast-checks=disabled
+    -D gst-plugins-ugly:glib_debug=disabled
+    -D gst-rtsp-server:glib_debug=disabled
     -D gst-editing-services:validate=disabled
   )
 
@@ -323,11 +322,10 @@
     -D gpl=enabled
     -D gst-examples=disabled
     -D libnice=disabled
-    -D vaapi=disabled
     -D introspection=disabled
     -D orc-source=auto
     -D gstreamer:dbghelp=disabled
-    -D gstreamer:gobject-cast-checks=disabled
+    -D gstreamer:glib_debug=disabled
     -D gstreamer:ptp-helper-permissions=capabilities
     -D gstreamer:introspection=disabled
     -D gstreamer:gst_parse=false
@@ -336,10 +334,10 @@
     -D gstreamer:bash-completion=disabled
     -D gstreamer:examples=disabled
     -D gstreamer:tests=disabled
-    -D gstreamer:glib-asserts=disabled
-    -D gstreamer:glib-checks=disabled
+    -D gstreamer:glib_assert=false
+    -D gstreamer:glib_checks=false
     -D gstreamer:nls=disabled
-    -D gst-plugins-base:gobject-cast-checks=disabled
+    -D gst-plugins-base:glib_debug=disabled
     -D gst-plugins-base:tremor=disabled
     -D gst-plugins-base:theora=disabled
 	-D gst-plugins-base:alsa=disabled
@@ -367,11 +365,11 @@
 	-D gst-plugins-base:examples=disabled
 	-D gst-plugins-base:tests=disabled
 	-D gst-plugins-base:introspection=disabled
-	-D gst-plugins-base:gobject-cast-checks=disabled
-	-D gst-plugins-base:glib-asserts=disabled
-	-D gst-plugins-base:glib-checks=disabled
+	-D gst-plugins-base:glib_debug=disabled
+	-D gst-plugins-base:glib_assert=false
+	-D gst-plugins-base:glib_checks=false
 	-D gst-plugins-base:nls=disabled
-    -D gst-plugins-good:gobject-cast-checks=disabled
+    -D gst-plugins-good:glib_debug=disabled
     -D gst-plugins-good:rpicamsrc=disabled
 	-D gst-plugins-good:aalib=disabled
 	-D gst-plugins-good:alpha=disabled
@@ -426,7 +424,7 @@
     -D gst-plugins-bad:dc1394=disabled
     -D gst-plugins-bad:directfb=disabled
     -D gst-plugins-bad:flite=disabled
-    -D gst-plugins-bad:gobject-cast-checks=disabled
+    -D gst-plugins-bad:glib_debug=disabled
     -D gst-plugins-bad:gs=disabled
     -D gst-plugins-bad:iqa=disabled
     -D gst-plugins-bad:isac=disabled
@@ -500,10 +498,10 @@
 	-D gst-plugins-bad:bluez=disabled
 	-D gst-plugins-bad:bs2b=disabled
 	-D gst-plugins-bad:timecode=disabled
-    -D gst-plugins-ugly:gobject-cast-checks=disabled
+    -D gst-plugins-ugly:glib_debug=disabled
     -D gst-plugins-ugly:cdio=disabled
     -D gst-plugins-ugly:dvdread=disabled
-    -D gst-rtsp-server:gobject-cast-checks=disabled
+    -D gst-rtsp-server:glib_debug=disabled
     -D gst-editing-services:validate=disabled
     )
 
