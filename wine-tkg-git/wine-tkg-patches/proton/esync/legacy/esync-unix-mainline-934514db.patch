@@ -83,7 +83,6 @@ index 573fcda1083..4737b6f711b 100644
 -        list_remove( &mutex->entry );
 -        mutex->owner = NULL;
 -        wake_up( &mutex->obj, 0 );
--        release_object( mutex );
 -    }
 -    return 1;
 -}
@@ -100,7 +99,8 @@ index 573fcda1083..4737b6f711b 100644
  {
 -    struct mutex_sync *mutex = (struct mutex_sync *)obj;
 -    assert( obj->ops == &mutex_sync_ops );
--    assert( !mutex->count );
+-
+-    if (mutex->count) do_release( mutex, current, mutex->count );
 -}
 -
 -static int mutex_sync_signaled( struct object *obj, struct wait_queue_entry *entry )
@@ -303,11 +303,11 @@ index 3845a86c962..3b0bd1826ef 100644
      int                    hotkey_count;    /* pending hotkey messages count */
      int                    quit_message;    /* is there a pending quit message? */
 @@ -134,7 +133,6 @@ struct msg_queue
+     struct hook_table     *hooks;           /* hook table */
      timeout_t              last_get_msg;    /* time of last get message call */
      int                    keystate_lock;   /* owns an input keystate lock */
 -    int                    waiting;         /* is thread waiting on queue */
      queue_shm_t           *shared;          /* queue in session shared memory */
-     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
  };
  
 @@ -306,7 +304,6 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
@@ -319,9 +319,9 @@ index 3845a86c962..3b0bd1826ef 100644
          queue->hotkey_count    = 0;
          queue->quit_message    = 0;
 @@ -318,7 +315,6 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+         queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
-         queue->ignore_post_msg = 0;
 -        queue->waiting         = 0;
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
@@ -2553,24 +2553,15 @@ index 05ec6a4ec00..83fa8760474 100644
          release_object( apc );
      }
  }
-@@ -1527,7 +1527,7 @@
-     /* grab reference since object can be destroyed while trying to wake up */
-     grab_object( &thread->obj );
-     thread->exit_poll = NULL;
+@@ -1568,7 +1537,7 @@ void kill_thread( struct thread *thread, int violent_death )
+     }
+     kill_console_processes( thread, 0 );
+     abandon_mutexes( thread );
 -    signal_sync( thread->sync );
 +    wake_up( &thread->obj, 0 );
-     release_object( &thread->obj );
- }
- 
-@@ -1568,7 +1537,7 @@ void kill_thread( struct thread *thread, int violent_death )
-         check_terminated( thread );
-     }
-     else
--        signal_sync( thread->sync );
-+        wake_up( &thread->obj, 0 );
+     if (violent_death) send_thread_signal( thread, SIGQUIT );
      cleanup_thread( thread );
      remove_process_thread( thread->process, thread );
-     release_object( thread );
 @@ -1922,7 +1891,7 @@ DECL_HANDLER(select)
          }
          ctx->status = STATUS_SUCCESS;
@@ -7367,9 +7358,9 @@ index a3479055ed4..08635c047b2 100644
  #define WM_NCMOUSEFIRST WM_NCMOUSEMOVE
  #define WM_NCMOUSELAST  (WM_NCMOUSEFIRST+(WM_MOUSELAST-WM_MOUSEFIRST))
 @@ -135,6 +136,7 @@ struct msg_queue
+     timeout_t              last_get_msg;    /* time of last get message call */
      int                    keystate_lock;   /* owns an input keystate lock */
      queue_shm_t           *shared;          /* queue in session shared memory */
-     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
 +    int                    esync_fd;        /* esync file descriptor (signalled on message) */
  };
  
@@ -7392,9 +7383,9 @@ index a3479055ed4..08635c047b2 100644
      no_signal,                 /* signal */
      no_get_fd,                 /* get_fd */
 @@ -317,6 +320,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+         queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
-         queue->ignore_post_msg = 0;
 +        queue->esync_fd        = -1;
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
@@ -7469,9 +7460,9 @@ index a3479055ed4..08635c047b2 100644
 +    if (do_esync() && !is_signaled( queue ))
 +        esync_clear( queue->esync_fd );
 +
-     return;
+ }
  
- found_msg:
+ 
 -- 
 2.47.2
 
@@ -7601,8 +7592,8 @@ index 08635c047b2..8f1a68acd7f 100644
 --- a/server/queue.c
 +++ b/server/queue.c
 @@ -137,6 +137,7 @@ struct msg_queue
+     int                    keystate_lock;   /* owns an input keystate lock */
      queue_shm_t           *shared;          /* queue in session shared memory */
-     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
      int                    esync_fd;        /* esync file descriptor (signalled on message) */
 +    int                    esync_in_msgwait; /* our thread is currently waiting on us */
  };
@@ -7611,12 +7602,22 @@ index 08635c047b2..8f1a68acd7f 100644
 @@ -321,6 +322,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
-         queue->ignore_post_msg = 0;
          queue->esync_fd        = -1;
 +        queue->esync_in_msgwait = 0;
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
          list_init( &queue->pending_timers );
+@@ -1291,6 +1293,10 @@ static int is_queue_hung( struct msg_queue *queue )
+         if (get_wait_queue_thread(entry)->queue == queue)
+             return 0;  /* thread is waiting on queue -> not hung */
+     }
++
++    if (do_esync() && queue->esync_in_msgwait)
++        return 0;   /* thread is waiting on queue in absentia -> not hung */
++
+     return 1;
+ }
+ 
 @@ -4281,6 +4287,23 @@ DECL_HANDLER(update_rawinput_devices)
      }
  }
@@ -9684,6 +9685,132 @@ index ad6ab1adc96..95f51f54b83 100644
 -- 
 2.35.1
 
+From 07694655cf43e87ffc6185a5e7fe8d1bdd8658a4 Mon Sep 17 00:00:00 2001
+From: Zebediah Figura <z.figura12@gmail.com>
+Date: Wed, 13 Jun 2018 23:32:04 -0500
+Subject: [PATCH] kernel32/tests: Add some mutex tests.
+
+---
+ dlls/kernel32/tests/sync.c | 94 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 94 insertions(+)
+
+diff --git a/dlls/kernel32/tests/sync.c b/dlls/kernel32/tests/sync.c
+index bc85126d9aa..491052d5593 100644
+--- a/dlls/kernel32/tests/sync.c
++++ b/dlls/kernel32/tests/sync.c
+@@ -227,8 +227,23 @@ static void test_temporary_objects(void)
+     ok(GetLastError() == ERROR_FILE_NOT_FOUND, "wrong error %lu\n", GetLastError());
+ }
+ 
++static HANDLE mutex, mutex2, mutices[2];
++
++static DWORD WINAPI mutex_thread( void *param )
++{
++    DWORD expect = (DWORD)(DWORD_PTR)param;
++    DWORD ret;
++
++    ret = WaitForSingleObject( mutex, 0 );
++    ok(ret == expect, "expected %lu, got %lu\n", expect, ret);
++
++    if (!ret) ReleaseMutex( mutex );
++    return 0;
++}
++
+ static void test_mutex(void)
+ {
++    HANDLE thread;
+     DWORD wait_ret;
+     BOOL ret;
+     HANDLE hCreated;
+@@ -339,6 +354,85 @@ todo_wine_if(getenv("WINEESYNC"))   /* XFAIL: due to the above */
+     CloseHandle(hOpened);
+ 
+     CloseHandle(hCreated);
++
++    mutex = CreateMutexA( NULL, FALSE, NULL );
++    ok(!!mutex, "got error %lu\n", GetLastError());
++
++    ret = ReleaseMutex( mutex );
++    ok(!ret, "got %d\n", ret);
++    ok(GetLastError() == ERROR_NOT_OWNER, "got error %lu\n", GetLastError());
++
++    for (i = 0; i < 100; i++)
++    {
++        ret = WaitForSingleObject( mutex, 0 );
++        ok(ret == 0, "got %u\n", ret);
++    }
++
++    for (i = 0; i < 100; i++)
++    {
++        ret = ReleaseMutex( mutex );
++        ok(ret, "got error %lu\n", GetLastError());
++    }
++
++    ret = ReleaseMutex( mutex );
++    ok(!ret, "got %d\n", ret);
++    ok(GetLastError() == ERROR_NOT_OWNER, "got error %lu\n", GetLastError());
++
++    thread = CreateThread( NULL, 0, mutex_thread, (void *)0, 0, NULL );
++    ret = WaitForSingleObject( thread, 2000 );
++    ok(ret == 0, "wait failed: %u\n", ret);
++
++    WaitForSingleObject( mutex, 0 );
++
++    thread = CreateThread( NULL, 0, mutex_thread, (void *)WAIT_TIMEOUT, 0, NULL );
++    ret = WaitForSingleObject( thread, 2000 );
++    ok(ret == 0, "wait failed: %u\n", ret);
++
++    ret = ReleaseMutex( mutex );
++        ok(ret, "got error %lu\n", GetLastError());
++
++    thread = CreateThread( NULL, 0, mutex_thread, (void *)0, 0, NULL );
++    ret = WaitForSingleObject( thread, 2000 );
++    ok(ret == 0, "wait failed: %u\n", ret);
++
++    mutex2 = CreateMutexA( NULL, TRUE, NULL );
++    ok(!!mutex2, "got error %lu\n", GetLastError());
++
++    ret = ReleaseMutex( mutex2 );
++    ok(ret, "got error %lu\n", GetLastError());
++
++    ret = ReleaseMutex( mutex2 );
++    ok(!ret, "got %d\n", ret);
++    ok(GetLastError() == ERROR_NOT_OWNER, "got error %lu\n", GetLastError());
++
++    mutices[0] = mutex;
++    mutices[1] = mutex2;
++
++    ret = WaitForMultipleObjects( 2, mutices, FALSE, 0 );
++    ok(ret == 0, "got %u\n", ret);
++
++    ret = ReleaseMutex( mutex );
++    ok(ret, "got error %lu\n", GetLastError());
++
++    ret = ReleaseMutex( mutex2 );
++    ok(!ret, "got %d\n", ret);
++    ok(GetLastError() == ERROR_NOT_OWNER, "got error %lu\n", GetLastError());
++
++    ret = WaitForMultipleObjects( 2, mutices, TRUE, 0 );
++    ok(ret == 0, "got %u\n", ret);
++
++    ret = ReleaseMutex( mutex );
++    ok(ret, "got error %lu\n", GetLastError());
++
++    ret = ReleaseMutex( mutex2 );
++    ok(ret, "got error %lu\n", GetLastError());
++
++    ret = CloseHandle( mutex );
++    ok(ret, "got error %lu\n", GetLastError());
++
++    ret = CloseHandle( mutex2 );
++    ok(ret, "got error %lu\n", GetLastError());
++
+ }
+ 
+ static void test_slist(void)
+-- 
+2.35.1
+
 From 9d683eab1efae1c8dcd5b571e8a31ac0f13fc563 Mon Sep 17 00:00:00 2001
 From: Zebediah Figura <z.figura12@gmail.com>
 Date: Wed, 13 Jun 2018 23:58:01 -0500
@@ -11101,14 +11228,14 @@ index 83f80740a46..bffe229586f 100644
 --- a/server/thread.c
 +++ b/server/thread.c
 @@ -1325,6 +1325,8 @@ void kill_thread( struct thread *thread, int violent_death )
-     }
-     else
-         wake_up( &thread->obj, 0 );
-+        if (do_esync())
-+            esync_abandon_mutexes( thread );
+     kill_console_processes( thread, 0 );
+     abandon_mutexes( thread );
+     wake_up( &thread->obj, 0 );
++    if (do_esync())
++        esync_abandon_mutexes( thread );
+     if (violent_death) send_thread_signal( thread, SIGQUIT );
      cleanup_thread( thread );
      remove_process_thread( thread->process, thread );
-     release_object( thread );
 -- 
 2.29.2
 
@@ -11361,40 +11488,3 @@ index 59f8809fc1a..9102cf911aa 100644
 -- 
 2.45.2
 
---- b/server/queue.c
-+++ a/server/queue.c
-@@ -1307,6 +1307,10 @@
-         if (get_wait_queue_thread(entry)->queue == queue)
-             return 0;  /* thread is waiting on queue -> not hung */
-     }
-+
-+    if (do_esync() && queue->esync_in_msgwait)
-+        return 0;   /* thread is waiting on queue in absentia -> not hung */
-+
-     return 1;
- }
- 
-@@ -4281,6 +4287,23 @@ DECL_HANDLER(update_rawinput_devices)
-     }
- }
- 
-+DECL_HANDLER(esync_msgwait)
-+{
-+    struct msg_queue *queue = get_current_queue();
-+    const queue_shm_t *queue_shm;
-+
-+    if (!queue) return;
-+    queue_shm = queue->shared;
-+    queue->esync_in_msgwait = req->in_msgwait;
-+
-+    if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
-+        set_event( current->process->idle_event );
-+
-+    /* and start/stop waiting on the driver */
-+    if (queue->fd)
-+        set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
-+}
-+
- DECL_HANDLER(set_keyboard_repeat)
- {
-     struct desktop *desktop;
