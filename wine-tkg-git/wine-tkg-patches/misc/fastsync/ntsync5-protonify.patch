@@ -83,6 +83,7 @@ index 573fcda1083..4737b6f711b 100644
 -        list_remove( &mutex->entry );
 -        mutex->owner = NULL;
 -        wake_up( &mutex->obj, 0 );
+-        release_object( mutex );
 -    }
 -    return 1;
 -}
@@ -99,8 +100,7 @@ index 573fcda1083..4737b6f711b 100644
  {
 -    struct mutex_sync *mutex = (struct mutex_sync *)obj;
 -    assert( obj->ops == &mutex_sync_ops );
--
--    if (mutex->count) do_release( mutex, current, mutex->count );
+-    assert( !mutex->count );
 -}
 -
 -static int mutex_sync_signaled( struct object *obj, struct wait_queue_entry *entry )
@@ -6324,7 +6324,7 @@ index 4218423ebac..671e1a77e36 100644
      no_close_handle,           /* close_handle */
      mutex_destroy              /* destroy */
  };
-@@ -94,23 +109,23 @@ static const struct object_ops mutex_ops =
+@@ -94,24 +109,23 @@ static const struct object_ops mutex_ops =
  /* grab a mutex for a given thread */
  static void do_grab( struct mutex *mutex, struct thread *thread )
  {
@@ -6335,6 +6335,7 @@ index 4218423ebac..671e1a77e36 100644
 +    if (!mutex->u.server.count++)  /* FIXME: avoid wrap-around */
      {
 -        assert( !mutex->owner );
+-        grab_object( mutex );
 -        mutex->owner = thread;
 -        list_add_head( &thread->mutex_list, &mutex->entry );
 +        assert( !mutex->u.server.owner );
