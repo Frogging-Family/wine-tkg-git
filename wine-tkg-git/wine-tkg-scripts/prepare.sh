@@ -744,7 +744,7 @@ _prepare() {
 	# Disable local Esync on 553986f 3e94d12465c0ed9f6ce1bec742ae779a0932813c
 	if [ "$_use_staging" = "true" ]; then
 	  cd "${srcdir}"/"${_stgsrcdir}"
-      if ( git merge-base --is-ancestor 3e94d12465c0ed9f6ce1bec742ae779a0932813c HEAD ) && [ "$_use_ntsync" = "false" ]; then
+      if ( git merge-base --is-ancestor 3e94d12465c0ed9f6ce1bec742ae779a0932813c HEAD ) && [ "$_use_esync" = "true" ]; then
 	    _use_esync="true"
 	    _staging_esync="true"
 	    echo "Re-enable esync patches since Staging impl is disabled." >> "$_where"/last_build_config.log
