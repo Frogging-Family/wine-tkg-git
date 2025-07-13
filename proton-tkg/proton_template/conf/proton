@@ -804,6 +804,7 @@ class CompatData:
             use_custom9 = "custom9" in g_session.compat_config
             use_wine_dxgi = "WINEDLLOVERRIDES" in g_session.env and "dxgi=b" in g_session.env["WINEDLLOVERRIDES"]
             use_nvapi = 'enablenvapi' in g_session.compat_config
+            use_fsr4upgrade = 'fsr4upgrade' in g_session.compat_config
 
             builtin_dll_copy = os.environ.get("PROTON_DLL_COPY",
                     #dxsetup redist
@@ -1016,6 +1017,7 @@ class CompatData:
                 str(use_wine_dxgi),
                 builtin_dll_copy,
                 str(use_nvapi),
+                str(use_fsr4upgrade),
             ))
 
             # check whether any prefix config has changed
@@ -1102,6 +1104,15 @@ class CompatData:
                         try_copy(g_proton.lib_dir + "wine/dxvk/" + f + ".dll",
                                 self.prefix_dir + "drive_c/windows/syswow64/" + f + ".dll")
                         g_session.dlloverrides[f] = "n"
+
+                if use_fsr4upgrade and file_exists(g_proton.lib64_dir + "wine/amdxcffx64/amdxcffx64.dll", follow_symlinks=False):
+                    try_copy(g_proton.lib64_dir + "wine/amdxcffx64/amdxcffx64.dll", "drive_c/windows/system32",
+                            prefix=self.prefix_dir, track_file=tracked_files)
+                    g_session.dlloverrides["amdxcffx64"] = "n"
+                else:
+                    fsr4_dll = self.prefix_dir + "drive_c/windows/amdxcffx64/amdxcffx64.dll"
+                    if file_exists(fsr4_dll, follow_symlinks=False):
+                        os.unlink(fsr4_dll)
 
                 # If the user requested the NVAPI be available, copy it into place.
                 # If they didn't, clean up any stray nvapi DLLs.
@@ -1522,6 +1533,7 @@ class Session:
         self.check_environment("PROTON_NO_XIM", "noxim")
         self.check_environment("PROTON_HEAP_DELAY_FREE", "heapdelayfree")
         self.check_environment("PROTON_ENABLE_NVAPI", "enablenvapi")
+        self.check_environment("PROTON_FSR4_UPGRADE", "fsr4upgrade")
         self.check_environment("PROTON_NVAPI_DISABLE", "nonvapi")
         self.check_environment("PROTON_GLES2_DISABLE", "disablelibglesv2")
         self.check_environment("PROTON_GL_OSMESA", "useglosmesa")
@@ -1687,6 +1699,9 @@ class Session:
 
         if "enablenvapi" in self.compat_config:
             self.env["DXVK_ENABLE_NVAPI"] = "1"
+
+        if "fsr4upgrade" in self.compat_config:
+            self.env["FSR4_UPGRADE"] = "1"
 
         if "nonvapi" in self.compat_config and not "enablenvapi" in self.compat_config:
             self.dlloverrides["nvapi"] = "d"

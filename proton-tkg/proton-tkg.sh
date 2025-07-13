@@ -780,6 +780,16 @@ function download_dxvk_version {
   done
 }
 
+function latest_amdxcffx64 {
+  _amdxcffx64_base_url="https://download.amd.com/dir/bin/amdxcffx64.dll"
+  if [ "$_use_fsr4" = "latest" ]; then
+    _amdxcffx64_version=$(curl -s $_amdxcffx64_base_url | awk -F'[<>]' '/<A HREF="/ {print $(NF-2), $(NF)}' | sed 's/-/ /g' | sort -k4,4n -k3,3M -k2,2n -k5,5n | tail -n 1 | awk '{print $1}' | tr -d /)
+  else
+    _amdxcffx64_version=$_use_fsr4
+  fi
+  echo "$_amdxcffx64_base_url/$_amdxcffx64_version/amdxcffx64.dll"
+}
+
 function latest_mono {
   if [ "$_use_latest_mono" = "true" ]; then
     curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.tar.xz" | cut -d : -f 2,3 | tr -d \"
@@ -1083,6 +1093,13 @@ else
       cp -v "$_nowhere"/Proton/build/dxvk-nvapi-master/x32/* "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
     fi
 
+    if [ -n "$_use_fsr4" ] && [ "$_use_fsr4" != "false" ]; then
+      echo ''
+      echo "Injecting amdxcffx64.dll..."
+      mkdir -p "$_nowhere"/proton_dist_tmp/lib64/wine/amdxcffx64/ && cd "$_nowhere"/proton_dist_tmp/lib64/wine/amdxcffx64/
+      latest_amdxcffx64 | wget -qi -
+    fi
+
     echo ''
     echo "Injecting wine-mono & wine-gecko..."
 
@@ -1245,6 +1262,12 @@ else
     else
       sed -i 's/.*PROTON_USE_WINED3D11.*/     "PROTON_USE_WINED3D11": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
       sed -i 's/.*PROTON_USE_WINED3D9.*/     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+    fi
+    
+    if [ -n "$_use_fsr4" ] && [ "$_use_fsr4" != "false" ]; then
+      sed -i 's/.*PROTON_FSR4_UPGRADE.*/     "PROTON_FSR4_UPGRADE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+    else
+      sed -i 's/.*PROTON_FSR4_UPGRADE.*/#     "PROTON_FSR4_UPGRADE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
     fi
 
     # Only use our local gstreamer when _build_gstreamer is enabled

@@ -50,6 +50,7 @@ _exit_cleanup() {
     echo "_proton_winetricks=${_proton_winetricks}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_use_steamhelper=${_proton_use_steamhelper}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_mf_hacks=${_proton_mf_hacks}" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_use_fsr4=${_use_fsr4}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_use_dxvk=${_use_dxvk}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_dxvk_version=${_dxvk_version}" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_use_vkd3dlib='${_use_vkd3dlib}'" >> "$_proton_tkg_path"/proton_tkg_token
