@@ -219,12 +219,12 @@ function build_vrclient {
   winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win64$_vrclient_longpath64/vrclient_x64.spec" -o vrclient_x64.dll.fake || exit 1
   cd ../..
 
-  cd build/vrclient.win32
-  if [ "$_NOLIB32" != "true" ]; then
+  if [ "$_NOLIB32" = "false" ]; then
+    cd build/vrclient.win32
     winemaker $WINEMAKERFLAGS --wine32 -L"$_nowhere/proton_dist_tmp/$_lib32name/" -L"$_nowhere/proton_dist_tmp/$_lib32name/wine/" -I"$_nowhere/openvr/build/vrclient.win32/vrclient/" -I"$_nowhere/openvr/build/vrclient.win32/" vrclient
     make -e CC="winegcc -std=gnu17 -m32" CXX="wineg++ -m32 $_cxx_addon" -C "$_nowhere/openvr/build/vrclient.win32/vrclient" -j$(nproc) && strip --strip-debug vrclient/vrclient.dll.so || exit 1
+    winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win32$_vrclient_longpath32/vrclient.spec" -o vrclient.dll.fake || exit 1
   fi
-  winebuild --dll --fake-module -E "$_nowhere/openvr/build/vrclient.win32$_vrclient_longpath32/vrclient.spec" -o vrclient.dll.fake || exit 1
   cd "$_nowhere"
 
   mkdir -p proton_dist_tmp/lib/wine/dxvk
@@ -235,18 +235,22 @@ function build_vrclient {
   if [ "$_wow64_paths" = "true" ]; then
     cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/$_lib64name/wine/x86_64-unix/
     cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/$_lib64name/wine/x86_64-windows/vrclient_x64.dll
-    cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/$_lib64name/wine/i386-windows/vrclient.dll
+    if [ "$_NOLIB32" = "false" ]; then
+      cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/$_lib64name/wine/i386-windows/vrclient.dll
+    fi
   elif [ "$_new_lib_paths" = "true" ]; then
     if [ "$_new_lib_paths_69" = "true" ] && [ -d proton_dist_tmp/$_lib32name/wine/i386-windows ] && [ -d proton_dist_tmp/$_lib64name/wine/x86_64-windows ]; then
       cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/$_lib64name/wine/x86_64-unix/ && cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/$_lib64name/wine/x86_64-windows/vrclient_x64.dll
-      if [ "$_NOLIB32" != "true" ]; then
+      if [ "$_NOLIB32" = "false" ]; then
         cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/$_lib32name/wine/i386-unix/
+        cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/$_lib32name/wine/i386-windows/vrclient.dll
       fi
-      cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/$_lib32name/wine/i386-windows/vrclient.dll
     fi
   else
     cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64/vrclient_x64.dll.so proton_dist_tmp/$_lib64name/wine/ && cp -v "${_nowhere}"/openvr/build/vrclient.win64/vrclient_x64.dll.fake proton_dist_tmp/$_lib64name/wine/fakedlls/vrclient_x64.dll
-    cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/$_lib32name/wine/ && cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/$_lib32name/wine/fakedlls/vrclient.dll
+    if [ "$_NOLIB32" = "false" ]; then
+      cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient/vrclient.dll.so proton_dist_tmp/$_lib32name/wine/ && cp -v "${_nowhere}"/openvr/build/vrclient.win32/vrclient.dll.fake proton_dist_tmp/$_lib32name/wine/fakedlls/vrclient.dll
+    fi
   fi
 }
 
