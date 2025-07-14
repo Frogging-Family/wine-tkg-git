@@ -506,6 +506,9 @@
 	-D gst-plugins-bad:openjpeg=disabled
 	-D gst-plugins-bad:libde265=disabled
 	-D gst-plugins-bad:fdkaac=disabled
+	-D gst-plugins-bad:webp=disabled
+	-D gst-plugins-bad:teletext=disabled
+	-D gst-plugins-bad:srt=disabled
     -D gst-plugins-ugly:glib_debug=disabled
     -D gst-plugins-ugly:cdio=disabled
     -D gst-plugins-ugly:dvdread=disabled
