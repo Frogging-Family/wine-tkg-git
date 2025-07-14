@@ -28,7 +28,7 @@
   git reset --hard HEAD
   git clean -xdf
   git pull origin master
-#  git checkout c947731
+  git checkout c947731
   cd ..
 
   if [ "$_build_faudio" = "true" ]; then
@@ -498,6 +498,17 @@
 	-D gst-plugins-bad:bluez=disabled
 	-D gst-plugins-bad:bs2b=disabled
 	-D gst-plugins-bad:timecode=disabled
+	-D gst-plugins-bad:aom=disabled
+	-D gst-plugins-bad:assrender=disabled
+	-D gst-plugins-bad:modplug=disabled
+	-D gst-plugins-bad:lv2=disabled
+	-D gst-plugins-bad:fluidsynth=disabled
+	-D gst-plugins-bad:openjpeg=disabled
+	-D gst-plugins-bad:libde265=disabled
+	-D gst-plugins-bad:fdkaac=disabled
+	-D gst-plugins-bad:webp=disabled
+	-D gst-plugins-bad:teletext=disabled
+	-D gst-plugins-bad:srt=disabled
     -D gst-plugins-ugly:glib_debug=disabled
     -D gst-plugins-ugly:cdio=disabled
     -D gst-plugins-ugly:dvdread=disabled
