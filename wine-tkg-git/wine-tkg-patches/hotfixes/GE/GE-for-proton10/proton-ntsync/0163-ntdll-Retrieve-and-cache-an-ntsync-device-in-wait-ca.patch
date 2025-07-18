@@ -1,0 +1,419 @@
+From 865ba33fd747151b0460516a0eeb4525f25b1f39 Mon Sep 17 00:00:00 2001
+From: Elizabeth Figura <zfigura@codeweavers.com>
+Date: Wed, 2 Jul 2025 22:35:32 -0400
+Subject: [PATCH 163/166] ntdll: Retrieve and cache an ntsync device in wait
+ calls.
+
+---
+ dlls/ntdll/unix/esync.h        |   7 +-
+ dlls/ntdll/unix/fsync.h        |   7 +-
+ dlls/ntdll/unix/sync.c         | 105 ++++++++++
+ dlls/ntdll/unix/unix_private.h |   2 +
+ include/wine/server_protocol.h | 337 ++++++++++++++++++++++++++++++++-
+ server/Makefile.in             |   1 +
+ server/inproc_sync.c           |  72 +++++++
+ server/protocol.def            |   4 +
+ server/request_handlers.h      | 131 ++++++++++++-
+ server/request_trace.h         | 222 +++++++++++++++++++++-
+ 10 files changed, 862 insertions(+), 26 deletions(-)
+ create mode 100644 server/inproc_sync.c
+
+diff --git a/dlls/ntdll/unix/esync.h b/dlls/ntdll/unix/esync.h
+index 59f8809fc1a..882c26c1342 100644
+--- a/dlls/ntdll/unix/esync.h
++++ b/dlls/ntdll/unix/esync.h
+@@ -55,7 +55,10 @@ extern NTSTATUS esync_signal_and_wait( HANDLE signal, HANDLE wait, BOOLEAN alert
+  * don't race with theirs. It looks weird, I know.
+  *
+  * If we weren't trying to avoid touching the code I'd rename the mutex to
+- * "server_fd_mutex" or something similar. */
+-extern pthread_mutex_t fd_cache_mutex;
++ * "server_fd_mutex" or something similar.
++ *
++ * Moved to unix_private.h
++ */
++/*extern pthread_mutex_t fd_cache_mutex;*/
+ 
+ extern int receive_fd( obj_handle_t *handle );
+diff --git a/dlls/ntdll/unix/fsync.h b/dlls/ntdll/unix/fsync.h
+index 6005c0fa322..7f193871048 100644
+--- a/dlls/ntdll/unix/fsync.h
++++ b/dlls/ntdll/unix/fsync.h
+@@ -50,5 +50,8 @@ extern NTSTATUS fsync_signal_and_wait( HANDLE signal, HANDLE wait,
+ 
+ /* We have to synchronize on the fd cache mutex so that fsync_close(), close_handle() sequence 
+  * called from NtClose() doesn't race with get_fsync_idx(), add_to_list() sequence called
+- * from get_object(). */
+-extern pthread_mutex_t fd_cache_mutex;
++ * from get_object().
++ *
++ * Moved to unix_private.h
++ */
++/* extern pthread_mutex_t fd_cache_mutex; */
+diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+index 37c1279c6a2..5becd7005c7 100644
+--- a/dlls/ntdll/unix/sync.c
++++ b/dlls/ntdll/unix/sync.c
+@@ -57,6 +57,9 @@
+ #ifdef HAVE_KQUEUE
+ # include <sys/event.h>
+ #endif
++#ifdef HAVE_LINUX_NTSYNC_H
++# include <linux/ntsync.h>
++#endif
+ 
+ #include "ntstatus.h"
+ #define WIN32_NO_STATUS
+@@ -302,6 +305,44 @@ static unsigned int validate_open_object_attributes( const OBJECT_ATTRIBUTES *at
+     return STATUS_SUCCESS;
+ }
+ 
++#ifdef NTSYNC_IOC_EVENT_READ
++
++static int get_linux_sync_device(void)
++{
++    static LONG device = -2;
++
++    if (device == -2)
++    {
++        obj_handle_t handle;
++        sigset_t sigset;
++        NTSTATUS ret;
++        int fd = -1;
++
++        /* We need to use fd_cache_mutex here to protect against races with
++         * other threads trying to receive fds for the fd cache,
++         * and we need to use an uninterrupted section to prevent reentrancy. */
++        server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
++
++        if (device == -2)
++        {
++            SERVER_START_REQ( get_linux_sync_device )
++            {
++                if (!(ret = wine_server_call( req )))
++                {
++                    fd = wine_server_receive_fd( &handle );
++                    assert( !handle );
++                }
++            }
++            SERVER_END_REQ;
++
++            device = fd;
++        }
++
++        server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
++    }
++    return device;
++}
++
+ static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *prev_count )
+ {
+     return STATUS_NOT_IMPLEMENTED;
+@@ -345,16 +386,80 @@ static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *inf
+ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
+                              BOOLEAN alertable, const LARGE_INTEGER *timeout )
+ {
++    int device;
++
++    if ((device = get_linux_sync_device()) < 0)
++        return STATUS_NOT_IMPLEMENTED;
++
+     return STATUS_NOT_IMPLEMENTED;
+ }
+ 
+ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
+                                         BOOLEAN alertable, const LARGE_INTEGER *timeout )
++{
++    int device;
++
++    if ((device = get_linux_sync_device()) < 0)
++        return STATUS_NOT_IMPLEMENTED;
++
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++#else
++
++static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *prev_count )
+ {
+     return STATUS_NOT_IMPLEMENTED;
+ }
+ 
++static NTSTATUS inproc_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATION *info )
++{
++    return STATUS_NOT_IMPLEMENTED;
++}
+ 
++static NTSTATUS inproc_set_event( HANDLE handle, LONG *prev_state )
++{
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++static NTSTATUS inproc_reset_event( HANDLE handle, LONG *prev_state )
++{
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++static NTSTATUS inproc_pulse_event( HANDLE handle, LONG *prev_state )
++{
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++static NTSTATUS inproc_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info )
++{
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++static NTSTATUS inproc_release_mutex( HANDLE handle, LONG *prev_count )
++{
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *info )
++{
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
++                             BOOLEAN alertable, const LARGE_INTEGER *timeout )
++{
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
++                                        BOOLEAN alertable, const LARGE_INTEGER *timeout )
++{
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++#endif
+ 
+ /******************************************************************************
+  *              NtCreateSemaphore (NTDLL.@)
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index cd070e0b98f..5de1758ac07 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -219,6 +219,8 @@ extern NTSTATUS load_start_exe( WCHAR **image, void **module );
+ extern ULONG_PTR redirect_arm64ec_rva( void *module, ULONG_PTR rva, const IMAGE_ARM64EC_METADATA *metadata );
+ extern void start_server( BOOL debug );
+ 
++extern pthread_mutex_t fd_cache_mutex;
++
+ extern unsigned int server_call_unlocked( void *req_ptr );
+ extern void server_enter_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
+ extern void server_leave_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index a39ab123970..39d0e6e4e5f 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -5882,6 +5960,16 @@ struct set_keyboard_repeat_reply
+ };
+ 
+ 
++struct get_linux_sync_device_request
++{
++    struct request_header __header;
++    char __pad_12[4];
++};
++struct get_linux_sync_device_reply
++{
++    struct reply_header __header;
++};
++
+ 
+ enum request
+ {
+@@ -6177,6 +6452,7 @@ enum request
+     REQ_fsync_msgwait,
+     REQ_get_fsync_apc_idx,
+     REQ_fsync_free_shm_idx,
++    REQ_get_linux_sync_device,
+     REQ_NB_REQUESTS
+ };
+ 
+@@ -6476,6 +6766,7 @@ union generic_request
+     struct fsync_msgwait_request fsync_msgwait_request;
+     struct get_fsync_apc_idx_request get_fsync_apc_idx_request;
+     struct fsync_free_shm_idx_request fsync_free_shm_idx_request;
++    struct get_linux_sync_device_request get_linux_sync_device_request;
+ };
+ union generic_reply
+ {
+@@ -6785,6 +7090,7 @@ union generic_reply
+     struct fsync_msgwait_reply fsync_msgwait_reply;
+     struct get_fsync_apc_idx_reply get_fsync_apc_idx_reply;
+     struct fsync_free_shm_idx_reply fsync_free_shm_idx_reply;
++    struct get_linux_sync_device_reply get_linux_sync_device_reply;
+ };
+ 
+ #define SERVER_PROTOCOL_VERSION 856
+diff --git a/server/Makefile.in b/server/Makefile.in
+index 4e2008a761f..6866b847b46 100644
+--- a/server/Makefile.in
++++ b/server/Makefile.in
+@@ -18,6 +18,7 @@ SOURCES = \
+ 	fsync.c \
+ 	handle.c \
+ 	hook.c \
++	inproc_sync.c \
+ 	mach.c \
+ 	mailslot.c \
+ 	main.c \
+diff --git a/server/inproc_sync.c b/server/inproc_sync.c
+new file mode 100644
+index 00000000000..47b2c4d44a2
+--- /dev/null
++++ b/server/inproc_sync.c
+@@ -0,0 +1,72 @@
++/*
++ * In-process synchronization primitives
++ *
++ * Copyright (C) 2021-2022 Elizabeth Figura for CodeWeavers
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#include "config.h"
++
++#include <assert.h>
++#include <stdint.h>
++#include <stdio.h>
++
++#include "ntstatus.h"
++#define WIN32_NO_STATUS
++#include "winternl.h"
++
++#include "file.h"
++#include "handle.h"
++#include "request.h"
++#include "thread.h"
++
++#ifdef HAVE_LINUX_NTSYNC_H
++# include <linux/ntsync.h>
++#endif
++
++#ifdef NTSYNC_IOC_EVENT_READ
++
++#include <fcntl.h>
++#include <sys/ioctl.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++static int get_linux_device(void)
++{
++    static int fd = -2;
++
++    if (fd == -2)
++        fd = open( "/dev/ntsync", O_CLOEXEC | O_RDONLY );
++
++    return fd;
++}
++
++#endif
++
++
++DECL_HANDLER(get_linux_sync_device)
++{
++    #ifdef NTSYNC_IOC_EVENT_READ
++    int fd;
++
++    if ((fd = get_linux_device()) >= 0)
++        send_client_fd( current->process, fd, 0 );
++    else
++        set_error( STATUS_NOT_IMPLEMENTED );
++    #else
++    set_error( STATUS_NOT_IMPLEMENTED );
++    #endif
++}
+diff --git a/server/protocol.def b/server/protocol.def
+index fedff72c267..89a7063c648 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -4250,3 +4250,7 @@ enum fsync_type
+     unsigned int shm_idx;
+ @REPLY
+ @END
++
++/* Obtain a fd for the ntsync device */
++@REQ(get_linux_sync_device)
++@END
+diff --git a/server/request_handlers.h b/server/request_handlers.h
+index fd39842df56..30e6ee25bc9 100644
+--- a/server/request_handlers.h
++++ b/server/request_handlers.h
+@@ -299,6 +302,7 @@ DECL_HANDLER(suspend_process);
+ DECL_HANDLER(fsync_msgwait);
+ DECL_HANDLER(get_fsync_apc_idx);
+ DECL_HANDLER(fsync_free_shm_idx);
++DECL_HANDLER(get_linux_sync_device);
+ 
+ typedef void (*req_handler)( const void *req, void *reply );
+ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+@@ -595,6 +613,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+     (req_handler)req_fsync_msgwait,
+     (req_handler)req_get_fsync_apc_idx,
+     (req_handler)req_fsync_free_shm_idx,
++    (req_handler)req_get_linux_sync_device,
+ };
+ 
+ C_ASSERT( sizeof(abstime_t) == 8 );
+@@ -2271,3 +2326,4 @@ C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
+ C_ASSERT( offsetof(struct fsync_free_shm_idx_request, shm_idx) == 12 );
+ C_ASSERT( sizeof(struct fsync_free_shm_idx_request) == 16 );
+ C_ASSERT( sizeof(struct fsync_free_shm_idx_reply) == 8 );
++C_ASSERT( sizeof(struct get_linux_sync_device_request) == 16 );
+diff --git a/server/request_trace.h b/server/request_trace.h
+index 6e38f2a8379..8de40b18686 100644
+--- a/server/request_trace.h
++++ b/server/request_trace.h
+@@ -3344,6 +3396,10 @@ static void dump_set_keyboard_repeat_reply( const struct set_keyboard_repeat_rep
+     fprintf( stderr, " shm_idx=%08x", req->shm_idx );
+ }
+ 
++static void dump_get_linux_sync_device_request( const struct get_linux_sync_device_request *req )
++{
++}
++
+ typedef void (*dump_func)( const void *req );
+ 
+ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
+@@ -3640,6 +3813,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
+     (dump_func)dump_fsync_msgwait_request,
+     (dump_func)dump_get_fsync_apc_idx_request,
+     (dump_func)dump_fsync_free_shm_idx_request,
++    (dump_func)dump_get_linux_sync_device_request,
+ };
+ 
+ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
+@@ -3936,6 +4124,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
+     NULL,
+     (dump_func)dump_get_fsync_apc_idx_reply,
+     NULL,
++    NULL,
+ };
+ 
+ static const char * const req_names[REQ_NB_REQUESTS] =
+@@ -4232,6 +4435,7 @@ static const char * const req_names[REQ_NB_REQUESTS] =
+     "fsync_msgwait",
+     "get_fsync_apc_idx",
+     "fsync_free_shm_idx",
++    "get_linux_sync_device",
+ };
+ 
+ static const struct
+-- 
+2.50.0
+
