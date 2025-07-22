@@ -14,8 +14,17 @@
 set -e
 
 _nowhere="$PWD"
+
+# this is not the makepkg path, let the main script know
 _nomakepkg="true"
+
+# set to true to not check for steampath
+# disables installer
 _no_steampath="false"
+
+# true disables building in valve SDK container to build against current system libs
+# this might lead to issues with some games and anticheats
+_no_container="true"
 
 function resources_cleanup {
   # The symlinks switch doesn't need the recursive flag, but we'll use it temporarily
@@ -798,6 +807,37 @@ function latest_mono_msi {
   fi
 }
 
+function build_in_valve_container {
+  cd "$_nowhere"
+  git clone --recurse-submodules https://github.com/ValveSoftware/Proton.git || true # It'll complain the path already exists on subsequent builds
+  cd Proton
+  git reset --hard
+  git submodule sync --recursive
+  git submodule update --remote --init --force --recursive
+  git clean -ffdx
+  git submodule foreach --recursive git clean -ffdx
+
+  source "$_nowhere/proton_tkg_token"
+  if [ -n "$_bleeding_tag" ]; then
+    git checkout "$_bleeding_tag"
+  else
+    git checkout "$_proton_branch"
+  fi
+  git submodule update --init --recursive
+  make clean
+
+  rm -rf wine
+  cp -r "$_wine_tkg_git_path/src/$_winesrcdir" wine
+
+  # We *will* face warnings
+  patch -Np1 < "$_nowhere"/proton_template/disable_wine_werror.patch
+
+  mkdir build && cd build
+  ../configure.sh --enable-ccache --build-name=TKG
+  make redist
+  echo "_proton_pkgdest='$_nowhere/external-resources/Proton/build/redist'" >> "$_nowhere"/proton_tkg_token
+}
+
 if [ "$1" = "clean" ]; then
   proton_tkg_uninstaller
 elif [ "$1" = "build_vrclient" ]; then
@@ -812,6 +852,8 @@ elif [ "$1" = "build_mediaconv" ]; then
   _build_mediaconv="true" build_mediaconverter
 elif [ "$1" = "build_steamhelper" ]; then
   build_steamhelper
+elif [ "$1" = "build_in_valve_container" ]; then
+  build_in_valve_container
 else
   # If $1 contains a path, and it exists, use it as default for config
   if [ -n "$1" ]; then
@@ -829,10 +871,13 @@ else
 
   # We'll need a token to register to wine-tkg-git - keep one for us to steal wine-tkg-git options later
   echo -e "_proton_tkg_path='${_nowhere}'\n_no_steampath='${_no_steampath}'" > proton_tkg_token && cp proton_tkg_token "${_wine_tkg_git_path}/"
+  if [ "$_no_container" != "true" ]; then
+    echo -e "_no_container=false" >> "${_wine_tkg_git_path}"/proton_tkg_token
+  fi
 
   echo -e "Proton-tkg - $(date +"%m-%d-%Y %H:%M:%S")" > "$_logdir"/proton-tkg.log
 
-  if [ -n "$_runtime" ]; then
+  if [ -n "$_runtime" ] && [ "$_no_container" = "true" ]; then
     rm -rf "${_nowhere}"/external-resources/steam-runtime
     if [ -d /tmp ]; then
       cp -R "$_runtime" /tmp/
@@ -847,18 +892,24 @@ else
 
   # Now let's build
   cd "$_wine_tkg_git_path"
-  if [ -e "/usr/bin/makepkg" ] && [ "$_nomakepkg" = "false" ]; then
-    makepkg -s || true
-  else
+  if [ "$_no_container" != "true" ]; then
     rm -f "$_wine_tkg_git_path"/non-makepkg-builds/HL3_confirmed
-    if [ -n "$_runtime" ]; then
-      echo -e "Using Steam runtime\n"
-      "$_nowhere"/steam-runtime/run.sh ./non-makepkg-build.sh
+    ./non-makepkg-build.sh
+    build_in_valve_container
+  else # legacy
+    if [ -e "/usr/bin/makepkg" ] && [ "$_nomakepkg" = "false" ]; then
+      makepkg -s || true
     else
-      ./non-makepkg-build.sh
-      # makepkg proton pkgver loop hack
-      if [ "$_isfirstloop" = "true" ]; then
-        exit 0
+      rm -f "$_wine_tkg_git_path"/non-makepkg-builds/HL3_confirmed
+      if [ -n "$_runtime" ]; then
+        echo -e "Using Steam runtime\n"
+        "$_nowhere"/steam-runtime/run.sh ./non-makepkg-build.sh
+      else
+        ./non-makepkg-build.sh
+        # makepkg proton pkgver loop hack
+        if [ "$_isfirstloop" = "true" ]; then
+          exit 0
+        fi
       fi
     fi
   fi
@@ -866,54 +917,56 @@ else
   # Wine-tkg-git has injected versioning and settings in the token for us, so get the values back
   source "$_nowhere/proton_tkg_token"
 
-  if [ "$_NOLIB32" = "true" ]; then
-    _lib32name="lib"
-    _lib64name="lib"
-  else
-    _lib32name="lib"
-    _lib64name="lib64"
-  fi
-
-  # Prompt to re-use existing gst
-  if [ -d "${_resources_path}"/gst ] && [ -z $_reuse_built_gst ]; then
-    echo "    Existing proton gstreamer dir found. Do you want to use it instead of rebuilding?"
-    read -rp $'\n> Y/n : ' _reuse_gst;
-    if ( [ "$_reuse_gst" != "n" ] && [ "$_reuse_gst" != "N" ] ); then
-      _reuse_built_gst="true"
+  if [ "$_no_container" = "true" ]; then
+    if [ "$_NOLIB32" = "true" ]; then
+      _lib32name="lib"
+      _lib64name="lib"
+    else
+      _lib32name="lib"
+      _lib64name="lib64"
     fi
-  fi
 
-  # We might not want experimental branches since they are a moving target and not useful to us, so fallback to regular by default unless _proton_branch_exp="true" is passed
-  if [[ "$_proton_branch" = experimental* ]] && [ "$_proton_branch_exp" != "true" ]; then
-    echo -e "#### Replacing experimental branch by regular ####"
-    sed -i "s/experimental_/proton_/g" "$_nowhere/proton_tkg_token" && source "$_nowhere/proton_tkg_token"
-  fi
-
-  # Use custom compiler paths if defined
-  if [ -n "${CUSTOM_MINGW_PATH}" ] && [ -z "${CUSTOM_GCC_PATH}" ]; then
-    PATH="${PATH}:${CUSTOM_MINGW_PATH}/bin:${CUSTOM_MINGW_PATH}/lib:${CUSTOM_MINGW_PATH}/include"
-  elif [ -n "${CUSTOM_GCC_PATH}" ] && [ -z "${CUSTOM_MINGW_PATH}" ]; then
-    PATH="${CUSTOM_GCC_PATH}/bin:${CUSTOM_GCC_PATH}/lib:${CUSTOM_GCC_PATH}/include:${PATH}"
-  elif [ -n "${CUSTOM_MINGW_PATH}" ] && [ -n "${CUSTOM_GCC_PATH}" ]; then
-    PATH="${CUSTOM_GCC_PATH}/bin:${CUSTOM_GCC_PATH}/lib:${CUSTOM_GCC_PATH}/include:${CUSTOM_MINGW_PATH}/bin:${CUSTOM_MINGW_PATH}/lib:${CUSTOM_MINGW_PATH}/include:${PATH}"
-  fi
-
-  # If mingw-w64 gcc can't be found, disable building vkd3d-proton
-  if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
-    echo -e "######\nmingw-w64 gcc not found - vkd3d-proton and dxvk won't be built\n######"
-    _build_vkd3d="false"
-    if [ "$_use_dxvk" = "git" ]; then
-      _use_dxvk="latest"
+    # Prompt to re-use existing gst
+    if [ -d "${_resources_path}"/gst ] && [ -z $_reuse_built_gst ]; then
+      echo "    Existing proton gstreamer dir found. Do you want to use it instead of rebuilding?"
+      read -rp $'\n> Y/n : ' _reuse_gst;
+      if ( [ "$_reuse_gst" != "n" ] && [ "$_reuse_gst" != "N" ] ); then
+        _reuse_built_gst="true"
+      fi
     fi
-  else
-    if [ "$_use_vkd3dlib" != "true" ]; then
-      _build_vkd3d="true"
+
+    # We might not want experimental branches since they are a moving target and not useful to us, so fallback to regular by default unless _proton_branch_exp="true" is passed
+    if [[ "$_proton_branch" = experimental* ]] && [ "$_proton_branch_exp" != "true" ]; then
+      echo -e "#### Replacing experimental branch by regular ####"
+      sed -i "s/experimental_/proton_/g" "$_nowhere/proton_tkg_token" && source "$_nowhere/proton_tkg_token"
     fi
-    echo -e "######\nmingw-w64 gcc found\n######"
+
+    # Use custom compiler paths if defined
+    if [ -n "${CUSTOM_MINGW_PATH}" ] && [ -z "${CUSTOM_GCC_PATH}" ]; then
+      PATH="${PATH}:${CUSTOM_MINGW_PATH}/bin:${CUSTOM_MINGW_PATH}/lib:${CUSTOM_MINGW_PATH}/include"
+    elif [ -n "${CUSTOM_GCC_PATH}" ] && [ -z "${CUSTOM_MINGW_PATH}" ]; then
+      PATH="${CUSTOM_GCC_PATH}/bin:${CUSTOM_GCC_PATH}/lib:${CUSTOM_GCC_PATH}/include:${PATH}"
+    elif [ -n "${CUSTOM_MINGW_PATH}" ] && [ -n "${CUSTOM_GCC_PATH}" ]; then
+      PATH="${CUSTOM_GCC_PATH}/bin:${CUSTOM_GCC_PATH}/lib:${CUSTOM_GCC_PATH}/include:${CUSTOM_MINGW_PATH}/bin:${CUSTOM_MINGW_PATH}/lib:${CUSTOM_MINGW_PATH}/include:${PATH}"
+    fi
+
+    # If mingw-w64 gcc can't be found, disable building vkd3d-proton
+    if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
+      echo -e "######\nmingw-w64 gcc not found - vkd3d-proton and dxvk won't be built\n######"
+      _build_vkd3d="false"
+      if [ "$_use_dxvk" = "git" ]; then
+        _use_dxvk="latest"
+      fi
+    else
+      if [ "$_use_vkd3dlib" != "true" ]; then
+        _build_vkd3d="true"
+      fi
+      echo -e "######\nmingw-w64 gcc found\n######"
+    fi
   fi
 
   # Copy the resulting package in here to begin our work
-  if [ -e "$_proton_pkgdest"/../HL3_confirmed ]; then
+  if [ -e "$_proton_pkgdest"/../HL3_confirmed ] || [ "$_no_container" != "true" ]; then
 
     cd "$_nowhere"
 
@@ -923,222 +976,242 @@ else
     fi
 
     rm -rf "proton_tkg_$_protontkg_version" && mkdir "proton_tkg_$_protontkg_version"
-    mkdir -p proton_template/share/fonts
-
     mv "$_proton_pkgdest" proton_dist_tmp
 
-    # Liberation Fonts
-    rm -f proton_template/share/fonts/*
-    git clone https://github.com/liberationfonts/liberation-fonts.git || true # It'll complain the path already exists on subsequent builds
-    cd liberation-fonts
-    git reset --hard 9510ebd
-    git clean -xdf
-    #git pull
-    patch -Np1 < "$_nowhere/proton_template/LiberationMono-Regular.patch"
-    make -j$(nproc)
-    cp -rv liberation-fonts-ttf*/Liberation{Sans-Regular,Sans-Bold,Serif-Regular,Mono-Regular}.ttf "$_nowhere/proton_template/share/fonts"/
-    cd "$_nowhere"
+    if [ "$_no_container" = "true" ]; then
 
-    if [ "$_NUKR" != "debug" ]; then
-      if [ -d Proton ] && [ ! -f Proton/proton ]; then
-        ( cd Proton && find . -name . -o -prune -exec rm -rf -- {} + ) # We need to clean everything including dotfiles
-      fi
-      # Clone Proton tree as we need to build some tools from it
-      git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
-      cd Proton
-      git reset --hard origin/HEAD
+      # Liberation Fonts
+      mkdir -p proton_template/share/fonts
+      rm -f proton_template/share/fonts/*
+      git clone https://github.com/liberationfonts/liberation-fonts.git || true # It'll complain the path already exists on subsequent builds
+      cd liberation-fonts
+      git reset --hard 9510ebd
       git clean -xdf
-      if ( ! git pull --ff-only ) || ( [ -n "$_bleeding_tag" ] ); then
-        echo -e "######\nProton tree was force-pushed upstream.. Recloning clean to avoid issues..\n######"
-        find . -name . -o -prune -exec rm -rf -- {} + # We need to clean everything including dotfiles
-        cd ..
+      #git pull
+      patch -Np1 < "$_nowhere/proton_template/LiberationMono-Regular.patch"
+      make -j$(nproc)
+      cp -rv liberation-fonts-ttf*/Liberation{Sans-Regular,Sans-Bold,Serif-Regular,Mono-Regular}.ttf "$_nowhere/proton_template/share/fonts"/
+      cd "$_nowhere"
+
+      if [ "$_NUKR" != "debug" ]; then
+        if [ -d Proton ] && [ ! -f Proton/proton ]; then
+          ( cd Proton && find . -name . -o -prune -exec rm -rf -- {} + ) # We need to clean everything including dotfiles
+        fi
+        # Clone Proton tree as we need to build some tools from it
         git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
         cd Proton
+        git reset --hard origin/HEAD
+        git clean -xdf
+        if ( ! git pull --ff-only ) || ( [ -n "$_bleeding_tag" ] ); then
+          echo -e "######\nProton tree was force-pushed upstream.. Recloning clean to avoid issues..\n######"
+          find . -name . -o -prune -exec rm -rf -- {} + # We need to clean everything including dotfiles
+          cd ..
+          git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
+          cd Proton
+        else
+          git pull origin
+        fi
+        if [ -n "$_bleeding_tag" ]; then
+          _bleeding_commit=$(git rev-list -n 1 "${_bleeding_tag}")
+          _proton_branch="$_bleeding_commit"
+        fi
+        git checkout "$_proton_branch"
+
+        _user_patches_no_confirm="true"
+        _userpatch_target="proton"
+        _userpatch_ext="myproton"
+        proton_patcher
       else
-        git pull origin
+        cd Proton
       fi
-      if [ -n "$_bleeding_tag" ]; then
-        _bleeding_commit=$(git rev-list -n 1 "${_bleeding_tag}")
-        _proton_branch="$_bleeding_commit"
+
+      # Tooling compilation needs an update for latest BE - Use slightly older tooling for now
+      if [ -n "$_bleeding_tag" ] || [[ "$_proton_branch" = experimental_8* ]] || [[ "$_proton_branch" = *9* ]] || [[ "$_proton_branch" = *10* ]]; then
+        git checkout f5e9c76903e4e18e0416e719a6d42d0cb00998aa
       fi
-      git checkout "$_proton_branch"
 
-      _user_patches_no_confirm="true"
-      _userpatch_target="proton"
-      _userpatch_ext="myproton"
-      proton_patcher
-    else
-      cd Proton
-    fi
+      # Embed fake data to spoof desired fonts
+      fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSans-Regular" "Arial" "Arial" "Arial" "$_nowhere/proton_template/share/fonts"/arial.ttf
+      fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSans-Bold" "Arial-Bold" "Arial" "Arial Bold" "$_nowhere/proton_template/share/fonts"/arialbd.ttf
+      fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSerif-Regular" "TimesNewRoman" "Times New Roman" "Times New Roman" "$_nowhere/proton_template/share/fonts"/times.ttf
+      fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationMono-Regular" "CourierNew" "Courier New" "Courier New" "$_nowhere/proton_template/share/fonts"/cour.ttf
 
-    # Tooling compilation needs an update for latest BE - Use slightly older tooling for now
-    if [ -n "$_bleeding_tag" ] || [[ "$_proton_branch" = experimental_8* ]] || [[ "$_proton_branch" = *9* ]] || [[ "$_proton_branch" = *10* ]]; then
-      git checkout f5e9c76903e4e18e0416e719a6d42d0cb00998aa
-    fi
-
-    # Embed fake data to spoof desired fonts
-    fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSans-Regular" "Arial" "Arial" "Arial" "$_nowhere/proton_template/share/fonts"/arial.ttf
-    fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSans-Bold" "Arial-Bold" "Arial" "Arial Bold" "$_nowhere/proton_template/share/fonts"/arialbd.ttf
-    fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSerif-Regular" "TimesNewRoman" "Times New Roman" "Times New Roman" "$_nowhere/proton_template/share/fonts"/times.ttf
-    fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationMono-Regular" "CourierNew" "Courier New" "Courier New" "$_nowhere/proton_template/share/fonts"/cour.ttf
-
-    # Build GST/mediaconverter
-    if [ "$_build_mediaconv" = "true" ] || [ "$_build_gstreamer" = "true" ]; then
-      if [ "$_reuse_built_gst" = "true" ] && [ -d "${_resources_path}"/gst ]; then
-        cp -r "${_resources_path}"/gst "$_nowhere"/gst
-      else
-        build_mediaconverter
-        rm -rf "${_resources_path}"/gst && cp -r "$_nowhere"/gst "${_resources_path}"/gst
+      # Build GST/mediaconverter
+      if [ "$_build_mediaconv" = "true" ] || [ "$_build_gstreamer" = "true" ]; then
+        if [ "$_reuse_built_gst" = "true" ] && [ -d "${_resources_path}"/gst ]; then
+          cp -r "${_resources_path}"/gst "$_nowhere"/gst
+        else
+          build_mediaconverter
+          rm -rf "${_resources_path}"/gst && cp -r "$_nowhere"/gst "${_resources_path}"/gst
+        fi
       fi
     fi
 
     # Grab share template and inject version
     _versionpre=`date '+%s'`
-    echo "$_versionpre" "TKG-proton-$_protontkg_true_version" > "$_nowhere/proton_dist_tmp/version" && cp -r "$_nowhere/proton_template/share"/* "$_nowhere/proton_dist_tmp/share"/
+    echo "$_versionpre" "TKG-proton-$_protontkg_true_version" > "$_nowhere/proton_dist_tmp/version"
 
-    # Create the dxvk dirs
-    mkdir -p "$_nowhere/proton_dist_tmp/lib64/wine/dxvk"
-    mkdir -p "$_nowhere/proton_dist_tmp/lib/wine/dxvk"
+    if [ "$_no_container" = "true" ]; then
+      cp -r "$_nowhere/proton_template/share"/* "$_nowhere/proton_dist_tmp/share"/
 
-    # Build vrclient libs
-    # I'm not sure we actually need this considering VR support is broken, but it might be needed by other tools
-    if [ "$_steamvr_support" = "true" ]; then
-      build_vrclient
-      cd Proton
-    fi
+      # Create the dxvk dirs
+      mkdir -p "$_nowhere/proton_dist_tmp/lib64/wine/dxvk"
+      mkdir -p "$_nowhere/proton_dist_tmp/lib/wine/dxvk"
 
-    # Build lsteamclient libs
-    build_lsteamclient
-
-    # Build steam helper
-    build_steamhelper
-
-    # gst/mediaconverter
-    # Disable lib32 stuff when _NOLIB32 is enabled
-    if [ "$_NOLIB32" = "true" ]; then
-      _lib32_gstreamer="false"
-      _use_lib32_mpeg2dec_and_x264="false"
-    fi
-    if [ "$_build_mediaconv" = "true" ] || [ "$_build_gstreamer" = "true" ]; then
-      mv "$_nowhere"/gst/lib64/* proton_dist_tmp/$_lib64name/
-      if [ "$_lib32_gstreamer" = "true" ]; then
-        mv "$_nowhere"/gst/lib/* proton_dist_tmp/$_lib32name/
+      # Build vrclient libs
+      # I'm not sure we actually need this considering VR support is broken, but it might be needed by other tools
+      if [ "$_steamvr_support" = "true" ]; then
+        build_vrclient
+        cd Proton
       fi
-    fi
-    rm -rf "$_nowhere/gst"
 
-    # vkd3d
-    # Build vkd3d-proton when vkd3dlib is disabled - Requires MinGW-w64-gcc or it won't be built
-    if [ "$_build_vkd3d" = "true" ]; then
-      build_vkd3d
-      mkdir -p proton_dist_tmp/lib64/wine/vkd3d-proton
-      mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton
-      cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/lib64/wine/vkd3d-proton/
-      cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/
-    fi
+      # Build lsteamclient libs
+      build_lsteamclient
 
-    # dxvk
-    _proton_dxvk_path32="proton_dist_tmp/lib/wine/dxvk/"
-    _proton_dxvk_path64="proton_dist_tmp/lib64/wine/dxvk/"
-    cd "$_nowhere"
-    if [ "$_use_dxvk" != "false" ]; then
-      if [ "$_use_dxvk" = "git" ]; then
-        build_dxvk
-      elif ( [ ! -d "$_nowhere"/dxvk ] && [ ! -e "$_nowhere"/dxvk ] ) || [ "$_use_dxvk" = "release" ] || [ "$_use_dxvk" = "latest" ]; then
-        rm -rf "$_nowhere"/dxvk
-        if [ "$_use_dxvk" = "latest" ]; then
-          # Download it & extract it into a temporary folder so we don't mess up the build in case proton-tkg also has/will have a folder "$_nowhere"/build (that folder is in the artifact zip)
-          rm -rf "$_nowhere"/tmp-dxvk-artifact
-          mkdir "$_nowhere"/tmp-dxvk-artifact
-          cd "$_nowhere"/tmp-dxvk-artifact
-          download_dxvk_version
-          unzip dxvk-latest-artifact.zip >/dev/null 2>&1
-          rm -f dxvk-latest-artifact.zip
-          mv "$_nowhere"/tmp-dxvk-artifact/build/dxvk-* "$_nowhere"/dxvk
-          cd "$_nowhere"
-          rm -rf "$_nowhere"/tmp-dxvk-artifact
-        else
-          download_dxvk_version
-          tar -xvf dxvk-*.tar.gz >/dev/null 2>&1
-          rm -f dxvk-*.tar.*
-          mv "$_nowhere"/dxvk-*.* "$_nowhere"/dxvk
+      # Build steam helper
+      build_steamhelper
+
+      # gst/mediaconverter
+      # Disable lib32 stuff when _NOLIB32 is enabled
+      if [ "$_NOLIB32" = "true" ]; then
+        _lib32_gstreamer="false"
+        _use_lib32_mpeg2dec_and_x264="false"
+      fi
+      if [ "$_build_mediaconv" = "true" ] || [ "$_build_gstreamer" = "true" ]; then
+        mv "$_nowhere"/gst/lib64/* proton_dist_tmp/$_lib64name/
+        if [ "$_lib32_gstreamer" = "true" ]; then
+          mv "$_nowhere"/gst/lib/* proton_dist_tmp/$_lib32name/
         fi
       fi
-      chmod -R 755 "$_nowhere"/dxvk
-      # Remove d3d10.dll and d3d10_1.dll when using a 5.3 base or newer - https://github.com/doitsujin/dxvk/releases/tag/v1.6
-      if [ "$_dxvk_minimald3d10" = "true" ]; then
-        cp -v dxvk/x64/{d3d10core.dll,d3d11.dll,d3d8.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path64
-        cp -v dxvk/x32/{d3d10core.dll,d3d11.dll,d3d8.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path32
-      else
-        cp -v dxvk/x64/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d8.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path64
-        cp -v dxvk/x32/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d8.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path32
+      rm -rf "$_nowhere/gst"
+
+      # vkd3d
+      # Build vkd3d-proton when vkd3dlib is disabled - Requires MinGW-w64-gcc or it won't be built
+      if [ "$_build_vkd3d" = "true" ]; then
+        build_vkd3d
+        mkdir -p proton_dist_tmp/lib64/wine/vkd3d-proton
+        mkdir -p proton_dist_tmp/lib/wine/vkd3d-proton
+        cp -v "$_nowhere"/vkd3d-proton/build/lib64-vkd3d/bin/* proton_dist_tmp/lib64/wine/vkd3d-proton/
+        cp -v "$_nowhere"/vkd3d-proton/build/lib32-vkd3d/bin/* proton_dist_tmp/lib/wine/vkd3d-proton/
       fi
+
+      # dxvk
+      _proton_dxvk_path32="proton_dist_tmp/lib/wine/dxvk/"
+      _proton_dxvk_path64="proton_dist_tmp/lib64/wine/dxvk/"
+      cd "$_nowhere"
+      if [ "$_use_dxvk" != "false" ]; then
+        if [ "$_use_dxvk" = "git" ]; then
+          build_dxvk
+        elif ( [ ! -d "$_nowhere"/dxvk ] && [ ! -e "$_nowhere"/dxvk ] ) || [ "$_use_dxvk" = "release" ] || [ "$_use_dxvk" = "latest" ]; then
+          rm -rf "$_nowhere"/dxvk
+          if [ "$_use_dxvk" = "latest" ]; then
+            # Download it & extract it into a temporary folder so we don't mess up the build in case proton-tkg also has/will have a folder "$_nowhere"/build (that folder is in the artifact zip)
+            rm -rf "$_nowhere"/tmp-dxvk-artifact
+            mkdir "$_nowhere"/tmp-dxvk-artifact
+            cd "$_nowhere"/tmp-dxvk-artifact
+            download_dxvk_version
+            unzip dxvk-latest-artifact.zip >/dev/null 2>&1
+            rm -f dxvk-latest-artifact.zip
+            mv "$_nowhere"/tmp-dxvk-artifact/build/dxvk-* "$_nowhere"/dxvk
+            cd "$_nowhere"
+            rm -rf "$_nowhere"/tmp-dxvk-artifact
+          else
+            download_dxvk_version
+            tar -xvf dxvk-*.tar.gz >/dev/null 2>&1
+            rm -f dxvk-*.tar.*
+            mv "$_nowhere"/dxvk-*.* "$_nowhere"/dxvk
+          fi
+        fi
+        chmod -R 755 "$_nowhere"/dxvk
+        # Remove d3d10.dll and d3d10_1.dll when using a 5.3 base or newer - https://github.com/doitsujin/dxvk/releases/tag/v1.6
+        if [ "$_dxvk_minimald3d10" = "true" ]; then
+          cp -v dxvk/x64/{d3d10core.dll,d3d11.dll,d3d8.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path64
+          cp -v dxvk/x32/{d3d10core.dll,d3d11.dll,d3d8.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path32
+        else
+          cp -v dxvk/x64/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d8.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path64
+          cp -v dxvk/x32/{d3d10.dll,d3d10_1.dll,d3d10core.dll,d3d11.dll,d3d8.dll,d3d9.dll,dxgi.dll} $_proton_dxvk_path32
+        fi
+      fi
+
+      if [ "$_proton_nvapi_disable" != "true" ]; then
+        build_dxvk_nvapi
+        mkdir -p "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
+        mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
+        cp -v "$_nowhere"/Proton/build/dxvk-nvapi-master/x64/* "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
+        cp -v "$_nowhere"/Proton/build/dxvk-nvapi-master/x32/* "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
+      fi
+
+      echo ''
+      echo "Injecting wine-mono & wine-gecko..."
+
+      # mono
+      mkdir -p "$_nowhere"/mono && cd "$_nowhere"/mono
+      rm -rf "$_nowhere"/mono/*
+      _mono_bin=$( latest_mono )
+      if [ ! -e ${_mono_bin##*/} ]; then
+        latest_mono | wget -qi -
+      fi
+      #_mono_msi=$( latest_mono_msi )
+      #if [ ! -e ${_mono_msi##*/} ]; then
+      #  latest_mono_msi | wget -qi -
+      #fi
+      cd "$_nowhere"
+      mkdir -p proton_dist_tmp/share/wine/mono
+      tar -xvJf "$_nowhere"/mono/wine-mono-*.tar.xz -C proton_dist_tmp/share/wine/mono >/dev/null 2>&1
+      #mv "$_nowhere"/mono/wine-mono-*.msi proton_dist_tmp/share/wine/mono
+
+      # gecko
+      _gecko_ver="2.47.2"
+      _gecko_compression=".tar.xz"
+      mkdir -p "$_nowhere"/gecko && cd "$_nowhere"/gecko
+      if [ ! -e "wine-gecko-$_gecko_ver-x86_64$_gecko_compression" ]; then
+        wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86_64$_gecko_compression
+      fi
+      if [ ! -e "wine-gecko-$_gecko_ver-x86$_gecko_compression" ]; then
+        wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86$_gecko_compression
+      fi
+      cd "$_nowhere"
+      mkdir -p proton_dist_tmp/share/wine/gecko
+      tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86_64$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
+      tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
     fi
 
-    if [ "$_proton_nvapi_disable" != "true" ]; then
-      build_dxvk_nvapi
-      mkdir -p "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
-      mkdir -p "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
-      cp -v "$_nowhere"/Proton/build/dxvk-nvapi-master/x64/* "$_nowhere"/proton_dist_tmp/lib64/wine/nvapi
-      cp -v "$_nowhere"/Proton/build/dxvk-nvapi-master/x32/* "$_nowhere"/proton_dist_tmp/lib/wine/nvapi
-    fi
-
-    echo ''
-    echo "Injecting wine-mono & wine-gecko..."
-
-    # mono
-    mkdir -p "$_nowhere"/mono && cd "$_nowhere"/mono
-    rm -rf "$_nowhere"/mono/*
-    _mono_bin=$( latest_mono )
-    if [ ! -e ${_mono_bin##*/} ]; then
-      latest_mono | wget -qi -
-    fi
-    #_mono_msi=$( latest_mono_msi )
-    #if [ ! -e ${_mono_msi##*/} ]; then
-    #  latest_mono_msi | wget -qi -
-    #fi
     cd "$_nowhere"
-    mkdir -p proton_dist_tmp/share/wine/mono
-    tar -xvJf "$_nowhere"/mono/wine-mono-*.tar.xz -C proton_dist_tmp/share/wine/mono >/dev/null 2>&1
-    #mv "$_nowhere"/mono/wine-mono-*.msi proton_dist_tmp/share/wine/mono
-
-    # gecko
-    _gecko_ver="2.47.2"
-    _gecko_compression=".tar.xz"
-    mkdir -p "$_nowhere"/gecko && cd "$_nowhere"/gecko
-    if [ ! -e "wine-gecko-$_gecko_ver-x86_64$_gecko_compression" ]; then
-      wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86_64$_gecko_compression
-    fi
-    if [ ! -e "wine-gecko-$_gecko_ver-x86$_gecko_compression" ]; then
-      wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86$_gecko_compression
-    fi
-    cd "$_nowhere"
-    mkdir -p proton_dist_tmp/share/wine/gecko
-    tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86_64$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
-    tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
 
     # Move prepared dist
-    mv "$_nowhere"/proton_dist_tmp "$_nowhere"/"proton_tkg_$_protontkg_version"/files && cd "$_nowhere"
-
-    # Grab conf template and inject version
-    echo "$_versionpre" "TKG-proton-$_protontkg_true_version" > "proton_tkg_$_protontkg_version/version" && cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/ && sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
-
-    # Inject toolmanifest
-    if [ "$_built_with_runtime" = "true" ]; then
-      if [ -e "$_nowhere"/Proton/toolmanifest_runtime.vdf ] && [ "$_nosteamruntime" = "sniper" ]; then
-        rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_runtime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
-        sed -i -e "s/1391110/1628350/g" "proton_tkg_$_protontkg_version"/toolmanifest.vdf
-      elif [ -e "$_nowhere"/Proton/toolmanifest_runtime.vdf ] && [ "$_nosteamruntime" != "true" ]; then
-        rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_runtime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
-      elif [ -e "$_nowhere"/Proton/toolmanifest_noruntime.vdf ] && [ "$_nosteamruntime" = "true" ]; then
-        rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_noruntime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
-      fi
-    elif [ -e "$_nowhere"/Proton/toolmanifest_noruntime.vdf ]; then
-      rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_noruntime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+    if [ "$_no_container" = "true" ]; then
+      mv proton_dist_tmp "proton_tkg_$_protontkg_version"/files
+    else
+      mv proton_dist_tmp/* "proton_tkg_$_protontkg_version"/
     fi
 
-    # steampipe fixups
-    cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
+    # Grab conf template and inject version
+    echo "$_versionpre" "TKG-proton-$_protontkg_true_version" > "proton_tkg_$_protontkg_version/version"
+    if [ "$_no_container" = "true" ]; then
+      cp "proton_template/conf"/* "proton_tkg_$_protontkg_version"/
+    else
+      cp "proton_template/conf/compatibilitytool.vdf" "proton_tkg_$_protontkg_version"/
+    fi
+    sed -i -e "s|TKGVERSION|$_protontkg_version|" "proton_tkg_$_protontkg_version/compatibilitytool.vdf"
+
+    if [ "$_no_container" = "true" ]; then
+      # Inject toolmanifest
+      if [ "$_built_with_runtime" = "true" ]; then
+        if [ -e "$_nowhere"/Proton/toolmanifest_runtime.vdf ] && [ "$_nosteamruntime" = "sniper" ]; then
+          rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_runtime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+          sed -i -e "s/1391110/1628350/g" "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+        elif [ -e "$_nowhere"/Proton/toolmanifest_runtime.vdf ] && [ "$_nosteamruntime" != "true" ]; then
+          rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_runtime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+        elif [ -e "$_nowhere"/Proton/toolmanifest_noruntime.vdf ] && [ "$_nosteamruntime" = "true" ]; then
+          rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_noruntime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+        fi
+      elif [ -e "$_nowhere"/Proton/toolmanifest_noruntime.vdf ]; then
+        rm -f "proton_tkg_$_protontkg_version"/toolmanifest.vdf && cp "$_nowhere"/Proton/toolmanifest_noruntime.vdf "proton_tkg_$_protontkg_version"/toolmanifest.vdf
+      fi
+
+      # steampipe fixups
+      cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
+    fi
 
     # Inject current wine tree prefix version value in a proton-friendly format - major.minor-commitnumber
     _prefix_version=$( echo ${_protontkg_true_version} | sed 's/rc[0-9]//g; s/.r/-/; s/.[^.]*//4g; s/\.[^.*-]*//2g;' )
@@ -1149,151 +1222,153 @@ else
       sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version-999\"|" "proton_tkg_$_protontkg_version/proton"
     fi
 
-    #### Disable VR support patch as our wine-side support reportedly doesn't work
-    # Patch our proton script to allow for VR support
-    #if [ "$_steamvr_support" = "true" ]; then
-    #  cd "$_nowhere/proton_tkg_$_protontkg_version"
-    #  _patchname="vr-support.patch"
-    #  echo -e "\nApplying $_patchname"
-    #  patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
-    #  cd "$_nowhere"
-    #fi
+    if [ "$_no_container" = "true" ]; then
+      #### Disable VR support patch as our wine-side support reportedly doesn't work
+      # Patch our proton script to allow for VR support
+      #if [ "$_steamvr_support" = "true" ]; then
+      #  cd "$_nowhere/proton_tkg_$_protontkg_version"
+      #  _patchname="vr-support.patch"
+      #  echo -e "\nApplying $_patchname"
+      #  patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
+      #  cd "$_nowhere"
+      #fi
 
-    # Patch our proton script to handle minimal d3d10 implementation for dxvk on Wine 5.3+
-    if [ "$_dxvk_minimald3d10" = "true" ]; then
-      cd "$_nowhere/proton_tkg_$_protontkg_version"
-      _patchname="dxvk_minimald3d10.patch"
-      echo -e "\nApplying $_patchname"
-      patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
-      cd "$_nowhere"
-    fi
+      # Patch our proton script to handle minimal d3d10 implementation for dxvk on Wine 5.3+
+      if [ "$_dxvk_minimald3d10" = "true" ]; then
+        cd "$_nowhere/proton_tkg_$_protontkg_version"
+        _patchname="dxvk_minimald3d10.patch"
+        echo -e "\nApplying $_patchname"
+        patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
+        cd "$_nowhere"
+      fi
 
-    # Patch our makepkg version of the proton script to not create default prefix and use /tmp/dist.lock
-    if [ "$_ispkgbuild" = "true" ]; then
-      cd "$_nowhere/proton_tkg_$_protontkg_version"
-      _patchname="makepkg_adjustments.patch"
-      echo -e "\nApplying $_patchname"
-      patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
-      cd "$_nowhere"
-    fi
+      # Patch our makepkg version of the proton script to not create default prefix and use /tmp/dist.lock
+      if [ "$_ispkgbuild" = "true" ]; then
+        cd "$_nowhere/proton_tkg_$_protontkg_version"
+        _patchname="makepkg_adjustments.patch"
+        echo -e "\nApplying $_patchname"
+        patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
+        cd "$_nowhere"
+      fi
 
-    # Patch our proton script to remove mfplay dll override when _proton_mf_hacks is disabled
-    if [ "$_proton_mf_hacks" != "true" ]; then
-      echo -e "\nUsing prebuilt mfplay"
-      sed -i '/.*#disable built-in mfplay.*/d' "proton_tkg_$_protontkg_version/proton"
-    fi
+      # Patch our proton script to remove mfplay dll override when _proton_mf_hacks is disabled
+      if [ "$_proton_mf_hacks" != "true" ]; then
+        echo -e "\nUsing prebuilt mfplay"
+        sed -i '/.*#disable built-in mfplay.*/d' "proton_tkg_$_protontkg_version/proton"
+      fi
 
-    if [ "$_new_lib_paths" = "true" ]; then
-      cd "$_nowhere/proton_tkg_$_protontkg_version"
-      if [ "$_wow64_paths" = "true" ]; then
-        _patchname="wow64_paths.patch"
+      if [ "$_new_lib_paths" = "true" ]; then
+        cd "$_nowhere/proton_tkg_$_protontkg_version"
+        if [ "$_wow64_paths" = "true" ]; then
+          _patchname="wow64_paths.patch"
+        else
+          _patchname="new_lib_paths.patch"
+        fi
+        echo -e "\nApplying $_patchname"
+        patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
+        cd "$_nowhere"
+      fi
+
+      rm -f "$_nowhere/proton_tkg_$_protontkg_version/proton.orig"
+
+      # Set Proton-tkg user_settings.py defaults
+      if [ "$_proton_nvapi_disable" = "true" ]; then
+        sed -i 's/.*PROTON_NVAPI_DISABLE.*/     "PROTON_NVAPI_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
       else
-        _patchname="new_lib_paths.patch"
+        sed -i 's/.*PROTON_NVAPI_DISABLE.*/#     "PROTON_NVAPI_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
       fi
-      echo -e "\nApplying $_patchname"
-      patch -Np1 < "$_nowhere/proton_template/$_patchname" || exit 1
-      cd "$_nowhere"
-    fi
+      if [ "$_proton_winedbg_disable" = "true" ]; then
+        sed -i 's/.*PROTON_WINEDBG_DISABLE.*/     "PROTON_WINEDBG_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      else
+        sed -i 's/.*PROTON_WINEDBG_DISABLE.*/#     "PROTON_WINEDBG_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      fi
+      if [ "$_proton_conhost_disable" = "true" ]; then
+        sed -i 's/.*PROTON_CONHOST_DISABLE.*/     "PROTON_CONHOST_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      else
+        sed -i 's/.*PROTON_CONHOST_DISABLE.*/#     "PROTON_CONHOST_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      fi
+      if [ "$_proton_force_LAA" = "true" ]; then
+        sed -i 's/.*PROTON_DISABLE_LARGE_ADDRESS_AWARE.*/#     "PROTON_DISABLE_LARGE_ADDRESS_AWARE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      else
+        sed -i 's/.*PROTON_DISABLE_LARGE_ADDRESS_AWARE.*/     "PROTON_DISABLE_LARGE_ADDRESS_AWARE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      fi
+      if [ "$_proton_pulse_lowlat" = "true" ]; then
+        sed -i 's/.*PROTON_PULSE_LOWLATENCY.*/     "PROTON_PULSE_LOWLATENCY": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      else
+        sed -i 's/.*PROTON_PULSE_LOWLATENCY.*/#     "PROTON_PULSE_LOWLATENCY": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      fi
+      if [ "$_proton_winetricks" = "true" ]; then
+        sed -i 's/.*PROTON_WINETRICKS.*/     "PROTON_WINETRICKS": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      else
+        sed -i 's/.*PROTON_WINETRICKS.*/#     "PROTON_WINETRICKS": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      fi
+      if [ -n "$_proton_dxvk_configfile" ]; then
+        sed -i "s|.*DXVK_CONFIG_FILE.*|     \"DXVK_CONFIG_FILE\": \"${_proton_dxvk_configfile}\",|g" "proton_tkg_$_protontkg_version/user_settings.py"
+      fi
+      if [ -n "$_proton_dxvk_hud" ]; then
+        sed -i "s|.*DXVK_HUD.*|     \"DXVK_HUD\": \"${_proton_dxvk_hud}\",|g" "proton_tkg_$_protontkg_version/user_settings.py"
+      fi
+      if [ -n "$_proton_shadercache_path" ]; then
+        sed -i "s|.*PROTON_BYPASS_SHADERCACHE_PATH.*|     \"PROTON_BYPASS_SHADERCACHE_PATH\": \"${_proton_shadercache_path}\",|g" "proton_tkg_$_protontkg_version/user_settings.py"
+      fi
 
-    rm -f "$_nowhere/proton_tkg_$_protontkg_version/proton.orig"
+      # Use the corresponding DXVK/D9VK combo options
+      if [ "$_use_dxvk" != "false" ]; then
+        sed -i 's/.*PROTON_USE_WINED3D11.*/#     "PROTON_USE_WINED3D11": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+        sed -i 's/.*PROTON_USE_WINED3D9.*/#     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      else
+        sed -i 's/.*PROTON_USE_WINED3D11.*/     "PROTON_USE_WINED3D11": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+        sed -i 's/.*PROTON_USE_WINED3D9.*/     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
+      fi
 
-    # Set Proton-tkg user_settings.py defaults
-    if [ "$_proton_nvapi_disable" = "true" ]; then
-      sed -i 's/.*PROTON_NVAPI_DISABLE.*/     "PROTON_NVAPI_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    else
-      sed -i 's/.*PROTON_NVAPI_DISABLE.*/#     "PROTON_NVAPI_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
-    if [ "$_proton_winedbg_disable" = "true" ]; then
-      sed -i 's/.*PROTON_WINEDBG_DISABLE.*/     "PROTON_WINEDBG_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    else
-      sed -i 's/.*PROTON_WINEDBG_DISABLE.*/#     "PROTON_WINEDBG_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
-    if [ "$_proton_conhost_disable" = "true" ]; then
-      sed -i 's/.*PROTON_CONHOST_DISABLE.*/     "PROTON_CONHOST_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    else
-      sed -i 's/.*PROTON_CONHOST_DISABLE.*/#     "PROTON_CONHOST_DISABLE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
-    if [ "$_proton_force_LAA" = "true" ]; then
-      sed -i 's/.*PROTON_DISABLE_LARGE_ADDRESS_AWARE.*/#     "PROTON_DISABLE_LARGE_ADDRESS_AWARE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    else
-      sed -i 's/.*PROTON_DISABLE_LARGE_ADDRESS_AWARE.*/     "PROTON_DISABLE_LARGE_ADDRESS_AWARE": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
-    if [ "$_proton_pulse_lowlat" = "true" ]; then
-      sed -i 's/.*PROTON_PULSE_LOWLATENCY.*/     "PROTON_PULSE_LOWLATENCY": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    else
-      sed -i 's/.*PROTON_PULSE_LOWLATENCY.*/#     "PROTON_PULSE_LOWLATENCY": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
-    if [ "$_proton_winetricks" = "true" ]; then
-      sed -i 's/.*PROTON_WINETRICKS.*/     "PROTON_WINETRICKS": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    else
-      sed -i 's/.*PROTON_WINETRICKS.*/#     "PROTON_WINETRICKS": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
-    if [ -n "$_proton_dxvk_configfile" ]; then
-      sed -i "s|.*DXVK_CONFIG_FILE.*|     \"DXVK_CONFIG_FILE\": \"${_proton_dxvk_configfile}\",|g" "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
-    if [ -n "$_proton_dxvk_hud" ]; then
-      sed -i "s|.*DXVK_HUD.*|     \"DXVK_HUD\": \"${_proton_dxvk_hud}\",|g" "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
-    if [ -n "$_proton_shadercache_path" ]; then
-      sed -i "s|.*PROTON_BYPASS_SHADERCACHE_PATH.*|     \"PROTON_BYPASS_SHADERCACHE_PATH\": \"${_proton_shadercache_path}\",|g" "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
+      # Only use our local gstreamer when _build_gstreamer is enabled
+      if [ "$_build_gstreamer" = "true" ]; then
+        sed -i 's/"GST_PLUGIN_PATH_1_0"/"GST_PLUGIN_SYSTEM_PATH_1_0"/g' "proton_tkg_$_protontkg_version/proton"
+      fi
 
-    # Use the corresponding DXVK/D9VK combo options
-    if [ "$_use_dxvk" != "false" ]; then
-      sed -i 's/.*PROTON_USE_WINED3D11.*/#     "PROTON_USE_WINED3D11": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-      sed -i 's/.*PROTON_USE_WINED3D9.*/#     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    else
-      sed -i 's/.*PROTON_USE_WINED3D11.*/     "PROTON_USE_WINED3D11": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-      sed -i 's/.*PROTON_USE_WINED3D9.*/     "PROTON_USE_WINED3D9": "1",/g' "proton_tkg_$_protontkg_version/user_settings.py"
-    fi
+      _standalone_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' | sed 's/rc[0-9]//g;')
+      echo -e "Full version: $_protontkg_true_version\nStripped version: ${_standalone_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
 
-    # Only use our local gstreamer when _build_gstreamer is enabled
-    if [ "$_build_gstreamer" = "true" ]; then
-      sed -i 's/"GST_PLUGIN_PATH_1_0"/"GST_PLUGIN_SYSTEM_PATH_1_0"/g' "proton_tkg_$_protontkg_version/proton"
-    fi
+      # Cleanup
+      find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.def' -or -iname '*.debug' ')' -delete
 
-    _standalone_start_vercheck=$( echo "$_protontkg_true_version" | cut -f1,2 -d'.' | sed 's/rc[0-9]//g;')
-    echo -e "Full version: $_protontkg_true_version\nStripped version: ${_standalone_start_vercheck//./}" >> "$_logdir"/proton-tkg.log
-
-    # Cleanup
-    find "$_nowhere"/"proton_tkg_$_protontkg_version"/ -type f '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.def' -or -iname '*.debug' ')' -delete
-
-    # pefixup
-    if [ "$_unfrog" = "true" ] || ( [[ $_proton_branch != *3.* ]] && [[ $_proton_branch != *4.* ]] && [[ $_proton_branch != *5.* ]] && [ ${_standalone_start_vercheck//./} -ge 66 ] ); then
-      echo ''
-      echo "Fixing x86_64 PE files..."
-      ( cd "$_nowhere/proton_tkg_$_protontkg_version/files/$_x86_64_windows_tail"
-      if [ "$_pkg_strip" = "true" ]; then
-        if [ "$_pefixup" = "objcopy" ]; then
-          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
-        else
-          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096
+      # pefixup
+      if [ "$_unfrog" = "true" ] || ( [[ $_proton_branch != *3.* ]] && [[ $_proton_branch != *4.* ]] && [[ $_proton_branch != *5.* ]] && [ ${_standalone_start_vercheck//./} -ge 66 ] ); then
+        echo ''
+        echo "Fixing x86_64 PE files..."
+        ( cd "$_nowhere/proton_tkg_$_protontkg_version/files/$_x86_64_windows_tail"
+        if [ "$_pkg_strip" = "true" ]; then
+          if [ "$_pefixup" = "objcopy" ]; then
+            find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+          else
+            find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096
+          fi
         fi
-      fi
-      if [ "$_pefixup" = "py" ]; then
-        find -type f -name "*.dll" -printf "%p\0" | xargs -0 -r -P8 -n1 "$_nowhere/proton_template/pefixup.py"
-        find -type f -name "*.drv" -printf "%p\0" | xargs -0 -r -P8 -n1 "$_nowhere/proton_template/pefixup.py"
-      fi
-      )
-      echo "Fixing i386 PE files..."
-      ( cd "$_nowhere/proton_tkg_$_protontkg_version/files/$_i386_windows_tail"
-      if [ "$_pkg_strip" = "true" ]; then
-        if [ "$_pefixup" = "objcopy" ]; then
-          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
-        else
-          find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096
+        if [ "$_pefixup" = "py" ]; then
+          find -type f -name "*.dll" -printf "%p\0" | xargs -0 -r -P8 -n1 "$_nowhere/proton_template/pefixup.py"
+          find -type f -name "*.drv" -printf "%p\0" | xargs -0 -r -P8 -n1 "$_nowhere/proton_template/pefixup.py"
         fi
+        )
+        echo "Fixing i386 PE files..."
+        ( cd "$_nowhere/proton_tkg_$_protontkg_version/files/$_i386_windows_tail"
+        if [ "$_pkg_strip" = "true" ]; then
+          if [ "$_pefixup" = "objcopy" ]; then
+            find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096 --set-section-flags .text=contents,alloc,load,readonly,code
+          else
+            find -type f -not '(' -iname '*.pc' -or -iname '*.cmake' -or -iname '*.a' -or -iname '*.la' -or -iname '*.def' -or -iname '*.conf' ')' -printf '--strip-debug\0%p\0%p\0' | xargs -0 -r -P1 -n3 objcopy --file-alignment=4096
+          fi
+        fi
+        if [ "$_pefixup" = "py" ]; then
+          find -type f -name "*.dll" -printf "%p\0" | xargs -0 -r -P8 -n1 "$_nowhere/proton_template/pefixup.py"
+          find -type f -name "*.drv" -printf "%p\0" | xargs -0 -r -P8 -n1 "$_nowhere/proton_template/pefixup.py"
+        fi
+        )
       fi
-      if [ "$_pefixup" = "py" ]; then
-        find -type f -name "*.dll" -printf "%p\0" | xargs -0 -r -P8 -n1 "$_nowhere/proton_template/pefixup.py"
-        find -type f -name "*.drv" -printf "%p\0" | xargs -0 -r -P8 -n1 "$_nowhere/proton_template/pefixup.py"
-      fi
-      )
-    fi
 
-    # perms
-    find "$_nowhere/proton_tkg_$_protontkg_version"/files/lib/wine -type f -execdir chmod a-w '{}' '+'
-    find "$_nowhere/proton_tkg_$_protontkg_version"/files/lib64/wine -type f -execdir chmod a-w '{}' '+'
+      # perms
+      find "$_nowhere/proton_tkg_$_protontkg_version"/files/lib/wine -type f -execdir chmod a-w '{}' '+'
+      find "$_nowhere/proton_tkg_$_protontkg_version"/files/lib64/wine -type f -execdir chmod a-w '{}' '+'
+    fi
 
     cd "$_nowhere"
 
@@ -1308,22 +1383,24 @@ else
       fi
     fi
 
-    # default prefix
-    echo ''
-    echo "Generating default prefix..."
-    python3 "$_nowhere"/proton_template/default_pfx.py "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" "$_nowhere/proton_tkg_$_protontkg_version/files" >>"$_logdir"/proton-tkg.log 2>&1
+    if [ "$_no_container" = "true" ]; then
+      # default prefix
+      echo ''
+      echo "Generating default prefix..."
+      python3 "$_nowhere"/proton_template/default_pfx.py "$_nowhere/proton_tkg_$_protontkg_version/files/share/default_pfx" "$_nowhere/proton_tkg_$_protontkg_version/files" >>"$_logdir"/proton-tkg.log 2>&1
 
-    wine_is_running
+      wine_is_running
 
-    # Enable standalone start when the steamhelper is disabled
-    if [ "$_proton_use_steamhelper" != "true" ]; then
-      sed -i 's/.*PROTON_STANDALONE_START.*/     "PROTON_STANDALONE_START": "1",/g' "$_nowhere/proton_tkg_$_protontkg_version/user_settings.py" | echo "Enable standalone start" >> "$_logdir"/proton-tkg.log
+      # Enable standalone start when the steamhelper is disabled
+      if [ "$_proton_use_steamhelper" != "true" ]; then
+        sed -i 's/.*PROTON_STANDALONE_START.*/     "PROTON_STANDALONE_START": "1",/g' "$_nowhere/proton_tkg_$_protontkg_version/user_settings.py" | echo "Enable standalone start" >> "$_logdir"/proton-tkg.log
+      fi
+
+      # steampipe fixups
+      echo ''
+      echo "Running steampipe fixups..."
+      python3 "$_nowhere"/proton_template/steampipe_fixups.py process "$_nowhere"/"proton_tkg_$_protontkg_version"
     fi
-
-    # steampipe fixups
-    echo ''
-    echo "Running steampipe fixups..."
-    python3 "$_nowhere"/proton_template/steampipe_fixups.py process "$_nowhere"/"proton_tkg_$_protontkg_version"
 
     if [ "$_ispkgbuild" != "true" ]; then
       if [ "$_no_steampath" != "y" ]; then

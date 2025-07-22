@@ -293,6 +293,9 @@ _init() {
         echo "_LOCAL_PRESET='$_LOCAL_PRESET'" >> "$_proton_tkg_path"/proton_tkg_tmp
       fi
     fi
+    if [ "$_no_container" = "false" ]; then
+      _NOCOMPILE="true"
+    fi
     _EXTERNAL_INSTALL="proton"
     _EXTERNAL_NOVER="false"
     _nomakepkg_nover="true"
