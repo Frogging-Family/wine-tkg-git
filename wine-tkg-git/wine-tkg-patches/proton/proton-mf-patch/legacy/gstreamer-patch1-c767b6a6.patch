@@ -8589,10 +8589,10 @@ index 3cb2c1a5bc6..c7f43ec328f 100644
 @@ -694,7 +933,7 @@ static HRESULT WINAPI video_processor_ProcessOutput(IMFTransform *iface, DWORD f
  {
      struct video_processor *impl = impl_from_IMFTransform(iface);
+     MFT_OUTPUT_STREAM_INFO info;
 -    IMFSample *output_sample;
 +    IMFSample *input_sample, *output_sample;
      HRESULT hr;
-     BOOL playback_mode, provide_samples;
  
      TRACE("iface %p, flags %#lx, count %lu, samples %p, status %p.\n", iface, flags, count, samples, status);
 @@ -956,23 +956,37 @@
@@ -8625,14 +8625,14 @@ index 3cb2c1a5bc6..c7f43ec328f 100644
          IMFSample_AddRef(output_sample);
      }
  
--    if (FAILED(hr = wg_transform_read_mf(impl->wg_transform, output_sample, &samples->dwStatus, NULL)))
+-    if (FAILED(hr = wg_transform_read_mf(impl->wg_transform, output_sample, info.cbSize, &samples->dwStatus, NULL)))
 -        goto done;
 -    wg_sample_queue_flush(impl->wg_sample_queue, false);
 +    if (FAILED(hr = video_processor_process_output_d3d11(impl, input_sample, output_sample)))
 +    {
 +        if (FAILED(hr = wg_transform_push_mf(impl->wg_transform, input_sample, impl->wg_sample_queue)))
 +            goto done;
-+        if (FAILED(hr = wg_transform_read_mf(impl->wg_transform, output_sample, &samples->dwStatus, NULL)))
++        if (FAILED(hr = wg_transform_read_mf(impl->wg_transform, output_sample, info.cbSize, &samples->dwStatus, NULL)))
 +            goto done;
 +        wg_sample_queue_flush(impl->wg_sample_queue, false);
 +    }
@@ -9241,9 +9241,9 @@ index d8e8246e1ca..7490362e5b4 100644
  {
 -    struct aac_decoder *decoder = impl_from_IMFTransform(iface);
 +    struct audio_decoder *decoder = impl_from_IMFTransform(iface);
+     MFT_OUTPUT_STREAM_INFO info;
      HRESULT hr;
  
-     TRACE("iface %p, flags %#lx, count %lu, samples %p, status %p.\n", iface, flags, count, samples, status);
 @@ -615,12 +615,12 @@ static HEAACWAVEINFO aac_decoder_input_types[] =
  
  HRESULT aac_decoder_create(REFIID riid, void **ret)
