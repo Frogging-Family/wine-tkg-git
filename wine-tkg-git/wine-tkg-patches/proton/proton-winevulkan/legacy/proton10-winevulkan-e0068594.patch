@@ -128,6 +128,20 @@ index ad7fc06cc0e..82aae4ad0bf 100644
  static const char *find_extension(const char *const *extensions, uint32_t count, const char *ext)
  {
      while (count--)
+@@ -544,9 +587,12 @@ static const char *find_extension(const char *const *extensions, uint32_t count,
+ static VkResult wine_vk_device_convert_create_info(VkPhysicalDevice client_physical_device,
+         struct conversion_context *ctx, const VkDeviceCreateInfo *src, VkDeviceCreateInfo *dst)
+ {
++    static const char *wine_xr_extension_name = "VK_WINE_openxr_device_extensions";
+     struct wine_phys_dev *phys_dev = wine_phys_dev_from_handle(client_physical_device);
+-    const char *extra_extensions[2], * const*extensions = src->ppEnabledExtensionNames;
++    const char *extra_extensions[64], * const*extensions = src->ppEnabledExtensionNames;
+     unsigned int i, extra_count = 0, extensions_count = src->enabledExtensionCount;
++    unsigned int j, remove_count = 0;
++    const char *remove_extensions[64];
+ 
+     *dst = *src;
+ 
 @@ -561,6 +607,12 @@ static VkResult wine_vk_device_convert_create_info(VkPhysicalDevice client_physi
          TRACE("Extension %u: %s.\n", i, debugstr_a(extension_name));
      }
@@ -233,6 +247,18 @@ diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
 index 82aae4ad0bf..7c8990172f5 100644
 --- a/dlls/winevulkan/vulkan.c
 +++ b/dlls/winevulkan/vulkan.c
+@@ -593,8 +593,11 @@ static VkResult wine_vk_device_convert_create_info(VkPhysicalDevice client_physi
+     unsigned int i, extra_count = 0, extensions_count = src->enabledExtensionCount;
+     unsigned int j, remove_count = 0;
+     const char *remove_extensions[64];
++    VkBaseOutStructure *header;
+ 
+     *dst = *src;
++    if ((header = (VkBaseOutStructure *)dst->pNext) && header->sType == VK_STRUCTURE_TYPE_CREATE_INFO_WINE_DEVICE_CALLBACK)
++        dst->pNext = header->pNext;
+ 
+     /* Should be filtered out by loader as ICDs don't support layers. */
+     dst->enabledLayerCount = 0;
 @@ -707,6 +710,9 @@ static VkResult wine_vk_instance_convert_create_info(struct conversion_context *
  
      *dst = *src;
@@ -4291,9 +4317,9 @@ index 3af7eb25cef..fe989bbf809 100644
      VULKAN_OBJECT_HEADER( VkPhysicalDevice, physical_device );
      struct vulkan_instance *instance;
 +    uint32_t api_version;
-     bool has_swapchain_maintenance1;
  };
  
+ static inline struct vulkan_physical_device *vulkan_physical_device_from_handle( VkPhysicalDevice handle )
 -- 
 2.49.0
 
@@ -7387,26 +7413,4 @@ index ffe892c03eb..47f598d5177 100644
  
 -- 
 2.49.0
-
---- a/dlls/winevulkan/vulkan.c
-+++ b/dlls/winevulkan/vulkan.c
-@@ -716,11 +716,17 @@
-         struct conversion_context *ctx, const VkDeviceCreateInfo *src, VkDeviceCreateInfo *dst,
-         struct vulkan_device *device)
- {
-+    static const char *wine_xr_extension_name = "VK_WINE_openxr_device_extensions";
-     struct wine_phys_dev *phys_dev = wine_phys_dev_from_handle(client_physical_device);
--    const char *extra_extensions[3], * const*extensions = src->ppEnabledExtensionNames;
-+    const char *extra_extensions[65], * const*extensions = src->ppEnabledExtensionNames;
-     unsigned int i, extra_count = 0, extensions_count = src->enabledExtensionCount;
-+    unsigned int j, remove_count = 0;
-+    const char *remove_extensions[65];
-+    VkBaseOutStructure *header;
- 
-     *dst = *src;
-+    if ((header = (VkBaseOutStructure *)dst->pNext) && header->sType == VK_STRUCTURE_TYPE_CREATE_INFO_WINE_DEVICE_CALLBACK)
-+        dst->pNext = header->pNext;
- 
-     /* Should be filtered out by loader as ICDs don't support layers. */
-     dst->enabledLayerCount = 0;
 
