@@ -812,6 +812,7 @@ function build_in_valve_container {
   git clone --recurse-submodules https://github.com/ValveSoftware/Proton.git || true # It'll complain the path already exists on subsequent builds
   cd Proton
   git reset --hard
+  git fetch --all -pP
   git submodule sync --recursive
   git submodule update --remote --init --force --recursive
   git clean -ffdx
