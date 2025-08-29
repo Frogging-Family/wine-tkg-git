@@ -319,9 +319,9 @@ index 3845a86c962..3b0bd1826ef 100644
          queue->hotkey_count    = 0;
          queue->quit_message    = 0;
 @@ -318,7 +315,6 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
+         queue->ignore_post_msg = 0;
 -        queue->waiting         = 0;
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
@@ -748,7 +748,6 @@ index 4b31bfe806c..304a821bcec 100644
          release_object( sem );
      }
  }
-
 diff --git b/server/console.c a/server/console.c
 index 8f01311892f..aa7ec863605 100644
 --- b/server/console.c
@@ -2553,15 +2552,24 @@ index 05ec6a4ec00..83fa8760474 100644
          release_object( apc );
      }
  }
-@@ -1568,7 +1537,7 @@ void kill_thread( struct thread *thread, int violent_death )
-     }
-     kill_console_processes( thread, 0 );
-     abandon_mutexes( thread );
+@@ -1527,7 +1527,7 @@
+     /* grab reference since object can be destroyed while trying to wake up */
+     grab_object( &thread->obj );
+     thread->exit_poll = NULL;
 -    signal_sync( thread->sync );
 +    wake_up( &thread->obj, 0 );
-     if (violent_death) send_thread_signal( thread, SIGQUIT );
+     release_object( &thread->obj );
+ }
+ 
+@@ -1568,7 +1537,7 @@ void kill_thread( struct thread *thread, int violent_death )
+         check_terminated( thread );
+     }
+     else
+-        signal_sync( thread->sync );
++        wake_up( &thread->obj, 0 );
      cleanup_thread( thread );
      remove_process_thread( thread->process, thread );
+     release_object( thread );
 @@ -1922,7 +1891,7 @@ DECL_HANDLER(select)
          }
          ctx->status = STATUS_SUCCESS;
@@ -4705,7 +4713,7 @@ index 3cdc9375e2d..4e4dd4ef181 100644
 +    struct get_linux_sync_device_reply get_linux_sync_device_reply;
  };
  
- #define SERVER_PROTOCOL_VERSION 890
+ #define SERVER_PROTOCOL_VERSION 888
 diff --git a/server/Makefile.in b/server/Makefile.in
 index 6e4e68d6ebf..57250fd0332 100644
 --- a/server/Makefile.in
@@ -4949,8 +4957,8 @@ index 4e4dd4ef181..372b6652766 100644
      struct get_linux_sync_device_reply get_linux_sync_device_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 890
-+#define SERVER_PROTOCOL_VERSION 891
+-#define SERVER_PROTOCOL_VERSION 888
++#define SERVER_PROTOCOL_VERSION 889
  
  #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git a/server/async.c b/server/async.c
@@ -7655,9 +7663,9 @@ index b8c7a48669d..489767bc709 100644
      msg_queue_destroy          /* destroy */
  };
 @@ -315,6 +317,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
+         queue->ignore_post_msg = 0;
 +        queue->inproc_sync     = create_inproc_event( TRUE, FALSE );
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
@@ -7798,9 +7806,9 @@ index ce78b50593c..ab448346319 100644
      destroy_thread              /* destroy */
  };
 @@ -416,6 +417,7 @@ static inline void init_thread_structure( struct thread *thread )
-     thread->token           = NULL;
      thread->desc            = NULL;
      thread->desc_len        = 0;
+     thread->exit_poll       = NULL;
 +    thread->inproc_sync     = create_inproc_event( TRUE, FALSE );
  
      thread->creation_time = current_time;
@@ -7829,21 +7837,21 @@ index ce78b50593c..ab448346319 100644
  
  /* dump a thread on stdout for debugging purposes */
 @@ -1512,6 +1523,7 @@ void kill_thread( struct thread *thread, int violent_death )
+     }
      kill_console_processes( thread, 0 );
      abandon_mutexes( thread );
-     wake_up( &thread->obj, 0 );
 +    set_inproc_event( thread->inproc_sync );
-     if (violent_death) send_thread_signal( thread, SIGQUIT );
-     cleanup_thread( thread );
-     remove_process_thread( thread->process, thread );
+     if (violent_death)
+     {
+         send_thread_signal( thread, SIGQUIT );
 diff --git a/server/thread.h b/server/thread.h
 index 7fdae3a629f..7c31d4e3326 100644
 --- a/server/thread.h
 +++ b/server/thread.h
 @@ -94,6 +94,7 @@ struct thread
-     data_size_t            desc_len;      /* thread description length in bytes */
      WCHAR                 *desc;          /* thread description string */
      struct completion_wait *completion_wait; /* completion port wait object the thread is associated with */
+     struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
 +    int                    inproc_sync;   /* in-process synchronization object */
  };
  
@@ -8268,8 +8276,8 @@ index 372b6652766..0a15e94322f 100644
 +    struct get_linux_sync_obj_reply get_linux_sync_obj_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 891
-+#define SERVER_PROTOCOL_VERSION 892
+-#define SERVER_PROTOCOL_VERSION 889
++#define SERVER_PROTOCOL_VERSION 890
  
  #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git a/server/inproc_sync.c b/server/inproc_sync.c
@@ -8476,8 +8484,8 @@ index 0a15e94322f..9919589dcfb 100644
 +    struct unselect_inproc_queue_reply unselect_inproc_queue_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 892
-+#define SERVER_PROTOCOL_VERSION 893
+-#define SERVER_PROTOCOL_VERSION 890
++#define SERVER_PROTOCOL_VERSION 891
  
  #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git a/server/protocol.def b/server/protocol.def
@@ -8512,8 +8520,8 @@ index 489767bc709..457a32d78a6 100644
  };
  
 @@ -318,6 +319,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
+         queue->ignore_post_msg = 0;
          queue->inproc_sync     = create_inproc_event( TRUE, FALSE );
 +        queue->in_inproc_wait  = 0;
          list_init( &queue->send_result );
@@ -8716,8 +8724,8 @@ index 9919589dcfb..45b8d41d474 100644
 +    struct get_inproc_alert_event_reply get_inproc_alert_event_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 893
-+#define SERVER_PROTOCOL_VERSION 894
+-#define SERVER_PROTOCOL_VERSION 891
++#define SERVER_PROTOCOL_VERSION 892
  
  #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git a/server/protocol.def b/server/protocol.def
@@ -8811,8 +8819,8 @@ index ab448346319..843cca458a8 100644
 --- a/server/thread.c
 +++ b/server/thread.c
 @@ -418,6 +418,7 @@ static inline void init_thread_structure( struct thread *thread )
-     thread->desc            = NULL;
      thread->desc_len        = 0;
+     thread->exit_poll       = NULL;
      thread->inproc_sync     = create_inproc_event( TRUE, FALSE );
 +    thread->inproc_alert_event = NULL;
  
@@ -8877,8 +8885,8 @@ index 7c31d4e3326..e7a63a1a6ce 100644
 --- a/server/thread.h
 +++ b/server/thread.h
 @@ -95,6 +95,7 @@ struct thread
-     WCHAR                 *desc;          /* thread description string */
      struct completion_wait *completion_wait; /* completion port wait object the thread is associated with */
+     struct timeout_user   *exit_poll;     /* poll if the thread/process has exited already */
      int                    inproc_sync;   /* in-process synchronization object */
 +    struct event          *inproc_alert_event; /* in-process synchronization alert event */
  };
