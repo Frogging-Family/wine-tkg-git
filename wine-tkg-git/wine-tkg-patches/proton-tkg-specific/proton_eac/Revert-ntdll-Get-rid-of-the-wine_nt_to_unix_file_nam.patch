@@ -1,0 +1,162 @@
+From 5aab417953abfeba687a0c7fd95893ecf84ba31b Mon Sep 17 00:00:00 2001
+From: Kirill Artemev <artewar6767@gmail.com>
+Date: Wed, 27 Aug 2025 18:18:29 +0500
+Subject: [PATCH] Revert "ntdll: Get rid of the wine_nt_to_unix_file_name
+ syscall."
+
+This reverts commit e377b7406859213adda6ccf912a4b64753fe88b3.
+---
+ dlls/ntdll/ntdll.spec       |  3 +++
+ dlls/ntdll/ntsyscalls.h     |  6 +++--
+ dlls/ntdll/signal_arm64ec.c |  1 +
+ dlls/ntdll/unix/file.c      | 45 +++++++++++++++++++++++++++++++++++++
+ dlls/wow64/file.c           | 16 +++++++++++++
+ include/winternl.h          |  5 +++++
+ 6 files changed, 74 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index 72a88b6d9f9..8d14ae393be 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -1771,3 +1771,6 @@
+ @ cdecl wine_get_version()
+ @ cdecl wine_get_build_id()
+ @ cdecl wine_get_host_version(ptr ptr)
++
++# Filesystem
++@ stdcall -syscall wine_nt_to_unix_file_name(ptr ptr ptr long)
+diff --git a/dlls/ntdll/ntsyscalls.h b/dlls/ntdll/ntsyscalls.h
+index 3aa13741a72..e1afe28423e 100644
+--- a/dlls/ntdll/ntsyscalls.h
++++ b/dlls/ntdll/ntsyscalls.h
+@@ -248,7 +248,8 @@
+     SYSCALL_ENTRY( 0x0103, NtWow64IsProcessorFeaturePresent, 4 ) \
+     SYSCALL_ENTRY( 0x0104, NtWow64QueryInformationProcess64, 20 ) \
+     SYSCALL_ENTRY( 0x0105, NtWow64ReadVirtualMemory64, 28 ) \
+-    SYSCALL_ENTRY( 0x0106, NtWow64WriteVirtualMemory64, 28 )
++    SYSCALL_ENTRY( 0x0106, NtWow64WriteVirtualMemory64, 28 ) \
++    SYSCALL_ENTRY( 0x0107, wine_nt_to_unix_file_name, 16 )
+ #ifdef _WIN64
+ #define ALL_SYSCALLS \
+     SYSCALL_ENTRY( 0x0000, NtAccessCheck, 64 ) \
+@@ -492,7 +493,8 @@
+     SYSCALL_ENTRY( 0x00fd, NtUnmapViewOfSectionEx, 24 ) \
+     SYSCALL_ENTRY( 0x00fe, NtWaitForAlertByThreadId, 16 ) \
+     SYSCALL_ENTRY( 0x00ff, NtWaitForDebugEvent, 32 ) \
+-    SYSCALL_ENTRY( 0x0100, NtWaitForKeyedEvent, 32 )
++    SYSCALL_ENTRY( 0x0100, NtWaitForKeyedEvent, 32 ) \
++    SYSCALL_ENTRY( 0x0101, wine_nt_to_unix_file_name, 32 )
+ #else
+ #define ALL_SYSCALLS ALL_SYSCALLS32
+ #endif
+diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
+index ec549d817d4..1cb587fa447 100644
+--- a/dlls/ntdll/signal_arm64ec.c
++++ b/dlls/ntdll/signal_arm64ec.c
+@@ -582,6 +582,7 @@ DEFINE_SYSCALL(NtWriteFile, (HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, v
+ DEFINE_SYSCALL(NtWriteFileGather, (HANDLE file, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user, IO_STATUS_BLOCK *io, FILE_SEGMENT_ELEMENT *segments, ULONG length, LARGE_INTEGER *offset, ULONG *key))
+ DEFINE_SYSCALL(NtWriteVirtualMemory, (HANDLE process, void *addr, const void *buffer, SIZE_T size, SIZE_T *bytes_written))
+ DEFINE_SYSCALL(NtYieldExecution, (void))
++DEFINE_SYSCALL(wine_nt_to_unix_file_name, (const OBJECT_ATTRIBUTES *attr, char *nameA, ULONG *size, UINT disposition))
+ 
+ NTSTATUS SYSCALL_API NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR zero_bits,
+                                               SIZE_T *size_ptr, ULONG type, ULONG protect )
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 901a4f2ff25..77c8f41b08f 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -3765,6 +3765,51 @@ static NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name
+ }
+ 
+ 
++/******************************************************************************
++ *           wine_nt_to_unix_file_name
++ *
++ * Convert a file name from NT namespace to Unix namespace.
++ *
++ * If disposition is not FILE_OPEN or FILE_OVERWRITE, the last path
++ * element doesn't have to exist; in that case STATUS_NO_SUCH_FILE is
++ * returned, but the unix name is still filled in properly.
++ */
++NTSTATUS WINAPI wine_nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char *nameA, ULONG *size,
++                                          UINT disposition )
++{
++    char *buffer = NULL;
++    NTSTATUS status;
++    UNICODE_STRING nt_name;
++    OBJECT_ATTRIBUTES new_attr = *attr;
++
++    status = get_nt_and_unix_names( &new_attr, &nt_name, &buffer, disposition );
++    if (!status || status == STATUS_NO_SUCH_FILE)
++    {
++        struct stat st1, st2;
++        char *name = buffer;
++
++        /* remove dosdevices prefix for z: drive if it points to the Unix root */
++        if (!strncmp( buffer, config_dir, strlen(config_dir) ) &&
++            !strncmp( buffer + strlen(config_dir), "/dosdevices/z:/", 15 ))
++        {
++            char *p = buffer + strlen(config_dir) + 14;
++            *p = 0;
++            if (!stat( buffer, &st1 ) && !stat( "/", &st2 ) &&
++                st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino)
++                name = p;
++            *p = '/';
++        }
++
++        if (*size > strlen(name)) strcpy( nameA, name );
++        else status = STATUS_BUFFER_TOO_SMALL;
++        *size = strlen(name) + 1;
++    }
++    free( buffer );
++    free( nt_name.Buffer );
++    return status;
++}
++
++
+ /******************************************************************
+  *		collapse_path
+  *
+diff --git a/dlls/wow64/file.c b/dlls/wow64/file.c
+index 103bc8628ab..5c3d571c6f5 100644
+--- a/dlls/wow64/file.c
++++ b/dlls/wow64/file.c
+@@ -955,3 +955,19 @@ NTSTATUS WINAPI wow64_NtWriteFileGather( UINT *args )
+     put_iosb( io32, &io );
+     return status;
+ }
++
++
++/**********************************************************************
++ *           wow64_wine_nt_to_unix_file_name
++ */
++NTSTATUS WINAPI wow64_wine_nt_to_unix_file_name( UINT *args )
++{
++    OBJECT_ATTRIBUTES32 *attr32 = get_ptr( &args );
++    char *nameA = get_ptr( &args );
++    ULONG *size = get_ptr( &args );
++    UINT disposition = get_ulong( &args );
++
++    struct object_attr64 attr;
++
++    return wine_nt_to_unix_file_name( objattr_32to64_redirect( &attr, attr32 ), nameA, size, disposition );
++}
+diff --git a/include/winternl.h b/include/winternl.h
+index 44362c612f7..a2cf74625fb 100644
+--- a/include/winternl.h
++++ b/include/winternl.h
+@@ -5210,6 +5210,11 @@ NTSYSAPI LONGLONG  WINAPI RtlLargeIntegerSubtract(LONGLONG,LONGLONG);
+ NTSYSAPI NTSTATUS  WINAPI RtlLargeIntegerToChar(const ULONGLONG *,ULONG,ULONG,PCHAR);
+ #endif
+ 
++/* Wine internal functions */
++
++NTSYSAPI NTSTATUS WINAPI wine_nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char *nameA, ULONG *size,
++                                                    UINT disposition );
++
+ 
+ /***********************************************************************
+  * Inline functions
+-- 
+2.51.0
+
