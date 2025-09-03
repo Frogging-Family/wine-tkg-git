@@ -481,7 +481,7 @@ index 6079d1fe28b..18e7b8a913e 100644
      output_filename( arch_make_variable( "LDFLAGS", link_arch ));
 +    output_filename( "-Wl,--file-alignment,4096" );
      output( "\n" );
- 
+
      if (*dll_ext && make->is_exe && !make->is_win16 && strendswith( make->module, ".exe" ))
 From 213905a322620eb326b655ab89fbca07316e6357 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
@@ -818,7 +818,8 @@ diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
 index 20eb6a05922..d99c6b462b2 100644
 --- a/dlls/ntdll/unix/file.c
 +++ b/dlls/ntdll/unix/file.c
-@@ -3593,14 +3593,20 @@ NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret,
+@@ -3593,12 +3593,20 @@ NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret,
+     const WCHAR *name;
      char *unix_name;
      int name_len, unix_len;
      NTSTATUS status;
@@ -826,19 +827,121 @@ index 20eb6a05922..d99c6b462b2 100644
 +    if (!attr->ObjectName->Buffer && attr->ObjectName->Length)
 +        return STATUS_ACCESS_VIOLATION;
 +
-     fileobj.FileName = *attr->ObjectName;
- reparse:
-     if (reparse_count++ == 31)
-         return STATUS_REPARSE_POINT_NOT_RESOLVED;
-     if (!rootdir) /* without root dir fall back to normal lookup */
-     {
+     if (!attr->RootDirectory)  /* without root dir fall back to normal lookup */
++    {
 +        if (!attr->ObjectName->Buffer)
 +            return STATUS_OBJECT_PATH_SYNTAX_BAD;
 +
-         status = nt_to_unix_file_name_no_root( &fileobj, name_ret, disposition );
-         if (status == STATUS_REPARSE) goto reparse;
-         if (fileobj.FileName.Buffer != attr->ObjectName->Buffer) free( fileobj.FileName.Buffer);
-         return status;
+         return nt_to_unix_file_name_no_root( attr->ObjectName, name_ret, disposition );
++    }
+ 
+     name     = attr->ObjectName->Buffer;
+     name_len = attr->ObjectName->Length / sizeof(WCHAR);
+ 
+     if (name_len && name[0] == '\\') return STATUS_INVALID_PARAMETER;
+From cb427c70056654bf12fb0d7d6dcb13386d193ff4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Gabriel=20Iv=C4=83ncescu?= <gabrielopcode@gmail.com>
+Date: Fri, 24 Apr 2020 14:37:58 +0300
+Subject: [PATCH] server: Try to retrieve the unix name on handles created from
+ file descriptors.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=46070
+Signed-off-by: Gabriel Ivăncescu <gabrielopcode@gmail.com>
+
+Fixes Unity of Command II, and possibly other games that use
+Python38.dll.
+---
+ server/fd.c   | 39 +++++++++++++++++++++++++++++++++++++++
+ server/file.c |  1 +
+ server/file.h |  2 ++
+ 3 files changed, 42 insertions(+)
+
+diff --git a/server/fd.c b/server/fd.c
+index 904c99029ca..990a1a708a0 100644
+--- a/server/fd.c
++++ b/server/fd.c
+@@ -2079,6 +2079,45 @@ struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops, int unix_fd, s
+     return NULL;
+ }
+ 
++void set_unix_name_of_fd( struct fd *fd, const struct stat *fd_st )
++{
++#ifdef __linux__
++    static const char procfs_fmt[] = "/proc/self/fd/%d";
++
++    char path[PATH_MAX], procfs_path[sizeof(procfs_fmt) - 2 /* %d */ + 11];
++    struct stat path_st;
++    ssize_t len;
++
++    sprintf( procfs_path, procfs_fmt, fd->unix_fd );
++    len = readlink( procfs_path, path, sizeof(path) );
++    if (len == -1 || len >= sizeof(path) )
++        return;
++    path[len] = '\0';
++
++    /* Make sure it's an absolute path, has at least one hardlink, and the same inode */
++    if (path[0] != '/' || stat( path, &path_st ) || path_st.st_nlink < 1 ||
++        path_st.st_dev != fd_st->st_dev || path_st.st_ino != fd_st->st_ino)
++        return;
++
++    if (!(fd->unix_name = mem_alloc( len + 1 )))
++        return;
++    memcpy( fd->unix_name, path, len + 1 );
++
++#elif defined(F_GETPATH)
++    char path[PATH_MAX];
++    size_t size;
++
++    if (fcntl( fd->unix_fd, F_GETPATH, path ) == -1 || path[0] != '/')
++        return;
++
++    size = strlen(path) + 1;
++    if (!(fd->unix_name = mem_alloc( size )))
++        return;
++    memcpy( fd->unix_name, path, size );
++
++#endif
++}
++
+ /* retrieve the object that is using an fd */
+ void *get_fd_user( struct fd *fd )
+ {
+diff --git a/server/file.c b/server/file.c
+index e5e367478ce..e469341c746 100644
+--- a/server/file.c
++++ b/server/file.c
+@@ -147,6 +147,7 @@ struct file *create_file_for_fd( int fd, unsigned int access, unsigned int shari
+         release_object( file );
+         return NULL;
+     }
++    set_unix_name_of_fd( file->fd, &st );
+     allow_fd_caching( file->fd );
+     return file;
+ }
+diff --git a/server/file.h b/server/file.h
+index 0e43a8170df..7d614569a16 100644
+--- a/server/file.h
++++ b/server/file.h
+@@ -22,6 +22,7 @@
+ #define __WINE_SERVER_FILE_H
+ 
+ #include <sys/types.h>
++#include <sys/stat.h>
+ 
+ #include "object.h"
+ 
+@@ -82,6 +83,7 @@ extern struct fd *open_fd( struct fd *root, const char *name, int flags, mode_t
+                            unsigned int access, unsigned int sharing, unsigned int options );
+ extern struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops,
+                                        int unix_fd, struct object *user, unsigned int options );
++extern void set_unix_name_of_fd( struct fd *fd, const struct stat *fd_st );
+ extern struct fd *dup_fd_object( struct fd *orig, unsigned int access, unsigned int sharing,
+                                  unsigned int options );
+ extern struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsigned int sharing );
+
 From 514d3e11c999b11a95ab35df5b4ab454d34fe791 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Wed, 13 May 2020 13:55:55 +0300
@@ -1435,22 +1538,22 @@ index af2094a96f0..9c98209d43d 100644
  BOOL use_system_cursors = TRUE;
 -BOOL grab_fullscreen = FALSE;
 +BOOL grab_fullscreen = TRUE;
- int keyboard_layout = -1;
- BOOL keyboard_scancode_detect = FALSE;
  BOOL managed_mode = TRUE;
-diff --git a/programs/winecfg/input.c b/programs/winecfg/input.c
+ BOOL decorated_mode = TRUE;
+ BOOL private_color_map = FALSE;
+diff --git a/programs/winecfg/x11drvdlg.c b/programs/winecfg/x11drvdlg.c
 index fbc6716e94e..1ca8c3ed0fd 100644
---- a/programs/winecfg/input.c
-+++ b/programs/winecfg/input.c
-@@ -90,7 +90,7 @@ static void init_dialog(HWND dialog)
+--- a/programs/winecfg/x11drvdlg.c
++++ b/programs/winecfg/x11drvdlg.c
+@@ -123,7 +123,7 @@ static void init_dialog(HWND dialog)
+     SendDlgItemMessageW(dialog, IDC_DESKTOP_WIDTH, EM_LIMITTEXT, RES_MAXLEN, 0);
+     SendDlgItemMessageW(dialog, IDC_DESKTOP_HEIGHT, EM_LIMITTEXT, RES_MAXLEN, 0);
 
-     updating_ui = TRUE;
-
--    buffer = get_reg_key( config_key, keypath( L"X11 Driver" ), L"GrabFullscreen", L"N" );
-+    buffer = get_reg_key( config_key, keypath( L"X11 Driver" ), L"GrabFullscreen", L"Y" );
-     if (IS_OPTION_TRUE( *buffer )) CheckDlgButton( dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED );
-     else CheckDlgButton( dialog, IDC_FULLSCREEN_GRAB, BST_UNCHECKED );
-     free( buffer );
+-    buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"N");
++    buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"Y");
+     if (IS_OPTION_TRUE(*buf))
+ 	CheckDlgButton(dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED);
+     else
 From 2452b57e7fed9ac5036df9bcace5c28366a8eb41 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Fri, 8 Jan 2021 13:47:39 -0600
@@ -1510,7 +1613,7 @@ diff --git a/loader/wine.inf.in b/loader/wine.inf.in
 index 4df88d1f386..1506a73573b 100644
 --- a/loader/wine.inf.in
 +++ b/loader/wine.inf.in
-@@ -67,6 +67,7 @@ AddReg=\
+@@ -68,6 +68,7 @@
      MCI,\
      Misc,\
      OLE,\
@@ -1518,30 +1621,30 @@ index 4df88d1f386..1506a73573b 100644
      Printing,\
      Services, \
      SessionMgr,\
-@@ -96,6 +96,7 @@  AddReg=\
+@@ -96,6 +97,7 @@
+ Needs=BaseInstall
  WineFakeDlls=FakeDllsWin64
  AddReg=\
-     CurrentVersionWow64.ntamd64,\
 +    Packages.ntamd64,\
+     CurrentVersionWow64.ntamd64,\
      VCRuntime.ntamd64,\
      VersionInfo
- 
-@@ -104,6 +104,7 @@  AddReg=\
+@@ -104,6 +106,7 @@
+ Needs=BaseInstall
  WineFakeDlls=FakeDllsWin64
  AddReg=\
-     CurrentVersionWow64.ntarm64,\
 +    Packages.ntarm64,\
+     CurrentVersionWow64.ntarm64,\
      VCRuntime.ntamd64,\
      VCRuntime.ntarm64,\
-     VersionInfo
-@@ -119,6 +119,7 @@ AddReg=\
-     LicenseInformation,\
-     MCI,\
-     Misc,\
-+    Packages.wow64,\
-     VersionInfo
- 
+@@ -125,6 +128,7 @@
  [Wow64Install.ntx86]
+ Needs=BaseWow64Install
+ AddReg=\
++    Packages.wow64,\
+     CurrentVersionWow64.ntx86,\
+     VCRuntime.ntamd64,\
+     VCRuntime.ntx86
 @@ -247,6 +251,7 @@ CurrentVersion="Software\Microsoft\Windows\CurrentVersion"
  CurrentVersionNT="Software\Microsoft\Windows NT\CurrentVersion"
  FontSubStr="Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes"
@@ -2082,48 +2185,6 @@ index d8db79b1263a..4631ac8d0bcf 100644
  {
      UINT32 code;
 
-
-From 995fdfb8cdb0a8eed82e16640034dc9673ded681 Mon Sep 17 00:00:00 2001
-From: Paul Gofman <pgofman@codeweavers.com>
-Date: Fri, 12 Mar 2021 23:58:39 +0300
-Subject: [PATCH 14/16] esync: Fix restoring the objects state on wait all
- objects retry.
-
----
- dlls/ntdll/unix/esync.c | 16 ++++++++++++++--
- 1 file changed, 14 insertions(+), 2 deletions(-)
-
-diff --git a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
-index 9a615fb277c..810477d02a0 100644
---- a/dlls/ntdll/unix/esync.c
-+++ b/dlls/ntdll/unix/esync.c
-@@ -1168,10 +1168,22 @@ tryagain:
-                         {
-                             /* We were too slow. Put everything back. */
-                             value = 1;
--                            for (j = i; j >= 0; j--)
-+                            for (j = i - 1; j >= 0; j--)
-                             {
--                                if (write( obj->fd, &value, sizeof(value) ) == -1)
-+                                struct esync *obj = objs[j];
-+
-+                                if (obj->type == ESYNC_MUTEX)
-+                                {
-+                                    struct mutex *mutex = obj->shm;
-+
-+                                    if (mutex->tid == GetCurrentThreadId())
-+                                        continue;
-+                                }
-+                                if (write( fds[j].fd, &value, sizeof(value) ) == -1)
-+                                {
-+                                    ERR("write failed.\n");
-                                     return errno_to_status( errno );
-+                                }
-                             }
- 
-                             goto tryagain;  /* break out of two loops and a switch */
--- 
-2.30.2
 
 From 47be204baf902d876fc5e5b0240b6167500ec0dd Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
@@ -2901,7 +2962,6 @@ index 020faa26a11..ba7d3e78905 100644
 +    return hr;
 +}
 
-
 From a9ec37d83082b1623aea4bc5933f77f4c8a356cf Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Tue, 14 Sep 2021 14:16:47 +0200
@@ -3281,120 +3341,3 @@ index 0a080ea6be8..667013df5ac 100644
      }
      pXRRFreeScreenResources( screen_resources );
      return FALSE;
-From 98bce52ddf46c0c8c6be57c27d4aa9c48303798b Mon Sep 17 00:00:00 2001
-From: Paul Gofman <pgofman@codeweavers.com>
-Date: Tue, 14 Mar 2023 21:12:22 -0600
-Subject: [PATCH] ntdll: HACK: Add WINE_SIMULATE_WRITECOPY option.
-
-CW-Bug-Id: #22034
-
-Edit: Enable for UplayWebCore.exe
----
- dlls/ntdll/unix/loader.c       |  5 +++++
- dlls/ntdll/unix/unix_private.h |  1 +
- dlls/ntdll/unix/virtual.c      | 13 +++++++++++--
- 3 files changed, 17 insertions(+), 2 deletions(-)
-
-diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index 9f00e45..67d071a 100644
---- a/dlls/ntdll/unix/loader.c
-+++ b/dlls/ntdll/unix/loader.c
-@@ -1346,6 +1346,7 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
- 
- BOOL ac_odyssey;
- BOOL fsync_simulate_sched_quantum;
-+BOOL simulate_writecopy;
- 
- static void hacks_init(void)
- {
-@@ -1367,6 +1368,9 @@ static void hacks_init(void)
-     if (fsync_simulate_sched_quantum)
-         ERR("HACK: Simulating sched quantum in fsync.\n");
- 
-+    env_str = getenv("WINE_SIMULATE_WRITECOPY");
-+    if (env_str) simulate_writecopy = atoi(env_str);
-+
-     env_str = getenv("SteamGameId");
-     if (env_str && !strcmp(env_str, "50130"))
-         setenv("WINESTEAMNOEXEC", "1", 0);
-diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
-index 2bf8975..8a5baf3 100644
---- a/dlls/ntdll/unix/unix_private.h
-+++ b/dlls/ntdll/unix/unix_private.h
-@@ -175,6 +175,7 @@ extern struct ldt_copy __wine_ldt_copy;
- 
- extern BOOL ac_odyssey;
- extern BOOL fsync_simulate_sched_quantum;
-+extern BOOL simulate_writecopy;
- 
- extern void init_environment( int argc, char *argv[], char *envp[] );
- extern void init_startup_info(void);
-diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index 59c0e6d..9a7af20 100644
---- a/dlls/ntdll/unix/virtual.c
-+++ b/dlls/ntdll/unix/virtual.c
-@@ -122,6 +122,7 @@ struct file_view
- #define VPROT_GUARD      0x10
- #define VPROT_COMMITTED  0x20
- #define VPROT_WRITEWATCH 0x40
-+#define VPROT_COPIED     0x80
- /* per-mapping protection flags */
- #define VPROT_ARM64EC          0x0100  /* view may contain ARM64EC code */
- #define VPROT_SYSTEM           0x0200  /* system view (underlying mmap not under our control) */
-@@ -1102,7 +1103,8 @@ static const char *get_prot_str( BYTE prot )
-     buffer[0] = (prot & VPROT_COMMITTED) ? 'c' : '-';
-     buffer[1] = (prot & VPROT_GUARD) ? 'g' : ((prot & VPROT_WRITEWATCH) ? 'H' : '-');
-     buffer[2] = (prot & VPROT_READ) ? 'r' : '-';
--    buffer[3] = (prot & VPROT_WRITECOPY) ? 'W' : ((prot & VPROT_WRITE) ? 'w' : '-');
-+    buffer[3] = (prot & VPROT_WRITECOPY) ? (prot & VPROT_COPIED ? 'w' : 'W')
-+        : ((prot & VPROT_WRITE) ? 'w' : '-');
-     buffer[4] = (prot & VPROT_EXEC) ? 'x' : '-';
-     buffer[5] = 0;
-     return buffer;
-@@ -1517,7 +1519,11 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
-  */
- static DWORD get_win32_prot( BYTE vprot, unsigned int map_prot )
- {
--    DWORD ret = VIRTUAL_Win32Flags[vprot & 0x0f];
-+    DWORD ret;
-+
-+    if ((vprot & (VPROT_COPIED | VPROT_WRITECOPY)) == (VPROT_COPIED | VPROT_WRITECOPY))
-+        vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
-+    ret = VIRTUAL_Win32Flags[vprot & 0x0f];
-     if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
-     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
-     return ret;
-@@ -4730,6 +4731,33 @@ NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T
-         {
-             old = get_win32_prot( vprot, view->protect );
-             status = set_protection( view, base, size, new_prot );
-+
-+            if (simulate_writecopy && status == STATUS_SUCCESS
-+                && ((old == PAGE_WRITECOPY || old == PAGE_EXECUTE_WRITECOPY)))
-+            {
-+                TRACE("Setting VPROT_COPIED.\n");
-+
-+                set_page_vprot_bits(base, size, VPROT_COPIED, 0);
-+                vprot |= VPROT_COPIED;
-+                old = get_win32_prot( vprot, view->protect );
-+            }
-+            else if (status == STATUS_SUCCESS && (view->protect & SEC_IMAGE) &&
-+                    base == (void*)NtCurrentTeb()->Peb->ImageBaseAddress)
-+            {
-+                /* GTA5 HACK: Mark first page as copied. */
-+                const WCHAR gta5W[] = { 'g','t','a','5','.','e','x','e',0 };
-+                WCHAR *name, *p;
-+
-+                name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
-+                p = wcsrchr(name, '\\');
-+                p = p ? p+1 : name;
-+
-+                if(!wcsicmp(p, gta5W))
-+                {
-+                    FIXME("HACK: changing GTA5.exe vprot\n");
-+                    set_page_vprot_bits(base, page_size, VPROT_COPIED, 0);
-+                }
-+            }
-         }
-         else status = STATUS_NOT_COMMITTED;
-     }
