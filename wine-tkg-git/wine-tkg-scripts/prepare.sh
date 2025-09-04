@@ -1021,7 +1021,6 @@ _prepare() {
                    "$_where/wine-tkg-patches/misc/nvidia-hate/nvidia-hate"
                    "$_where/wine-tkg-patches/misc/kernelbase-reverts/kernelbase-reverts"
                    "$_where/wine-tkg-patches/proton/LAA/LAA"
-		   "$_where/wine-tkg-patches/proton/proton-winevulkan/proton-winevulkan"
                    "$_where/wine-tkg-patches/proton-tkg-specific/proton-staging/proton-staging_winex11-MWM_Decorations"
                    "$_where/wine-tkg-patches/proton-tkg-specific/proton-tkg-steamclient-swap/proton-tkg-steamclient-swap"
 		   "$_where/wine-tkg-patches/misc/winewayland/winewayland") && _patchpathloader
@@ -1060,6 +1059,7 @@ _prepare() {
 	fi
 
 	_patchpathes=( "$_where/wine-tkg-patches/proton-tkg-specific/proton-vk-bits-4.5/proton-vk-bits-4.5"
+                   "$_where/wine-tkg-patches/proton/proton-winevulkan/proton-winevulkan"
                    "$_where/wine-tkg-patches/proton/msvcrt_nativebuiltin/msvcrt_nativebuiltin"
                    "$_where/wine-tkg-patches/proton/proton-bcrypt/proton-bcrypt"
                    "$_where/wine-tkg-patches/misc/josh-flat-theme/josh-flat-theme"
