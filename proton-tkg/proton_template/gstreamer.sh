@@ -238,7 +238,6 @@
 	-D gst-plugins-bad:lc3=disabled
     -D gst-plugins-ugly:glib_debug=disabled
     -D gst-rtsp-server:glib_debug=disabled
-    -D gst-editing-services:validate=disabled
   )
 
   meson setup "$_nowhere"/Proton/build/gst64 --prefix="$_nowhere/gst" --libdir="lib64" --buildtype=release -Dpkg_config_path="$_nowhere/gst/lib64/pkgconfig" "${meson_options[@]}"
@@ -513,7 +512,6 @@
     -D gst-plugins-ugly:cdio=disabled
     -D gst-plugins-ugly:dvdread=disabled
     -D gst-rtsp-server:glib_debug=disabled
-    -D gst-editing-services:validate=disabled
     )
 
     # mpeg2dec and x264 are kinda widely used but unavailable as lib32 in Arch repos - enable optionally
