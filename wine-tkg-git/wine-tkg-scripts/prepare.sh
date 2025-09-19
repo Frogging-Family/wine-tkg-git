@@ -759,7 +759,7 @@ _prepare() {
 	  cd "${srcdir}"/"${_winesrcdir}"
 	fi
 
-	if [ "$_use_esync" = "true" ]; then
+	if [ "$_use_esync" = "true" ] && ( ! git merge-base --is-ancestor cad35b3c8119f38bf2084a5a3613630cd7b2d45d HEAD ); then
 	  if [ -z "$_esync_version" ]; then
 	    if git merge-base --is-ancestor 2600ecd4edfdb71097105c74312f83845305a4f2 HEAD; then # 3.20+
 	      _esync_version="ce79346"
