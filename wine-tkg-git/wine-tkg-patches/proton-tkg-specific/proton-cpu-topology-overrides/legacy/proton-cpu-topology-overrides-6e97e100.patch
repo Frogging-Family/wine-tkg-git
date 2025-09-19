@@ -33,9 +33,9 @@ index 59cc5b4056f..a5f603c1bbd 100644
      {
 +        if (cpu_override)
 +            wine_server_add_data( req, cpu_override, sizeof(*cpu_override) );
-         req->teb = wine_server_client_ptr( teb );
-         req->peb = NtCurrentTeb64() ? NtCurrentTeb64()->Peb : wine_server_client_ptr( peb );
-         status = wine_server_call( req );
+         req->teb      = wine_server_client_ptr( teb );
+         req->peb      = NtCurrentTeb64() ? NtCurrentTeb64()->Peb : wine_server_client_ptr( peb );
+ #ifdef __i386__
 diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
 index 13f37ee8a9a..3efa8ef64ac 100644
 --- a/dlls/ntdll/unix/system.c
@@ -558,9 +558,9 @@ index 7751a75c42b..6f7a2e559d9 100644
  {
      int                  x;                /* cursor position */
 @@ -1091,6 +1097,7 @@ struct obj_locator
- @REQ(init_process_done)
      client_ptr_t teb;          /* TEB of new thread (in process address space) */
      client_ptr_t peb;          /* PEB of new process (in process address space) */
+     client_ptr_t ldt_copy;     /* address of LDT copy (in process address space) */
 +    VARARG(cpu_override,cpu_topology_override); /* Overridden CPUs to host CPUs mapping. */
  @REPLY
      int          suspend;      /* is process suspended? */
@@ -702,9 +702,9 @@ index d16f95d9169..30fc6fc9214 100644
      {
 -        if (cpu_override)
 -            wine_server_add_data( req, cpu_override, sizeof(*cpu_override) );
-         req->teb = wine_server_client_ptr( teb );
-         req->peb = NtCurrentTeb64() ? NtCurrentTeb64()->Peb : wine_server_client_ptr( peb );
-         status = wine_server_call( req );
+         req->teb      = wine_server_client_ptr( teb );
+         req->peb      = NtCurrentTeb64() ? NtCurrentTeb64()->Peb : wine_server_client_ptr( peb );
+ #ifdef __i386__
 diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
 index 7936479f29b..061eda174b2 100644
 --- a/dlls/ntdll/unix/system.c
@@ -822,9 +822,9 @@ index fbc9da0c063..72cb633397a 100644
 --- a/server/protocol.def
 +++ b/server/protocol.def
 @@ -1103,7 +1103,6 @@ struct obj_locator
- @REQ(init_process_done)
      client_ptr_t teb;          /* TEB of new thread (in process address space) */
      client_ptr_t peb;          /* PEB of new process (in process address space) */
+     client_ptr_t ldt_copy;     /* address of LDT copy (in process address space) */
 -    VARARG(cpu_override,cpu_topology_override); /* Overridden CPUs to host CPUs mapping. */
  @REPLY
      int          suspend;      /* is process suspended? */
@@ -842,9 +842,9 @@ index ed5dca186fc..25b91a9b74a 100644
 --- a/server/thread.c
 +++ b/server/thread.c
 @@ -1597,6 +1597,29 @@ static int init_thread( struct thread *thread, int reply_fd, int wait_fd )
- DECL_HANDLER(init_first_thread)
  {
      struct process *process = current->process;
+     int fd;
 +    const struct cpu_topology_override *cpu_override = get_req_data();
 +    unsigned int have_cpu_override = get_req_data_size() / sizeof(*cpu_override);
 +    unsigned int i;
