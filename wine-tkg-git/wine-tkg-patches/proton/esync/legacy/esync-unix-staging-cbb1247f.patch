@@ -1,323 +1,3 @@
-diff --git b/dlls/win32u/message.c a/dlls/win32u/message.c
-index 3a3f79a2ee8..035ab6574e4 100644
---- b/dlls/win32u/message.c
-+++ a/dlls/win32u/message.c
-@@ -3219,6 +3219,7 @@ static DWORD wait_objects( DWORD count, const HANDLE *handles, DWORD timeout,
-         {
-             req->wake_mask    = wake_mask;
-             req->changed_mask = changed_mask;
-+            req->skip_wait    = 0;
-             wine_server_call( req );
-         }
-         SERVER_END_REQ;
-@@ -3539,6 +3540,7 @@ static void wait_message_reply( UINT flags )
-         {
-             req->wake_mask    = wake_mask;
-             req->changed_mask = wake_mask;
-+            req->skip_wait    = 1;
-             wine_server_call( req );
-             wake_bits = reply->wake_bits & wake_mask;
-         }
-diff --git b/include/wine/server_protocol.h a/include/wine/server_protocol.h
-index 84e75349b0f..cce625aacc1 100644
---- b/include/wine/server_protocol.h
-+++ a/include/wine/server_protocol.h
-@@ -2994,7 +2994,7 @@ struct set_queue_mask_request
-     struct request_header __header;
-     unsigned int wake_mask;
-     unsigned int changed_mask;
--    char __pad_20[4];
-+    int          skip_wait;
- };
- struct set_queue_mask_reply
- {
-@@ -6876,6 +6876,6 @@ union generic_reply
-     struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
- };
- 
--#define SERVER_PROTOCOL_VERSION 899
-+#define SERVER_PROTOCOL_VERSION 898
- 
- #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
-diff --git b/server/protocol.def a/server/protocol.def
-index 0c8be12314a..785f0e26d4e 100644
---- b/server/protocol.def
-+++ a/server/protocol.def
-@@ -2286,6 +2286,7 @@ struct process_info
- @REQ(set_queue_mask)
-     unsigned int wake_mask;    /* wakeup bits mask */
-     unsigned int changed_mask; /* changed bits mask */
-+    int          skip_wait;    /* will we skip waiting if signaled? */
- @REPLY
-     unsigned int wake_bits;    /* current wake bits */
-     unsigned int changed_bits; /* current changed bits */
-diff --git b/server/queue.c a/server/queue.c
-index b6cff69f38f..0e286063285 100644
---- b/server/queue.c
-+++ a/server/queue.c
-@@ -729,7 +729,7 @@ static void reset_queue_sync( struct msg_queue *queue )
- }
- 
- /* check the queue status */
--static inline int get_queue_status( struct msg_queue *queue )
-+static inline int is_signaled( struct msg_queue *queue )
- {
-     queue_shm_t *queue_shm = queue->shared;
-     return (queue_shm->wake_bits & queue_shm->wake_mask) ||
-@@ -754,7 +754,7 @@ static inline void set_queue_bits( struct msg_queue *queue, unsigned int bits )
-     }
-     SHARED_WRITE_END;
- 
--    if (get_queue_status( queue )) signal_queue_sync( queue );
-+    if (is_signaled( queue )) signal_queue_sync( queue );
- }
- 
- /* clear some queue bits */
-@@ -774,7 +774,7 @@ static inline void clear_queue_bits( struct msg_queue *queue, unsigned int bits
-         if (queue->keystate_lock) unlock_input_keystate( queue->input );
-         queue->keystate_lock = 0;
-     }
--    if (!get_queue_status( queue )) reset_queue_sync( queue );
-+    if (!is_signaled( queue )) reset_queue_sync( queue );
- }
- 
- /* check if message is matched by the filter */
-@@ -1348,6 +1348,14 @@ static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entr
- static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *entry )
- {
-     struct msg_queue *queue = (struct msg_queue *)obj;
-+    queue_shm_t *queue_shm = queue->shared;
-+
-+    SHARED_WRITE_BEGIN( queue_shm, queue_shm_t )
-+    {
-+        shared->wake_mask = 0;
-+        shared->changed_mask = 0;
-+    }
-+    SHARED_WRITE_END;
-     reset_queue_sync( queue );
- }
- 
-@@ -3170,8 +3178,9 @@ DECL_HANDLER(set_queue_mask)
-         reply->wake_bits    = queue_shm->wake_bits;
-         reply->changed_bits = queue_shm->changed_bits;
- 
--        if (!get_queue_status( queue )) reset_queue_sync( queue );
--        else signal_queue_sync( queue );
-+        if (!is_signaled( queue )) reset_queue_sync( queue );
-+        else if (!req->skip_wait) signal_queue_sync( queue );
-+        else msg_queue_satisfied( &queue->obj, NULL );
-     }
- }
- 
-@@ -3193,7 +3202,7 @@ DECL_HANDLER(get_queue_status)
-         }
-         SHARED_WRITE_END;
- 
--        if (!get_queue_status( queue )) reset_queue_sync( queue );
-+        if (!is_signaled( queue )) reset_queue_sync( queue );
-     }
-     else reply->wake_bits = reply->changed_bits = 0;
- }
-@@ -3391,7 +3400,7 @@ DECL_HANDLER(get_message)
-     }
-     SHARED_WRITE_END;
- 
--    if (!get_queue_status( queue )) reset_queue_sync( queue );
-+    if (!is_signaled( queue )) reset_queue_sync( queue );
- 
-     /* then check for posted messages */
-     if ((filter & QS_POSTMESSAGE) &&
-diff --git b/server/request_handlers.h a/server/request_handlers.h
-index 89b8af50aec..a0d5799f511 100644
---- b/server/request_handlers.h
-+++ a/server/request_handlers.h
-@@ -1300,6 +1300,7 @@ C_ASSERT( offsetof(struct set_queue_fd_request, handle) == 12 );
- C_ASSERT( sizeof(struct set_queue_fd_request) == 16 );
- C_ASSERT( offsetof(struct set_queue_mask_request, wake_mask) == 12 );
- C_ASSERT( offsetof(struct set_queue_mask_request, changed_mask) == 16 );
-+C_ASSERT( offsetof(struct set_queue_mask_request, skip_wait) == 20 );
- C_ASSERT( sizeof(struct set_queue_mask_request) == 24 );
- C_ASSERT( offsetof(struct set_queue_mask_reply, wake_bits) == 8 );
- C_ASSERT( offsetof(struct set_queue_mask_reply, changed_bits) == 12 );
-diff --git b/server/request_trace.h a/server/request_trace.h
-index b9a86a6361b..13c05c754e7 100644
---- b/server/request_trace.h
-+++ a/server/request_trace.h
-@@ -1382,6 +1382,7 @@ static void dump_set_queue_mask_request( const struct set_queue_mask_request *re
- {
-     fprintf( stderr, " wake_mask=%08x", req->wake_mask );
-     fprintf( stderr, ", changed_mask=%08x", req->changed_mask );
-+    fprintf( stderr, ", skip_wait=%d", req->skip_wait );
- }
- 
- static void dump_set_queue_mask_reply( const struct set_queue_mask_reply *req )
-
-diff --git b/dlls/ntdll/unix/sync.c a/dlls/ntdll/unix/sync.c
-index a07ff3ddecf..acdb7b3d9f8 100644
---- b/dlls/ntdll/unix/sync.c
-+++ a/dlls/ntdll/unix/sync.c
-@@ -309,9 +309,9 @@ static unsigned int validate_open_object_attributes( const OBJECT_ATTRIBUTES *at
- 
- struct inproc_sync
- {
--    int            fd;        /* unix file descriptor */
--    unsigned int   access;    /* handle access rights */
--    unsigned int   type;      /* enum inproc_sync_type */
-+    int fd;
-+    unsigned int access;
-+    unsigned int type : 2;
- };
- 
- static void release_inproc_sync( struct inproc_sync *sync )
-@@ -355,18 +355,6 @@ static NTSTATUS get_inproc_sync( HANDLE handle, ACCESS_MASK desired_access, stru
-     return STATUS_SUCCESS;
- }
- 
--extern NTSTATUS check_signal_access( struct inproc_sync *sync )
--{
--    switch (sync->type)
--    {
--    case INPROC_SYNC_INTERNAL:
--        return STATUS_OBJECT_TYPE_MISMATCH;
--    }
--
--    assert( 0 );
--    return STATUS_OBJECT_TYPE_MISMATCH;
--}
--
- static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *prev_count )
- {
-     if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
-@@ -441,26 +429,7 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
- static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
-                                         BOOLEAN alertable, const LARGE_INTEGER *timeout )
- {
--    struct inproc_sync stack_signal, stack_wait, *signal_sync = &stack_signal, *wait_sync = &stack_wait;
--    NTSTATUS ret;
--
-     if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
--
--    if ((ret = get_inproc_sync( signal, 0, signal_sync ))) return ret;
--    if ((ret = check_signal_access( signal_sync )))
--    {
--        release_inproc_sync( signal_sync );
--        return ret;
--    }
--
--    if ((ret = get_inproc_sync( wait, SYNCHRONIZE, wait_sync )))
--    {
--        release_inproc_sync( signal_sync );
--        return ret;
--    }
--
--    release_inproc_sync( signal_sync );
--    release_inproc_sync( wait_sync );
-     return STATUS_NOT_IMPLEMENTED;
- }
- 
-diff --git b/include/wine/server_protocol.h a/include/wine/server_protocol.h
-index cce625aacc1..ce3bfa7620a 100644
---- b/include/wine/server_protocol.h
-+++ a/include/wine/server_protocol.h
-@@ -5951,8 +5951,8 @@ struct set_keyboard_repeat_reply
- 
- enum inproc_sync_type
- {
--    INPROC_SYNC_UNKNOWN   = 0,
--    INPROC_SYNC_INTERNAL  = 1,
-+    INPROC_SYNC_UNKNOWN = 0,
-+    INPROC_SYNC_EVENT = 1,
- };
- 
- 
-@@ -6876,6 +6876,6 @@ union generic_reply
-     struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
- };
- 
--#define SERVER_PROTOCOL_VERSION 898
-+#define SERVER_PROTOCOL_VERSION 897
- 
- #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
-diff --git b/server/inproc_sync.c a/server/inproc_sync.c
-index 41a9c2770a7..f20410c85ed 100644
---- b/server/inproc_sync.c
-+++ a/server/inproc_sync.c
-@@ -87,21 +87,15 @@ static const struct object_ops inproc_sync_ops =
-     inproc_sync_destroy,        /* destroy */
- };
- 
--struct inproc_sync *create_inproc_internal_sync( int manual, int signaled )
-+struct inproc_sync *create_inproc_event_sync( int manual, int signaled )
- {
-     struct ntsync_event_args args = {.signaled = signaled, .manual = manual};
-     struct inproc_sync *event;
- 
-     if (!(event = alloc_object( &inproc_sync_ops ))) return NULL;
--    event->type = INPROC_SYNC_INTERNAL;
--    event->fd   = ioctl( get_inproc_device_fd(), NTSYNC_IOC_CREATE_EVENT, &args );
-+    event->type = INPROC_SYNC_EVENT;
-+    event->fd = ioctl( get_inproc_device_fd(), NTSYNC_IOC_CREATE_EVENT, &args );
- 
--    if (event->fd == -1)
--    {
--        set_error( STATUS_TOO_MANY_OPENED_FILES );
--        release_object( event );
--        return NULL;
--    }
-     return event;
- }
- 
-@@ -160,7 +154,7 @@ int get_inproc_device_fd(void)
-     return -1;
- }
- 
--struct inproc_sync *create_inproc_internal_sync( int manual, int signaled )
-+struct inproc_sync *create_inproc_event_sync( int manual, int signaled )
- {
-     return NULL;
- }
-diff --git b/server/object.h a/server/object.h
-index 203734a565f..51b74429e73 100644
---- b/server/object.h
-+++ a/server/object.h
-@@ -244,7 +244,7 @@ extern void abandon_mutexes( struct thread *thread );
- 
- struct inproc_sync;
- extern int get_inproc_device_fd(void);
--extern struct inproc_sync *create_inproc_internal_sync( int manual, int signaled );
-+extern struct inproc_sync *create_inproc_event_sync( int manual, int signaled );
- extern void signal_inproc_sync( struct inproc_sync *sync );
- extern void reset_inproc_sync( struct inproc_sync *sync );
- 
-diff --git b/server/protocol.def a/server/protocol.def
-index 785f0e26d4e..6bb7ae155c6 100644
---- b/server/protocol.def
-+++ a/server/protocol.def
-@@ -4126,8 +4126,8 @@ struct handle_info
- 
- enum inproc_sync_type
- {
--    INPROC_SYNC_UNKNOWN   = 0,
--    INPROC_SYNC_INTERNAL  = 1,
-+    INPROC_SYNC_UNKNOWN = 0,
-+    INPROC_SYNC_EVENT = 1,
- };
- 
- /* Get the in-process synchronization fd associated with the waitable handle */
-diff --git b/server/queue.c a/server/queue.c
-index 0e286063285..596742bc64c 100644
---- b/server/queue.c
-+++ a/server/queue.c
-@@ -328,7 +328,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         list_init( &queue->expired_timers );
-         for (i = 0; i < NB_MSG_KINDS; i++) list_init( &queue->msg_list[i] );
- 
--        if (get_inproc_device_fd() >= 0 && !(queue->inproc_sync = create_inproc_internal_sync( 1, 0 ))) goto error;
-+        if (get_inproc_device_fd() >= 0 && !(queue->inproc_sync = create_inproc_event_sync( 1, 0 ))) goto error;
-         if (!(queue->shared = alloc_shared_object())) goto error;
- 
-         SHARED_WRITE_BEGIN( queue->shared, queue_shm_t )
-
 diff --git b/configure a/configure
 index 3a21302782d..f2f8ab95d3d 100755
 --- b/configure
@@ -964,8 +644,8 @@ index 781b4a4e59f..62145442ffc 100644
 -    struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 897
-+#define SERVER_PROTOCOL_VERSION 894
+-#define SERVER_PROTOCOL_VERSION 898
++#define SERVER_PROTOCOL_VERSION 895
  
  #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/Makefile.in a/server/Makefile.in
@@ -1447,6 +1127,7 @@ index 0ec6ef3145e..0ebda06b49b 100644
  extern int attach_thread_input( struct thread *thread_from, struct thread *thread_to );
  extern void detach_thread_input( struct thread *thread_from );
  extern void set_clip_rectangle( struct desktop *desktop, const struct rectangle *rect,
+
 diff --git b/server/mutex.c a/server/mutex.c
 index 573fcda1083..4737b6f711b 100644
 --- b/server/mutex.c
@@ -1752,11 +1433,11 @@ index 3845a86c962..3b0bd1826ef 100644
      int                    hotkey_count;    /* pending hotkey messages count */
      int                    quit_message;    /* is there a pending quit message? */
 @@ -134,7 +133,6 @@ struct msg_queue
-     struct hook_table     *hooks;           /* hook table */
      timeout_t              last_get_msg;    /* time of last get message call */
      int                    keystate_lock;   /* owns an input keystate lock */
 -    int                    waiting;         /* is thread waiting on queue */
      queue_shm_t           *shared;          /* queue in session shared memory */
+     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
  };
  
 @@ -306,7 +304,6 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
@@ -1768,9 +1449,9 @@ index 3845a86c962..3b0bd1826ef 100644
          queue->hotkey_count    = 0;
          queue->quit_message    = 0;
 @@ -318,7 +315,6 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
+         queue->ignore_post_msg = 0;
 -        queue->waiting         = 0;
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
@@ -4002,15 +3683,24 @@ index 05ec6a4ec00..83fa8760474 100644
          release_object( apc );
      }
  }
-@@ -1568,7 +1537,7 @@ void kill_thread( struct thread *thread, int violent_death )
-     }
-     kill_console_processes( thread, 0 );
-     abandon_mutexes( thread );
+@@ -1527,7 +1527,7 @@
+     /* grab reference since object can be destroyed while trying to wake up */
+     grab_object( &thread->obj );
+     thread->exit_poll = NULL;
 -    signal_sync( thread->sync );
 +    wake_up( &thread->obj, 0 );
-     if (violent_death) send_thread_signal( thread, SIGQUIT );
+     release_object( &thread->obj );
+ }
+ 
+@@ -1568,7 +1537,7 @@ void kill_thread( struct thread *thread, int violent_death )
+         check_terminated( thread );
+     }
+     else
+-        signal_sync( thread->sync );
++        wake_up( &thread->obj, 0 );
      cleanup_thread( thread );
      remove_process_thread( thread->process, thread );
+     release_object( thread );
 @@ -1922,7 +1891,7 @@ DECL_HANDLER(select)
          }
          ctx->status = STATUS_SUCCESS;
@@ -8807,9 +8497,9 @@ index a3479055ed4..08635c047b2 100644
  #define WM_NCMOUSEFIRST WM_NCMOUSEMOVE
  #define WM_NCMOUSELAST  (WM_NCMOUSEFIRST+(WM_MOUSELAST-WM_MOUSEFIRST))
 @@ -135,6 +136,7 @@ struct msg_queue
-     timeout_t              last_get_msg;    /* time of last get message call */
      int                    keystate_lock;   /* owns an input keystate lock */
      queue_shm_t           *shared;          /* queue in session shared memory */
+     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
 +    int                    esync_fd;        /* esync file descriptor (signalled on message) */
  };
  
@@ -8832,9 +8522,9 @@ index a3479055ed4..08635c047b2 100644
      no_signal,                 /* signal */
      no_get_fd,                 /* get_fd */
 @@ -317,6 +320,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
+         queue->ignore_post_msg = 0;
 +        queue->esync_fd        = -1;
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
@@ -8909,9 +8599,9 @@ index a3479055ed4..08635c047b2 100644
 +    if (do_esync() && !is_signaled( queue ))
 +        esync_clear( queue->esync_fd );
 +
- }
+     return;
  
- 
+ found_msg:
 -- 
 2.47.2
 
@@ -9041,8 +8731,8 @@ index 08635c047b2..8f1a68acd7f 100644
 --- a/server/queue.c
 +++ b/server/queue.c
 @@ -137,6 +137,7 @@ struct msg_queue
-     int                    keystate_lock;   /* owns an input keystate lock */
      queue_shm_t           *shared;          /* queue in session shared memory */
+     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
      int                    esync_fd;        /* esync file descriptor (signalled on message) */
 +    int                    esync_in_msgwait; /* our thread is currently waiting on us */
  };
@@ -9051,22 +8741,12 @@ index 08635c047b2..8f1a68acd7f 100644
 @@ -321,6 +322,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
+         queue->ignore_post_msg = 0;
          queue->esync_fd        = -1;
 +        queue->esync_in_msgwait = 0;
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
          list_init( &queue->pending_timers );
-@@ -1291,6 +1293,10 @@ static int is_queue_hung( struct msg_queue *queue )
-         if (get_wait_queue_thread(entry)->queue == queue)
-             return 0;  /* thread is waiting on queue -> not hung */
-     }
-+
-+    if (do_esync() && queue->esync_in_msgwait)
-+        return 0;   /* thread is waiting on queue in absentia -> not hung */
-+
-     return 1;
- }
- 
 @@ -4281,6 +4287,23 @@ DECL_HANDLER(update_rawinput_devices)
      }
  }
@@ -12551,14 +12231,14 @@ index 83f80740a46..bffe229586f 100644
 --- a/server/thread.c
 +++ b/server/thread.c
 @@ -1325,6 +1325,8 @@ void kill_thread( struct thread *thread, int violent_death )
-     kill_console_processes( thread, 0 );
-     abandon_mutexes( thread );
-     wake_up( &thread->obj, 0 );
-+    if (do_esync())
-+        esync_abandon_mutexes( thread );
-     if (violent_death) send_thread_signal( thread, SIGQUIT );
+     }
+     else
+         wake_up( &thread->obj, 0 );
++        if (do_esync())
++            esync_abandon_mutexes( thread );
      cleanup_thread( thread );
      remove_process_thread( thread->process, thread );
+     release_object( thread );
 -- 
 2.29.2
 
@@ -12811,3 +12491,40 @@ index 59f8809fc1a..9102cf911aa 100644
 -- 
 2.45.2
 
+--- b/server/queue.c
++++ a/server/queue.c
+@@ -1307,6 +1307,10 @@
+         if (get_wait_queue_thread(entry)->queue == queue)
+             return 0;  /* thread is waiting on queue -> not hung */
+     }
++
++    if (do_esync() && queue->esync_in_msgwait)
++        return 0;   /* thread is waiting on queue in absentia -> not hung */
++
+     return 1;
+ }
+ 
+@@ -4281,6 +4287,23 @@ DECL_HANDLER(update_rawinput_devices)
+     }
+ }
+ 
++DECL_HANDLER(esync_msgwait)
++{
++    struct msg_queue *queue = get_current_queue();
++    const queue_shm_t *queue_shm;
++
++    if (!queue) return;
++    queue_shm = queue->shared;
++    queue->esync_in_msgwait = req->in_msgwait;
++
++    if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
++        set_event( current->process->idle_event );
++
++    /* and start/stop waiting on the driver */
++    if (queue->fd)
++        set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
++}
++
+ DECL_HANDLER(set_keyboard_repeat)
+ {
+     struct desktop *desktop;
