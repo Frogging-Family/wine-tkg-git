@@ -1,21 +1,3 @@
---- b/server/d3dkmt.c
-+++ a/server/d3dkmt.c
-@@ -56,7 +56,6 @@
-     NULL,                           /* satisfied */
-     no_signal,                      /* signal */
-     no_get_fd,                      /* get_fd */
--    default_get_sync,               /* get_sync */
-     default_map_access,             /* map_access */
-     default_get_sd,                 /* get_sd */
-     default_set_sd,                 /* set_sd */
-@@ -66,6 +65,7 @@
-     NULL,                           /* unlink_name */
-     no_open_file,                   /* open_file */
-     no_kernel_obj_list,             /* get_kernel_obj_list */
-+    no_get_inproc_sync,             /* get_inproc_sync */
-     no_close_handle,                /* close_handle */
-     d3dkmt_object_destroy,          /* destroy */
- };
 diff --git b/dlls/win32u/hook.c a/dlls/win32u/hook.c
 index b0f49e84b65..b1a154c6fb7 100644
 --- b/dlls/win32u/hook.c
@@ -155,8 +137,8 @@ index 993a432be66..84e75349b0f 100644
      struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 903
-+#define SERVER_PROTOCOL_VERSION 902
+-#define SERVER_PROTOCOL_VERSION 901
++#define SERVER_PROTOCOL_VERSION 899
  
  #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/hook.c a/server/hook.c
@@ -361,8 +343,8 @@ index 84e75349b0f..cce625aacc1 100644
      struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 902
-+#define SERVER_PROTOCOL_VERSION 901
+-#define SERVER_PROTOCOL_VERSION 899
++#define SERVER_PROTOCOL_VERSION 898
  
  #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/protocol.def a/server/protocol.def
@@ -560,8 +542,8 @@ index cce625aacc1..ce3bfa7620a 100644
      struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 901
-+#define SERVER_PROTOCOL_VERSION 900
+-#define SERVER_PROTOCOL_VERSION 898
++#define SERVER_PROTOCOL_VERSION 897
  
  #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/inproc_sync.c a/server/inproc_sync.c
@@ -1264,36 +1246,36 @@ index 781b4a4e59f..62145442ffc 100644
 -};
 -
 -
- 
- struct d3dkmt_object_create_request
+ enum request
  {
+     REQ_new_process,
 @@ -6275,7 +6253,6 @@ enum request
      REQ_get_next_process,
      REQ_get_next_thread,
      REQ_set_keyboard_repeat,
 -    REQ_get_inproc_sync_fd,
-     REQ_d3dkmt_object_create,
      REQ_NB_REQUESTS
  };
+ 
 @@ -6580,7 +6557,6 @@ union generic_request
      struct get_next_process_request get_next_process_request;
      struct get_next_thread_request get_next_thread_request;
      struct set_keyboard_repeat_request set_keyboard_repeat_request;
 -    struct get_inproc_sync_fd_request get_inproc_sync_fd_request;
-     struct d3dkmt_object_create_request d3dkmt_object_create_request;
  };
  union generic_reply
+ {
 @@ -6883,9 +6859,8 @@ union generic_reply
      struct get_next_process_reply get_next_process_reply;
      struct get_next_thread_reply get_next_thread_reply;
      struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
 -    struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
-     struct d3dkmt_object_create_reply d3dkmt_object_create_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 900
+-#define SERVER_PROTOCOL_VERSION 897
 +#define SERVER_PROTOCOL_VERSION 894
  
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/Makefile.in a/server/Makefile.in
 index 57250fd0332..6e4e68d6ebf 100644
 --- b/server/Makefile.in
@@ -1542,7 +1524,7 @@ index 59c6436fa88..b87b7d6515a 100644
  @REQ(get_next_process)
      obj_handle_t last;         /* process handle to start with */
      unsigned int access;       /* desired access for returned handle */
-@@ -4122,21 +4121,6 @@ struct handle_info
+@@ -4122,18 +4121,3 @@ struct handle_info
  @REPLY
      int enable;                /* previous state of auto-repeat enable */
  @END
@@ -1561,9 +1543,6 @@ index 59c6436fa88..b87b7d6515a 100644
 -    int           type;         /* inproc sync type */
 -    unsigned int access;        /* handle access rights */
 -@END
- 
- 
- /* Create a global d3dkmt object */
 diff --git b/server/queue.c a/server/queue.c
 index 596742bc64c..c3d80ed7f2d 100644
 --- b/server/queue.c
@@ -1653,17 +1632,17 @@ index cfaf03d1b67..ecb46926845 100644
  DECL_HANDLER(get_next_thread);
  DECL_HANDLER(set_keyboard_repeat);
 -DECL_HANDLER(get_inproc_sync_fd);
- DECL_HANDLER(d3dkmt_object_create);
  
  typedef void (*req_handler)( const void *req, void *reply );
+ static const req_handler req_handlers[REQ_NB_REQUESTS] =
 @@ -606,7 +605,6 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
      (req_handler)req_get_next_process,
      (req_handler)req_get_next_thread,
      (req_handler)req_set_keyboard_repeat,
 -    (req_handler)req_get_inproc_sync_fd,
-     (req_handler)req_d3dkmt_object_create,
  };
  
+ C_ASSERT( sizeof(abstime_t) == 8 );
 @@ -709,9 +707,8 @@ C_ASSERT( offsetof(struct init_first_thread_reply, pid) == 8 );
  C_ASSERT( offsetof(struct init_first_thread_reply, tid) == 12 );
  C_ASSERT( offsetof(struct init_first_thread_reply, server_start) == 16 );
@@ -1676,7 +1655,7 @@ index cfaf03d1b67..ecb46926845 100644
  C_ASSERT( offsetof(struct init_thread_request, unix_tid) == 12 );
  C_ASSERT( offsetof(struct init_thread_request, reply_fd) == 16 );
  C_ASSERT( offsetof(struct init_thread_request, wait_fd) == 20 );
-@@ -2294,11 +2291,6 @@ C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
+@@ -2294,8 +2291,3 @@ C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
  C_ASSERT( offsetof(struct set_keyboard_repeat_reply, enable) == 8 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_reply) == 16 );
@@ -1685,9 +1664,6 @@ index cfaf03d1b67..ecb46926845 100644
 -C_ASSERT( offsetof(struct get_inproc_sync_fd_reply, type) == 8 );
 -C_ASSERT( offsetof(struct get_inproc_sync_fd_reply, access) == 12 );
 -C_ASSERT( sizeof(struct get_inproc_sync_fd_reply) == 16 );
- C_ASSERT( offsetof(struct d3dkmt_object_create_request, type) == 12 );
- C_ASSERT( sizeof(struct d3dkmt_object_create_request) == 16 );
- C_ASSERT( offsetof(struct d3dkmt_object_create_reply, global) == 8 );
 diff --git b/server/request_trace.h a/server/request_trace.h
 index f2fe556cd5f..b5d789b2205 100644
 --- b/server/request_trace.h
@@ -1715,33 +1691,33 @@ index f2fe556cd5f..b5d789b2205 100644
 -    fprintf( stderr, ", access=%08x", req->access );
 -}
 -
- static void dump_d3dkmt_object_create_request( const struct d3dkmt_object_create_request *req )
- {
-     fprintf( stderr, " type=%08x", req->type );
+ typedef void (*dump_func)( const void *req );
+ 
+ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
 @@ -3696,7 +3684,6 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
      (dump_func)dump_get_next_process_request,
      (dump_func)dump_get_next_thread_request,
      (dump_func)dump_set_keyboard_repeat_request,
 -    (dump_func)dump_get_inproc_sync_fd_request,
-     (dump_func)dump_d3dkmt_object_create_request,
  };
  
+ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
 @@ -3998,7 +3985,6 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
      (dump_func)dump_get_next_process_reply,
      (dump_func)dump_get_next_thread_reply,
      (dump_func)dump_set_keyboard_repeat_reply,
 -    (dump_func)dump_get_inproc_sync_fd_reply,
-     (dump_func)dump_d3dkmt_object_create_reply,
  };
  
+ static const char * const req_names[REQ_NB_REQUESTS] =
 @@ -4300,7 +4286,6 @@ static const char * const req_names[REQ_NB_REQUESTS] =
      "get_next_process",
      "get_next_thread",
      "set_keyboard_repeat",
 -    "get_inproc_sync_fd",
-     "d3dkmt_object_create",
  };
  
+ static const struct
 diff --git b/server/thread.c a/server/thread.c
 index 64cd1a74702..aa566c10be4 100644
 --- b/server/thread.c
@@ -6469,25 +6445,25 @@ index 3cdc9375e2d..4e4dd4ef181 100644
      REQ_get_next_thread,
      REQ_set_keyboard_repeat,
 +    REQ_get_linux_sync_device,
-     REQ_d3dkmt_object_create,
      REQ_NB_REQUESTS
  };
+ 
 @@ -6498,6 +6511,7 @@ union generic_request
      struct get_next_process_request get_next_process_request;
      struct get_next_thread_request get_next_thread_request;
      struct set_keyboard_repeat_request set_keyboard_repeat_request;
 +    struct get_linux_sync_device_request get_linux_sync_device_request;
-     struct d3dkmt_object_create_request d3dkmt_object_create_request;
  };
  union generic_reply
+ {
 @@ -6796,6 +6810,7 @@ union generic_reply
      struct get_next_process_reply get_next_process_reply;
      struct get_next_thread_reply get_next_thread_reply;
      struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
 +    struct get_linux_sync_device_reply get_linux_sync_device_reply;
-     struct d3dkmt_object_create_reply d3dkmt_object_create_reply;
  };
  
+ #define SERVER_PROTOCOL_VERSION 894
 diff --git a/server/Makefile.in b/server/Makefile.in
 index 6e4e68d6ebf..57250fd0332 100644
 --- a/server/Makefile.in
@@ -6600,25 +6576,22 @@ index 2afc9707869..9011ff3d4f0 100644
  DECL_HANDLER(get_next_thread);
  DECL_HANDLER(set_keyboard_repeat);
 +DECL_HANDLER(get_linux_sync_device);
- DECL_HANDLER(d3dkmt_object_create);
  
  typedef void (*req_handler)( const void *req, void *reply );
+ static const req_handler req_handlers[REQ_NB_REQUESTS] =
 @@ -597,6 +598,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
      (req_handler)req_get_next_process,
      (req_handler)req_get_next_thread,
      (req_handler)req_set_keyboard_repeat,
 +    (req_handler)req_get_linux_sync_device,
-     (req_handler)req_d3dkmt_object_create,
  };
  
-@@ -2281,6 +2283,7 @@ C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
+ C_ASSERT( sizeof(abstime_t) == 8 );
+@@ -2281,3 +2283,4 @@ C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
  C_ASSERT( offsetof(struct set_keyboard_repeat_reply, enable) == 8 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_reply) == 16 );
 +C_ASSERT( sizeof(struct get_linux_sync_device_request) == 16 );
- C_ASSERT( offsetof(struct d3dkmt_object_create_request, type) == 12 );
- C_ASSERT( sizeof(struct d3dkmt_object_create_request) == 16 );
- C_ASSERT( offsetof(struct d3dkmt_object_create_reply, global) == 8 );
 diff --git a/server/request_trace.h b/server/request_trace.h
 index bd961791024..23ae334c85a 100644
 --- a/server/request_trace.h
@@ -6639,25 +6612,25 @@ index bd961791024..23ae334c85a 100644
      (dump_func)dump_get_next_thread_request,
      (dump_func)dump_set_keyboard_repeat_request,
 +    (dump_func)dump_get_linux_sync_device_request,
-     (dump_func)dump_d3dkmt_object_create_request,
  };
  
+ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
 @@ -3953,6 +3958,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
      (dump_func)dump_get_next_process_reply,
      (dump_func)dump_get_next_thread_reply,
      (dump_func)dump_set_keyboard_repeat_reply,
 +    NULL,
-     (dump_func)dump_d3dkmt_object_create_reply,
  };
  
+ static const char * const req_names[REQ_NB_REQUESTS] =
 @@ -4250,6 +4256,7 @@ static const char * const req_names[REQ_NB_REQUESTS] =
      "get_next_process",
      "get_next_thread",
      "set_keyboard_repeat",
 +    "get_linux_sync_device",
-     "d3dkmt_object_create",
  };
  
+ static const struct
 -- 
 GitLab
 
@@ -10035,28 +10008,28 @@ index 372b6652766..0a15e94322f 100644
      REQ_set_keyboard_repeat,
      REQ_get_linux_sync_device,
 +    REQ_get_linux_sync_obj,
-     REQ_d3dkmt_object_create,
      REQ_NB_REQUESTS
  };
+ 
 @@ -6524,6 +6538,7 @@ union generic_request
      struct get_next_thread_request get_next_thread_request;
      struct set_keyboard_repeat_request set_keyboard_repeat_request;
      struct get_linux_sync_device_request get_linux_sync_device_request;
 +    struct get_linux_sync_obj_request get_linux_sync_obj_request;
-     struct d3dkmt_object_create_request d3dkmt_object_create_request;
  };
  union generic_reply
+ {
 @@ -6823,8 +6838,9 @@ union generic_reply
      struct get_next_thread_reply get_next_thread_reply;
      struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
      struct get_linux_sync_device_reply get_linux_sync_device_reply;
 +    struct get_linux_sync_obj_reply get_linux_sync_obj_reply;
-     struct d3dkmt_object_create_reply d3dkmt_object_create_reply;
  };
  
 -#define SERVER_PROTOCOL_VERSION 895
 +#define SERVER_PROTOCOL_VERSION 896
  
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git a/server/inproc_sync.c b/server/inproc_sync.c
 index 6471364c4de..c6f79081b6f 100644
 --- a/server/inproc_sync.c
@@ -10116,18 +10089,18 @@ index 9011ff3d4f0..c047cdcb435 100644
  DECL_HANDLER(set_keyboard_repeat);
  DECL_HANDLER(get_linux_sync_device);
 +DECL_HANDLER(get_linux_sync_obj);
- DECL_HANDLER(d3dkmt_object_create);
  
  typedef void (*req_handler)( const void *req, void *reply );
+ static const req_handler req_handlers[REQ_NB_REQUESTS] =
 @@ -599,6 +600,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
      (req_handler)req_get_next_thread,
      (req_handler)req_set_keyboard_repeat,
      (req_handler)req_get_linux_sync_device,
 +    (req_handler)req_get_linux_sync_obj,
-     (req_handler)req_d3dkmt_object_create,
  };
  
-@@ -2284,6 +2286,11 @@ C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
+ C_ASSERT( sizeof(abstime_t) == 8 );
+@@ -2284,3 +2286,8 @@ C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
  C_ASSERT( offsetof(struct set_keyboard_repeat_reply, enable) == 8 );
  C_ASSERT( sizeof(struct set_keyboard_repeat_reply) == 16 );
  C_ASSERT( sizeof(struct get_linux_sync_device_request) == 16 );
@@ -10136,9 +10109,6 @@ index 9011ff3d4f0..c047cdcb435 100644
 +C_ASSERT( offsetof(struct get_linux_sync_obj_reply, type) == 8 );
 +C_ASSERT( offsetof(struct get_linux_sync_obj_reply, access) == 12 );
 +C_ASSERT( sizeof(struct get_linux_sync_obj_reply) == 16 );
- C_ASSERT( offsetof(struct d3dkmt_object_create_request, type) == 12 );
- C_ASSERT( sizeof(struct d3dkmt_object_create_request) == 16 );
- C_ASSERT( offsetof(struct d3dkmt_object_create_reply, global) == 8 );
 diff --git a/server/request_trace.h b/server/request_trace.h
 index 23ae334c85a..ba854fae5b1 100644
 --- a/server/request_trace.h
@@ -10166,25 +10136,25 @@ index 23ae334c85a..ba854fae5b1 100644
      (dump_func)dump_set_keyboard_repeat_request,
      (dump_func)dump_get_linux_sync_device_request,
 +    (dump_func)dump_get_linux_sync_obj_request,
-     (dump_func)dump_d3dkmt_object_create_request,
  };
  
+ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
 @@ -3959,6 +3971,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
      (dump_func)dump_get_next_thread_reply,
      (dump_func)dump_set_keyboard_repeat_reply,
      NULL,
 +    (dump_func)dump_get_linux_sync_obj_reply,
-     (dump_func)dump_d3dkmt_object_create_reply,
  };
  
+ static const char * const req_names[REQ_NB_REQUESTS] =
 @@ -4257,6 +4270,7 @@ static const char * const req_names[REQ_NB_REQUESTS] =
      "get_next_thread",
      "set_keyboard_repeat",
      "get_linux_sync_device",
 +    "get_linux_sync_obj",
-     "d3dkmt_object_create",
  };
  
+ static const struct
 -- 
 GitLab
 
@@ -10244,30 +10214,30 @@ index 0a15e94322f..9919589dcfb 100644
      REQ_get_linux_sync_obj,
 +    REQ_select_inproc_queue,
 +    REQ_unselect_inproc_queue,
-     REQ_d3dkmt_object_create,
      REQ_NB_REQUESTS
  };
+ 
 @@ -6539,6 +6565,8 @@ union generic_request
      struct set_keyboard_repeat_request set_keyboard_repeat_request;
      struct get_linux_sync_device_request get_linux_sync_device_request;
      struct get_linux_sync_obj_request get_linux_sync_obj_request;
 +    struct select_inproc_queue_request select_inproc_queue_request;
 +    struct unselect_inproc_queue_request unselect_inproc_queue_request;
-     struct d3dkmt_object_create_request d3dkmt_object_create_request;
  };
  union generic_reply
+ {
 @@ -6839,8 +6867,10 @@ union generic_reply
      struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
      struct get_linux_sync_device_reply get_linux_sync_device_reply;
      struct get_linux_sync_obj_reply get_linux_sync_obj_reply;
 +    struct select_inproc_queue_reply select_inproc_queue_reply;
 +    struct unselect_inproc_queue_reply unselect_inproc_queue_reply;
-     struct d3dkmt_object_create_reply d3dkmt_object_create_reply;
  };
  
 -#define SERVER_PROTOCOL_VERSION 896
 +#define SERVER_PROTOCOL_VERSION 897
  
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git a/server/protocol.def b/server/protocol.def
 index faebb0c5632..b6ea0951b64 100644
 --- a/server/protocol.def
@@ -10371,16 +10341,15 @@ index c047cdcb435..cd9e52aeffe 100644
  DECL_HANDLER(get_linux_sync_obj);
 +DECL_HANDLER(select_inproc_queue);
 +DECL_HANDLER(unselect_inproc_queue);
- DECL_HANDLER(d3dkmt_object_create);
  
  typedef void (*req_handler)( const void *req, void *reply );
+ static const req_handler req_handlers[REQ_NB_REQUESTS] =
 @@ -601,6 +603,8 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
      (req_handler)req_set_keyboard_repeat,
      (req_handler)req_get_linux_sync_device,
      (req_handler)req_get_linux_sync_obj,
 +    (req_handler)req_select_inproc_queue,
 +    (req_handler)req_unselect_inproc_queue,
-     (req_handler)req_d3dkmt_object_create,
  };
  
  C_ASSERT( sizeof(abstime_t) == 8 );
@@ -10391,9 +10360,6 @@ index c047cdcb435..cd9e52aeffe 100644
 +C_ASSERT( sizeof(struct select_inproc_queue_request) == 16 );
 +C_ASSERT( offsetof(struct unselect_inproc_queue_request, signaled) == 12 );
 +C_ASSERT( sizeof(struct unselect_inproc_queue_request) == 16 );
- C_ASSERT( offsetof(struct d3dkmt_object_create_request, type) == 12 );
- C_ASSERT( sizeof(struct d3dkmt_object_create_request) == 16 );
- C_ASSERT( offsetof(struct d3dkmt_object_create_reply, global) == 8 );
 diff --git a/server/request_trace.h b/server/request_trace.h
 index ba854fae5b1..870df471c1d 100644
 --- a/server/request_trace.h
@@ -10420,7 +10386,6 @@ index ba854fae5b1..870df471c1d 100644
      (dump_func)dump_get_linux_sync_obj_request,
 +    (dump_func)dump_select_inproc_queue_request,
 +    (dump_func)dump_unselect_inproc_queue_request,
-     (dump_func)dump_d3dkmt_object_create_request,
  };
  
  static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
@@ -10430,7 +10395,6 @@ index ba854fae5b1..870df471c1d 100644
      (dump_func)dump_get_linux_sync_obj_reply,
 +    NULL,
 +    NULL,
-     (dump_func)dump_d3dkmt_object_create_reply,
  };
  
  static const char * const req_names[REQ_NB_REQUESTS] =
@@ -10440,7 +10404,6 @@ index ba854fae5b1..870df471c1d 100644
      "get_linux_sync_obj",
 +    "select_inproc_queue",
 +    "unselect_inproc_queue",
-     "d3dkmt_object_create",
  };
  
  static const struct
@@ -10493,28 +10456,28 @@ index 9919589dcfb..45b8d41d474 100644
      REQ_select_inproc_queue,
      REQ_unselect_inproc_queue,
 +    REQ_get_inproc_alert_event,
-     REQ_d3dkmt_object_create,
      REQ_NB_REQUESTS
  };
+ 
 @@ -6567,6 +6582,7 @@ union generic_request
      struct get_linux_sync_obj_request get_linux_sync_obj_request;
      struct select_inproc_queue_request select_inproc_queue_request;
      struct unselect_inproc_queue_request unselect_inproc_queue_request;
 +    struct get_inproc_alert_event_request get_inproc_alert_event_request;
-     struct d3dkmt_object_create_request d3dkmt_object_create_request;
  };
  union generic_reply
+ {
 @@ -6869,8 +6885,9 @@ union generic_reply
      struct get_linux_sync_obj_reply get_linux_sync_obj_reply;
      struct select_inproc_queue_reply select_inproc_queue_reply;
      struct unselect_inproc_queue_reply unselect_inproc_queue_reply;
 +    struct get_inproc_alert_event_reply get_inproc_alert_event_reply;
-     struct d3dkmt_object_create_reply d3dkmt_object_create_reply;
  };
  
 -#define SERVER_PROTOCOL_VERSION 897
 +#define SERVER_PROTOCOL_VERSION 898
  
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git a/server/protocol.def b/server/protocol.def
 index b6ea0951b64..b098ee6c49b 100644
 --- a/server/protocol.def
@@ -10539,15 +10502,14 @@ index cd9e52aeffe..a5f48e0e968 100644
  DECL_HANDLER(select_inproc_queue);
  DECL_HANDLER(unselect_inproc_queue);
 +DECL_HANDLER(get_inproc_alert_event);
- DECL_HANDLER(d3dkmt_object_create);
  
  typedef void (*req_handler)( const void *req, void *reply );
+ static const req_handler req_handlers[REQ_NB_REQUESTS] =
 @@ -605,6 +606,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
      (req_handler)req_get_linux_sync_obj,
      (req_handler)req_select_inproc_queue,
      (req_handler)req_unselect_inproc_queue,
 +    (req_handler)req_get_inproc_alert_event,
-     (req_handler)req_d3dkmt_object_create,
  };
  
  C_ASSERT( sizeof(abstime_t) == 8 );
@@ -10558,9 +10520,6 @@ index cd9e52aeffe..a5f48e0e968 100644
 +C_ASSERT( sizeof(struct get_inproc_alert_event_request) == 16 );
 +C_ASSERT( offsetof(struct get_inproc_alert_event_reply, handle) == 8 );
 +C_ASSERT( sizeof(struct get_inproc_alert_event_reply) == 16 );
- C_ASSERT( offsetof(struct d3dkmt_object_create_request, type) == 12 );
- C_ASSERT( sizeof(struct d3dkmt_object_create_request) == 16 );
- C_ASSERT( offsetof(struct d3dkmt_object_create_reply, global) == 8 );
 diff --git a/server/request_trace.h b/server/request_trace.h
 index 870df471c1d..dbe5bd8abc5 100644
 --- a/server/request_trace.h
@@ -10586,7 +10545,6 @@ index 870df471c1d..dbe5bd8abc5 100644
      (dump_func)dump_select_inproc_queue_request,
      (dump_func)dump_unselect_inproc_queue_request,
 +    (dump_func)dump_get_inproc_alert_event_request,
-     (dump_func)dump_d3dkmt_object_create_request,
  };
  
  static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
@@ -10595,7 +10553,6 @@ index 870df471c1d..dbe5bd8abc5 100644
      NULL,
      NULL,
 +    (dump_func)dump_get_inproc_alert_event_reply,
-     (dump_func)dump_d3dkmt_object_create_reply,
  };
  
  static const char * const req_names[REQ_NB_REQUESTS] =
@@ -10604,7 +10561,6 @@ index 870df471c1d..dbe5bd8abc5 100644
      "select_inproc_queue",
      "unselect_inproc_queue",
 +    "get_inproc_alert_event",
-     "d3dkmt_object_create",
  };
  
  static const struct
