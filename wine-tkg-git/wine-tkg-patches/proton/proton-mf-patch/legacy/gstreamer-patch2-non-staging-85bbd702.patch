@@ -2988,6 +2988,33 @@ index dd6f91fe5b6..672389564a2 100644
 -- 
 2.49.0
 
+From fed10bb4f9c7124f7d0479906ecf3de501e10b0e Mon Sep 17 00:00:00 2001
+From: Conor McCarthy <cmccarthy@codeweavers.com>
+Date: Tue, 10 Dec 2024 00:19:53 +1000
+Subject: [PATCH 1020/1564] mf: Propagate errors from session_collect_nodes()
+ to the caller of session_set_current_topology().
+
+---
+ dlls/mf/session.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/mf/session.c b/dlls/mf/session.c
+index d2cfc4db995..9d6514df8a5 100644
+--- a/dlls/mf/session.c
++++ b/dlls/mf/session.c
+@@ -2014,7 +2014,8 @@ static HRESULT session_set_current_topology(struct media_session *session, IMFTo
+ 
+     session->source_shutdown_handled = FALSE;
+ 
+-    session_collect_nodes(session);
++    if (FAILED(hr = session_collect_nodes(session)))
++        return hr;
+ 
+     LIST_FOR_EACH_ENTRY(node, &session->presentation.nodes, struct topo_node, entry)
+     {
+-- 
+2.49.0
+
 From cda3fe890881966e63da5de442f85083ffa40f81 Mon Sep 17 00:00:00 2001
 From: Conor McCarthy <cmccarthy@codeweavers.com>
 Date: Tue, 10 Dec 2024 00:23:16 +1000
@@ -3442,29 +3469,17 @@ diff --git a/dlls/mf/mf.rgs b/dlls/mf/mf.rgs
 index f06576baccb..f127df76321 100644
 --- a/dlls/mf/mf.rgs
 +++ b/dlls/mf/mf.rgs
-@@ -12,26 +12,6 @@
+@@ -12,14 +12,6 @@ HKLM
                      {
                          val '{477ec299-1421-4bdd-971f-7ccb933f21ad}' = s 'File Scheme Handler'
                      }
 -                    'http:'
 -                    {
--                        val '{44cb442b-9da9-49df-b3fd-023777b16e50}' = s 'Http Scheme Handler'
+-                        val '{9ec4b4f9-3029-45ad-947b-344de2a249e2}' = s 'Urlmon Scheme Handler'
 -                    }
 -                    'https:'
 -                    {
--                        val '{44cb442b-9da9-49df-b3fd-023777b16e50}' = s 'Http Scheme Handler'
--                    }
--                    'httpd:'
--                    {
--                        val '{44cb442b-9da9-49df-b3fd-023777b16e50}' = s 'Http Scheme Handler'
--                    }
--                    'httpsd:'
--                    {
--                        val '{44cb442b-9da9-49df-b3fd-023777b16e50}' = s 'Http Scheme Handler'
--                    }
--                    'mms:'
--                    {
--                        val '{44cb442b-9da9-49df-b3fd-023777b16e50}' = s 'Http Scheme Handler'
+-                        val '{9ec4b4f9-3029-45ad-947b-344de2a249e2}' = s 'Urlmon Scheme Handler'
 -                    }
                  }
              }
@@ -4805,36 +4820,6 @@ index f3eb7f9222e..76894d31175 100644
 -- 
 2.49.0
 
-From 63944eaab571600c4da06f41502cc038e44cc618 Mon Sep 17 00:00:00 2001
-From: Conor McCarthy <cmccarthy@codeweavers.com>
-Date: Fri, 28 Feb 2025 14:03:34 +1000
-Subject: [PATCH 1404/1564] mf: Initialise the grabber sample count when
- setting state after a seek.
-
-If sample_count is zero in this case, we end up with no samples being
-requested.
----
- dlls/mf/samplegrabber.c | 4 ++++
- 1 file changed, 4 insertions(+)
-
-diff --git a/dlls/mf/samplegrabber.c b/dlls/mf/samplegrabber.c
-index de599139736..4d54afc1d31 100644
---- a/dlls/mf/samplegrabber.c
-+++ b/dlls/mf/samplegrabber.c
-@@ -1195,6 +1195,10 @@ static HRESULT sample_grabber_set_state(struct sample_grabber *grabber, enum sin
- 
-             if (state == SINK_STATE_RUNNING && grabber->state != SINK_STATE_RUNNING)
-             {
-+                /* Unpause at a position is a seek operation which drops everything pending. */
-+                if (grabber->state == SINK_STATE_PAUSED && offset != PRESENTATION_CURRENT_POSITION)
-+                    grabber->sample_count = MAX_SAMPLE_QUEUE_LENGTH;
-+
-                 /* Every transition to running state sends a bunch requests to build up initial queue. */
-                 for (i = 0; i < grabber->sample_count; ++i)
-                 {
--- 
-2.49.0
-
 From 36212c14da315c1c1db997320a65ef4da2d7860a Mon Sep 17 00:00:00 2001
 From: Conor McCarthy <cmccarthy@codeweavers.com>
 Date: Mon, 3 Mar 2025 12:21:21 +1000
@@ -4874,12 +4859,12 @@ index 62efa0d75f9..eee3952ed04 100644
  {
      struct media_source *source;
 -    struct topo_node *topo_node;
-     BOOL keep_position;
      MFTIME duration;
      HRESULT hr;
 -    UINT i;
  
      switch (session->state)
+     {
 @@ -1110,17 +1126,7 @@ static void session_start(struct media_session *session, const GUID *time_format
                  }
              }
@@ -4976,10 +4961,10 @@ index 485e28a4158..b8febde4ad2 100644
  static void session_start(struct media_session *session, const GUID *time_format, const PROPVARIANT *start_position)
  {
      struct media_source *source;
-     BOOL keep_position;
 +    BOOL unpause_seek;
      MFTIME duration;
      HRESULT hr;
+ 
 @@ -1116,7 +1119,8 @@ static void session_start(struct media_session *session, const GUID *time_format
                  return session_command_complete_with_event(session, MESessionStarted, hr, NULL);
              }
@@ -5052,6 +5037,61 @@ index bf87ed49e6c..3059762b917 100644
      }
  }
  
+-- 
+2.49.0
+
+From 63944eaab571600c4da06f41502cc038e44cc618 Mon Sep 17 00:00:00 2001
+From: Conor McCarthy <cmccarthy@codeweavers.com>
+Date: Fri, 28 Feb 2025 14:03:34 +1000
+Subject: [PATCH 1404/1564] mf: Initialise the grabber sample count when
+ setting state after a seek.
+
+If sample_count is zero in this case, we end up with no samples being
+requested.
+---
+ dlls/mf/samplegrabber.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/dlls/mf/samplegrabber.c b/dlls/mf/samplegrabber.c
+index de599139736..4d54afc1d31 100644
+--- a/dlls/mf/samplegrabber.c
++++ b/dlls/mf/samplegrabber.c
+@@ -1195,6 +1195,10 @@ static HRESULT sample_grabber_set_state(struct sample_grabber *grabber, enum sin
+ 
+             if (state == SINK_STATE_RUNNING && grabber->state != SINK_STATE_RUNNING)
+             {
++                /* Unpause at a position is a seek operation which drops everything pending. */
++                if (grabber->state == SINK_STATE_PAUSED && offset != PRESENTATION_CURRENT_POSITION)
++                    grabber->sample_count = MAX_SAMPLE_QUEUE_LENGTH;
++
+                 /* Every transition to running state sends a bunch requests to build up initial queue. */
+                 for (i = 0; i < grabber->sample_count; ++i)
+                 {
+-- 
+2.49.0
+
+From b11d349b90dbbdffa73fc6451146729a38a3e23c Mon Sep 17 00:00:00 2001
+From: Conor McCarthy <cmccarthy@codeweavers.com>
+Date: Fri, 28 Feb 2025 14:08:49 +1000
+Subject: [PATCH 1405/1564] mf: Reset transform nodes when seeking.
+
+---
+ dlls/mf/session.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/dlls/mf/session.c b/dlls/mf/session.c
+index 3059762b917..3f4eb4f5489 100644
+--- a/dlls/mf/session.c
++++ b/dlls/mf/session.c
+@@ -1171,6 +1171,8 @@ static void session_start(struct media_session *session, const GUID *time_format
+                 }
+             }
+ 
++            session_reset_transforms(session, TRUE);
++
+             session->presentation.time_format = *time_format;
+             session->presentation.start_position.vt = VT_EMPTY;
+             PropVariantCopy(&session->presentation.start_position, start_position);
 -- 
 2.49.0
 
