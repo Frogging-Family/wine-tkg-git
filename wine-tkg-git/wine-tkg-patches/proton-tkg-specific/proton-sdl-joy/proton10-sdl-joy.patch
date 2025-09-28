@@ -1,0 +1,2808 @@
+From c9a7339f9945abe923299d331c2a67e72170e9f1 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Tue, 15 Dec 2020 12:23:31 -0600
+Subject: [PATCH 0080/2018] winebus: Enable SDL input logging when hid channel
+ is enabled.
+
+---
+ dlls/winebus.sys/bus_sdl.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/dlls/winebus.sys/bus_sdl.c b/dlls/winebus.sys/bus_sdl.c
+index e050742ca66..18c846139a9 100644
+--- a/dlls/winebus.sys/bus_sdl.c
++++ b/dlls/winebus.sys/bus_sdl.c
+@@ -115,6 +115,7 @@ MAKE_FUNCPTR(SDL_GameControllerAddMapping);
+ MAKE_FUNCPTR(SDL_RegisterEvents);
+ MAKE_FUNCPTR(SDL_PushEvent);
+ MAKE_FUNCPTR(SDL_GetTicks);
++MAKE_FUNCPTR(SDL_LogSetPriority);
+ static int (*pSDL_JoystickRumble)(SDL_Joystick *joystick, Uint16 low_frequency_rumble, Uint16 high_frequency_rumble, Uint32 duration_ms);
+ static int (*pSDL_JoystickRumbleTriggers)(SDL_Joystick *joystick, Uint16 left_rumble, Uint16 right_rumble, Uint32 duration_ms);
+ static Uint16 (*pSDL_JoystickGetProduct)(SDL_Joystick * joystick);
+@@ -1141,6 +1142,7 @@ NTSTATUS sdl_bus_init(void *args)
+     LOAD_FUNCPTR(SDL_RegisterEvents);
+     LOAD_FUNCPTR(SDL_PushEvent);
+     LOAD_FUNCPTR(SDL_GetTicks);
++    LOAD_FUNCPTR(SDL_LogSetPriority);
+ #undef LOAD_FUNCPTR
+     pSDL_JoystickRumble = dlsym(sdl_handle, "SDL_JoystickRumble");
+     pSDL_JoystickRumbleTriggers = dlsym(sdl_handle, "SDL_JoystickRumbleTriggers");
+@@ -1162,6 +1164,11 @@ NTSTATUS sdl_bus_init(void *args)
+         goto failed;
+     }
+ 
++    if (TRACE_ON(hid))
++    {
++        pSDL_LogSetPriority(SDL_LOG_CATEGORY_INPUT, SDL_LOG_PRIORITY_VERBOSE);
++    }
++
+     pSDL_JoystickEventState(SDL_ENABLE);
+     pSDL_GameControllerEventState(SDL_ENABLE);
+ 
+-- 
+2.51.0
+
+From 6646937517c6db37710a77d574cce14d3d430d56 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 23 Nov 2022 01:02:13 +0100
+Subject: [PATCH 0082/2018] xinput1_3: Move controller_(destroy|disable) code
+ around.
+
+CW-Bug-Id: #20528
+---
+ dlls/xinput1_3/main.c | 68 +++++++++++++++++++++----------------------
+ 1 file changed, 34 insertions(+), 34 deletions(-)
+
+diff --git a/dlls/xinput1_3/main.c b/dlls/xinput1_3/main.c
+index 28f57e93bce..17450134e82 100644
+--- a/dlls/xinput1_3/main.c
++++ b/dlls/xinput1_3/main.c
+@@ -337,7 +337,40 @@ static DWORD HID_set_state(struct xinput_controller *controller, XINPUT_VIBRATIO
+     return ERROR_SUCCESS;
+ }
+ 
+-static void controller_destroy(struct xinput_controller *controller, BOOL already_removed);
++static void controller_disable(struct xinput_controller *controller)
++{
++    XINPUT_VIBRATION state = {0};
++
++    if (!controller->enabled) return;
++    if (controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED) HID_set_state(controller, &state);
++    controller->enabled = FALSE;
++
++    CancelIoEx(controller->device, &controller->hid.read_ovl);
++    WaitForSingleObject(controller->hid.read_ovl.hEvent, INFINITE);
++    SetEvent(update_event);
++}
++
++static void controller_destroy(struct xinput_controller *controller, BOOL already_removed)
++{
++    EnterCriticalSection(&controller->crit);
++
++    if (controller->device)
++    {
++        TRACE("removing device %s from index %Iu\n", debugstr_w(controller->device_path), controller - controllers);
++
++        if (!already_removed) controller_disable(controller);
++        CloseHandle(controller->device);
++        controller->device = NULL;
++
++        free(controller->hid.input_report_buf);
++        free(controller->hid.output_report_buf);
++        free(controller->hid.feature_report_buf);
++        HidD_FreePreparsedData(controller->hid.preparsed);
++        memset(&controller->hid, 0, sizeof(controller->hid));
++    }
++
++    LeaveCriticalSection(&controller->crit);
++}
+ 
+ static void controller_enable(struct xinput_controller *controller)
+ {
+@@ -357,19 +390,6 @@ static void controller_enable(struct xinput_controller *controller)
+     else SetEvent(update_event);
+ }
+ 
+-static void controller_disable(struct xinput_controller *controller)
+-{
+-    XINPUT_VIBRATION state = {0};
+-
+-    if (!controller->enabled) return;
+-    if (controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED) HID_set_state(controller, &state);
+-    controller->enabled = FALSE;
+-
+-    CancelIoEx(controller->device, &controller->hid.read_ovl);
+-    WaitForSingleObject(controller->hid.read_ovl.hEvent, INFINITE);
+-    SetEvent(update_event);
+-}
+-
+ static BOOL controller_init(struct xinput_controller *controller, PHIDP_PREPARSED_DATA preparsed,
+                             HIDP_CAPS *caps, HANDLE device, const WCHAR *device_path)
+ {
+@@ -525,26 +545,6 @@ static void update_controller_list(void)
+     SetupDiDestroyDeviceInfoList(set);
+ }
+ 
+-static void controller_destroy(struct xinput_controller *controller, BOOL already_removed)
+-{
+-    EnterCriticalSection(&controller->crit);
+-
+-    if (controller->device)
+-    {
+-        if (!already_removed) controller_disable(controller);
+-        CloseHandle(controller->device);
+-        controller->device = NULL;
+-
+-        free(controller->hid.input_report_buf);
+-        free(controller->hid.output_report_buf);
+-        free(controller->hid.feature_report_buf);
+-        HidD_FreePreparsedData(controller->hid.preparsed);
+-        memset(&controller->hid, 0, sizeof(controller->hid));
+-    }
+-
+-    LeaveCriticalSection(&controller->crit);
+-}
+-
+ static LONG sign_extend(ULONG value, const HIDP_VALUE_CAPS *caps)
+ {
+     UINT sign = 1 << (caps->BitSize - 1);
+-- 
+2.51.0
+
+From f5721727db673e60434751cda74a86651db018b6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 23 Nov 2022 01:02:13 +0100
+Subject: [PATCH 0083/2018] xinput1_3: Introduce a new open_device_at_index
+ helper.
+
+CW-Bug-Id: #20528
+---
+ dlls/xinput1_3/main.c | 47 ++++++++++++++++++++++++++-----------------
+ 1 file changed, 28 insertions(+), 19 deletions(-)
+
+diff --git a/dlls/xinput1_3/main.c b/dlls/xinput1_3/main.c
+index 17450134e82..ffcf05b961d 100644
+--- a/dlls/xinput1_3/main.c
++++ b/dlls/xinput1_3/main.c
+@@ -123,19 +123,6 @@ static HMODULE xinput_instance;
+ static HANDLE start_event;
+ static HANDLE update_event;
+ 
+-static BOOL find_opened_device(const WCHAR *device_path, int *free_slot)
+-{
+-    int i;
+-
+-    *free_slot = XUSER_MAX_COUNT;
+-    for (i = XUSER_MAX_COUNT; i > 0; i--)
+-    {
+-        if (!controllers[i - 1].device) *free_slot = i - 1;
+-        else if (!wcsicmp(device_path, controllers[i - 1].device_path)) return TRUE;
+-    }
+-    return FALSE;
+-}
+-
+ static void check_value_caps(struct xinput_controller *controller, USHORT usage, HIDP_VALUE_CAPS *caps)
+ {
+     switch (usage)
+@@ -473,17 +460,13 @@ static BOOL device_is_overridden(HANDLE device)
+     return disable;
+ }
+ 
+-static BOOL try_add_device(const WCHAR *device_path)
++static BOOL open_device_at_index(const WCHAR *device_path, int index)
+ {
+     SP_DEVICE_INTERFACE_DATA iface = {sizeof(iface)};
+     PHIDP_PREPARSED_DATA preparsed;
+     HIDP_CAPS caps;
+     NTSTATUS status;
+     HANDLE device;
+-    int i;
+-
+-    if (find_opened_device(device_path, &i)) return TRUE; /* already opened */
+-    if (i == XUSER_MAX_COUNT) return FALSE; /* no more slots */
+ 
+     device = CreateFileW(device_path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                          NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING, NULL);
+@@ -501,16 +484,42 @@ static BOOL try_add_device(const WCHAR *device_path)
+         WARN("ignoring HID device, unsupported usage %04x:%04x\n", caps.UsagePage, caps.Usage);
+     else if (device_is_overridden(device))
+         WARN("ignoring HID device, overridden for dinput\n");
+-    else if (!controller_init(&controllers[i], preparsed, &caps, device, device_path))
++    else if (!controller_init(&controllers[index], preparsed, &caps, device, device_path))
+         WARN("ignoring HID device, failed to initialize\n");
+     else
++    {
++        TRACE("opened device %s at index %u\n", debugstr_w(device_path), index);
+         return TRUE;
++    }
+ 
+     CloseHandle(device);
+     HidD_FreePreparsedData(preparsed);
+     return TRUE;
+ }
+ 
++static BOOL find_opened_device(const WCHAR *device_path, int *free_slot)
++{
++    int i;
++
++    *free_slot = XUSER_MAX_COUNT;
++    for (i = XUSER_MAX_COUNT; i > 0; i--)
++    {
++        if (!controllers[i - 1].device) *free_slot = i - 1;
++        else if (!wcsicmp(device_path, controllers[i - 1].device_path)) return TRUE;
++    }
++    return FALSE;
++}
++
++static BOOL try_add_device(const WCHAR *device_path)
++{
++    SP_DEVICE_INTERFACE_DATA iface = {sizeof(iface)};
++    int i;
++
++    if (find_opened_device(device_path, &i)) return TRUE; /* already opened */
++    if (i == XUSER_MAX_COUNT) return FALSE; /* no more slots */
++    return open_device_at_index(device_path, i);
++}
++
+ static void try_remove_device(const WCHAR *device_path)
+ {
+     int i;
+-- 
+2.51.0
+
+From 15f2422bb3ea03cfaab57926cf247dfb25260dcb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 11 Oct 2021 10:48:49 +0200
+Subject: [PATCH 0084/2018] HACK: xinput1_3: Check Steam overlay presence and
+ disconnect controllers when enabled.
+
+Squashed with:
+
+HACK: gamescope: xinput1_3: Ignore gamepad input when Steam Keyboard is opened.
+---
+ dlls/xinput1_3/main.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/xinput1_3/main.c b/dlls/xinput1_3/main.c
+index ffcf05b961d..1ccbe834d09 100644
+--- a/dlls/xinput1_3/main.c
++++ b/dlls/xinput1_3/main.c
+@@ -122,6 +122,7 @@ static struct xinput_controller controllers[XUSER_MAX_COUNT] =
+ static HMODULE xinput_instance;
+ static HANDLE start_event;
+ static HANDLE update_event;
++static HANDLE steam_overlay_event;
+ 
+ static void check_value_caps(struct xinput_controller *controller, USHORT usage, HIDP_VALUE_CAPS *caps)
+ {
+@@ -750,6 +751,8 @@ static BOOL WINAPI start_update_thread_once( INIT_ONCE *once, void *param, void
+     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (void*)hid_update_thread_proc, &module))
+         WARN("Failed to increase module's reference count, error: %lu\n", GetLastError());
+ 
++    steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
++
+     start_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+     if (!start_event) ERR("failed to create start event, error %lu\n", GetLastError());
+ 
+@@ -836,7 +839,8 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputSetState(DWORD index, XINPUT_VIBRATION *vib
+     if (index >= XUSER_MAX_COUNT) return ERROR_BAD_ARGUMENTS;
+     if (!controller_lock(&controllers[index])) return ERROR_DEVICE_NOT_CONNECTED;
+ 
+-    ret = HID_set_state(&controllers[index], vibration);
++    if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0) ret = ERROR_SUCCESS;
++    else ret = HID_set_state(&controllers[index], vibration);
+ 
+     controller_unlock(&controllers[index]);
+ 
+@@ -854,7 +858,9 @@ static DWORD xinput_get_state(DWORD index, XINPUT_STATE *state)
+     if (index >= XUSER_MAX_COUNT) return ERROR_BAD_ARGUMENTS;
+     if (!controller_lock(&controllers[index])) return ERROR_DEVICE_NOT_CONNECTED;
+ 
+-    *state = controllers[index].state;
++    if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0) memset(state, 0, sizeof(*state));
++    else *state = controllers[index].state;
++
+     controller_unlock(&controllers[index]);
+ 
+     return ERROR_SUCCESS;
+-- 
+2.51.0
+
+From e8363f6227ac045402ed411c38beb49bfbdd2961 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Sat, 9 Jan 2021 20:11:52 +0100
+Subject: [PATCH 0085/2018] HACK: dinput: Check Steam overlay presence and
+ clear device state when enabled.
+
+CW-Bug-Id: #20083
+---
+ dlls/dinput/dinput_main.c    |  4 ++++
+ dlls/dinput/dinput_private.h |  1 +
+ dlls/dinput/joystick_hid.c   | 18 ++++++++++++++++++
+ 3 files changed, 23 insertions(+)
+
+diff --git a/dlls/dinput/dinput_main.c b/dlls/dinput/dinput_main.c
+index eb38bbe4ee9..d7c1d4729d5 100644
+--- a/dlls/dinput/dinput_main.c
++++ b/dlls/dinput/dinput_main.c
+@@ -508,6 +508,8 @@ void check_dinput_events(void)
+     MsgWaitForMultipleObjectsEx(0, NULL, 0, QS_ALLINPUT, 0);
+ }
+ 
++HANDLE steam_overlay_event;
++
+ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, void *reserved )
+ {
+     TRACE( "inst %p, reason %lu, reserved %p.\n", inst, reason, reserved );
+@@ -516,12 +518,14 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, void *reserved )
+     {
+       case DLL_PROCESS_ATTACH:
+         DisableThreadLibraryCalls(inst);
++        steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
+         DINPUT_instance = inst;
+         register_di_em_win_class();
+         break;
+       case DLL_PROCESS_DETACH:
+         if (reserved) break;
+         unregister_di_em_win_class();
++        CloseHandle(steam_overlay_event);
+         break;
+     }
+     return TRUE;
+diff --git a/dlls/dinput/dinput_private.h b/dlls/dinput/dinput_private.h
+index 0609b816b3b..433dfcf949d 100644
+--- a/dlls/dinput/dinput_private.h
++++ b/dlls/dinput/dinput_private.h
+@@ -46,6 +46,7 @@ struct dinput
+ 
+ extern const IDirectInput7AVtbl dinput7_a_vtbl;
+ extern const IDirectInput8AVtbl dinput8_a_vtbl;
++extern HANDLE steam_overlay_event;
+ 
+ extern void dinput_internal_addref( struct dinput *dinput );
+ extern void dinput_internal_release( struct dinput *dinput );
+diff --git a/dlls/dinput/joystick_hid.c b/dlls/dinput/joystick_hid.c
+index 367d6356195..6989a3d4a44 100644
+--- a/dlls/dinput/joystick_hid.c
++++ b/dlls/dinput/joystick_hid.c
+@@ -1101,6 +1101,7 @@ struct parse_device_state_params
+ {
+     BYTE old_state[DEVICE_STATE_MAX_SIZE];
+     BYTE buttons[128];
++    BOOL reset_state;
+     DWORD time;
+     DWORD seq;
+ };
+@@ -1116,6 +1117,8 @@ static BOOL check_device_state_button( struct dinput_device *device, UINT index,
+ 
+     value = params->buttons[instance->wUsage - 1];
+     old_value = params->old_state[instance->dwOfs];
++    if (params->reset_state) value = 0;
++
+     device->device_state[instance->dwOfs] = value;
+     if (old_value != value) queue_event( iface, index, value, params->time, params->seq );
+ 
+@@ -1201,6 +1204,16 @@ static BOOL read_device_state_value( struct dinput_device *device, UINT index, s
+     if (instance->dwType & DIDFT_AXIS) value = scale_axis_value( logical_value, properties );
+     else value = scale_value( logical_value, properties );
+ 
++    if (params->reset_state)
++    {
++        if (instance->dwType & DIDFT_POV) value = -1;
++        else if (instance->dwType & DIDFT_AXIS)
++        {
++            if (!properties->range_min) value = properties->range_max / 2;
++            else value = round( (properties->range_min + properties->range_max) / 2.0 );
++        }
++    }
++
+     old_value = *(LONG *)(params->old_state + instance->dwOfs);
+     *(LONG *)(impl->base.device_state + instance->dwOfs) = value;
+     if (old_value != value) queue_event( iface, index, value, params->time, params->seq );
+@@ -1230,6 +1243,11 @@ static HRESULT hid_joystick_read( IDirectInputDevice8W *iface )
+ 
+     ret = GetOverlappedResult( impl->device, &impl->read_ovl, &count, FALSE );
+ 
++    if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0) /* steam overlay is enabled */
++        params.reset_state = TRUE;
++    else
++        params.reset_state = FALSE;
++
+     EnterCriticalSection( &impl->base.crit );
+     while (ret)
+     {
+-- 
+2.51.0
+
+From 065fe6d17f9767dfe272d3aac751ea21c32cda98 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Sat, 3 Dec 2022 08:03:58 +0100
+Subject: [PATCH 0087/2018] HACK: winebus: Introduce new
+ PROTON_(ENABLE|DISABLE)_HIDRAW env vars.
+
+To easily enable/disable hidraw for new devices.
+---
+ dlls/winebus.sys/main.c | 36 +++++++++++++++++++++++++++++++++++-
+ 1 file changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/winebus.sys/main.c b/dlls/winebus.sys/main.c
+index 82bc8667bde..9dbfd1bf074 100644
+--- a/dlls/winebus.sys/main.c
++++ b/dlls/winebus.sys/main.c
+@@ -505,14 +505,32 @@
+     return default_value;
+ }
+ 
++static const WCHAR *wcscasestr(const WCHAR *search, const WCHAR *needle)
++{
++    UNICODE_STRING search_str, needle_str;
++
++    RtlInitUnicodeString(&search_str, search);
++    RtlInitUnicodeString(&needle_str, needle);
++
++    while (needle_str.Length <= search_str.Length)
++    {
++        if (!RtlCompareUnicodeString(&search_str, &needle_str, TRUE)) return search_str.Buffer;
++        search_str.Length -= sizeof(WCHAR);
++        search_str.Buffer += 1;
++    }
++
++    return NULL;
++}
++
+ static BOOL is_hidraw_enabled(WORD vid, WORD pid, const USAGE_AND_PAGE *usages, UINT buttons)
+ {
+     char buffer[FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data[1024])];
+     KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
+     struct device_options *device;
+-    WCHAR vidpid[MAX_PATH], *tmp;
++    WCHAR vidpid[MAX_PATH], *tmp, value[1024];
+     BOOL prefer_hidraw = FALSE;
+     UNICODE_STRING str;
++    SIZE_T len;
+     DWORD size;
+ 
+     if (options.disable_hidraw) return FALSE;
+@@ -525,6 +543,14 @@
+         return !!device->hidraw;
+     }
+ 
++    if (!RtlQueryEnvironmentVariable(NULL, L"PROTON_DISABLE_HIDRAW", 20, value, ARRAY_SIZE(value) - 1, &len))
++    {
++        value[len] = 0;
++        if (wcscmp(value, L"1")) return FALSE;
++        swprintf(vidpid, ARRAY_SIZE(vidpid), L"0x%04X/0x%04X", vid, pid);
++        if (wcscasestr(value, vidpid)) return FALSE;
++    }
++
+     if (usages->UsagePage == HID_USAGE_PAGE_DIGITIZER)
+     {
+         WARN("Ignoring unsupported %04X:%04X hidraw touchscreen\n", vid, pid);
+@@ -538,6 +564,14 @@
+     }
+     if (usages->Usage != HID_USAGE_GENERIC_GAMEPAD && usages->Usage != HID_USAGE_GENERIC_JOYSTICK) return TRUE;
+ 
++    if (!RtlQueryEnvironmentVariable(NULL, L"PROTON_ENABLE_HIDRAW", 20, value, ARRAY_SIZE(value) - 1, &len))
++    {
++        value[len] = 0;
++        if (wcscmp(value, L"1")) return TRUE;
++        swprintf(vidpid, ARRAY_SIZE(vidpid), L"0x%04X/0x%04X", vid, pid);
++        if (wcscasestr(value, vidpid)) return TRUE;
++    }
++
+     if (options.disable_sdl && options.disable_input) prefer_hidraw = TRUE;
+     if (is_dualshock4_gamepad(vid, pid)) prefer_hidraw = TRUE;
+     if (is_dualsense_gamepad(vid, pid)) prefer_hidraw = TRUE;
+-- 
+2.51.0
+
+From 3828dfc725cfd9f2db0d1d19f9abf0c47cfa2ec6 Mon Sep 17 00:00:00 2001
+From: Simon McVittie <smcv@collabora.com>
+Date: Tue, 10 Nov 2020 18:32:28 +0000
+Subject: [PATCH 0088/2018] winebus: Automatically bypass udevd in Flatpak or
+ pressure-vessel.
+
+Flatpak uses unprivileged containers that don't normally map uid 0
+into the container, so netlink events won't work there, as described
+in previous commits. Steam's pressure-vessel container tool behaves
+similarly.
+---
+ dlls/winebus.sys/bus_udev.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/dlls/winebus.sys/bus_udev.c b/dlls/winebus.sys/bus_udev.c
+index 2a363d72b84..1c81415673c 100644
+--- a/dlls/winebus.sys/bus_udev.c
++++ b/dlls/winebus.sys/bus_udev.c
+@@ -1701,6 +1701,12 @@ NTSTATUS udev_bus_init(void *args)
+         goto error;
+     }
+ 
++    if (access("/run/pressure-vessel", R_OK) || access("/.flatpak-info", R_OK))
++    {
++        TRACE("Container detected, bypassing udevd by default\n");
++        disable_udevd = TRUE;
++    }
++
+ #ifdef HAVE_SYS_INOTIFY_H
+     if (options.disable_udevd) monitor_fd = create_inotify();
+     if (monitor_fd < 0) options.disable_udevd = FALSE;
+-- 
+2.51.0
+
+From ba045634e2e84012e63138c9465fcdf52f8957d2 Mon Sep 17 00:00:00 2001
+From: Simon McVittie <smcv@collabora.com>
+Date: Tue, 10 Nov 2020 19:03:47 +0000
+Subject: [PATCH 0089/2018] winebus: Guess the type of evdev input devices.
+
+Ordinarily, we can get the type of an evdev input device from udev:
+the input_id builtin sets udev properties of the form ID_INPUT_FOO
+that we can read.
+
+However, in a container there is no guarantee that the libudev in the
+container will interoperate with the udevd on the host system, so we
+need to be prepared to do this ourselves from first principles, using
+a heuristic similar to the one in udev's input_id.
+
+We cannot simply copy the heuristic from udev's input_id, because its
+licensing is incompatible (GPL). Instead, use a vaguely similar heuristic
+that works from the same inputs and will generally produce similar results.
+---
+ dlls/winebus.sys/bus_udev.c | 325 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 325 insertions(+)
+
+diff --git a/dlls/winebus.sys/bus_udev.c b/dlls/winebus.sys/bus_udev.c
+index 1c81415673c..7ad9c51fd3f 100644
+--- a/dlls/winebus.sys/bus_udev.c
++++ b/dlls/winebus.sys/bus_udev.c
+@@ -25,6 +25,7 @@
+ #include "config.h"
+ #include <errno.h>
+ #include <fcntl.h>
++#include <limits.h>
+ #include <stdarg.h>
+ #include <stdlib.h>
+ #include <stdio.h>
+@@ -455,6 +456,302 @@ static const struct raw_device_vtbl hidraw_device_vtbl =
+ 
+ #define test_bit(arr,bit) (((BYTE*)(arr))[(bit)>>3]&(1<<((bit)&7)))
+ 
++/* Minimal compatibility with code taken from steam-runtime-tools */
++typedef int gboolean;
++#define g_debug(fmt, ...) TRACE(fmt "\n", ## __VA_ARGS__)
++#define G_N_ELEMENTS(arr) (sizeof(arr)/sizeof(arr[0]))
++
++typedef enum
++{
++  SRT_INPUT_DEVICE_TYPE_FLAGS_JOYSTICK = (1 << 0),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_ACCELEROMETER = (1 << 1),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_KEYBOARD = (1 << 2),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_HAS_KEYS = (1 << 3),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_MOUSE = (1 << 4),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_TOUCHPAD = (1 << 5),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_TOUCHSCREEN = (1 << 6),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_TABLET = (1 << 7),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_TABLET_PAD = (1 << 8),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_POINTING_STICK = (1 << 9),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_SWITCH = (1 << 10),
++  SRT_INPUT_DEVICE_TYPE_FLAGS_NONE = 0
++} SrtInputDeviceTypeFlags;
++
++#define BITS_PER_LONG           (sizeof (unsigned long) * CHAR_BIT)
++#define LONGS_FOR_BITS(x)       ((((x)-1)/BITS_PER_LONG)+1)
++typedef struct
++{
++  unsigned long ev[LONGS_FOR_BITS (EV_MAX)];
++  unsigned long keys[LONGS_FOR_BITS (KEY_MAX)];
++  unsigned long abs[LONGS_FOR_BITS (ABS_MAX)];
++  unsigned long rel[LONGS_FOR_BITS (REL_MAX)];
++  unsigned long ff[LONGS_FOR_BITS (FF_MAX)];
++  unsigned long props[LONGS_FOR_BITS (INPUT_PROP_MAX)];
++} SrtEvdevCapabilities;
++
++static gboolean
++_srt_get_caps_from_evdev (int fd,
++                          unsigned int type,
++                          unsigned long *bitmask,
++                          size_t bitmask_len_longs)
++{
++  size_t bitmask_len_bytes = bitmask_len_longs * sizeof (*bitmask);
++
++  memset (bitmask, 0, bitmask_len_bytes);
++
++  if (ioctl (fd, EVIOCGBIT (type, bitmask_len_bytes), bitmask) < 0)
++    return FALSE;
++
++  return TRUE;
++}
++
++static gboolean
++_srt_evdev_capabilities_set_from_evdev (SrtEvdevCapabilities *caps,
++                                        int fd)
++{
++  if (_srt_get_caps_from_evdev (fd, 0, caps->ev, G_N_ELEMENTS (caps->ev)))
++    {
++      _srt_get_caps_from_evdev (fd, EV_KEY, caps->keys, G_N_ELEMENTS (caps->keys));
++      _srt_get_caps_from_evdev (fd, EV_ABS, caps->abs, G_N_ELEMENTS (caps->abs));
++      _srt_get_caps_from_evdev (fd, EV_REL, caps->rel, G_N_ELEMENTS (caps->rel));
++      _srt_get_caps_from_evdev (fd, EV_FF, caps->ff, G_N_ELEMENTS (caps->ff));
++      ioctl (fd, EVIOCGPROP (sizeof (caps->props)), caps->props);
++      return TRUE;
++    }
++
++  memset (caps, 0, sizeof (*caps));
++  return FALSE;
++}
++
++#define JOYSTICK_ABS_AXES \
++  ((1 << ABS_X) | (1 << ABS_Y) \
++   | (1 << ABS_RX) | (1 << ABS_RY) \
++   | (1 << ABS_THROTTLE) | (1 << ABS_RUDDER) \
++   | (1 << ABS_WHEEL) | (1 << ABS_GAS) | (1 << ABS_BRAKE) \
++   | (1 << ABS_HAT0X) | (1 << ABS_HAT0Y) \
++   | (1 << ABS_HAT1X) | (1 << ABS_HAT1Y) \
++   | (1 << ABS_HAT2X) | (1 << ABS_HAT2Y) \
++   | (1 << ABS_HAT3X) | (1 << ABS_HAT3Y))
++
++static const unsigned int first_mouse_button = BTN_MOUSE;
++static const unsigned int last_mouse_button = BTN_JOYSTICK - 1;
++
++static const unsigned int first_joystick_button = BTN_JOYSTICK;
++static const unsigned int last_joystick_button = BTN_GAMEPAD - 1;
++
++static const unsigned int first_gamepad_button = BTN_GAMEPAD;
++static const unsigned int last_gamepad_button = BTN_DIGI - 1;
++
++static const unsigned int first_dpad_button = BTN_DPAD_UP;
++static const unsigned int last_dpad_button = BTN_DPAD_RIGHT;
++
++static const unsigned int first_extra_joystick_button = BTN_TRIGGER_HAPPY;
++static const unsigned int last_extra_joystick_button = BTN_TRIGGER_HAPPY40;
++
++SrtInputDeviceTypeFlags
++_srt_evdev_capabilities_guess_type (const SrtEvdevCapabilities *caps)
++{
++  SrtInputDeviceTypeFlags flags = SRT_INPUT_DEVICE_TYPE_FLAGS_NONE;
++  unsigned int i;
++  gboolean has_joystick_axes = FALSE;
++  gboolean has_joystick_buttons = FALSE;
++
++  /* Some properties let us be fairly sure about a device */
++  if (test_bit (caps->props, INPUT_PROP_ACCELEROMETER))
++    {
++      g_debug ("INPUT_PROP_ACCELEROMETER => is accelerometer");
++      flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_ACCELEROMETER;
++    }
++
++  if (test_bit (caps->props, INPUT_PROP_POINTING_STICK))
++    {
++      g_debug ("INPUT_PROP_POINTING_STICK => is pointing stick");
++      flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_POINTING_STICK;
++    }
++
++  if (test_bit (caps->props, INPUT_PROP_BUTTONPAD)
++      || test_bit (caps->props, INPUT_PROP_TOPBUTTONPAD))
++    {
++      g_debug ("INPUT_PROP_[TOP]BUTTONPAD => is touchpad");
++      flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_TOUCHPAD;
++    }
++
++  /* Devices with a stylus or pen are assumed to be graphics tablets */
++  if (test_bit (caps->keys, BTN_STYLUS)
++      || test_bit (caps->keys, BTN_TOOL_PEN))
++    {
++      g_debug ("Stylus or pen => is tablet");
++      flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_TABLET;
++    }
++
++  /* Devices that accept a finger touch are assumed to be touchpads or
++   * touchscreens.
++   *
++   * In Steam we mostly only care about these as a way to
++   * reject non-joysticks, so we're not very precise here yet.
++   *
++   * SDL assumes that TOUCH means a touchscreen and FINGER
++   * means a touchpad. */
++  if (flags == SRT_INPUT_DEVICE_TYPE_FLAGS_NONE
++      && (test_bit (caps->keys, BTN_TOOL_FINGER)
++          || test_bit (caps->keys, BTN_TOUCH)
++          || test_bit (caps->props, INPUT_PROP_SEMI_MT)))
++    {
++      g_debug ("Finger or touch or semi-MT => is touchpad or touchscreen");
++
++      if (test_bit (caps->props, INPUT_PROP_POINTER))
++        flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_TOUCHPAD;
++      else
++        flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_TOUCHSCREEN;
++    }
++
++  /* Devices with mouse buttons are ... probably mice? */
++  if (flags == SRT_INPUT_DEVICE_TYPE_FLAGS_NONE)
++    {
++      for (i = first_mouse_button; i <= last_mouse_button; i++)
++        {
++          if (test_bit (caps->keys, i))
++            {
++              g_debug ("Mouse button => mouse");
++              flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_MOUSE;
++            }
++        }
++    }
++
++  if (flags == SRT_INPUT_DEVICE_TYPE_FLAGS_NONE)
++    {
++      for (i = ABS_X; i < ABS_Z; i++)
++        {
++          if (!test_bit (caps->abs, i))
++            break;
++        }
++
++      /* If it has 3 axes and no buttons it's probably an accelerometer. */
++      if (i == ABS_Z && !test_bit (caps->ev, EV_KEY))
++        {
++          g_debug ("3 left axes and no buttons => accelerometer");
++          flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_ACCELEROMETER;
++        }
++
++      /* Same for RX..RZ (e.g. Wiimote) */
++      for (i = ABS_RX; i < ABS_RZ; i++)
++        {
++          if (!test_bit (caps->abs, i))
++            break;
++        }
++
++      if (i == ABS_RZ && !test_bit (caps->ev, EV_KEY))
++        {
++          g_debug ("3 right axes and no buttons => accelerometer");
++          flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_ACCELEROMETER;
++        }
++    }
++
++  /* Bits 1 to 31 are ESC, numbers and Q to D, which SDL and udev both
++   * consider to be enough to count as a fully-functioned keyboard. */
++  if ((caps->keys[0] & 0xfffffffe) == 0xfffffffe)
++    {
++      g_debug ("First few keys => keyboard");
++      flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_KEYBOARD;
++    }
++
++  /* If we have *any* keys, consider it to be something a bit
++   * keyboard-like. Bits 0 to 63 are all keyboard keys.
++   * Make sure we stop before reaching KEY_UP which is sometimes
++   * used on game controller mappings, e.g. for the Wiimote. */
++  for (i = 0; i < (64 / BITS_PER_LONG); i++)
++    {
++      if (caps->keys[i] != 0)
++        flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_HAS_KEYS;
++    }
++
++  if (caps->abs[0] & JOYSTICK_ABS_AXES)
++    has_joystick_axes = TRUE;
++
++  /* Flight stick buttons */
++  for (i = first_joystick_button; i <= last_joystick_button; i++)
++    {
++      if (test_bit (caps->keys, i))
++        has_joystick_buttons = TRUE;
++    }
++
++  /* Gamepad buttons (Xbox, PS3, etc.) */
++  for (i = first_gamepad_button; i <= last_gamepad_button; i++)
++    {
++      if (test_bit (caps->keys, i))
++        has_joystick_buttons = TRUE;
++    }
++
++  /* Gamepad digital dpad */
++  for (i = first_dpad_button; i <= last_dpad_button; i++)
++    {
++      if (test_bit (caps->keys, i))
++        has_joystick_buttons = TRUE;
++    }
++
++  /* Steering wheel gear-change buttons */
++  for (i = BTN_GEAR_DOWN; i <= BTN_GEAR_UP; i++)
++    {
++      if (test_bit (caps->keys, i))
++        has_joystick_buttons = TRUE;
++    }
++
++  /* Reserved space for extra game-controller buttons, e.g. on Corsair
++   * gaming keyboards */
++  for (i = first_extra_joystick_button; i <= last_extra_joystick_button; i++)
++    {
++      if (test_bit (caps->keys, i))
++        has_joystick_buttons = TRUE;
++    }
++
++  if (test_bit (caps->keys, last_mouse_button))
++    {
++      /* Mice with a very large number of buttons can apparently
++       * overflow into the joystick-button space, but they're still not
++       * joysticks. */
++      has_joystick_buttons = FALSE;
++    }
++
++  /* TODO: Do we want to consider BTN_0 up to BTN_9 to be joystick buttons?
++   * libmanette and SDL look for BTN_1, udev does not.
++   *
++   * They're used by some game controllers, like BTN_1 and BTN_2 for the
++   * Wiimote, BTN_1..BTN_9 for the SpaceTec SpaceBall and BTN_0..BTN_3
++   * for Playstation dance pads, but they're also used by
++   * non-game-controllers like Logitech mice. For now we entirely ignore
++   * these buttons: they are not evidence that it's a joystick, but
++   * neither are they evidence that it *isn't* a joystick. */
++
++  /* We consider it to be a joystick if there is some evidence that it is,
++   * and no evidence that it's something else.
++   *
++   * Unlike SDL, we accept devices with only axes and no buttons as a
++   * possible joystick, unless they have X/Y/Z axes in which case we
++   * assume they're accelerometers. */
++  if ((has_joystick_buttons || has_joystick_axes)
++      && (flags == SRT_INPUT_DEVICE_TYPE_FLAGS_NONE))
++    {
++      g_debug ("Looks like a joystick");
++      flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_JOYSTICK;
++    }
++
++  /* If we have *any* keys below BTN_MISC, consider it to be something
++   * a bit keyboard-like, but don't rule out *also* being considered
++   * to be a joystick (again for e.g. the Wiimote). */
++  for (i = 0; i < (BTN_MISC / BITS_PER_LONG); i++)
++    {
++      if (caps->keys[i] != 0)
++        flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_HAS_KEYS;
++    }
++
++  /* Also non-exclusive: don't rule out a device being a joystick and
++   * having a switch */
++  if (test_bit (caps->ev, EV_SW))
++    flags |= SRT_INPUT_DEVICE_TYPE_FLAGS_SWITCH;
++
++  return flags;
++}
++
+ static const USAGE_AND_PAGE *what_am_I(struct udev_device *dev, int fd)
+ {
+     static const USAGE_AND_PAGE Unknown     = {.UsagePage = HID_USAGE_PAGE_GENERIC, .Usage = 0};
+@@ -465,6 +762,7 @@ static const USAGE_AND_PAGE *what_am_I(struct udev_device *dev, int fd)
+     static const USAGE_AND_PAGE Tablet      = {.UsagePage = HID_USAGE_PAGE_DIGITIZER, .Usage = HID_USAGE_DIGITIZER_PEN};
+     static const USAGE_AND_PAGE Touchscreen = {.UsagePage = HID_USAGE_PAGE_DIGITIZER, .Usage = HID_USAGE_DIGITIZER_TOUCH_SCREEN};
+     static const USAGE_AND_PAGE Touchpad    = {.UsagePage = HID_USAGE_PAGE_DIGITIZER, .Usage = HID_USAGE_DIGITIZER_TOUCH_PAD};
++    SrtEvdevCapabilities caps;
+ 
+     struct udev_device *parent = dev;
+ 
+@@ -489,6 +787,33 @@ static const USAGE_AND_PAGE *what_am_I(struct udev_device *dev, int fd)
+         parent = udev_device_get_parent_with_subsystem_devtype(parent, "input", NULL);
+     }
+ 
++    /* In a container, udev properties might not be available. Fall back to deriving the device
++     * type from the fd's evdev capabilities. */
++    if (_srt_evdev_capabilities_set_from_evdev (&caps, fd))
++    {
++        SrtInputDeviceTypeFlags guessed_type;
++
++        guessed_type = _srt_evdev_capabilities_guess_type (&caps);
++
++        if (guessed_type & (SRT_INPUT_DEVICE_TYPE_FLAGS_MOUSE
++                            | SRT_INPUT_DEVICE_TYPE_FLAGS_POINTING_STICK))
++            return &Mouse;
++        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_KEYBOARD)
++            return &Keyboard;
++        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_JOYSTICK)
++            return &Gamepad;
++        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_HAS_KEYS)
++            return &Keypad;
++        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_TOUCHPAD)
++            return &Touchpad;
++        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_TOUCHSCREEN)
++            return &Touchscreen;
++        else if (guessed_type & SRT_INPUT_DEVICE_TYPE_FLAGS_TABLET)
++            return &Tablet;
++
++        /* Mapped to Unknown: ACCELEROMETER, TABLET_PAD, SWITCH. */
++    }
++
+     return &Unknown;
+ }
+ 
+-- 
+2.51.0
+
+From 8c3a62f0daa0931337ebbb9833dfe4cc3d1144b7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Sun, 17 Nov 2024 10:50:49 +0100
+Subject: [PATCH 0090/2018] HACK: winebus: Ignore some SDL controllers and
+ joysticks.
+
+---
+ dlls/winebus.sys/bus_sdl.c      | 23 +++++++++++++++++++++++
+ dlls/winebus.sys/bus_udev.c     |  6 ++++++
+ dlls/winebus.sys/unix_private.h |  2 ++
+ 3 files changed, 31 insertions(+)
+
+diff --git a/dlls/winebus.sys/bus_sdl.c b/dlls/winebus.sys/bus_sdl.c
+index 18c846139a9..e2340fc06f5 100644
+--- a/dlls/winebus.sys/bus_sdl.c
++++ b/dlls/winebus.sys/bus_sdl.c
+@@ -926,6 +926,21 @@ static BOOL set_report_from_controller_event(struct sdl_device *impl, SDL_Event
+     return FALSE;
+ }
+ 
++/* logic from SDL2's SDL_ShouldIgnoreGameController */
++BOOL is_sdl_ignored_device(WORD vid, WORD pid)
++{
++    const char *whitelist = getenv("SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT");
++    const char *blacklist = getenv("SDL_GAMECONTROLLER_IGNORE_DEVICES");
++    char needle[16];
++
++    if (vid == 0x056a) return TRUE; /* all Wacom devices */
++
++    sprintf(needle, "0x%04x/0x%04x", vid, pid);
++    if (whitelist) return strcasestr(whitelist, needle) == NULL;
++    if (blacklist) return strcasestr(blacklist, needle) != NULL;
++    return FALSE;
++}
++
+ static void sdl_add_device(unsigned int index)
+ {
+     struct device_desc desc =
+@@ -970,6 +985,14 @@ static void sdl_add_device(unsigned int index)
+         desc.version = 0;
+     }
+ 
++    if (is_sdl_ignored_device(desc.vid, desc.pid))
++    {
++        TRACE("ignoring %s\n", debugstr_device_desc(&desc));
++        if (controller) pSDL_GameControllerClose(controller);
++        pSDL_JoystickClose(joystick);
++        return;
++    }
++
+     if (pSDL_JoystickGetSerial && (sdl_serial = pSDL_JoystickGetSerial(joystick)))
+     {
+         ntdll_umbstowcs(sdl_serial, strlen(sdl_serial) + 1, desc.serialnumber, ARRAY_SIZE(desc.serialnumber));
+diff --git a/dlls/winebus.sys/bus_udev.c b/dlls/winebus.sys/bus_udev.c
+index 7ad9c51fd3f..0fd91182f56 100644
+--- a/dlls/winebus.sys/bus_udev.c
++++ b/dlls/winebus.sys/bus_udev.c
+@@ -1617,6 +1617,12 @@ static void udev_add_device(struct udev_device *dev, int fd)
+     }
+ 
+     if (is_xbox_gamepad(desc.vid, desc.pid)) desc.is_gamepad = TRUE;
++    else if (is_sdl_ignored_device(desc.vid, desc.pid))
++    {
++        TRACE("evdev %s: ignoring %s, in SDL ignore list\n", debugstr_a(devnode), debugstr_device_desc(&desc));
++        close(fd);
++        return;
++    }
+     else if (axis_count == 6 && button_count >= (impl->hat_count ? 10 : 14)) desc.is_gamepad = TRUE;
+ 
+     if ((impl->is_gamepad = desc.is_gamepad))
+diff --git a/dlls/winebus.sys/unix_private.h b/dlls/winebus.sys/unix_private.h
+index f2f4e71f014..797ec7de740 100644
+--- a/dlls/winebus.sys/unix_private.h
++++ b/dlls/winebus.sys/unix_private.h
+@@ -266,4 +266,6 @@ extern void hid_device_drop_report(struct unix_device *iface);
+ 
+ extern void hid_device_set_effect_state(struct unix_device *iface, BYTE index, BYTE flags);
+ 
++extern BOOL is_sdl_ignored_device(WORD vid, WORD pid);
++
+ #endif /* __WINEBUS_UNIX_PRIVATE_H */
+-- 
+2.51.0
+
+From 067ae0012646cabb246358b66d446c9157ff7cf9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 12 Jan 2024 11:39:11 +0100
+Subject: [PATCH 0091/2018] HACK: winebus: Disable SDL2.30 new behavior for the
+ SDL unix backend.
+
+CW-Bug-Id: #23185
+---
+ dlls/winebus.sys/bus_sdl.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/dlls/winebus.sys/bus_sdl.c b/dlls/winebus.sys/bus_sdl.c
+index e2340fc06f5..bdd982421fc 100644
+--- a/dlls/winebus.sys/bus_sdl.c
++++ b/dlls/winebus.sys/bus_sdl.c
+@@ -116,6 +116,7 @@ MAKE_FUNCPTR(SDL_RegisterEvents);
+ MAKE_FUNCPTR(SDL_PushEvent);
+ MAKE_FUNCPTR(SDL_GetTicks);
+ MAKE_FUNCPTR(SDL_LogSetPriority);
++MAKE_FUNCPTR(SDL_SetHintWithPriority);
+ static int (*pSDL_JoystickRumble)(SDL_Joystick *joystick, Uint16 low_frequency_rumble, Uint16 high_frequency_rumble, Uint32 duration_ms);
+ static int (*pSDL_JoystickRumbleTriggers)(SDL_Joystick *joystick, Uint16 left_rumble, Uint16 right_rumble, Uint32 duration_ms);
+ static Uint16 (*pSDL_JoystickGetProduct)(SDL_Joystick * joystick);
+@@ -1166,6 +1167,7 @@ NTSTATUS sdl_bus_init(void *args)
+     LOAD_FUNCPTR(SDL_PushEvent);
+     LOAD_FUNCPTR(SDL_GetTicks);
+     LOAD_FUNCPTR(SDL_LogSetPriority);
++    LOAD_FUNCPTR(SDL_SetHintWithPriority);
+ #undef LOAD_FUNCPTR
+     pSDL_JoystickRumble = dlsym(sdl_handle, "SDL_JoystickRumble");
+     pSDL_JoystickRumbleTriggers = dlsym(sdl_handle, "SDL_JoystickRumbleTriggers");
+@@ -1175,6 +1177,10 @@ NTSTATUS sdl_bus_init(void *args)
+     pSDL_JoystickGetType = dlsym(sdl_handle, "SDL_JoystickGetType");
+     pSDL_JoystickGetSerial = dlsym(sdl_handle, "SDL_JoystickGetSerial");
+ 
++    /* CW-Bug-Id: #23185: Disable SDL 2.30 new behavior, we need the steam virtual
++     * controller name to figure which slot number it represents. */
++    pSDL_SetHintWithPriority("SteamVirtualGamepadInfo", "", SDL_HINT_OVERRIDE);
++
+     if (pSDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC) < 0)
+     {
+         ERR("could not init SDL: %s\n", pSDL_GetError());
+-- 
+2.51.0
+
+From ed841579ca6861462abd67c2acbc232d1cc464a7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 14 Jun 2024 17:31:38 +0200
+Subject: [PATCH 0092/2018] HACK: winebus: Use evdev backend for the Steam
+ Input virtual controllers.
+
+CW-Bug-Id: #23185
+CW-Bug-Id: #23928
+CW-Bug-Id: #23931
+CW-Bug-Id: #24642
+---
+ dlls/winebus.sys/bus_sdl.c  |  1 +
+ dlls/winebus.sys/bus_udev.c | 19 ++++++++++++++++++-
+ dlls/winebus.sys/main.c     |  2 +-
+ 3 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winebus.sys/bus_sdl.c b/dlls/winebus.sys/bus_sdl.c
+index bdd982421fc..81bc61dd3be 100644
+--- a/dlls/winebus.sys/bus_sdl.c
++++ b/dlls/winebus.sys/bus_sdl.c
+@@ -935,6 +935,7 @@ BOOL is_sdl_ignored_device(WORD vid, WORD pid)
+     char needle[16];
+ 
+     if (vid == 0x056a) return TRUE; /* all Wacom devices */
++    if (vid == 0x28de && pid == 0x11ff) return TRUE; /* Steam Input virtual controller, handled with evdev */
+ 
+     sprintf(needle, "0x%04x/0x%04x", vid, pid);
+     if (whitelist) return strcasestr(whitelist, needle) == NULL;
+diff --git a/dlls/winebus.sys/bus_udev.c b/dlls/winebus.sys/bus_udev.c
+index 0fd91182f56..935a66b39fc 100644
+--- a/dlls/winebus.sys/bus_udev.c
++++ b/dlls/winebus.sys/bus_udev.c
+@@ -1504,8 +1504,10 @@
+ 
+     desc.is_hidraw = TRUE;
+     if (!desc.product[0] && ioctl(fd, HIDIOCGRAWNAME(sizeof(buffer) - 1), buffer) >= 0)
++    {
++        if (sscanf(buffer, "Microsoft X-Box 360 pad %u", &desc.input) != 1) desc.input = -1;
+         ntdll_umbstowcs(buffer, strlen(buffer) + 1, desc.product, ARRAY_SIZE(desc.product));
+-
++    }
+     if (!desc.manufacturer[0]) memcpy(desc.manufacturer, hidraw, sizeof(hidraw));
+     if (!desc.serialnumber[0]) memcpy(desc.serialnumber, zeros, sizeof(zeros));
+ 
+@@ -1591,13 +1593,28 @@
+         impl->button_map[i] = ++impl->button_count;
+     }
+ 
+-    if (is_xbox_gamepad(desc.vid, desc.pid)) desc.is_gamepad = TRUE;
++    if (desc.vid == 0x28de && desc.pid == 0x11ff && !strcmp(subsystem, "input"))
++    {
++        TRACE("evdev %s: detected steam input virtual controller\n", debugstr_a(devnode));
++        desc.is_gamepad = TRUE;
++        desc.version = 0; /* keep version fixed as 0 so we can hardcode it in ntdll rawinput pipe redirection */
++    }
+     else if (is_sdl_ignored_device(desc.vid, desc.pid))
+     {
+         TRACE("evdev %s: ignoring %s, in SDL ignore list\n", debugstr_a(devnode), debugstr_device_desc(&desc));
+         close(fd);
+         return;
+     }
++    else if (!strcmp(subsystem, "input"))
++    {
++        TRACE("evdev %s: deferring %s to a different backend\n", debugstr_a(devnode), debugstr_device_desc(&desc));
++        close(fd);
++        return;
++    }
++    else if (is_xbox_gamepad(desc.vid, desc.pid))
++    {
++        desc.is_gamepad = TRUE;
++    }
+     else if (axis_count == 6 && button_count >= (impl->hat_count ? 10 : 14)) desc.is_gamepad = TRUE;
+ 
+     if ((impl->is_gamepad = desc.is_gamepad))
+-- 
+2.51.0
+
+From b711e19d91e62b4e7b4c5b448a03299ab3602e83 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Sun, 17 Nov 2024 11:10:17 +0100
+Subject: [PATCH 0093/2018] HACK: xinput: Emulate Steam Input native hooks.
+
+CW-Bug-Id: #23185
+---
+ dlls/xinput1_3/main.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/dlls/xinput1_3/main.c b/dlls/xinput1_3/main.c
+index 1ccbe834d09..92cd439f6b9 100644
+--- a/dlls/xinput1_3/main.c
++++ b/dlls/xinput1_3/main.c
+@@ -508,6 +508,17 @@ static BOOL find_opened_device(const WCHAR *device_path, int *free_slot)
+         if (!controllers[i - 1].device) *free_slot = i - 1;
+         else if (!wcsicmp(device_path, controllers[i - 1].device_path)) return TRUE;
+     }
++
++    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++    if ((swscanf(device_path, L"\\\\?\\hid#vid_28de&pid_11ff&xi_%02u#", &i) == 1 ||
++         swscanf(device_path, L"\\\\?\\HID#VID_28DE&PID_11FF&XI_%02u#", &i) == 1) &&
++        i < XUSER_MAX_COUNT && *free_slot != i)
++    {
++        controller_destroy(&controllers[i], TRUE);
++        if (*free_slot != XUSER_MAX_COUNT) open_device_at_index(controllers[i].device_path, *free_slot);
++        *free_slot = i;
++    }
++
+     return FALSE;
+ }
+ 
+@@ -1157,6 +1168,8 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetCapabilitiesEx(DWORD unk, DWORD index, D
+         caps->VendorId = attr.VendorID;
+         caps->ProductId = attr.ProductID;
+         caps->VersionNumber = attr.VersionNumber;
++        /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++        caps->unk2 = index;
+     }
+ 
+     controller_unlock(&controllers[index]);
+-- 
+2.51.0
+
+From 4de93694219ec005756bd2ed8fce2c215528f7a8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 8 Jan 2024 14:35:42 +0100
+Subject: [PATCH 0094/2018] HACK: dinput: Emulate Steam Input native hooks.
+
+CW-Bug-Id: #23185
+---
+ dlls/dinput/joystick_hid.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/dlls/dinput/joystick_hid.c b/dlls/dinput/joystick_hid.c
+index 6989a3d4a44..b66e8f3deff 100644
+--- a/dlls/dinput/joystick_hid.c
++++ b/dlls/dinput/joystick_hid.c
+@@ -821,6 +821,16 @@ static HRESULT hid_joystick_get_property( IDirectInputDevice8W *iface, DWORD pro
+     {
+         DIPROPGUIDANDPATH *value = (DIPROPGUIDANDPATH *)header;
+         value->guidClass = GUID_DEVCLASS_HIDCLASS;
++
++        /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++        if (impl->attrs.VendorID == 0x28de && impl->attrs.ProductID == 0x11ff)
++        {
++            const WCHAR *tmp;
++            if ((tmp = wcschr( impl->device_path, '#' ))) tmp = wcschr( tmp + 1, '#' );
++            lstrcpynW( value->wszPath, impl->device_path, tmp - impl->device_path + 1 );
++            return DI_OK;
++        }
++
+         lstrcpynW( value->wszPath, impl->device_path, MAX_PATH );
+         return DI_OK;
+     }
+-- 
+2.51.0
+
+From f1f3b5d3bbc3a3bc222be92ce583d5ce6746d069 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 8 Jan 2024 14:35:42 +0100
+Subject: [PATCH 0098/2018] HACK: windows.gaming.input: Emulate Steam Input
+ native hooks.
+
+CW-Bug-Id: #23185
+---
+ dlls/windows.gaming.input/provider.c | 53 ++++++++++++++++++++++++++++
+ 1 file changed, 53 insertions(+)
+
+diff --git a/dlls/windows.gaming.input/provider.c b/dlls/windows.gaming.input/provider.c
+index 381f4ccfadb..d9389ebbeed 100644
+--- a/dlls/windows.gaming.input/provider.c
++++ b/dlls/windows.gaming.input/provider.c
+@@ -148,9 +148,62 @@ static BOOL CALLBACK count_ffb_axes( const DIDEVICEOBJECTINSTANCEW *obj, void *a
+     return DIENUM_CONTINUE;
+ }
+ 
++static BOOL steam_input_get_vid_pid( UINT slot, UINT16 *vid, UINT16 *pid )
++{
++    const char *info = getenv( "SteamVirtualGamepadInfo" );
++    char buffer[256];
++    UINT current;
++    FILE *file;
++
++    TRACE( "reading SteamVirtualGamepadInfo %s\n", debugstr_a(info) );
++
++    if (!info || !(file = fopen( info, "r" ))) return FALSE;
++    while (fscanf( file, "%255[^\n]\n", buffer ) == 1)
++    {
++        if (sscanf( buffer, "[slot %d]", &current )) continue;
++        if (current < slot) continue;
++        if (current > slot) break;
++        if (sscanf( buffer, "VID=0x%hx", vid )) continue;
++        if (sscanf( buffer, "PID=0x%hx", pid )) continue;
++    }
++
++    fclose( file );
++
++    return TRUE;
++}
++
+ static HRESULT WINAPI wine_provider_get_NonRoamableId( IWineGameControllerProvider *iface, HSTRING *value )
+ {
++    struct provider *impl = impl_from_IWineGameControllerProvider( iface );
++    WCHAR buffer[1024];
++    UINT16 vid, pid;
++    HRESULT hr;
++
+     FIXME( "iface %p, value %p stub!\n", iface, value );
++
++    if (FAILED(hr = IGameControllerProvider_get_HardwareVendorId( &impl->IGameControllerProvider_iface, &vid ))) return hr;
++    if (FAILED(hr = IGameControllerProvider_get_HardwareProductId( &impl->IGameControllerProvider_iface, &pid ))) return hr;
++
++    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++    if (vid == 0x28de && pid == 0x11ff)
++    {
++        const WCHAR *tmp;
++        char serial[256];
++        UINT32 len, slot;
++
++        if (!(tmp = wcschr( impl->device_path + 8, '#' )) || wcsnicmp( tmp - 6, L"&XI_", 4 )) return E_NOTIMPL;
++        if (swscanf( tmp - 2, L"%02u#%*u&%255[^&]&", &slot, serial ) != 2) return E_NOTIMPL;
++
++        if (!steam_input_get_vid_pid( slot, &vid, &pid ))
++        {
++            vid = 0x045e;
++            pid = 0x028e;
++        }
++
++        len = swprintf( buffer, ARRAY_SIZE(buffer), L"{wgi/nrid/:steam-%04X&%04X&%s#%d#%u}", vid, pid, serial, slot, GetCurrentProcessId() );
++        return WindowsCreateString( buffer, len, value );
++    }
++
+     return E_NOTIMPL;
+ }
+ 
+-- 
+2.51.0
+
+From faf8d0fc57a6404bdf8f9b3c8381f2d599936d2f Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Tue, 18 Jan 2022 14:29:59 +0200
+Subject: [PATCH 0101/2018] dinput: Make it possible to add hacks that override
+ names and GUID of axes.
+
+---
+ dlls/dinput/joystick_hid.c | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/dinput/joystick_hid.c b/dlls/dinput/joystick_hid.c
+index b66e8f3deff..bb851089938 100644
+--- a/dlls/dinput/joystick_hid.c
++++ b/dlls/dinput/joystick_hid.c
+@@ -540,6 +540,8 @@ static BOOL enum_objects( struct hid_joystick *impl, const DIPROPHEADER *filter,
+     struct hid_collection_node *node, *node_end;
+     WORD version = impl->base.dinput->dwVersion;
+     BOOL ret, seen_axis[6] = {0};
++    const GUID *hack_guid;
++    const WCHAR *hack_name;
+     const WCHAR *tmp;
+ 
+     button_ofs += impl->caps.NumberInputValueCaps * sizeof(LONG);
+@@ -559,6 +561,8 @@ static BOOL enum_objects( struct hid_joystick *impl, const DIPROPHEADER *filter,
+             value_ofs += (caps->usage_max - caps->usage_min + 1) * sizeof(LONG);
+         else for (j = caps->usage_min; j <= caps->usage_max; ++j)
+         {
++            hack_name = NULL;
++            hack_guid = NULL;
+             instance.dwOfs = value_ofs;
+             switch (MAKELONG(j, caps->usage_page))
+             {
+@@ -605,12 +609,16 @@ static BOOL enum_objects( struct hid_joystick *impl, const DIPROPHEADER *filter,
+             }
+             instance.wUsagePage = caps->usage_page;
+             instance.wUsage = j;
+-            instance.guidType = *object_usage_to_guid( instance.wUsagePage, instance.wUsage );
++            if (hack_guid)
++                instance.guidType = *hack_guid;
++            else
++                instance.guidType = *object_usage_to_guid( instance.wUsagePage, instance.wUsage );
+             instance.wReportId = caps->report_id;
+             instance.wCollectionNumber = caps->link_collection;
+             instance.dwDimension = caps->units;
+             instance.wExponent = caps->units_exp;
+-            if ((tmp = object_usage_to_string( &instance ))) lstrcpynW( instance.tszName, tmp, MAX_PATH );
++            if (hack_name) lstrcpynW( instance.tszName, hack_name, MAX_PATH );
++            else if ((tmp = object_usage_to_string( &instance ))) lstrcpynW( instance.tszName, tmp, MAX_PATH );
+             else swprintf( instance.tszName, MAX_PATH, L"Unknown %u", DIDFT_GETINSTANCE( instance.dwType ) );
+             check_pid_effect_axis_caps( impl, &instance );
+             ret = enum_object( impl, filter, flags, callback, object, caps, &instance, data );
+-- 
+2.51.0
+
+From 01fa0f5965080bbda7a3a555869716d658890f98 Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Tue, 18 Jan 2022 14:30:46 +0200
+Subject: [PATCH 0102/2018] dinput: Add mapping for Logitech G920.
+
+The wheel has a custom mapping and type override on Windows that do not
+correspond what dinput would create by itself basing on HID descriptors.
+---
+ dlls/dinput/joystick_hid.c | 39 +++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 38 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/dinput/joystick_hid.c b/dlls/dinput/joystick_hid.c
+index bb851089938..de01025109e 100644
+--- a/dlls/dinput/joystick_hid.c
++++ b/dlls/dinput/joystick_hid.c
+@@ -47,6 +47,9 @@
+ #include "wine/debug.h"
+ #include "wine/hid.h"
+ 
++#define VID_LOGITECH 0x046D
++#define PID_LOGITECH_G920 0xC262
++
+ WINE_DEFAULT_DEBUG_CHANNEL(dinput);
+ 
+ DEFINE_GUID( GUID_DEVINTERFACE_WINEXINPUT,0x6c53d5fd,0x6480,0x440f,0xb6,0x18,0x47,0x67,0x50,0xc5,0xe1,0xa6 );
+@@ -572,7 +575,38 @@ static BOOL enum_objects( struct hid_joystick *impl, const DIPROPHEADER *filter,
+             case MAKELONG(HID_USAGE_GENERIC_RX, HID_USAGE_PAGE_GENERIC):
+             case MAKELONG(HID_USAGE_GENERIC_RY, HID_USAGE_PAGE_GENERIC):
+             case MAKELONG(HID_USAGE_GENERIC_RZ, HID_USAGE_PAGE_GENERIC):
+-                set_axis_type( &instance, seen_axis, j - HID_USAGE_GENERIC_X, &axis );
++                if (impl->attrs.VendorID == VID_LOGITECH && impl->attrs.ProductID == PID_LOGITECH_G920)
++                {
++                    if (j == HID_USAGE_GENERIC_X)
++                    {
++                        set_axis_type( &instance, seen_axis, 0, &axis );
++                        hack_guid = &GUID_XAxis;
++                        hack_name = L"Wheel axis";
++                    }
++                    else if (j == HID_USAGE_GENERIC_Y)
++                    {
++                        set_axis_type( &instance, seen_axis, 2, &axis );
++                        hack_guid = &GUID_YAxis;
++                        hack_name = L"Accelerator";
++                    }
++                    else if (j == HID_USAGE_GENERIC_Z)
++                    {
++                        set_axis_type( &instance, seen_axis, 5, &axis );
++                        hack_guid = &GUID_RzAxis;
++                        hack_name = L"Brake";
++                    }
++                    else if (j == HID_USAGE_GENERIC_RZ)
++                    {
++                        instance.dwType = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 6 + axis++ );
++                        hack_guid = &GUID_Slider;
++                        hack_name = L"Clutch";
++                    }
++                    else WARN("unknown axis usage page %x usage %lx for Logitech G920\n", caps->usage_page, j);
++                }
++                else
++                {
++                    set_axis_type( &instance, seen_axis, j - HID_USAGE_GENERIC_X, &axis );
++                }
+                 instance.dwFlags = DIDOI_ASPECTPOSITION;
+                 break;
+             case MAKELONG(HID_USAGE_SIMULATION_STEERING, HID_USAGE_PAGE_SIMULATION):
+@@ -1572,6 +1606,9 @@ static HRESULT hid_joystick_device_try_open( const WCHAR *path, HANDLE *device,
+         break;
+     }
+ 
++    if (attrs->VendorID == VID_LOGITECH && attrs->ProductID == PID_LOGITECH_G920)
++        type = DI8DEVTYPE_DRIVING | (DI8DEVTYPEDRIVING_DUALPEDALS << 8);
++
+     instance->dwDevType = device_type_for_version( type, version ) | DIDEVTYPE_HID;
+     TRACE("detected device type %#lx\n", instance->dwDevType);
+ 
+-- 
+2.51.0
+
+From 720d09c51e72d081bb1f435f9ff7299c6407fd5c Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Fri, 2 Dec 2022 20:56:46 +0200
+Subject: [PATCH 0103/2018] dinput: Don't apply G920 mapping when used through
+ windows.gaming.input.
+
+Our windows.gaming.input.dll implementation is built on top of dinput
+while on Windows it seems to be completely independent.
+
+This means it doesn't respect the mapping entries created by Logitech's
+drivers for dinput and does regular axis mapping on top of hid.
+
+Because of that we have to ignore our dinput mapping for the device when
+we know it was opened through the special WGI GUID.
+---
+ dlls/dinput/joystick_hid.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/dinput/joystick_hid.c b/dlls/dinput/joystick_hid.c
+index de01025109e..cad9abdc634 100644
+--- a/dlls/dinput/joystick_hid.c
++++ b/dlls/dinput/joystick_hid.c
+@@ -175,6 +175,7 @@ struct pid_effect_state
+ struct hid_joystick
+ {
+     struct dinput_device base;
++    BOOL wgi_device;
+ 
+     HANDLE device;
+     OVERLAPPED read_ovl;
+@@ -575,7 +576,7 @@ static BOOL enum_objects( struct hid_joystick *impl, const DIPROPHEADER *filter,
+             case MAKELONG(HID_USAGE_GENERIC_RX, HID_USAGE_PAGE_GENERIC):
+             case MAKELONG(HID_USAGE_GENERIC_RY, HID_USAGE_PAGE_GENERIC):
+             case MAKELONG(HID_USAGE_GENERIC_RZ, HID_USAGE_PAGE_GENERIC):
+-                if (impl->attrs.VendorID == VID_LOGITECH && impl->attrs.ProductID == PID_LOGITECH_G920)
++                if (!impl->wgi_device && impl->attrs.VendorID == VID_LOGITECH && impl->attrs.ProductID == PID_LOGITECH_G920)
+                 {
+                     if (j == HID_USAGE_GENERIC_X)
+                     {
+@@ -2095,6 +2096,7 @@ HRESULT hid_joystick_create_device( struct dinput *dinput, const GUID *guid, IDi
+                                        &attrs, &impl->caps, dinput->dwVersion );
+     else
+     {
++        impl->wgi_device = TRUE;
+         wcscpy( impl->device_path, *(const WCHAR **)guid );
+         hr = hid_joystick_device_try_open( impl->device_path, &impl->device, &impl->preparsed, &attrs,
+                                            &impl->caps, &impl->base.instance, dinput->dwVersion );
+-- 
+2.51.0
+
+From 513d6479aff3bdceb2110f29c3217486f66de887 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 3 Jan 2025 10:35:41 +0100
+Subject: [PATCH 1050/2018] winebus: Ignore unsupported hidraw touchscreen
+ devices.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=57601
+(cherry picked from commit 28c806ae9c78d4c0675f5e2aab3becf4073621b8)
+
+CW-Bug-ID: #24661
+---
+ dlls/winebus.sys/main.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/dlls/winebus.sys/main.c b/dlls/winebus.sys/main.c
+index e0e95b86e13..19fe986a674 100644
+--- a/dlls/winebus.sys/main.c
++++ b/dlls/winebus.sys/main.c
+@@ -462,6 +462,12 @@ static BOOL is_hidraw_enabled(WORD vid, WORD pid, const USAGE_AND_PAGE *usages,
+ 
+     if (check_bus_option(L"DisableHidraw", FALSE)) return FALSE;
+ 
++    if (usages->UsagePage == HID_USAGE_PAGE_DIGITIZER)
++    {
++        WARN("Ignoring unsupported %04X:%04X hidraw touchscreen\n", vid, pid);
++        return FALSE;
++    }
++
+     if (!RtlQueryEnvironmentVariable(NULL, L"PROTON_DISABLE_HIDRAW", 20, value, ARRAY_SIZE(value) - 1, &len))
+     {
+         value[len] = 0;
+-- 
+2.51.0
+
+From b57f7a3f02fa3f9ea276bd51ef64b127fb1122af Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Aida=20Jonikien=C4=97?= <aidas957@gmail.com>
+Date: Thu, 19 Sep 2024 12:27:58 +0300
+Subject: [PATCH 1112/2018] dinput8: Prefer the native DLL.
+
+Many mod/ASI loaders hijack this DLL to do their work so accommodate
+this fairly common case by preferring their library.
+
+CW-Bug-Id: #24533
+---
+ dlls/dinput8/Makefile.in | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/dlls/dinput8/Makefile.in b/dlls/dinput8/Makefile.in
+index f3f5fdc4fd8..ac5b89747f7 100644
+--- a/dlls/dinput8/Makefile.in
++++ b/dlls/dinput8/Makefile.in
+@@ -2,6 +2,7 @@ MODULE    = dinput8.dll
+ IMPORTLIB = dinput8
+ IMPORTS   = dinput8 dxguid uuid comctl32 ole32 user32 advapi32 hid setupapi
+ EXTRADEFS = -DDIRECTINPUT_VERSION=0x0800
++EXTRADLLFLAGS = -Wb,--prefer-native
+ PARENTSRC = ../dinput
+ 
+ SOURCES = \
+-- 
+2.51.0
+
+From 5201b0e67fc666cd6d6c70897f945ef945e717d1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 7 May 2025 10:26:19 +0200
+Subject: [PATCH 1402/2018] winebus: Move PROTON_ENABLE_HIDRAW check before
+ default heuristics.
+
+Link: https://github.com/ValveSoftware/Proton/issues/8644
+CW-Bug-Id: #25339
+---
+ dlls/winebus.sys/main.c | 15 +++++++--------
+ 1 file changed, 7 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/winebus.sys/main.c b/dlls/winebus.sys/main.c
+index 19fe986a674..3e816357316 100644
+--- a/dlls/winebus.sys/main.c
++++ b/dlls/winebus.sys/main.c
+@@ -475,6 +475,13 @@ static BOOL is_hidraw_enabled(WORD vid, WORD pid, const USAGE_AND_PAGE *usages,
+         swprintf(vidpid, ARRAY_SIZE(vidpid), L"0x%04X/0x%04X", vid, pid);
+         if (wcscasestr(value, vidpid)) return FALSE;
+     }
++    if (!RtlQueryEnvironmentVariable(NULL, L"PROTON_ENABLE_HIDRAW", 20, value, ARRAY_SIZE(value) - 1, &len))
++    {
++        value[len] = 0;
++        if (wcscmp(value, L"1")) return TRUE;
++        swprintf(vidpid, ARRAY_SIZE(vidpid), L"0x%04X/0x%04X", vid, pid);
++        if (wcscasestr(value, vidpid)) return TRUE;
++    }
+ 
+     if (usages->UsagePage == HID_USAGE_PAGE_DIGITIZER)
+     {
+@@ -484,14 +491,6 @@ static BOOL is_hidraw_enabled(WORD vid, WORD pid, const USAGE_AND_PAGE *usages,
+     }
+     if (usages->Usage != HID_USAGE_GENERIC_GAMEPAD && usages->Usage != HID_USAGE_GENERIC_JOYSTICK) return TRUE;
+ 
+-    if (!RtlQueryEnvironmentVariable(NULL, L"PROTON_ENABLE_HIDRAW", 20, value, ARRAY_SIZE(value) - 1, &len))
+-    {
+-        value[len] = 0;
+-        if (wcscmp(value, L"1")) return TRUE;
+-        swprintf(vidpid, ARRAY_SIZE(vidpid), L"0x%04X/0x%04X", vid, pid);
+-        if (wcscasestr(value, vidpid)) return TRUE;
+-    }
+-
+     if (options.disable_sdl && options.disable_input) prefer_hidraw = TRUE;
+     if (is_dualshock4_gamepad(vid, pid)) prefer_hidraw = TRUE;
+     if (is_dualsense_gamepad(vid, pid)) prefer_hidraw = TRUE;
+-- 
+2.51.0
+
+From 08023f5242eb77ae3b74f0191f71193fc14c1760 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Fri, 9 May 2025 10:56:04 +0200
+Subject: [PATCH 1432/2018] fixup! HACK: winebus: Introduce new
+ PROTON_(ENABLE|DISABLE)_HIDRAW env vars.
+
+---
+ dlls/winebus.sys/main.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/winebus.sys/main.c b/dlls/winebus.sys/main.c
+index 099b9a4d108..858c89d7d5a 100644
+--- a/dlls/winebus.sys/main.c
++++ b/dlls/winebus.sys/main.c
+@@ -471,14 +471,14 @@ static BOOL is_hidraw_enabled(WORD vid, WORD pid, const USAGE_AND_PAGE *usages,
+     if (!RtlQueryEnvironmentVariable(NULL, L"PROTON_DISABLE_HIDRAW", 20, value, ARRAY_SIZE(value) - 1, &len))
+     {
+         value[len] = 0;
+-        if (wcscmp(value, L"1")) return FALSE;
++        if (!wcscmp(value, L"1")) return FALSE;
+         swprintf(vidpid, ARRAY_SIZE(vidpid), L"0x%04X/0x%04X", vid, pid);
+         if (wcscasestr(value, vidpid)) return FALSE;
+     }
+     if (!RtlQueryEnvironmentVariable(NULL, L"PROTON_ENABLE_HIDRAW", 20, value, ARRAY_SIZE(value) - 1, &len))
+     {
+         value[len] = 0;
+-        if (wcscmp(value, L"1")) return TRUE;
++        if (!wcscmp(value, L"1")) return TRUE;
+         swprintf(vidpid, ARRAY_SIZE(vidpid), L"0x%04X/0x%04X", vid, pid);
+         if (wcscasestr(value, vidpid)) return TRUE;
+     }
+-- 
+2.51.0
+
+From c204c4918f2b9c37bde6e1d3b1cec813060dab40 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Thu, 21 Nov 2024 21:22:17 -0600
+Subject: [PATCH 1465/2018] dinput: Derive DIPROP_JOYSTICKID from device path
+ enumeration.
+
+CW-Bug-Id: #24406
+---
+ dlls/dinput/joystick_hid.c    | 40 ++++++++++++++++++++++++++++++++++-
+ dlls/dinput/tests/joystick8.c | 16 ++++++++------
+ 2 files changed, 48 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/dinput/joystick_hid.c b/dlls/dinput/joystick_hid.c
+index 40a8cc38e2e..4026353f01b 100644
+--- a/dlls/dinput/joystick_hid.c
++++ b/dlls/dinput/joystick_hid.c
+@@ -243,6 +243,42 @@ struct hid_joystick_effect
+     char *set_envelope_buf;
+ };
+ 
++struct joystick_device
++{
++    WCHAR device_path[MAX_PATH];
++};
++
++static CRITICAL_SECTION joystick_devices_crit;
++static CRITICAL_SECTION_DEBUG joystick_devices_crit_debug =
++{
++    0, 0, &joystick_devices_crit,
++    { &joystick_devices_crit_debug.ProcessLocksList, &joystick_devices_crit_debug.ProcessLocksList },
++      0, 0, { (DWORD_PTR)(__FILE__ ": joystick_devices_crit") }
++};
++static CRITICAL_SECTION joystick_devices_crit = { &joystick_devices_crit_debug, -1, 0, 0, 0, 0 };
++
++static struct joystick_device *joystick_devices;
++static unsigned int joystick_device_count;
++
++static unsigned int get_joystick_index( const WCHAR *device_path )
++{
++    unsigned int i;
++
++    EnterCriticalSection( &joystick_devices_crit );
++    for (i = 0; i < joystick_device_count; ++i)
++        if (!wcsicmp( joystick_devices[i].device_path, device_path )) break;
++
++    if (i == joystick_device_count)
++    {
++        ++joystick_device_count;
++        joystick_devices = realloc( joystick_devices, sizeof(*joystick_devices) * joystick_device_count );
++        wcscpy( joystick_devices[i].device_path, device_path );
++    }
++    LeaveCriticalSection( &joystick_devices_crit );
++    return i;
++}
++
++
+ static inline struct hid_joystick_effect *impl_from_IDirectInputEffect( IDirectInputEffect *iface )
+ {
+     return CONTAINING_RECORD( iface, struct hid_joystick_effect, IDirectInputEffect_iface );
+@@ -848,7 +884,7 @@ static HRESULT hid_joystick_get_property( IDirectInputDevice8W *iface, DWORD pro
+     case (DWORD_PTR)DIPROP_JOYSTICKID:
+     {
+         DIPROPDWORD *value = (DIPROPDWORD *)header;
+-        value->dwData = impl->base.instance.guidInstance.Data3;
++        value->dwData = get_joystick_index( impl->device_path );
+         return DI_OK;
+     }
+     case (DWORD_PTR)DIPROP_GUIDANDPATH:
+@@ -1700,6 +1736,8 @@ static HRESULT hid_joystick_device_open( int index, const GUID *guid, DIDEVICEIN
+                                                      attrs, caps, instance, version )))
+                 continue;
+         }
++        /* Assign joystick index if the device path is first seen. */
++        get_joystick_index( detail->DevicePath );
+ 
+         /* enumerate device by GUID */
+         if (IsEqualGUID( guid, &instance->guidProduct ) || IsEqualGUID( guid, &instance->guidInstance )) break;
+-- 
+2.51.0
+
+From 8fb081a25e5b9b1ae10c2053f2691d10b7fc8eaa Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Thu, 21 Nov 2024 17:57:13 -0600
+Subject: [PATCH 1466/2018] dinput: Once again support creating joystick device
+ with GUID_Joystick.
+
+CW-Bug-Id: #24406
+---
+ dlls/dinput/joystick_hid.c    | 16 ++++++++++++++++
+ dlls/dinput/tests/joystick8.c | 13 +++++--------
+ 2 files changed, 21 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/dinput/joystick_hid.c b/dlls/dinput/joystick_hid.c
+index 4026353f01b..97a333b8c31 100644
+--- a/dlls/dinput/joystick_hid.c
++++ b/dlls/dinput/joystick_hid.c
+@@ -278,6 +278,15 @@ static unsigned int get_joystick_index( const WCHAR *device_path )
+     return i;
+ }
+ 
++static BOOL get_default_joystick_device_path( WCHAR *device_path )
++{
++    BOOL ret;
++
++    EnterCriticalSection( &joystick_devices_crit );
++    if ((ret = !!joystick_device_count)) wcscpy( device_path, joystick_devices[0].device_path );
++    LeaveCriticalSection( &joystick_devices_crit );
++    return ret;
++}
+ 
+ static inline struct hid_joystick_effect *impl_from_IDirectInputEffect( IDirectInputEffect *iface )
+ {
+@@ -2154,8 +2163,15 @@ HRESULT hid_joystick_create_device( struct dinput *dinput, const GUID *guid, IDi
+     impl->base.read_event = CreateEventW( NULL, TRUE, FALSE, NULL );
+ 
+     if (memcmp( device_path_guid.Data4, guid->Data4, sizeof(device_path_guid.Data4) ))
++    {
++        /* Let hid_joystick_device_open() populate joystick devices before checking for default joystick GUID. */
+         hr = hid_joystick_device_open( -1, guid, &impl->base.instance, impl->device_path, &impl->device, &impl->preparsed,
+                                        &attrs, &impl->caps, dinput->dwVersion );
++        if (hr == DIERR_DEVICENOTREG && IsEqualGUID( guid, &GUID_Joystick )
++            && get_default_joystick_device_path( impl->device_path ))
++            hr = hid_joystick_device_try_open( impl->device_path, &impl->device, &impl->preparsed, &attrs,
++                                               &impl->caps, &impl->base.instance, dinput->dwVersion );
++    }
+     else
+     {
+         impl->wgi_device = TRUE;
+-- 
+2.51.0
+
+From cb61ed3638741fb43a61d4e7714e1fd85574da6c Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 7 Mar 2025 20:15:59 -0600
+Subject: [PATCH 1475/2018] dinput/tests: Add tests for mouse state tracking
+ from pointer updates.
+
+CW-Bug-Id: #24947
+Wine MR: https://gitlab.winehq.org/wine/wine/-/merge_requests/7530
+---
+ dlls/dinput/tests/device8.c | 392 ++++++++++++++++++++++++++++++++++--
+ 1 file changed, 379 insertions(+), 13 deletions(-)
+
+diff --git a/dlls/dinput/tests/device8.c b/dlls/dinput/tests/device8.c
+index 85c0b79d70e..52a4d9c0e25 100644
+--- a/dlls/dinput/tests/device8.c
++++ b/dlls/dinput/tests/device8.c
+@@ -50,6 +50,17 @@ struct enum_data
+     };
+ };
+ 
++static void pump_messages(void)
++{
++    MSG msg;
++
++    while (PeekMessageA( &msg, 0, 0, 0, PM_REMOVE ))
++    {
++        TranslateMessage( &msg );
++        DispatchMessageA( &msg );
++    }
++}
++
+ static void flush_events(void)
+ {
+     int min_timeout = 100, diff = 200;
+@@ -1769,13 +1780,121 @@ done:
+ 
+ static UINT pointer_enter_count;
+ static UINT pointer_up_count;
+-static HANDLE touchdown_event, touchleave_event;
++static HANDLE touchdown_event, touchmoved_event, touchleave_event;
+ static WPARAM pointer_wparam[16];
+ static WPARAM pointer_lparam[16];
+ static UINT pointer_count;
++static int touch_test_line;
++static POINT last_cursor_pos;
++static const BOOL *skip_defwnd_for_pointer_message;
++BOOL skip_touch_mouse_tests, touch_missing_leave_todo;
++
++#define start_touch_test(a) start_touch_test_( __LINE__, a )
++static void start_touch_test_( int line, const BOOL *skip_defwnd )
++{
++    pointer_enter_count = pointer_up_count = pointer_count = 0;
++    memset( pointer_wparam, 0, sizeof(pointer_wparam) );
++    memset( pointer_lparam, 0, sizeof(pointer_lparam) );
++
++    skip_defwnd_for_pointer_message = skip_defwnd;
++    SetCursorPos( 0, 0 );
++    GetCursorPos( &last_cursor_pos );
++    touch_test_line = line;
++}
++
++static BOOL get_touch_mouse_message( HWND hwnd, MSG *msg )
++{
++    while (PeekMessageW( msg, NULL, WM_MOUSEFIRST, WM_MOUSELAST, PM_REMOVE ))
++    {
++        if (msg->message != WM_MOUSEMOVE || (GetMessageExtraInfo() & ~(ULONG_PTR)0xff) == 0xff515700) return TRUE;
++    }
++    return FALSE;
++}
++
++static BOOL touch_mouse_message_matches( UINT msg, UINT expect_msg )
++{
++    /* Pointer quick up / downs, holds are used to simulate right mouse button and double clicks on Windows. That
++     * is randomly triggered with the tests. Since currently that is neither avoided nor consciously emulated
++     * in tests just accept that all. */
++    if (expect_msg == WM_LBUTTONDOWN)
++        return msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_LBUTTONDBLCLK;
++    if (expect_msg == WM_LBUTTONUP)
++        return msg == WM_LBUTTONUP || msg == WM_RBUTTONUP;
++    return msg == expect_msg;
++}
++
++#define expect_touch_mouse_message(a, b, c) expect_touch_mouse_message_( __LINE__, a, b, c )
++static BOOL expect_touch_mouse_message_( int line, HWND hwnd, UINT expect_msg, BOOL optional )
++{
++    INPUT_MESSAGE_SOURCE source;
++    LPARAM extra;
++    DWORD pos;
++    BOOL bret;
++    POINT cp;
++    MSG msg;
++
++    if (skip_touch_mouse_tests) return TRUE;
++
++    if (!(bret = get_touch_mouse_message( hwnd, &msg )) && !optional)
++    {
++        MsgWaitForMultipleObjects( 0, NULL, FALSE, 100, QS_MOUSE );
++        bret = get_touch_mouse_message( hwnd, &msg );
++    }
++
++    if (!optional)
++        ok_(__FILE__, line)( bret, "did not receive mouse message, expected %#x.\n", expect_msg );
++    if (!bret) return FALSE;
++
++    if (optional && !touch_mouse_message_matches( msg.message, expect_msg ))
++    {
++        trace_(__FILE__, line)( "got message %#x instead of optional %#x.\n", msg.message, expect_msg );
++        return FALSE;
++    }
++
++    ok_(__FILE__, line)( touch_mouse_message_matches( msg.message, expect_msg ),
++                         "got message %#x, expected %#x.\n", msg.message, expect_msg );
++
++    bret = GetCurrentInputMessageSource( &source );
++    ok_(__FILE__, line)( bret, "got error %ld.\n", GetLastError() );
++    ok_(__FILE__, line)( source.deviceType == IMDT_TOUCH, "got deviceType %#x, expected %#x.\n",
++                         source.deviceType, IMDT_TOUCH );
++    ok_(__FILE__, line)( source.originId == IMO_HARDWARE, "got originId %#x, expected %#x.\n",
++                         source.originId, IMO_HARDWARE );
++
++    cp = last_cursor_pos;
++    pos = msg.lParam;
++    ok_(__FILE__, line)( pos == MAKELPARAM(cp.x, cp.y), "got coords (%d, %d), expected (%ld, %ld).\n",
++                         LOWORD(pos), HIWORD(pos), cp.x, cp.y );
++    pos = GetMessagePos();
++    ok_(__FILE__, line)( pos == MAKELPARAM(cp.x, cp.y), "got coords (%d, %d), expected (%ld, %ld).\n",
++                         LOWORD(pos), HIWORD(pos), cp.x, cp.y );
++
++    extra = GetMessageExtraInfo();
++    ok_(__FILE__, line)( (extra & ~(ULONG_PTR)0xff) == 0xff515700, "got message extra info %#Ix, expected %#x.\n",
++                         extra, 0xff515700 );
++    return TRUE;
++}
+ 
+ static LRESULT CALLBACK touch_screen_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+ {
++    static struct
++    {
++        UINT pointerid;
++        BOOL tracking_started;
++        POINT curr_pos;
++    }
++    state[64];
++    static unsigned int active_touch_count, total_touch_count;
++
++    BOOL pointer_moved, curpos_changed;
++    UINT expect_message_after;
++    unsigned int i;
++    UINT pointerid;
++    LRESULT ret;
++    MSG message;
++    BOOL bret;
++    POINT pt;
++
+     if (msg == WM_POINTERENTER)
+     {
+         pointer_wparam[pointer_count] = wparam;
+@@ -1783,8 +1902,6 @@ static LRESULT CALLBACK touch_screen_wndproc( HWND hwnd, UINT msg, WPARAM wparam
+         pointer_count++;
+         pointer_enter_count++;
+     }
+-    if (msg == WM_POINTERDOWN) ReleaseSemaphore( touchdown_event, 1, NULL );
+-
+     if (msg == WM_POINTERUP)
+     {
+         pointer_wparam[pointer_count] = wparam;
+@@ -1792,9 +1909,182 @@ static LRESULT CALLBACK touch_screen_wndproc( HWND hwnd, UINT msg, WPARAM wparam
+         pointer_count++;
+         pointer_up_count++;
+     }
+-    if (msg == WM_POINTERLEAVE) ReleaseSemaphore( touchleave_event, 1, NULL );
+ 
+-    return DefWindowProcW( hwnd, msg, wparam, lparam );
++    if (!skip_touch_mouse_tests && msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST)
++    {
++        INPUT_MESSAGE_SOURCE source;
++        GetCurrentInputMessageSource( &source );
++        ok( source.deviceType != IMDT_TOUCH, "got touch mouse message %#x outside of state tracking.\n", msg );
++    }
++
++    if (!(msg >= WM_POINTERUPDATE && msg <= WM_POINTERLEAVE))
++        return DefWindowProcW( hwnd, msg, wparam, lparam );
++
++    pointerid = GET_POINTERID_WPARAM( wparam );
++    winetest_push_context( "line %d, pointer msg %#x, wp %#Ix, lp %#Ix, pointerid %#x",
++                           touch_test_line, msg, wparam, lparam, pointerid );
++    for (i = 0; i < ARRAY_SIZE(state); ++i)
++    {
++        if (state[i].pointerid == pointerid) break;
++    }
++    if (msg == WM_POINTERENTER)
++    {
++        todo_wine_if(touch_missing_leave_todo) ok( i == ARRAY_SIZE(state), "Duplicate WM_POINTERDOWN for id %#x.\n", pointerid );
++        touch_missing_leave_todo = FALSE;
++        if (i == ARRAY_SIZE(state))
++        {
++            for (i = 0; i < ARRAY_SIZE(state); ++i)
++            {
++                if (!state[i].pointerid) break;
++            }
++        }
++        else
++        {
++            ok( active_touch_count == 1, "got %u.\n", active_touch_count );
++            ok( total_touch_count == 1, "got %u.\n", total_touch_count );
++            if (!--active_touch_count) total_touch_count = 0;
++        }
++        ok( i < ARRAY_SIZE(state), "No free space in state table.\n" );
++        state[i].pointerid = pointerid;
++        state[i].tracking_started = FALSE;
++        state[i].curr_pos.x = LOWORD(lparam);
++        state[i].curr_pos.y = HIWORD(lparam);
++        ++active_touch_count;
++        ++total_touch_count;
++    }
++    else if (msg != WM_POINTERLEAVE)
++    {
++        ok( i < ARRAY_SIZE(state), "Missed WM_POINTERDOWN for id %#x.\n", pointerid );
++    }
++
++    pointer_moved = LOWORD(lparam) != state[i].curr_pos.x || HIWORD(lparam) != state[i].curr_pos.y;
++    curpos_changed = LOWORD(lparam) != last_cursor_pos.x || HIWORD(lparam) != last_cursor_pos.y;
++    expect_message_after = 0;
++
++        if (winetest_debug > 1)
++            trace( "msg %#x, msgpos (%d, %d), tracking %d, t %ld, pointer_moved %d, curpos_changed %d.\n",
++                    msg, LOWORD(lparam), HIWORD(lparam), state[i].tracking_started, GetTickCount(),
++                    pointer_moved, curpos_changed);
++
++    if (state[i].tracking_started)
++    {
++        if (msg == WM_POINTERUPDATE && (pointer_moved || curpos_changed)
++            && active_touch_count && total_touch_count == 1)
++        {
++            state[i].curr_pos.x = LOWORD(lparam);
++            state[i].curr_pos.y = HIWORD(lparam);
++            last_cursor_pos = state[i].curr_pos;
++            expect_touch_mouse_message( hwnd, WM_MOUSEMOVE, FALSE );
++        }
++        else if (msg == WM_POINTERUP)
++        {
++            if (pointer_moved || curpos_changed)
++            {
++                state[i].curr_pos.x = LOWORD(lparam);
++                state[i].curr_pos.y = HIWORD(lparam);
++                last_cursor_pos = state[i].curr_pos;
++                expect_touch_mouse_message( hwnd, WM_MOUSEMOVE, FALSE );
++            }
++            if (!expect_touch_mouse_message( hwnd, WM_LBUTTONUP, TRUE ))
++            {
++                /* This message arrives here most of the time, but sometimes it is delayed until after DefWindowProc
++                 * call, maybe based on timing between WM_POINTERUPDATE which changed the position first time
++                 * and WM_POINTERUP. */
++                expect_message_after = WM_LBUTTONUP;
++            }
++        }
++    }
++    else
++    {
++        if (!skip_touch_mouse_tests) do
++        {
++            bret = get_touch_mouse_message( hwnd, &message );
++
++            ok( !bret, "got mouse message before DefWindowProc, msg  %#x, wp %#Ix, lp %#Ix.\n",
++                       message.message, message.wParam, message.lParam );
++        } while (bret);
++    }
++
++    if (skip_defwnd_for_pointer_message && skip_defwnd_for_pointer_message[msg - WM_POINTERUPDATE])
++    {
++        ret = 0;
++    }
++    else
++    {
++        /* The handling in DefWindowProc() doesn't depend on pointer flags in wparam and position in lparam */
++        ret = DefWindowProcW( hwnd, msg, LOWORD(wparam), 0 );
++        ok( !ret, "got %Id from DefWindowProcW.\n", ret );
++
++        if (skip_defwnd_for_pointer_message && skip_defwnd_for_pointer_message[WM_POINTERDOWN - WM_POINTERUPDATE])
++        {
++            /* No mouse messages al all if DefWindowProcW() wasn't called for WM_POINTERDOWN. */
++        }
++        else if (msg == WM_POINTERUPDATE && pointer_moved && !state[i].tracking_started && active_touch_count && total_touch_count == 1)
++        {
++            last_cursor_pos = state[i].curr_pos;
++            expect_touch_mouse_message( hwnd, WM_MOUSEMOVE, FALSE );
++            state[i].curr_pos.x = LOWORD(lparam);
++            state[i].curr_pos.y = HIWORD(lparam);
++            if (!state[i].tracking_started)
++            {
++                state[i].tracking_started = TRUE;
++                expect_touch_mouse_message( hwnd, WM_LBUTTONDOWN, FALSE );
++                last_cursor_pos = state[i].curr_pos;
++                expect_touch_mouse_message( hwnd, WM_MOUSEMOVE, FALSE );
++            }
++        }
++        else if (msg == WM_POINTERUP && active_touch_count == 1 && total_touch_count == 1)
++        {
++            if (!state[i].tracking_started)
++            {
++                last_cursor_pos = state[i].curr_pos;
++                if (!expect_touch_mouse_message( hwnd, WM_MOUSEMOVE, TRUE ))
++                {
++                    /* A lot of details go different before Win10, so don't perform the rest of mouse message tests. */
++                    win_skip( "Old behaviour detected, skipping remaining mouse tracking tests.\n" );
++                    skip_touch_mouse_tests = TRUE;
++                }
++                expect_touch_mouse_message( hwnd, WM_LBUTTONDOWN, FALSE );
++                expect_touch_mouse_message( hwnd, WM_LBUTTONUP, FALSE );
++            }
++        }
++
++        if (!skip_touch_mouse_tests)
++        {
++            GetCursorPos( &pt );
++            /* This is flaky because GetCursorPos() currently periodically updated from mouse position from
++             * display driver. While we try to update that on mouse position update from pointer that may
++             * still fail. */
++            flaky_wine ok( pt.x == last_cursor_pos.x && pt.y == last_cursor_pos.y, "got (%ld, %ld), expected (%ld, %ld).\n",
++                           pt.x, pt.y, last_cursor_pos.x, last_cursor_pos.y );
++        }
++    }
++
++    if (expect_message_after) expect_touch_mouse_message( hwnd, expect_message_after, FALSE );
++    if (msg == WM_POINTERDOWN && total_touch_count > 1)
++    {
++        /* With double touch, depending on WM_POINTERDOWN / WM_POINTERUPDATE timing, we may get mouse down message
++         * here (both on Windows and Wine). Then we are going to get mouse up before DefWindowProc which will be
++         * handled by our test state tracker with 'tracking_started' set. */
++        if (expect_touch_mouse_message( hwnd, WM_LBUTTONDOWN, TRUE ))
++        {
++            trace( "Got WM_LBUTTONDOWN on WM_POINTERDOWN.\n" );
++            state[i].tracking_started = TRUE;
++        }
++    }
++
++    if (msg == WM_POINTERUP)
++    {
++        state[i].pointerid = 0;
++        ok( active_touch_count, "got 0.\n" );
++        if (!--active_touch_count) total_touch_count = 0;
++    }
++
++    winetest_pop_context();
++    if (msg == WM_POINTERUPDATE && pointer_moved) SetEvent( touchmoved_event );
++    if (msg == WM_POINTERDOWN) ReleaseSemaphore( touchdown_event, 1, NULL );
++    if (msg == WM_POINTERLEAVE) ReleaseSemaphore( touchleave_event, 1, NULL );
++    return ret;
+ }
+ 
+ static void test_hid_touch_screen(void)
+@@ -1910,6 +2200,16 @@ static void test_hid_touch_screen(void)
+         .code = IOCTL_HID_READ_REPORT,
+         .report_buf = {1, 1, 0x01,0x02,0x08,0x10},
+     };
++    struct hid_expect touch_single2 =
++    {
++        .code = IOCTL_HID_READ_REPORT,
++        .report_buf = {1, 1, 0x01,0x02,0x18,0x20},
++    };
++    struct hid_expect touch_single3 =
++    {
++        .code = IOCTL_HID_READ_REPORT,
++        .report_buf = {1, 1, 0x01,0x02,0x40,0x50},
++    };
+     struct hid_expect touch_multiple =
+     {
+         .code = IOCTL_HID_READ_REPORT,
+@@ -1928,11 +2228,26 @@ static void test_hid_touch_screen(void)
+         .report_buf = {1,0x02},
+     };
+ 
++    static struct
++    {
++        BOOL skip_message[5];
++    }
++    mouse_tests[] =
++    {
++        /* WM_POINTERUPDATE, WM_POINTERDOWN, WM_POINTERUP, WM_POINTERENTER, WM_POINTERLEAVE */
++        {{ FALSE }},
++        {{ FALSE, TRUE }},
++        {{ TRUE }},
++        {{ FALSE, FALSE, TRUE }},
++        {{ TRUE, FALSE, TRUE }},
++    };
++
+     RAWINPUTDEVICE rawdevice = {.usUsagePage = HID_USAGE_PAGE_DIGITIZER, .usUsage = HID_USAGE_DIGITIZER_TOUCH_SCREEN};
+     UINT rawbuffer_count, rawbuffer_size, expect_flags, id, width, height;
+     WCHAR device_path[MAX_PATH];
+     char rawbuffer[1024];
+     RAWINPUT *rawinput;
++    unsigned int i, j;
+     HANDLE file;
+     DWORD res;
+     HWND hwnd;
+@@ -1943,6 +2258,8 @@ static void test_hid_touch_screen(void)
+ 
+     touchdown_event = CreateSemaphoreW( NULL, 0, LONG_MAX, NULL );
+     ok( !!touchdown_event, "CreateSemaphoreW failed, error %lu\n", GetLastError() );
++    touchmoved_event = CreateEventW( NULL, FALSE, FALSE, NULL );
++    ok( !!touchmoved_event, "CreateEventW failed, error %lu\n", GetLastError() );
+     touchleave_event = CreateSemaphoreW( NULL, 0, LONG_MAX, NULL );
+     ok( !!touchleave_event, "CreateSemaphoreW failed, error %lu\n", GetLastError() );
+ 
+@@ -1986,17 +2303,13 @@ static void test_hid_touch_screen(void)
+ 
+     /* check basic touch_screen input injection to window message */
+ 
+-    SetCursorPos( 0, 0 );
+-
+     hwnd = create_foreground_window( TRUE );
+     SetWindowLongPtrW( hwnd, GWLP_WNDPROC, (LONG_PTR)touch_screen_wndproc );
+ 
+ 
+     /* a single touch is automatically released if we don't send continuous updates */
+ 
+-    pointer_enter_count = pointer_up_count = pointer_count = 0;
+-    memset( pointer_wparam, 0, sizeof(pointer_wparam) );
+-    memset( pointer_lparam, 0, sizeof(pointer_lparam) );
++    start_touch_test( NULL );
+     bus_send_hid_input( file, &desc, &touch_single, sizeof(touch_single) );
+ 
+     res = MsgWaitForMultipleObjects( 0, NULL, FALSE, 500, QS_POINTER );
+@@ -2033,6 +2346,8 @@ static void test_hid_touch_screen(void)
+     todo_wine
+     ok( HIWORD( pointer_lparam[1] ) * 128 / height == 0x10, "got lparam %#Ix\n", pointer_lparam[1] );
+ 
++    /* Wine is currently missing WM_POINTERUP generation in this case. */
++    touch_missing_leave_todo = TRUE;
+ 
+     /* test that we receive HID rawinput type with the touchscreen */
+ 
+@@ -2143,9 +2458,7 @@ static void test_hid_touch_screen(void)
+ 
+     /* now the touch is continuously updated */
+ 
+-    pointer_enter_count = pointer_up_count = pointer_count = 0;
+-    memset( pointer_wparam, 0, sizeof(pointer_wparam) );
+-    memset( pointer_lparam, 0, sizeof(pointer_lparam) );
++    start_touch_test( NULL );
+     bus_send_hid_input( file, &desc, &touch_single, sizeof(touch_single) );
+ 
+     res = msg_wait_for_events( 1, &touchdown_event, 1000 );
+@@ -2194,12 +2507,14 @@ static void test_hid_touch_screen(void)
+     pointer_enter_count = pointer_up_count = pointer_count = 0;
+     memset( pointer_wparam, 0, sizeof(pointer_wparam) );
+     memset( pointer_lparam, 0, sizeof(pointer_lparam) );
++
+     bus_send_hid_input( file, &desc, &touch_multiple, sizeof(touch_multiple) );
+ 
+     res = msg_wait_for_events( 1, &touchdown_event, 1000 );
+     ok( res == 0, "WaitForSingleObject returned %#lx\n", res );
+     res = msg_wait_for_events( 1, &touchdown_event, 1000 );
+     ok( res == 0, "WaitForSingleObject returned %#lx\n", res );
++
+     res = msg_wait_for_events( 1, &touchleave_event, 10 );
+     ok( res == WAIT_TIMEOUT, "WaitForSingleObject returned %#lx\n", res );
+     ok( pointer_enter_count == 2, "got pointer_enter_count %u\n", pointer_enter_count );
+@@ -2256,7 +2571,57 @@ static void test_hid_touch_screen(void)
+     ok( LOWORD( pointer_lparam[1] ) * 128 / width == 0x18, "got lparam %#Ix\n", pointer_lparam[1] );
+     ok( HIWORD( pointer_lparam[1] ) * 128 / height == 0x20, "got lparam %#Ix\n", pointer_lparam[1] );
+ 
++    /* Test mouse messages generation. */
++    SetCapture( hwnd );
++    pump_messages();
++    for (i = 0; i < ARRAY_SIZE(mouse_tests); ++i)
++    {
++        for (j = 0; j < 2; ++j)
++        {
++            winetest_push_context( "test %u, %u", i, j );
++
++            res = WaitForSingleObject( touchdown_event, 0 );
++            ok( res == WAIT_TIMEOUT, "WaitForSingleObject returned %#lx\n", res );
++            res = WaitForSingleObject( touchleave_event, 0 );
++            ok( res == WAIT_TIMEOUT, "WaitForSingleObject returned %#lx\n", res );
++
++            start_touch_test( mouse_tests[i].skip_message );
++            bus_send_hid_input( file, &desc, &touch_single, sizeof(touch_single) );
++            ResetEvent( touchmoved_event );
++            res = msg_wait_for_events( 1, &touchdown_event, 1000 );
++            ok( res == 0, "WaitForSingleObject returned %#lx\n", res );
++
++            if (j)
++            {
++                /* Current cursor positon affects WM_MOUSEMOVE messages. */
++                start_touch_test( mouse_tests[i].skip_message );
++            }
++            ResetEvent( touchmoved_event );
++            bus_send_hid_input( file, &desc, &touch_single2, sizeof(touch_single2) );
++
++            res = msg_wait_for_events( 1, &touchmoved_event, 1000 );
++            ok( res == 0, "WaitForSingleObject returned %#lx\n", res );
++
++            if (j) start_touch_test( mouse_tests[i].skip_message );
++            ResetEvent( touchmoved_event );
++            bus_send_hid_input( file, &desc, &touch_single3, sizeof(touch_single3) );
++            res = msg_wait_for_events( 1, &touchmoved_event, 1000 );
++            ok( res == 0, "WaitForSingleObject returned %#lx\n", res );
++
++            if (j) start_touch_test( mouse_tests[i].skip_message );
++            bus_send_hid_input( file, & desc, &touch_release, sizeof(touch_release) );
++            res = msg_wait_for_events( 1, &touchleave_event, 1000 );
++            ok( res == 0, "WaitForSingleObject returned %#lx\n", res );
++
++            start_touch_test( NULL );
++            pump_messages();
++
++            winetest_pop_context();
++        }
++    }
+ 
++    ret = ReleaseCapture();
++    ok( ret, "ReleaseCapture() failed.\n" );
+     DestroyWindow( hwnd );
+ 
+     CloseHandle( file );
+@@ -2265,6 +2630,7 @@ done:
+     hid_device_stop( &desc, 1 );
+ 
+     CloseHandle( touchdown_event );
++    CloseHandle( touchmoved_event );
+     CloseHandle( touchleave_event );
+ }
+ 
+-- 
+2.51.0
+
+From b83f288df5728163633f0c0227131315592c7745 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Thu, 19 Jun 2025 17:22:50 +0200
+Subject: [PATCH 1688/2018] services: Preserve some winebus specific
+ environment variable.
+
+CW-Bug-Id: #25366
+---
+ programs/services/services.c | 22 +++++++++++++++-------
+ 1 file changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/programs/services/services.c b/programs/services/services.c
+index 2c19f0b14cc..3fb5ed28ae1 100644
+--- a/programs/services/services.c
++++ b/programs/services/services.c
+@@ -1030,15 +1030,23 @@ found:
+ 
+     if (!environment && OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &token))
+     {
+-        WCHAR val[16];
+-        CreateEnvironmentBlock(&environment, token, FALSE);
+-        if (GetEnvironmentVariableW( L"WINEBOOTSTRAPMODE", val, ARRAY_SIZE(val) ))
++        static const WCHAR *preserve[] =
+         {
+-            UNICODE_STRING name = RTL_CONSTANT_STRING(L"WINEBOOTSTRAPMODE");
+-            UNICODE_STRING value;
++            L"WINEBOOTSTRAPMODE",
++            L"WINEBUSCONFIG",
++        };
++        WCHAR buffer[1024];
+ 
+-            RtlInitUnicodeString( &value, val );
+-            RtlSetEnvironmentVariable( (WCHAR **)&environment, &name, &value );
++        CreateEnvironmentBlock(&environment, token, FALSE);
++        for (size_t i = 0; i < ARRAY_SIZE(preserve); i++)
++        {
++            if (GetEnvironmentVariableW( preserve[i], buffer, ARRAY_SIZE(buffer) ))
++            {
++                UNICODE_STRING value, name;
++                RtlInitUnicodeString( &name, preserve[i] );
++                RtlInitUnicodeString( &value, buffer );
++                RtlSetEnvironmentVariable( (WCHAR **)&environment, &name, &value );
++            }
+         }
+         CloseHandle(token);
+     }
+-- 
+2.51.0
+
+From ca5ceaae14ac57900fa4fca46467620f4e7af765 Mon Sep 17 00:00:00 2001
+From: Arkadiusz Hiler <ahiler@codeweavers.com>
+Date: Fri, 18 Jul 2025 12:09:25 +0300
+Subject: [PATCH 1871/2018] HACK: winebus.sys: Fall back to non-hidraw devices.
+
+Based on Proton 9's 72503e35e55f ("HACK: winebus.sys: Prefer devices on
+UDEV hidraw bus over SDL bus.")
+
+CW-Bug-Id: #25270
+---
+ dlls/winebus.sys/main.c | 37 ++++++++++++++++++++++++++++++++-----
+ 1 file changed, 32 insertions(+), 5 deletions(-)
+
+diff --git a/dlls/winebus.sys/main.c b/dlls/winebus.sys/main.c
+index fe785e5804a..c170b338e41 100644
+--- a/dlls/winebus.sys/main.c
++++ b/dlls/winebus.sys/main.c
+@@ -371,6 +371,17 @@ static DEVICE_OBJECT *bus_find_unix_device(UINT64 unix_device)
+     return NULL;
+ }
+ 
++static DEVICE_OBJECT *bus_find_device_from_vid_pid(const BOOL is_hidraw, struct device_desc *desc)
++{
++    struct device_extension *ext;
++
++    LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
++        if (ext->desc.is_hidraw == is_hidraw && ext->desc.vid == desc->vid &&
++            ext->desc.pid == desc->pid) return ext->device;
++
++    return NULL;
++}
++
+ static void bus_unlink_hid_device(DEVICE_OBJECT *device)
+ {
+     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
+@@ -914,7 +925,7 @@ static DWORD CALLBACK bus_main_thread(void *args)
+             UINT buttons;
+ 
+             usages = get_device_usages(event->device, &buttons);
+-            if (!desc.is_hidraw != !is_hidraw_enabled(desc.vid, desc.pid, &usages, buttons))
++            if (desc.is_hidraw && !is_hidraw_enabled(desc.vid, desc.pid, &usages, buttons))
+             {
+                 struct device_remove_params params = {.device = event->device};
+                 WARN("ignoring %shidraw device %04x:%04x with usages %04x:%04x\n", desc.is_hidraw ? "" : "non-",
+@@ -922,11 +933,27 @@ static DWORD CALLBACK bus_main_thread(void *args)
+                 winebus_call(device_remove, &params);
+                 break;
+             }
++            else if (desc.is_hidraw)
++            {
++                RtlEnterCriticalSection(&device_list_cs);
++                if ((device = bus_find_device_from_vid_pid(!desc.is_hidraw, &event->device_created.desc)))
++                    bus_unlink_hid_device(device);
++                device = bus_create_hid_device(&event->device_created.desc, event->device);
++                RtlLeaveCriticalSection(&device_list_cs);
++            }
++            else
++            {
++                RtlEnterCriticalSection(&device_list_cs);
++                if (bus_find_device_from_vid_pid(!desc.is_hidraw, &event->device_created.desc)) device = NULL;
++                else device = bus_create_hid_device(&event->device_created.desc, event->device);
++                RtlLeaveCriticalSection(&device_list_cs);
++            }
++
+ 
+-            TRACE("creating %shidraw device %04x:%04x with usages %04x:%04x\n", desc.is_hidraw ? "" : "non-",
+-                  desc.vid, desc.pid, usages.UsagePage, usages.Usage);
++            if (device)
++                TRACE("creating %shidraw device %04x:%04x with usages %04x:%04x\n", desc.is_hidraw ? "" : "non-",
++                      desc.vid, desc.pid, usages.UsagePage, usages.Usage);
+ 
+-            device = bus_create_hid_device(&event->device_created.desc, event->device);
+             if (device) IoInvalidateDeviceRelations(bus_pdo, BusRelations);
+             else
+             {
+@@ -1300,8 +1327,8 @@ static NTSTATUS fdo_pnp_dispatch(DEVICE_OBJECT *device, IRP *irp)
+         mouse_device_create();
+         keyboard_device_create();
+ 
+-        if (!sdl_driver_init()) options.disable_input = TRUE;
+         udev_driver_init();
++        if (!sdl_driver_init()) options.disable_input = TRUE;
+         iohid_driver_init();
+ 
+         irp->IoStatus.Status = STATUS_SUCCESS;
+-- 
+2.51.0
+
+From 812d4a2c542ab8166eba2902b077e674233a510b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 19 Aug 2025 19:51:14 +0200
+Subject: [PATCH 1975/2018] xinput: Hardcode gamepad capabilities like native
+ report them.
+
+Some games expect the button mask to have some specific value to decide
+if a gamepad is an XBox compatible one.
+
+CW-Bug-Id: #25652
+---
+ dlls/xinput1_1/Makefile.in |  1 +
+ dlls/xinput1_2/Makefile.in |  1 +
+ dlls/xinput1_3/Makefile.in |  1 +
+ dlls/xinput1_3/main.c      | 64 +++++++++++++++++++-------------------
+ dlls/xinput1_4/Makefile.in |  1 +
+ dlls/xinput9_1_0/main.c    | 19 +++++++++--
+ 6 files changed, 53 insertions(+), 34 deletions(-)
+
+diff --git a/dlls/xinput1_1/Makefile.in b/dlls/xinput1_1/Makefile.in
+index b5c13cde8df..770937e7612 100644
+--- a/dlls/xinput1_1/Makefile.in
++++ b/dlls/xinput1_1/Makefile.in
+@@ -1,3 +1,4 @@
++EXTRADEFS = -DXINPUT_VER=1
+ MODULE    = xinput1_1.dll
+ IMPORTS   = hid setupapi advapi32 user32
+ PARENTSRC = ../xinput1_3
+diff --git a/dlls/xinput1_2/Makefile.in b/dlls/xinput1_2/Makefile.in
+index f49e8f53191..a8c71b40ca8 100644
+--- a/dlls/xinput1_2/Makefile.in
++++ b/dlls/xinput1_2/Makefile.in
+@@ -1,3 +1,4 @@
++EXTRADEFS = -DXINPUT_VER=2
+ MODULE    = xinput1_2.dll
+ IMPORTS   = hid setupapi advapi32 user32
+ PARENTSRC = ../xinput1_3
+diff --git a/dlls/xinput1_3/Makefile.in b/dlls/xinput1_3/Makefile.in
+index 28d46d8c97f..7dc406dd85a 100644
+--- a/dlls/xinput1_3/Makefile.in
++++ b/dlls/xinput1_3/Makefile.in
+@@ -1,3 +1,4 @@
++EXTRADEFS = -DXINPUT_VER=3
+ MODULE    = xinput1_3.dll
+ IMPORTLIB = xinput
+ IMPORTS   = hid setupapi advapi32 user32
+diff --git a/dlls/xinput1_3/main.c b/dlls/xinput1_3/main.c
+index c2ae05a0ce8..eb84f6df830 100644
+--- a/dlls/xinput1_3/main.c
++++ b/dlls/xinput1_3/main.c
+@@ -54,7 +54,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(xinput);
+ struct xinput_controller
+ {
+     CRITICAL_SECTION crit;
+-    XINPUT_CAPABILITIES caps;
+     XINPUT_STATE state;
+     XINPUT_GAMEPAD last_keystroke;
+     XINPUT_VIBRATION vibration;
+@@ -198,7 +197,6 @@ static void check_waveform_caps(struct xinput_controller *controller, HANDLE dev
+ static BOOL controller_check_caps(struct xinput_controller *controller, HANDLE device, PHIDP_PREPARSED_DATA preparsed)
+ {
+     USHORT caps_count = 0, waveform_caps_count = 0;
+-    XINPUT_CAPABILITIES *caps = &controller->caps;
+     HIDP_LINK_COLLECTION_NODE *collections;
+     HIDP_VALUE_CAPS waveform_caps[8];
+     HIDP_BUTTON_CAPS *button_caps;
+@@ -207,9 +205,6 @@ static BOOL controller_check_caps(struct xinput_controller *controller, HANDLE d
+     int i, u, button_count = 0;
+     NTSTATUS status;
+ 
+-    /* Count buttons */
+-    memset(caps, 0, sizeof(XINPUT_CAPABILITIES));
+-
+     if (!(button_caps = malloc(sizeof(*button_caps) * controller->hid.caps.NumberInputButtonCaps))) return FALSE;
+     status = HidP_GetButtonCaps(HidP_Input, button_caps, &controller->hid.caps.NumberInputButtonCaps, preparsed);
+     if (status != HIDP_STATUS_SUCCESS) WARN("HidP_GetButtonCaps returned %#lx\n", status);
+@@ -223,9 +218,7 @@ static BOOL controller_check_caps(struct xinput_controller *controller, HANDLE d
+             button_count = max(button_count, button_caps[i].NotRange.Usage);
+     }
+     free(button_caps);
+-    if (button_count < 11)
+-        WARN("Too few buttons, continuing anyway\n");
+-    caps->Gamepad.wButtons = 0xffff;
++    if (button_count < 11) WARN("Too few buttons, continuing anyway\n");
+ 
+     if (!(value_caps = malloc(sizeof(*value_caps) * controller->hid.caps.NumberInputValueCaps))) return FALSE;
+     status = HidP_GetValueCaps(HidP_Input, value_caps, &controller->hid.caps.NumberInputValueCaps, preparsed);
+@@ -240,20 +233,11 @@ static BOOL controller_check_caps(struct xinput_controller *controller, HANDLE d
+     free(value_caps);
+ 
+     if (!controller->hid.lt_caps.UsagePage) WARN("Missing axis LeftTrigger\n");
+-    else caps->Gamepad.bLeftTrigger = (1u << (sizeof(caps->Gamepad.bLeftTrigger) + 1)) - 1;
+     if (!controller->hid.rt_caps.UsagePage) WARN("Missing axis RightTrigger\n");
+-    else caps->Gamepad.bRightTrigger = (1u << (sizeof(caps->Gamepad.bRightTrigger) + 1)) - 1;
+     if (!controller->hid.lx_caps.UsagePage) WARN("Missing axis ThumbLX\n");
+-    else caps->Gamepad.sThumbLX = (1u << (sizeof(caps->Gamepad.sThumbLX) + 1)) - 1;
+     if (!controller->hid.ly_caps.UsagePage) WARN("Missing axis ThumbLY\n");
+-    else caps->Gamepad.sThumbLY = (1u << (sizeof(caps->Gamepad.sThumbLY) + 1)) - 1;
+     if (!controller->hid.rx_caps.UsagePage) WARN("Missing axis ThumbRX\n");
+-    else caps->Gamepad.sThumbRX = (1u << (sizeof(caps->Gamepad.sThumbRX) + 1)) - 1;
+     if (!controller->hid.ry_caps.UsagePage) WARN("Missing axis ThumbRY\n");
+-    else caps->Gamepad.sThumbRY = (1u << (sizeof(caps->Gamepad.sThumbRY) + 1)) - 1;
+-
+-    caps->Type = XINPUT_DEVTYPE_GAMEPAD;
+-    caps->SubType = XINPUT_DEVSUBTYPE_GAMEPAD;
+ 
+     collections_count = controller->hid.caps.NumberLinkCollectionNodes;
+     if (!(collections = malloc(sizeof(*collections) * controller->hid.caps.NumberLinkCollectionNodes))) return FALSE;
+@@ -273,14 +257,6 @@ static BOOL controller_check_caps(struct xinput_controller *controller, HANDLE d
+     for (i = 0; i < waveform_caps_count; ++i) check_waveform_caps(controller, device, preparsed, collections, waveform_caps + i);
+     free(collections);
+ 
+-    if (controller->hid.haptics_rumble_caps.UsagePage ||
+-        controller->hid.haptics_buzz_caps.UsagePage)
+-    {
+-        caps->Flags |= XINPUT_CAPS_FFB_SUPPORTED;
+-        caps->Vibration.wLeftMotorSpeed = 255;
+-        caps->Vibration.wRightMotorSpeed = 255;
+-    }
+-
+     return TRUE;
+ }
+ 
+@@ -294,7 +270,7 @@ static DWORD HID_set_state(struct xinput_controller *controller, XINPUT_VIBRATIO
+     NTSTATUS status;
+     BYTE report_id;
+ 
+-    if (!(controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED)) return ERROR_SUCCESS;
++    if (!controller->hid.haptics_rumble_caps.UsagePage && !controller->hid.haptics_buzz_caps.UsagePage) return ERROR_SUCCESS;
+ 
+     update_rumble = (controller->vibration.wLeftMotorSpeed != state->wLeftMotorSpeed);
+     controller->vibration.wLeftMotorSpeed = state->wLeftMotorSpeed;
+@@ -330,7 +306,7 @@ static void controller_disable(struct xinput_controller *controller)
+     XINPUT_VIBRATION state = {0};
+ 
+     if (!controller->enabled) return;
+-    if (controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED) HID_set_state(controller, &state);
++    HID_set_state(controller, &state);
+     controller->enabled = FALSE;
+ 
+     CancelIoEx(controller->device, &controller->hid.read_ovl);
+@@ -368,7 +344,7 @@ static void controller_enable(struct xinput_controller *controller)
+     BOOL ret;
+ 
+     if (controller->enabled) return;
+-    if (controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED) HID_set_state(controller, &state);
++    HID_set_state(controller, &state);
+     controller->enabled = TRUE;
+ 
+     memset(&controller->hid.read_ovl, 0, sizeof(controller->hid.read_ovl));
+@@ -1151,6 +1127,10 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetBatteryInformation(DWORD index, BYTE typ
+ 
+ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetCapabilitiesEx(DWORD unk, DWORD index, DWORD flags, XINPUT_CAPABILITIES_EX *caps)
+ {
++    static const UINT XINPUT_BUTTONS_ALL = XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT
++                                         | XINPUT_GAMEPAD_START | XINPUT_GAMEPAD_BACK | XINPUT_GAMEPAD_LEFT_THUMB | XINPUT_GAMEPAD_RIGHT_THUMB
++                                         | XINPUT_GAMEPAD_LEFT_SHOULDER | XINPUT_GAMEPAD_RIGHT_SHOULDER
++                                         | XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_X | XINPUT_GAMEPAD_Y;
+     HIDD_ATTRIBUTES attr;
+     DWORD ret = ERROR_SUCCESS;
+ 
+@@ -1162,13 +1142,33 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetCapabilitiesEx(DWORD unk, DWORD index, D
+ 
+     if (!controller_lock(&controllers[index])) return ERROR_DEVICE_NOT_CONNECTED;
+ 
+-    if (flags & XINPUT_FLAG_GAMEPAD && controllers[index].caps.SubType != XINPUT_DEVSUBTYPE_GAMEPAD)
+-        ret = ERROR_DEVICE_NOT_CONNECTED;
+-    else if (!HidD_GetAttributes(controllers[index].device, &attr))
++    if (!HidD_GetAttributes(controllers[index].device, &attr))
+         ret = ERROR_DEVICE_NOT_CONNECTED;
+     else
+     {
+-        caps->Capabilities = controllers[index].caps;
++        memset(caps, 0, sizeof(*caps));
++
++#if XINPUT_VER >= 4
++        caps->Capabilities.Type = XINPUT_DEVTYPE_GAMEPAD;
++#endif
++        caps->Capabilities.SubType = XINPUT_DEVSUBTYPE_GAMEPAD;
++#if XINPUT_VER >= 4
++        caps->Capabilities.Flags |= XINPUT_CAPS_PMD_SUPPORTED;
++#endif
++#if XINPUT_VER >= 3
++        caps->Capabilities.Flags |= XINPUT_CAPS_VOICE_SUPPORTED;
++#endif
++
++        caps->Capabilities.Gamepad.wButtons = XINPUT_BUTTONS_ALL;
++        caps->Capabilities.Gamepad.bLeftTrigger = 0xff;
++        caps->Capabilities.Gamepad.bRightTrigger = 0xff;
++        caps->Capabilities.Gamepad.sThumbLX = ~0x3f;
++        caps->Capabilities.Gamepad.sThumbLY = ~0x3f;
++        caps->Capabilities.Gamepad.sThumbRX = ~0x3f;
++        caps->Capabilities.Gamepad.sThumbRY = ~0x3f;
++        caps->Capabilities.Vibration.wLeftMotorSpeed = 0xff;
++        caps->Capabilities.Vibration.wRightMotorSpeed = 0xff;
++
+         caps->VendorId = attr.VendorID;
+         caps->ProductId = attr.ProductID;
+         caps->VersionNumber = attr.VersionNumber;
+diff --git a/dlls/xinput1_4/Makefile.in b/dlls/xinput1_4/Makefile.in
+index 69d6b9c018f..482f75d0f7e 100644
+--- a/dlls/xinput1_4/Makefile.in
++++ b/dlls/xinput1_4/Makefile.in
+@@ -1,3 +1,4 @@
++EXTRADEFS = -DXINPUT_VER=4
+ MODULE    = xinput1_4.dll
+ IMPORTS   = hid setupapi advapi32 user32
+ PARENTSRC = ../xinput1_3
+diff --git a/dlls/xinput9_1_0/main.c b/dlls/xinput9_1_0/main.c
+index 8c0259d1c60..dc3c54e6498 100644
+--- a/dlls/xinput9_1_0/main.c
++++ b/dlls/xinput9_1_0/main.c
+@@ -70,12 +70,27 @@ static BOOL WINAPI init_xinput1_4_funcs(INIT_ONCE *once, void *param, void **con
+     return TRUE;
+ }
+ 
+-DWORD WINAPI DECLSPEC_HOTPATCH XInputGetCapabilities(DWORD index, DWORD flags, XINPUT_CAPABILITIES *capabilities)
++DWORD WINAPI DECLSPEC_HOTPATCH XInputGetCapabilities(DWORD index, DWORD flags, XINPUT_CAPABILITIES *caps)
+ {
++    DWORD ret;
++
+     InitOnceExecuteOnce(&init_xinput1_4_once, init_xinput1_4_funcs, NULL, NULL);
+ 
+     if (!pXInputGetCapabilities) return ERROR_DEVICE_NOT_CONNECTED;
+-    return pXInputGetCapabilities(index, flags, capabilities);
++    if (!(ret = pXInputGetCapabilities(index, flags, caps)))
++    {
++        caps->Flags = XINPUT_CAPS_VOICE_SUPPORTED;
++        caps->Gamepad.bLeftTrigger = !!caps->Gamepad.bLeftTrigger;
++        caps->Gamepad.bRightTrigger = !!caps->Gamepad.bRightTrigger;
++        caps->Gamepad.sThumbLX = !!caps->Gamepad.sThumbLX;
++        caps->Gamepad.sThumbLY = !!caps->Gamepad.sThumbLY;
++        caps->Gamepad.sThumbRX = !!caps->Gamepad.sThumbRX;
++        caps->Gamepad.sThumbRY = !!caps->Gamepad.sThumbRY;
++        caps->Vibration.wLeftMotorSpeed = !!caps->Vibration.wLeftMotorSpeed;
++        caps->Vibration.wRightMotorSpeed = !!caps->Vibration.wRightMotorSpeed;
++    }
++
++    return ret;
+ }
+ 
+ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetDSoundAudioDeviceGuids(DWORD index, GUID *render_guid, GUID *capture_guid)
+-- 
+2.51.0
+
+From ddafc3e28a3afba498bbc165ab6b4d5eacfde626 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 20 Aug 2025 10:39:08 +0200
+Subject: [PATCH 1976/2018] fixup! HACK: dinput: Emulate Steam Input native
+ hooks.
+
+CW-Bug-Id: #25652
+---
+ dlls/dinput/joystick_hid.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/dlls/dinput/joystick_hid.c b/dlls/dinput/joystick_hid.c
+index 2f321fd471b..6efb9acd07b 100644
+--- a/dlls/dinput/joystick_hid.c
++++ b/dlls/dinput/joystick_hid.c
+@@ -1581,6 +1581,14 @@ static HRESULT hid_joystick_device_try_open( const WCHAR *path, HANDLE *device,
+     instance->wUsagePage = caps->UsagePage;
+     instance->wUsage = caps->Usage;
+ 
++    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++    if (attrs->VendorID == 0x28de && attrs->ProductID == 0x11ff)
++    {
++        instance->guidProduct.Data2 = 0x28de;
++        instance->guidInstance = instance->guidProduct;
++        instance->guidInstance.Data3 = 1;
++    }
++
+     node_count = ARRAY_SIZE(nodes);
+     status = HidP_GetLinkCollectionNodes( nodes, &node_count, preparsed_data );
+     if (status != HIDP_STATUS_SUCCESS) node_count = 0;
+-- 
+2.51.0
+
+From 11e17c5684db44fc8b8d1e990da159d2bd54a1c1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 20 Aug 2025 10:40:10 +0200
+Subject: [PATCH 1977/2018] fixup! HACK: windows.gaming.input: Emulate Steam
+ Input native hooks.
+
+CW-Bug-Id: #25652
+---
+ dlls/windows.gaming.input/provider.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/dlls/windows.gaming.input/provider.c b/dlls/windows.gaming.input/provider.c
+index d12785dee4c..b0c54044b66 100644
+--- a/dlls/windows.gaming.input/provider.c
++++ b/dlls/windows.gaming.input/provider.c
+@@ -145,10 +145,21 @@ static HRESULT WINAPI wine_provider_get_DisplayName( IWineGameControllerProvider
+ {
+     struct provider *impl = impl_from_IWineGameControllerProvider( iface );
+     DIDEVICEINSTANCEW instance = {.dwSize = sizeof(DIDEVICEINSTANCEW)};
++    UINT16 vid, pid;
+     HRESULT hr;
+ 
+     TRACE( "iface %p, value %p\n", iface, value );
+ 
++    if (FAILED(hr = IGameControllerProvider_get_HardwareVendorId( &impl->IGameControllerProvider_iface, &vid ))) return hr;
++    if (FAILED(hr = IGameControllerProvider_get_HardwareProductId( &impl->IGameControllerProvider_iface, &pid ))) return hr;
++
++    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++    if (vid == 0x28de && pid == 0x11ff)
++    {
++        static const WCHAR name[] = L"Xbox 360 Controller for Windows";
++        return WindowsCreateString( name, wcslen( name ), value );
++    }
++
+     if (FAILED(hr = IDirectInputDevice8_GetDeviceInfo( impl->dinput_device, &instance ))) return hr;
+     return WindowsCreateString( instance.tszProductName, wcslen( instance.tszProductName ), value );
+ }
+-- 
+2.51.0
+
+From a9775afc6b67d78262c57a20ff4f73722fff6750 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Wed, 20 Aug 2025 10:38:29 +0200
+Subject: [PATCH 1978/2018] fixup! HACK: xinput: Emulate Steam Input native
+ hooks.
+
+CW-Bug-Id: #25652
+---
+ dlls/xinput1_3/main.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/xinput1_3/main.c b/dlls/xinput1_3/main.c
+index eb84f6df830..906d25d196b 100644
+--- a/dlls/xinput1_3/main.c
++++ b/dlls/xinput1_3/main.c
+@@ -1172,8 +1172,14 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetCapabilitiesEx(DWORD unk, DWORD index, D
+         caps->VendorId = attr.VendorID;
+         caps->ProductId = attr.ProductID;
+         caps->VersionNumber = attr.VersionNumber;
++
+         /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
+-        caps->unk2 = index;
++        if (attr.VendorID == 0x28de && attr.ProductID == 0x11ff)
++        {
++            caps->Capabilities.Type = XINPUT_DEVTYPE_GAMEPAD;
++            caps->Capabilities.Flags = XINPUT_CAPS_WIRELESS;
++            caps->unk2 = index;
++        }
+     }
+ 
+     controller_unlock(&controllers[index]);
+-- 
+2.51.0
+
+--- a/dlls/winebus.sys/bus_udev.c
++++ b/dlls/winebus.sys/bus_udev.c
+@@ -1593,28 +1593,13 @@
+         impl->button_map[i] = ++impl->button_count;
+     }
+ 
+-    if (desc.vid == 0x28de && desc.pid == 0x11ff && !strcmp(subsystem, "input"))
++    if (sscanf(info.name, "Microsoft X-Box 360 pad %u", &desc.input) != 1) desc.input = -1;
++    if (desc.vid == 0x28de && desc.pid == 0x11ff)
+     {
+-        TRACE("evdev %s: detected steam input virtual controller\n", debugstr_a(devnode));
+         desc.is_gamepad = TRUE;
+         desc.version = 0; /* keep version fixed as 0 so we can hardcode it in ntdll rawinput pipe redirection */
+     }
+-    else if (is_sdl_ignored_device(desc.vid, desc.pid))
+-    {
+-        TRACE("evdev %s: ignoring %s, in SDL ignore list\n", debugstr_a(devnode), debugstr_device_desc(&desc));
+-        close(fd);
+-        return;
+-    }
+-    else if (!strcmp(subsystem, "input"))
+-    {
+-        TRACE("evdev %s: deferring %s to a different backend\n", debugstr_a(devnode), debugstr_device_desc(&desc));
+-        close(fd);
+-        return;
+-    }
+-    else if (is_xbox_gamepad(desc.vid, desc.pid))
+-    {
+-        desc.is_gamepad = TRUE;
+-    }
++    else if (is_xbox_gamepad(desc.vid, desc.pid)) desc.is_gamepad = TRUE;
+     else if (axis_count == 6 && button_count >= (impl->hat_count ? 10 : 14)) desc.is_gamepad = TRUE;
+ 
+     if ((impl->is_gamepad = desc.is_gamepad))
+@@ -1719,6 +1704,21 @@
+         close(fd);
+         return;
+     }
++
++    if (desc.vid == 0x28de && desc.pid == 0x11ff && !strcmp(subsystem, "input"))
++        TRACE("evdev %s: detected steam input virtual controller\n", debugstr_a(devnode));
++    else if (is_sdl_ignored_device(desc.vid, desc.pid))
++    {
++        TRACE("evdev %s: ignoring %s, in SDL ignore list\n", debugstr_a(devnode), debugstr_device_desc(&desc));
++        close(fd);
++        return;
++    }
++    else if (!strcmp(subsystem, "input"))
++    {
++        TRACE("evdev %s: deferring %s to a different backend\n", debugstr_a(devnode), debugstr_device_desc(&desc));
++        close(fd);
++        return;
++    }
+ 
+     if ((desc.is_hidraw = !strcmp(subsystem, "hidraw")) && !hidraw_device_create(dev, fd, devnode, desc)) return;
+     if (!strcmp(subsystem, "input") && !lnxev_device_create(dev, fd, devnode, desc)) return;
