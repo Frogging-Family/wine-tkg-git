@@ -415,6 +415,113 @@ index 367d6356195..6989a3d4a44 100644
 -- 
 2.51.0
 
+From e5ded9f55d14820054e2da4a400de2ce30c5d3d0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Sat, 16 Nov 2024 22:13:34 +0100
+Subject: [PATCH 0086/2018] HACK: hidclass: Do not send WM_INPUT messages when
+ overlay is open.
+
+So that games listening to them, such as ICEY, do not have input
+bleeding through the overlay. Note that some other games, such as Hades,
+which are reading the HID devices directly, have the input bleeding
+through on Windows, so we do the same here.
+
+CW-Bug-Id: #20083
+---
+ dlls/hidclass.sys/device.c | 6 +++++-
+ dlls/hidclass.sys/hid.h    | 4 ++++
+ dlls/hidclass.sys/pnp.c    | 8 ++++++++
+ 3 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/hidclass.sys/device.c b/dlls/hidclass.sys/device.c
+index 8725ca7bba9..479e49701d1 100644
+--- a/dlls/hidclass.sys/device.c
++++ b/dlls/hidclass.sys/device.c
+@@ -222,6 +222,7 @@ static void hid_device_queue_input( DEVICE_OBJECT *device, HID_XFER_PACKET *pack
+     HIDP_COLLECTION_DESC *desc = ext->u.pdo.collection_desc;
+     ULONG size, report_len = polled ? packet->reportBufferLen : desc->InputLength;
+     struct hid_report *last_report, *report;
++    BOOL steam_overlay_open = FALSE;
+     struct hid_queue *queue;
+     LIST_ENTRY completed, *entry;
+     KIRQL irql;
+@@ -229,7 +230,10 @@ static void hid_device_queue_input( DEVICE_OBJECT *device, HID_XFER_PACKET *pack
+ 
+     TRACE("device %p, packet %p\n", device, packet);
+ 
+-    if (IsEqualGUID( pdo->base.class_guid, &GUID_DEVINTERFACE_HID ))
++    if (WaitForSingleObject( pdo->base.steam_overlay_event, 0 ) == WAIT_OBJECT_0) /* steam overlay is open */
++        steam_overlay_open = TRUE;
++
++    if (IsEqualGUID( pdo->base.class_guid, &GUID_DEVINTERFACE_HID ) && !steam_overlay_open)
+     {
+         struct hid_packet *hid;
+ 
+diff --git a/dlls/hidclass.sys/hid.h b/dlls/hidclass.sys/hid.h
+index 3924c72dcc3..af835c3dd7c 100644
+--- a/dlls/hidclass.sys/hid.h
++++ b/dlls/hidclass.sys/hid.h
+@@ -88,6 +88,8 @@ typedef struct _BASE_DEVICE_EXTENSION
+     WCHAR container_id[MAX_GUID_STRING_LEN];
+     const GUID *class_guid;
+ 
++    HANDLE steam_overlay_event;
++
+     BOOL is_fdo;
+ } BASE_DEVICE_EXTENSION;
+ 
+@@ -119,6 +121,8 @@ typedef struct _minidriver
+ 
+     PDRIVER_ADD_DEVICE AddDevice;
+     PDRIVER_DISPATCH PNPDispatch;
++
++    HANDLE steam_overlay_event;
+ } minidriver;
+ 
+ void call_minidriver( ULONG code, DEVICE_OBJECT *device, void *in_buff, ULONG in_size,
+diff --git a/dlls/hidclass.sys/pnp.c b/dlls/hidclass.sys/pnp.c
+index 156b9a65f9f..54447cbb86c 100644
+--- a/dlls/hidclass.sys/pnp.c
++++ b/dlls/hidclass.sys/pnp.c
+@@ -171,6 +171,8 @@ static NTSTATUS WINAPI driver_add_device(DRIVER_OBJECT *driver, DEVICE_OBJECT *b
+     if (get_device_id(bus_pdo, BusQueryContainerID, ext->container_id))
+         ext->container_id[0] = 0;
+ 
++    fdo->base.steam_overlay_event = minidriver->steam_overlay_event;
++
+     is_xinput_class = !wcsncmp(device_id, L"WINEXINPUT\\", 7) && wcsstr(device_id, L"&XI_") != NULL;
+     if (is_xinput_class) ext->class_guid = &GUID_DEVINTERFACE_WINEXINPUT;
+     else ext->class_guid = &GUID_DEVINTERFACE_HID;
+@@ -312,6 +314,8 @@ static NTSTATUS create_child_pdos( minidriver *minidriver, DEVICE_OBJECT *device
+         pdo->information.Polled = minidriver->minidriver.DevicesArePolled;
+         pdo->information.DescriptorSize = pdo->collection_desc->PreparsedDataLength;
+ 
++        pdo->base.steam_overlay_event = minidriver->steam_overlay_event;
++
+         page = pdo->collection_desc->UsagePage;
+         usage = pdo->collection_desc->Usage;
+         if (page == HID_USAGE_PAGE_GENERIC && usage == HID_USAGE_GENERIC_MOUSE)
+@@ -659,6 +663,8 @@ static void WINAPI driver_unload(DRIVER_OBJECT *driver)
+         if (md->DriverUnload)
+             md->DriverUnload(md->minidriver.DriverObject);
+         list_remove(&md->entry);
++
++        CloseHandle(md->steam_overlay_event);
+         free(md);
+     }
+ }
+@@ -674,6 +680,8 @@ NTSTATUS WINAPI HidRegisterMinidriver(HID_MINIDRIVER_REGISTRATION *registration)
+     if (!(driver = calloc(1, sizeof(*driver))))
+         return STATUS_NO_MEMORY;
+ 
++    driver->steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
++
+     driver->DriverUnload = registration->DriverObject->DriverUnload;
+     registration->DriverObject->DriverUnload = driver_unload;
+ 
+-- 
+2.51.0
+
 From 065fe6d17f9767dfe272d3aac751ea21c32cda98 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Sat, 3 Dec 2022 08:03:58 +0100
@@ -1193,6 +1300,229 @@ index 6989a3d4a44..b66e8f3deff 100644
          lstrcpynW( value->wszPath, impl->device_path, MAX_PATH );
          return DI_OK;
      }
+-- 
+2.51.0
+
+From e9f99a2660072e5746cdf399f1b1a3d3ad133135 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 8 Jan 2024 14:35:42 +0100
+Subject: [PATCH 0095/2018] HACK: hidclass: Emulate Steam Input native hooks.
+
+CW-Bug-Id: #23185
+---
+ dlls/hidclass.sys/device.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/dlls/hidclass.sys/device.c b/dlls/hidclass.sys/device.c
+index 479e49701d1..2020b8ce3a5 100644
+--- a/dlls/hidclass.sys/device.c
++++ b/dlls/hidclass.sys/device.c
+@@ -403,6 +403,8 @@ struct device_strings
+ 
+ static const struct device_strings device_strings[] =
+ {
++    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++    { .id = L"VID_28DE&PID_11FF", .product = L"Controller (XBOX 360 For Windows)" },
+     /* Microsoft controllers */
+     { .id = L"VID_045E&PID_028E", .product = L"Controller (XBOX 360 For Windows)" },
+     { .id = L"VID_045E&PID_028F", .product = L"Controller (XBOX 360 For Windows)" },
+-- 
+2.51.0
+
+From 3e95eab6896540c8c2328aca7b994c8ee5f52b85 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 8 Jan 2024 14:35:42 +0100
+Subject: [PATCH 0096/2018] HACK: ntdll: Emulate Steam Input native hooks.
+
+CW-Bug-Id: #23185
+---
+ dlls/ntdll/unix/file.c | 68 +++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 67 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 4a2c3a84b6f..6d8a81e7f4f 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -2925,6 +2925,67 @@ not_found:
+     return STATUS_OBJECT_NAME_NOT_FOUND;
+ }
+ 
++/* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++static BOOL replace_steam_input_path( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
++{
++    static const WCHAR pipe_prefixW[] =
++    {
++        '\\','?','?','\\','p','i','p','e','\\','H','I','D','#','V','I','D','_','0','4','5','E',
++        '&','P','I','D','_','0','2','8','E','&','I','G','_','0','0',
++    };
++    static const WCHAR hid_prefixW[] =
++    {
++        '\\','?','?','\\','h','i','d','#','v','i','d','_','2','8','d','e',
++        '&','p','i','d','_','1','1','f','f','&','i','g','_','0'
++    };
++    static const WCHAR hid_midW[] =
++    {
++        '#','0',
++    };
++    static const WCHAR hid_tailW[] =
++    {
++        '&','0','&','0','&','1','#','{','4','d','1','e','5','5','b','2','-','f','1','6','f','-',
++        '1','1','c','f','-','8','8','c','b','-','0','0','1','1','1','1','0','0','0','0','3','0','}'
++    };
++    UNICODE_STRING *path = attr->ObjectName;
++    const WCHAR *slot = NULL, *slot_end = NULL, *serial, *serial_end = NULL;
++    UINT len = 0;
++
++    if (!path || !path->Buffer || path->Length <= sizeof(pipe_prefixW)) return FALSE;
++    if (wcsnicmp( path->Buffer, pipe_prefixW, ARRAY_SIZE(pipe_prefixW) )) return FALSE;
++
++    serial = path->Buffer + path->Length / sizeof(WCHAR);
++    while (serial > path->Buffer && *serial != '&')
++    {
++        if (*serial == '#')
++        {
++            slot_end = serial_end;
++            serial_end = serial;
++            slot = serial_end + 1;
++        }
++        serial--;
++    }
++    if (serial == path->Buffer || *serial != '&' || !slot_end || !serial_end) return FALSE;
++
++    redir->Length = sizeof(hid_prefixW) + sizeof(hid_midW) + sizeof(hid_tailW);
++    redir->Length += (serial_end - serial + slot_end - slot) * sizeof(WCHAR);
++    redir->MaximumLength = redir->Length + sizeof(WCHAR);
++    if (!(redir->Buffer = malloc( redir->MaximumLength ))) return FALSE;
++
++    memcpy( redir->Buffer, hid_prefixW, sizeof(hid_prefixW) );
++    len += ARRAY_SIZE(hid_prefixW);
++    memcpy( redir->Buffer + len, slot, (slot_end - slot) * sizeof(WCHAR) );
++    len += slot_end - slot;
++    memcpy( redir->Buffer + len, hid_midW, sizeof(hid_midW) );
++    len += ARRAY_SIZE(hid_midW);
++    memcpy( redir->Buffer + len, serial, (serial_end - serial) * sizeof(WCHAR) );
++    len += serial_end - serial;
++    memcpy( redir->Buffer + len, hid_tailW, sizeof(hid_tailW) );
++
++    TRACE( "HACK: %s -> %s\n", debugstr_us(attr->ObjectName), debugstr_us(redir) );
++    attr->ObjectName = redir;
++    return TRUE;
++}
+ 
+ #ifndef _WIN64
+ 
+@@ -3026,6 +3087,9 @@ BOOL get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
+     const WCHAR *name = attr->ObjectName->Buffer;
+     unsigned int i, prefix_len = 0, len = attr->ObjectName->Length / sizeof(WCHAR);
+ 
++    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++    if (replace_steam_input_path( attr, redir )) return;
++
+     if (!NtCurrentTeb64()) return;
+ 
+     if (!attr->RootDirectory)
+-- 
+2.51.0
+
+From 59add17c083e08e8724b80fa6648c824f199226f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Mon, 8 Jan 2024 14:35:42 +0100
+Subject: [PATCH 0097/2018] HACK: win32u: Emulate Steam Input native hooks.
+
+CW-Bug-Id: #23185
+---
+ dlls/win32u/rawinput.c | 69 ++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 67 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/win32u/rawinput.c b/dlls/win32u/rawinput.c
+index 62b1707dbfe..5e875e65580 100644
+--- a/dlls/win32u/rawinput.c
++++ b/dlls/win32u/rawinput.c
+@@ -374,6 +374,30 @@ UINT WINAPI NtUserGetRawInputDeviceList( RAWINPUTDEVICELIST *device_list, UINT *
+     return count;
+ }
+ 
++static BOOL steam_input_get_vid_pid( UINT slot, UINT16 *vid, UINT16 *pid )
++{
++    const char *info = getenv( "SteamVirtualGamepadInfo" );
++    char buffer[256];
++    UINT current;
++    FILE *file;
++
++    TRACE( "reading SteamVirtualGamepadInfo %s\n", debugstr_a(info) );
++
++    if (!info || !(file = fopen( info, "r" ))) return FALSE;
++    while (fscanf( file, "%255[^\n]\n", buffer ) == 1)
++    {
++        if (sscanf( buffer, "[slot %d]", &current )) continue;
++        if (current < slot) continue;
++        if (current > slot) break;
++        if (sscanf( buffer, "VID=0x%hx", vid )) continue;
++        if (sscanf( buffer, "PID=0x%hx", pid )) continue;
++    }
++
++    fclose( file );
++
++    return TRUE;
++}
++
+ /**********************************************************************
+  *         NtUserGetRawInputDeviceInfo   (win32u.@)
+  */
+@@ -411,10 +435,51 @@ UINT WINAPI NtUserGetRawInputDeviceInfo( HANDLE handle, UINT command, void *data
+     switch (command)
+     {
+     case RIDI_DEVICENAME:
+-        if ((len = wcslen( device->path ) + 1) <= data_len && data)
+-            memcpy( data, device->path, len * sizeof(WCHAR) );
++    {
++        static const WCHAR steam_input_idW[] =
++        {
++            '\\','\\','?','\\','H','I','D','#','V','I','D','_','2','8','D','E','&','P','I','D','_','1','1','F','F','&','I','G','_',0
++        };
++        const WCHAR *device_path;
++        WCHAR bufferW[MAX_PATH];
++
++        /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
++        if (wcsnicmp( device->path, steam_input_idW, 29 )) device_path = device->path;
++        else
++        {
++            char buffer[MAX_PATH];
++            UINT size = 0, slot;
++            const WCHAR *tmpW;
++            UINT16 vid, pid;
++
++            tmpW = device->path + 29;
++            while (*tmpW && *tmpW != '#' && size < ARRAY_SIZE(buffer)) buffer[size++] = *tmpW++;
++            buffer[size] = 0;
++            if (sscanf( buffer, "%02u", &slot ) != 1) slot = 0;
++
++            if (!steam_input_get_vid_pid( slot, &vid, &pid ))
++            {
++                vid = 0x045e;
++                pid = 0x028e;
++            }
++
++            size = snprintf( buffer, ARRAY_SIZE(buffer), "\\\\.\\pipe\\HID#VID_045E&PID_028E&IG_00#%04X&%04X", vid, pid );
++            if ((tmpW = wcschr( device->path + 29, '&' )))
++            {
++                do buffer[size++] = *tmpW++;
++                while (*tmpW != '&' && size < ARRAY_SIZE(buffer));
++            }
++            size += snprintf( buffer + size, ARRAY_SIZE(buffer) - size, "#%d#%u", slot, (UINT)GetCurrentProcessId() );
++
++            ntdll_umbstowcs( buffer, size + 1, bufferW, sizeof(bufferW) );
++            device_path = bufferW;
++        }
++
++        if ((len = wcslen( device_path ) + 1) <= data_len && data)
++            memcpy( data, device_path, len * sizeof(WCHAR) );
+         *data_size = len;
+         break;
++    }
+ 
+     case RIDI_DEVICEINFO:
+         if ((len = sizeof(info)) <= data_len && data)
 -- 
 2.51.0
 
@@ -2755,7 +3085,7 @@ index eb84f6df830..906d25d196b 100644
 @@ -1593,28 +1593,13 @@
          impl->button_map[i] = ++impl->button_count;
      }
- 
+
 -    if (desc.vid == 0x28de && desc.pid == 0x11ff && !strcmp(subsystem, "input"))
 +    if (sscanf(info.name, "Microsoft X-Box 360 pad %u", &desc.input) != 1) desc.input = -1;
 +    if (desc.vid == 0x28de && desc.pid == 0x11ff)
@@ -2782,7 +3112,7 @@ index eb84f6df830..906d25d196b 100644
 -    }
 +    else if (is_xbox_gamepad(desc.vid, desc.pid)) desc.is_gamepad = TRUE;
      else if (axis_count == 6 && button_count >= (impl->hat_count ? 10 : 14)) desc.is_gamepad = TRUE;
- 
+
      if ((impl->is_gamepad = desc.is_gamepad))
 @@ -1719,6 +1704,21 @@
          close(fd);
@@ -2803,6 +3133,6 @@ index eb84f6df830..906d25d196b 100644
 +        close(fd);
 +        return;
 +    }
- 
+
      if ((desc.is_hidraw = !strcmp(subsystem, "hidraw")) && !hidraw_device_create(dev, fd, devnode, desc)) return;
      if (!strcmp(subsystem, "input") && !lnxev_device_create(dev, fd, devnode, desc)) return;
