@@ -1,6 +1,6 @@
 --- a/server/d3dkmt.c
 +++ b/server/d3dkmt.c
-@@ -56,6 +56,7 @@
+@@ -54,6 +54,7 @@
      NULL,                           /* remove_queue */
      NULL,                           /* signaled */
      NULL,                           /* get_esync_fd */
@@ -8,22 +8,6 @@
      NULL,                           /* satisfied */
      no_signal,                      /* signal */
      no_get_fd,                      /* get_fd */
-@@ -109,6 +110,7 @@
-     NULL,                               /* signaled */
-     NULL,                               /* satisfied */
-     NULL,                               /* get_esync_fd */
-+    NULL,                               /* get_fsync_fd */
-     no_signal,                          /* signal */
-     no_get_fd,                          /* get_fd */
-     default_map_access,                 /* map_access */
-@@ -175,6 +177,7 @@
-     NULL,                                   /* remove_queue */
-     NULL,                                   /* signaled */
-     NULL,                                   /* get_esync_fd */
-+    NULL,                                   /* get_fsync_fd */
-     NULL,                                   /* satisfied */
-     no_signal,                              /* signal */
-     no_get_fd,                              /* get_fd */
 
 From 1d3dadfd7707ac176b67b50a0dc573f799778836 Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
@@ -3301,13 +3285,12 @@ index a78748b96ca..dccf43197cf 100644
      NULL,                         /* satisfied */
      no_signal,                    /* signal */
      no_get_fd,                    /* get_fd */
-@@ -321,29 +327,34 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+@@ -321,28 +327,33 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
          queue->ignore_post_msg = 0;
          queue->esync_fd        = -1;
          queue->esync_in_msgwait = 0;
 +        queue->fsync_idx       = 0;
 +        queue->fsync_in_msgwait = 0;
- 
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
          list_init( &queue->pending_timers );
@@ -3622,14 +3605,14 @@ index 1a245c58396..1fb3603f2a7 100644
          esync_clear( thread->esync_apc_fd );
  
 @@ -1327,6 +1356,8 @@ void kill_thread( struct thread *thread, int violent_death )
-     }
-     else
-         wake_up( &thread->obj, 0 );
-+        if (do_fsync())
-+            fsync_abandon_mutexes( thread );
-         if (do_esync())
-             esync_abandon_mutexes( thread );
-     cleanup_thread( thread );
+     kill_console_processes( thread, 0 );
+     abandon_mutexes( thread );
+     wake_up( &thread->obj, 0 );
++    if (do_fsync())
++        fsync_abandon_mutexes( thread );
+     if (do_esync())
+         esync_abandon_mutexes( thread );
+     if (violent_death) send_thread_signal( thread, SIGQUIT );
 diff --git a/server/thread.h b/server/thread.h
 index 0f6108b684a..53627631343 100644
 --- a/server/thread.h
