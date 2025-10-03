@@ -547,7 +547,7 @@ _package_makepkg() {
 		fi
 	fi
 
-	if [ "$_use_fastsync" = "true" ] || [ "$_use_ntsync" = "true" ]; then
+	if [ "$_use_fastsync" = "true" ] || [ "$_use_ntsync" = "legacy" ]; then
 		msg2 '##########################################################################################################################'
 		msg2 ''
 		msg2 'To disable NTsync, export WINE_DISABLE_FAST_SYNC=1'
