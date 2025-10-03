@@ -1,7 +1,709 @@
-From 546f26cb5342e5e71ce100c25e4effd1ce00bad1 Mon Sep 17 00:00:00 2001
+From 5eb6ba136bef8597625b37afce4308219564c65e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Thu, 18 Sep 2025 15:50:07 +0200
+Subject: [PATCH 05/20] win32u: Check queue signaled state after processing
+ events.
+
+Instead of relying on ProcessEvents return value.
+---
+ dlls/win32u/message.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/win32u/message.c b/dlls/win32u/message.c
+index dc316922581..87efad6202c 100644
+--- a/dlls/win32u/message.c
++++ b/dlls/win32u/message.c
+@@ -3164,9 +3164,25 @@ static HANDLE get_server_queue_handle(void)
+     return ret;
+ }
+ 
++static BOOL is_queue_signaled(void)
++{
++    struct object_lock lock = OBJECT_LOCK_INIT;
++    const queue_shm_t *queue_shm;
++    BOOL signaled = FALSE;
++    UINT status;
++
++    while ((status = get_shared_queue( &lock, &queue_shm )) == STATUS_PENDING)
++        signaled = (queue_shm->wake_bits & queue_shm->wake_mask) ||
++                   (queue_shm->changed_bits & queue_shm->changed_mask);
++    if (status) return FALSE;
++
++    return signaled;
++}
++
+ BOOL process_driver_events( UINT mask )
+ {
+-    return user_driver->pProcessEvents( mask );
++    user_driver->pProcessEvents( mask );
++    return is_queue_signaled();
+ }
+ 
+ void check_for_events( UINT flags )
+-- 
+2.51.0
+
+From f46a9b42d072aafceeced982674d3022ee44a63d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Thu, 18 Sep 2025 16:01:48 +0200
+Subject: [PATCH 06/20] win32u: Return TRUE from ProcessEvents after emptying
+ the event queue.
+
+---
+ dlls/wineandroid.drv/window.c | 11 +++++++---
+ dlls/winemac.drv/event.c      | 34 ++++++++++++++---------------
+ dlls/winex11.drv/event.c      | 40 ++++++++++++++++-------------------
+ 3 files changed, 43 insertions(+), 42 deletions(-)
+
+diff --git a/dlls/wineandroid.drv/window.c b/dlls/wineandroid.drv/window.c
+index 9c0dc8d6115..81be65a065c 100644
+--- a/dlls/wineandroid.drv/window.c
++++ b/dlls/wineandroid.drv/window.c
+@@ -391,13 +391,19 @@ static void pull_events(void)
+ }
+ 
+ 
++static int check_fd_events( int fd, int events )
++{
++    struct pollfd pfd = {.fd = fd, .events = events};
++    if (poll( &pfd, 1, 0 ) <= 0) return 0;
++    return pfd.revents;
++}
++
+ /***********************************************************************
+  *           process_events
+  */
+ static int process_events( DWORD mask )
+ {
+     struct java_event *event, *next, *previous;
+-    unsigned int count = 0;
+ 
+     assert( GetCurrentThreadId() == desktop_tid );
+ 
+@@ -505,12 +511,11 @@ static int process_events( DWORD mask )
+             FIXME( "got event %u\n", event->data.type );
+         }
+         free( event );
+-        count++;
+         /* next may have been removed by a recursive call, so reset it to the beginning of the list */
+         next = LIST_ENTRY( event_queue.next, struct java_event, entry );
+     }
+     current_event = previous;
+-    return count;
++    return !check_fd_events( event_pipe[0], POLLIN );
+ }
+ 
+ 
+diff --git a/dlls/winemac.drv/event.c b/dlls/winemac.drv/event.c
+index f86716c7942..b97b876cb70 100644
+--- a/dlls/winemac.drv/event.c
++++ b/dlls/winemac.drv/event.c
+@@ -26,6 +26,8 @@
+ 
+ #include "config.h"
+ 
++#include <poll.h>
++
+ #include "ntstatus.h"
+ #define WIN32_NO_STATUS
+ #include "macdrv.h"
+@@ -526,25 +528,13 @@ void macdrv_handle_event(const macdrv_event *event)
+ }
+ 
+ 
+-/***********************************************************************
+- *              process_events
+- */
+-static int process_events(macdrv_event_queue queue, macdrv_event_mask mask)
++static int check_fd_events( int fd, int events )
+ {
+-    macdrv_event *event;
+-    int count = 0;
+-
+-    while (macdrv_copy_event_from_queue(queue, mask, &event))
+-    {
+-        count++;
+-        macdrv_handle_event(event);
+-        macdrv_release_event(event);
+-    }
+-    if (count) TRACE("processed %d events\n", count);
+-    return count;
++    struct pollfd pfd = {.fd = fd, .events = events};
++    if (poll( &pfd, 1, 0 ) <= 0) return 0;
++    return pfd.revents;
+ }
+ 
+-
+ /***********************************************************************
+  *              ProcessEvents   (MACDRV.@)
+  */
+@@ -552,6 +542,8 @@ BOOL macdrv_ProcessEvents(DWORD mask)
+ {
+     struct macdrv_thread_data *data = macdrv_thread_data();
+     macdrv_event_mask event_mask = get_event_mask(mask);
++    macdrv_event *event;
++    int count = 0;
+ 
+     TRACE("mask %x\n", mask);
+ 
+@@ -563,5 +555,13 @@ BOOL macdrv_ProcessEvents(DWORD mask)
+         data->current_event->type != WINDOW_DRAG_BEGIN)
+         event_mask = 0;  /* don't process nested events */
+ 
+-    return process_events(data->queue, event_mask);
++    while (macdrv_copy_event_from_queue(data->queue, event_mask, &event))
++    {
++        count++;
++        macdrv_handle_event(event);
++        macdrv_release_event(event);
++    }
++
++    if (count) TRACE("processed %d events\n", count);
++    return !check_fd_events(macdrv_get_event_queue_fd(data->queue), POLLIN);
+ }
+diff --git a/dlls/winex11.drv/event.c b/dlls/winex11.drv/event.c
+index d2cf9e55977..ca261b7bf3b 100644
+--- a/dlls/winex11.drv/event.c
++++ b/dlls/winex11.drv/event.c
+@@ -464,19 +464,28 @@ static inline BOOL call_event_handler( Display *display, XEvent *event )
+     return ret;
+ }
+ 
++static int check_fd_events( int fd, int events )
++{
++    struct pollfd pfd = {.fd = fd, .events = events};
++    if (poll( &pfd, 1, 0 ) <= 0) return 0;
++    return pfd.revents;
++}
+ 
+ /***********************************************************************
+- *           process_events
++ *           ProcessEvents   (X11DRV.@)
+  */
+-static BOOL process_events( Display *display, Bool (*filter)(Display*, XEvent*,XPointer), ULONG_PTR arg )
++BOOL X11DRV_ProcessEvents( DWORD mask )
+ {
++    struct x11drv_thread_data *data = x11drv_thread_data();
+     XEvent event, prev_event;
+     int count = 0;
+-    BOOL queued = FALSE;
+     enum event_merge_action action = MERGE_DISCARD;
+ 
++    if (!data) return FALSE;
++    if (data->current_event) mask = 0;  /* don't process nested events */
++
+     prev_event.type = 0;
+-    while (XCheckIfEvent( display, &event, filter, (char *)arg ))
++    while (XCheckIfEvent( data->display, &event, filter_event, (XPointer)(UINT_PTR)mask ))
+     {
+         count++;
+         if (XFilterEvent( &event, None ))
+@@ -517,41 +526,28 @@ static BOOL process_events( Display *display, Bool (*filter)(Display*, XEvent*,X
+         switch( action )
+         {
+         case MERGE_HANDLE:  /* handle prev, keep new */
+-            queued |= call_event_handler( display, &prev_event );
++            call_event_handler( data->display, &prev_event );
+             /* fall through */
+         case MERGE_DISCARD:  /* discard prev, keep new */
+             free_event_data( &prev_event );
+             prev_event = event;
+             break;
+         case MERGE_KEEP:  /* handle new, keep prev for future merging */
+-            queued |= call_event_handler( display, &event );
++            call_event_handler( data->display, &event );
+             /* fall through */
+         case MERGE_IGNORE: /* ignore new, keep prev for future merging */
+             free_event_data( &event );
+             break;
+         }
+     }
+-    if (prev_event.type) queued |= call_event_handler( display, &prev_event );
++    if (prev_event.type) call_event_handler( data->display, &prev_event );
+     free_event_data( &prev_event );
+     XFlush( gdi_display );
+-    if (count) TRACE( "processed %d events, returning %d\n", count, queued );
+-    return queued;
++    if (count) TRACE( "processed %d events\n", count );
++    return !check_fd_events( ConnectionNumber( data->display ), POLLIN );
+ }
+ 
+ 
+-/***********************************************************************
+- *           ProcessEvents   (X11DRV.@)
+- */
+-BOOL X11DRV_ProcessEvents( DWORD mask )
+-{
+-    struct x11drv_thread_data *data = x11drv_thread_data();
+-
+-    if (!data) return FALSE;
+-    if (data->current_event) mask = 0;  /* don't process nested events */
+-
+-    return process_events( data->display, filter_event, mask );
+-}
+-
+ /***********************************************************************
+  *           EVENT_x11_time_to_win32_time
+  *
+-- 
+2.51.0
+
+From 5d38dbac2dc514a6aa0e639e16d9d9a8727d80da Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Thu, 18 Sep 2025 15:51:17 +0200
+Subject: [PATCH 07/20] win32u: Notify wineserver after processing every driver
+ events.
+
+---
+ dlls/win32u/message.c | 11 ++++++++++-
+ server/protocol.def   |  1 +
+ server/queue.c        |  8 ++++++++
+ 3 files changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/win32u/message.c b/dlls/win32u/message.c
+index 87efad6202c..02f937715bf 100644
+--- a/dlls/win32u/message.c
++++ b/dlls/win32u/message.c
+@@ -3181,7 +3181,16 @@ static BOOL is_queue_signaled(void)
+ 
+ BOOL process_driver_events( UINT mask )
+ {
+-    user_driver->pProcessEvents( mask );
++    if (user_driver->pProcessEvents( mask ))
++    {
++        SERVER_START_REQ( set_queue_mask )
++        {
++            req->poll_events = 1;
++            wine_server_call( req );
++        }
++        SERVER_END_REQ;
++    }
++
+     return is_queue_signaled();
+ }
+ 
+diff --git a/server/protocol.def b/server/protocol.def
+index 452f3f163af..7be8976911b 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -2302,6 +2302,7 @@ struct process_info
+ @REQ(set_queue_mask)
+     unsigned int wake_mask;    /* wakeup bits mask */
+     unsigned int changed_mask; /* changed bits mask */
++    int          poll_events;  /* whether to poll queue fd */
+ @REPLY
+     unsigned int wake_bits;    /* current wake bits */
+     unsigned int changed_bits; /* current changed bits */
+diff --git a/server/queue.c b/server/queue.c
+index ffb1d441e60..2d36e1568c0 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -3158,6 +3158,14 @@ DECL_HANDLER(set_queue_mask)
+     if (!queue) return;
+     queue_shm = queue->shared;
+ 
++    if (req->poll_events)
++    {
++        if (!queue->fd) return;
++        if (check_fd_events( queue->fd, POLLIN )) set_queue_bits( queue, QS_DRIVER );
++        else clear_queue_bits( queue, QS_DRIVER );
++        return;
++    }
++
+     SHARED_WRITE_BEGIN( queue_shm, queue_shm_t )
+     {
+         shared->access_time  = monotonic_time;
+-- 
+2.51.0
+
+From 9db9d1d313f264a16e4d0a86f9a3025df478f39d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Thu, 18 Sep 2025 15:41:59 +0200
+Subject: [PATCH 08/20] server: Continuously poll on queue fd for driver
+ events.
+
+---
+ server/queue.c | 33 ++++++---------------------------
+ 1 file changed, 6 insertions(+), 27 deletions(-)
+
+diff --git a/server/queue.c b/server/queue.c
+index 2d36e1568c0..7ae58bc2b2e 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -152,7 +152,6 @@ struct hotkey
+ 
+ static void msg_queue_dump( struct object *obj, int verbose );
+ static int msg_queue_add_queue( struct object *obj, struct wait_queue_entry *entry );
+-static void msg_queue_remove_queue( struct object *obj, struct wait_queue_entry *entry );
+ static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static void msg_queue_destroy( struct object *obj );
+ static void msg_queue_poll_event( struct fd *fd, int event );
+@@ -166,7 +165,7 @@ static const struct object_ops msg_queue_ops =
+     &no_type,                  /* type */
+     msg_queue_dump,            /* dump */
+     msg_queue_add_queue,       /* add_queue */
+-    msg_queue_remove_queue,    /* remove_queue */
++    remove_queue,              /* remove_queue */
+     msg_queue_signaled,        /* signaled */
+     no_satisfied,              /* satisfied */
+     no_signal,                 /* signal */
+@@ -1307,33 +1306,10 @@ static int msg_queue_add_queue( struct object *obj, struct wait_queue_entry *ent
+         return 0;
+     }
+ 
+-    if (queue->fd)
+-    {
+-        if (check_fd_events( queue->fd, POLLIN ))
+-            set_queue_bits( queue, QS_DRIVER );
+-        else
+-        {
+-            clear_queue_bits( queue, QS_DRIVER );
+-            set_fd_events( queue->fd, POLLIN );
+-        }
+-    }
+     add_queue( obj, entry );
+     return 1;
+ }
+ 
+-static void msg_queue_remove_queue(struct object *obj, struct wait_queue_entry *entry )
+-{
+-    struct msg_queue *queue = (struct msg_queue *)obj;
+-
+-    remove_queue( obj, entry );
+-    if (queue->fd)
+-    {
+-        /* after waiting, assume that all events will be processed */
+-        clear_queue_bits( queue, QS_DRIVER );
+-        set_fd_events( queue->fd, 0 );
+-    }
+-}
+-
+ static void msg_queue_dump( struct object *obj, int verbose )
+ {
+     struct msg_queue *queue = (struct msg_queue *)obj;
+@@ -3141,7 +3117,10 @@ DECL_HANDLER(set_queue_fd)
+     if ((unix_fd = get_file_unix_fd( file )) != -1)
+     {
+         if ((unix_fd = dup( unix_fd )) != -1)
++        {
+             queue->fd = create_anonymous_fd( &msg_queue_fd_ops, unix_fd, &queue->obj, 0 );
++            set_fd_events( queue->fd, POLLIN );
++        }
+         else
+             file_set_error();
+     }
+@@ -3161,8 +3140,8 @@ DECL_HANDLER(set_queue_mask)
+     if (req->poll_events)
+     {
+         if (!queue->fd) return;
+-        if (check_fd_events( queue->fd, POLLIN )) set_queue_bits( queue, QS_DRIVER );
+-        else clear_queue_bits( queue, QS_DRIVER );
++        clear_queue_bits( queue, QS_DRIVER );
++        set_fd_events( queue->fd, POLLIN );
+         return;
+     }
+ 
+-- 
+2.51.0
+
+From efad80c148b3e90e4496c9765f061246a734bbe5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 30 Sep 2025 18:14:24 +0200
+Subject: [PATCH 09/20] server: Remove mostly unnecessary thread own queue
+ check.
+
+The thread queue handle is private and it shouldn't be possible to wait
+on it from other threads.
+---
+ server/queue.c | 18 +-----------------
+ 1 file changed, 1 insertion(+), 17 deletions(-)
+
+diff --git a/server/queue.c b/server/queue.c
+index 7ae58bc2b2e..825ecb7217c 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -151,7 +151,6 @@ struct hotkey
+ };
+ 
+ static void msg_queue_dump( struct object *obj, int verbose );
+-static int msg_queue_add_queue( struct object *obj, struct wait_queue_entry *entry );
+ static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry );
+ static void msg_queue_destroy( struct object *obj );
+ static void msg_queue_poll_event( struct fd *fd, int event );
+@@ -164,7 +163,7 @@ static const struct object_ops msg_queue_ops =
+     sizeof(struct msg_queue),  /* size */
+     &no_type,                  /* type */
+     msg_queue_dump,            /* dump */
+-    msg_queue_add_queue,       /* add_queue */
++    add_queue,                 /* add_queue */
+     remove_queue,              /* remove_queue */
+     msg_queue_signaled,        /* signaled */
+     no_satisfied,              /* satisfied */
+@@ -1295,21 +1294,6 @@ static int is_queue_hung( struct msg_queue *queue )
+     return queue->signaled && monotonic_time - queue->shared->access_time > 5 * TICKS_PER_SEC;
+ }
+ 
+-static int msg_queue_add_queue( struct object *obj, struct wait_queue_entry *entry )
+-{
+-    struct msg_queue *queue = (struct msg_queue *)obj;
+-
+-    /* a thread can only wait on its own queue */
+-    if (get_wait_queue_thread(entry)->queue != queue)
+-    {
+-        set_error( STATUS_ACCESS_DENIED );
+-        return 0;
+-    }
+-
+-    add_queue( obj, entry );
+-    return 1;
+-}
+-
+ static void msg_queue_dump( struct object *obj, int verbose )
+ {
+     struct msg_queue *queue = (struct msg_queue *)obj;
+-- 
+2.51.0
+
+From 25f6f4c8dba093018533f6f7cf37635cfde8cd3c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
+Date: Tue, 30 Sep 2025 18:15:38 +0200
+Subject: [PATCH 10/20] server: Create event syncs for the message queues.
+
+Instead of the dual server / inproc sync.
+---
+ server/inproc_sync.c |  5 +--
+ server/queue.c       | 74 ++++++++++++++++----------------------------
+ server/user.h        |  1 -
+ 3 files changed, 27 insertions(+), 53 deletions(-)
+
+diff --git a/server/inproc_sync.c b/server/inproc_sync.c
+index 41a9c2770a7..435c58947f3 100644
+--- a/server/inproc_sync.c
++++ b/server/inproc_sync.c
+@@ -138,10 +138,7 @@ static int get_inproc_sync_fd( struct object *obj, int *type )
+     struct object *sync;
+     int fd = -1;
+ 
+-    if (obj != (struct object *)current->queue) sync = get_obj_sync( obj );
+-    else sync = thread_queue_inproc_sync( current );
+-    if (!sync) return -1;
+-
++    if (!(sync = get_obj_sync( obj ))) return -1;
+     if (sync->ops == &inproc_sync_ops)
+     {
+         struct inproc_sync *inproc = (struct inproc_sync *)sync;
+diff --git a/server/queue.c b/server/queue.c
+index 825ecb7217c..97cb11c8cc0 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -119,8 +119,7 @@ struct msg_queue
+ {
+     struct object          obj;             /* object header */
+     struct fd             *fd;              /* optional file descriptor to poll */
+-    struct inproc_sync    *inproc_sync;     /* inproc sync for client-side waits */
+-    int                    signaled;        /* queue is signaled from fd POLLIN or masks */
++    struct event_sync     *sync;            /* sync object for wait/signal */
+     int                    paint_count;     /* pending paint messages count */
+     int                    hotkey_count;    /* pending hotkey messages count */
+     int                    quit_message;    /* is there a pending quit message? */
+@@ -151,7 +150,7 @@ struct hotkey
+ };
+ 
+ static void msg_queue_dump( struct object *obj, int verbose );
+-static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry );
++static struct object *msg_queue_get_sync( struct object *obj );
+ static void msg_queue_destroy( struct object *obj );
+ static void msg_queue_poll_event( struct fd *fd, int event );
+ static void thread_input_dump( struct object *obj, int verbose );
+@@ -163,13 +162,13 @@ static const struct object_ops msg_queue_ops =
+     sizeof(struct msg_queue),  /* size */
+     &no_type,                  /* type */
+     msg_queue_dump,            /* dump */
+-    add_queue,                 /* add_queue */
+-    remove_queue,              /* remove_queue */
+-    msg_queue_signaled,        /* signaled */
+-    no_satisfied,              /* satisfied */
++    NULL,                      /* add_queue */
++    NULL,                      /* remove_queue */
++    NULL,                      /* signaled */
++    NULL,                      /* satisfied */
+     no_signal,                 /* signal */
+     no_get_fd,                 /* get_fd */
+-    default_get_sync,          /* get_sync */
++    msg_queue_get_sync,        /* get_sync */
+     default_map_access,        /* map_access */
+     default_get_sd,            /* get_sd */
+     default_set_sd,            /* set_sd */
+@@ -306,8 +305,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+     if ((queue = alloc_object( &msg_queue_ops )))
+     {
+         queue->fd              = NULL;
+-        queue->inproc_sync     = NULL;
+-        queue->signaled        = 0;
++        queue->sync            = NULL;
+         queue->paint_count     = 0;
+         queue->hotkey_count    = 0;
+         queue->quit_message    = 0;
+@@ -324,7 +322,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+         list_init( &queue->expired_timers );
+         for (i = 0; i < NB_MSG_KINDS; i++) list_init( &queue->msg_list[i] );
+ 
+-        if (get_inproc_device_fd() >= 0 && !(queue->inproc_sync = create_inproc_internal_sync( 1, 0 ))) goto error;
++        if (!(queue->sync = create_event_sync( 1, 0 ))) goto error;
+         if (!(queue->shared = alloc_shared_object())) goto error;
+ 
+         SHARED_WRITE_BEGIN( queue->shared, queue_shm_t )
+@@ -712,20 +710,6 @@ void add_queue_hook_count( struct thread *thread, unsigned int index, int count
+     assert( thread->queue->shared->hooks_count[index] >= 0 );
+ }
+ 
+-static void signal_queue_sync( struct msg_queue *queue )
+-{
+-    if (queue->signaled) return;
+-    queue->signaled = 1;
+-    wake_up( &queue->obj, 0 );
+-    if (queue->inproc_sync) signal_inproc_sync( queue->inproc_sync );
+-}
+-
+-static void reset_queue_sync( struct msg_queue *queue )
+-{
+-    queue->signaled = 0;
+-    if (queue->inproc_sync) reset_inproc_sync( queue->inproc_sync );
+-}
+-
+ /* check the queue status */
+ static inline int get_queue_status( struct msg_queue *queue )
+ {
+@@ -756,7 +740,7 @@ static inline void set_queue_bits( struct msg_queue *queue, unsigned int bits )
+     }
+     SHARED_WRITE_END;
+ 
+-    if (get_queue_status( queue )) signal_queue_sync( queue );
++    if (get_queue_status( queue )) signal_sync( queue->sync );
+ }
+ 
+ /* clear some queue bits */
+@@ -780,7 +764,7 @@ static inline void clear_queue_bits( struct msg_queue *queue, unsigned int bits
+         if (queue->keystate_lock) unlock_input_keystate( queue->input );
+         queue->keystate_lock = 0;
+     }
+-    if (!get_queue_status( queue )) reset_queue_sync( queue );
++    if (!get_queue_status( queue )) reset_sync( queue->sync );
+ }
+ 
+ /* check if message is matched by the filter */
+@@ -1291,22 +1275,22 @@ static void cleanup_results( struct msg_queue *queue )
+ static int is_queue_hung( struct msg_queue *queue )
+ {
+     /* queue is hung if it's signaled and thread didn't access it for more than 5 seconds */
+-    return queue->signaled && monotonic_time - queue->shared->access_time > 5 * TICKS_PER_SEC;
++    return get_queue_status( queue ) && monotonic_time - queue->shared->access_time > 5 * TICKS_PER_SEC;
+ }
+ 
+-static void msg_queue_dump( struct object *obj, int verbose )
++static struct object *msg_queue_get_sync( struct object *obj )
+ {
+     struct msg_queue *queue = (struct msg_queue *)obj;
+-    queue_shm_t *queue_shm = queue->shared;
+-    fprintf( stderr, "Msg queue bits=%x mask=%x\n",
+-             queue_shm->wake_bits, queue_shm->wake_mask );
++    assert( obj->ops == &msg_queue_ops );
++    return grab_object( queue->sync );
+ }
+ 
+-static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry )
++static void msg_queue_dump( struct object *obj, int verbose )
+ {
+     struct msg_queue *queue = (struct msg_queue *)obj;
+-    assert( obj->ops == &msg_queue_ops );
+-    return queue->signaled;
++    queue_shm_t *queue_shm = queue->shared;
++    fprintf( stderr, "Msg queue bits=%x mask=%x\n",
++             queue_shm->wake_bits, queue_shm->wake_mask );
+ }
+ 
+ static void msg_queue_destroy( struct object *obj )
+@@ -1352,7 +1336,7 @@ static void msg_queue_destroy( struct object *obj )
+     if (queue->hooks) release_object( queue->hooks );
+     if (queue->fd) release_object( queue->fd );
+     if (queue->shared) free_shared_object( queue->shared );
+-    if (queue->inproc_sync) release_object( queue->inproc_sync );
++    if (queue->sync) release_object( queue->sync );
+ }
+ 
+ static void msg_queue_poll_event( struct fd *fd, int event )
+@@ -1442,12 +1426,6 @@ int init_thread_queue( struct thread *thread )
+     return (create_msg_queue( thread, NULL ) != NULL);
+ }
+ 
+-struct object *thread_queue_inproc_sync( struct thread *thread )
+-{
+-    if (!thread->queue) return NULL;
+-    return grab_object( thread->queue->inproc_sync );
+-}
+-
+ /* attach two thread input data structures */
+ int attach_thread_input( struct thread *thread_from, struct thread *thread_to )
+ {
+@@ -3139,8 +3117,8 @@ DECL_HANDLER(set_queue_mask)
+     }
+     SHARED_WRITE_END;
+ 
+-    if (!get_queue_status( queue )) reset_queue_sync( queue );
+-    else signal_queue_sync( queue );
++    if (!get_queue_status( queue )) reset_sync( queue->sync );
++    else signal_sync( queue->sync );
+ }
+ 
+ 
+@@ -3161,7 +3139,7 @@ DECL_HANDLER(get_queue_status)
+     }
+     SHARED_WRITE_END;
+ 
+-    if (!get_queue_status( queue )) reset_queue_sync( queue );
++    if (!get_queue_status( queue )) reset_sync( queue->sync );
+ }
+ 
+ 
+@@ -3361,7 +3339,7 @@ DECL_HANDLER(get_message)
+     }
+     SHARED_WRITE_END;
+ 
+-    if (!get_queue_status( queue )) reset_queue_sync( queue );
++    if (!get_queue_status( queue )) reset_sync( queue->sync );
+ 
+     /* then check for posted messages */
+     if ((filter & QS_POSTMESSAGE) &&
+@@ -3422,8 +3400,8 @@ DECL_HANDLER(get_message)
+     }
+     SHARED_WRITE_END;
+ 
+-    if (!get_queue_status( queue )) reset_queue_sync( queue );
+-    else signal_queue_sync( queue );
++    if (!get_queue_status( queue )) reset_sync( queue->sync );
++    else signal_sync( queue->sync );
+     set_error( STATUS_PENDING );  /* FIXME */
+ }
+ 
+diff --git a/server/user.h b/server/user.h
+index 35bd396f859..73b10aaf5ac 100644
+--- a/server/user.h
++++ b/server/user.h
+@@ -120,7 +120,6 @@ extern void inc_queue_paint_count( struct thread *thread, int incr );
+ extern void queue_cleanup_window( struct thread *thread, user_handle_t win );
+ extern int init_thread_queue( struct thread *thread );
+ extern void check_thread_queue_idle( struct thread *thread );
+-extern struct object *thread_queue_inproc_sync( struct thread *thread );
+ extern int attach_thread_input( struct thread *thread_from, struct thread *thread_to );
+ extern void detach_thread_input( struct thread *thread_from );
+ extern void set_clip_rectangle( struct desktop *desktop, const struct rectangle *rect,
+-- 
+2.51.0
+
+From 62abbadafe4b0e689a9dfcbee387f9558f8fbfb0 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Fri, 19 Sep 2025 16:23:16 +0200
-Subject: [PATCH 1/8] server: Use a separate helper to create internal event
+Subject: [PATCH 12/20] server: Use a separate helper to create internal event
  syncs.
 
 ---
@@ -189,10 +891,10 @@ index b9bc02b6469..48a1d2d697d 100644
          close( socket_fd );
          goto done;
 diff --git a/server/queue.c b/server/queue.c
-index 89e862d25a4..4ccecc5c26a 100644
+index 97cb11c8cc0..264ef9aab62 100644
 --- a/server/queue.c
 +++ b/server/queue.c
-@@ -323,7 +323,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
+@@ -322,7 +322,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
          list_init( &queue->expired_timers );
          for (i = 0; i < NB_MSG_KINDS; i++) list_init( &queue->msg_list[i] );
  
@@ -246,13 +948,12 @@ index 522fc6a7113..e8811594cac 100644
                  release_object( timer );
                  return NULL;
 -- 
-GitLab
+2.51.0
 
-
-From 354b50ba31e4f14e2b21601054fafa30f5c7b970 Mon Sep 17 00:00:00 2001
+From 654141d2e9a22c3eb27a0627f2560c3a645fabe1 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Tue, 30 Sep 2025 17:26:33 +0200
-Subject: [PATCH 2/8] server: Explicitly create an internal server sync for
+Subject: [PATCH 13/20] server: Explicitly create an internal server sync for
  debug events.
 
 ---
@@ -310,13 +1011,12 @@ index 0a7b5bf7c84..d604f70d100 100644
  extern void signal_sync( struct event_sync *sync );
  extern void reset_sync( struct event_sync *sync );
 -- 
-GitLab
+2.51.0
 
-
-From 6464b81276413d5b3bab8681dfcb21ba9c638b74 Mon Sep 17 00:00:00 2001
+From 89495239e0a47fd3ea661f954236d5faa44f1d7d Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Tue, 30 Sep 2025 18:10:39 +0200
-Subject: [PATCH 3/8] server: Signal event server / inproc syncs using the
+Subject: [PATCH 14/20] server: Signal event server / inproc syncs using the
  signal op.
 
 ---
@@ -567,13 +1267,12 @@ index 8bd1e0cff3b..83ee9a47794 100644
      }
      return ret;
 -- 
-GitLab
+2.51.0
 
-
-From 3e02ed9c15a82e2f37158684b717ab0f6163da80 Mon Sep 17 00:00:00 2001
+From e1e02dc80f31583254824d2fb732d015a68cdcac Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Fri, 19 Sep 2025 17:16:04 +0200
-Subject: [PATCH 4/8] server: Use struct object pointers for object syncs.
+Subject: [PATCH 15/20] server: Use struct object pointers for object syncs.
 
 ---
  server/completion.c |  2 +-
@@ -1041,10 +1740,10 @@ index 619e4894d1d..f7188627abc 100644
      process_id_t         parent_id;       /* parent process id (at the time of creation) */
      struct list          thread_list;     /* thread list */
 diff --git a/server/queue.c b/server/queue.c
-index 4ccecc5c26a..fb9499b5589 100644
+index 264ef9aab62..6e1cfb76329 100644
 --- a/server/queue.c
 +++ b/server/queue.c
-@@ -120,7 +120,7 @@ struct msg_queue
+@@ -119,7 +119,7 @@ struct msg_queue
  {
      struct object          obj;             /* object header */
      struct fd             *fd;              /* optional file descriptor to poll */
@@ -1200,13 +1899,55 @@ index e8811594cac..a4309d54045 100644
      int                  signaled;  /* current signaled state */
      unsigned int         period;    /* timer period in ms */
 -- 
-GitLab
+2.51.0
 
+From 3051a1a9cb77d6ecc621c519acb463805f655c73 Mon Sep 17 00:00:00 2001
+From: Elizabeth Figura <zfigura@codeweavers.com>
+Date: Tue, 9 Sep 2025 17:12:34 +0200
+Subject: [PATCH 16/20] ntdll: Add a reference count to inproc_sync objects.
 
-From a7af3ea54a5975645625093b68a07f0a4705f2d7 Mon Sep 17 00:00:00 2001
+---
+ dlls/ntdll/unix/sync.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+index dd18c948d22..8c04628fbc6 100644
+--- a/dlls/ntdll/unix/sync.c
++++ b/dlls/ntdll/unix/sync.c
+@@ -309,6 +309,7 @@ static unsigned int validate_open_object_attributes( const OBJECT_ATTRIBUTES *at
+ 
+ struct inproc_sync
+ {
++    LONG           refcount;  /* reference count of the sync object */
+     int            fd;        /* unix file descriptor */
+     unsigned int   access;    /* handle access rights */
+     unsigned int   type;      /* enum inproc_sync_type */
+@@ -316,7 +317,9 @@ struct inproc_sync
+ 
+ static void release_inproc_sync( struct inproc_sync *sync )
+ {
+-    close( sync->fd );
++    LONG ref = InterlockedDecrement( &sync->refcount );
++    assert( ref >= 0 );
++    if (!ref) close( sync->fd );
+ }
+ 
+ static NTSTATUS get_inproc_sync( HANDLE handle, ACCESS_MASK desired_access, struct inproc_sync *sync )
+@@ -335,6 +338,7 @@ static NTSTATUS get_inproc_sync( HANDLE handle, ACCESS_MASK desired_access, stru
+         if (!(ret = wine_server_call( req )))
+         {
+             obj_handle_t fd_handle;
++            sync->refcount = 1;
+             sync->fd = wine_server_receive_fd( &fd_handle );
+             assert( wine_server_ptr_handle(fd_handle) == handle );
+             sync->access = reply->access;
+-- 
+2.51.0
+
+From e90fe84a9c7cd4f55a7f22525fa56bb91c50e8b0 Mon Sep 17 00:00:00 2001
 From: Elizabeth Figura <zfigura@codeweavers.com>
 Date: Fri, 19 Sep 2025 17:57:27 +0200
-Subject: [PATCH 5/8] ntdll: Validate expected inproc sync type in
+Subject: [PATCH 17/20] ntdll: Validate expected inproc sync type in
  get_inproc_sync.
 
 ---
@@ -1216,11 +1957,11 @@ Subject: [PATCH 5/8] ntdll: Validate expected inproc sync type in
  3 files changed, 91 insertions(+), 30 deletions(-)
 
 diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
-index dd18c948d22..d8d8406f211 100644
+index 8c04628fbc6..be52237c076 100644
 --- a/dlls/ntdll/unix/sync.c
 +++ b/dlls/ntdll/unix/sync.c
-@@ -319,16 +319,11 @@ static void release_inproc_sync( struct inproc_sync *sync )
-     close( sync->fd );
+@@ -322,16 +322,11 @@ static void release_inproc_sync( struct inproc_sync *sync )
+     if (!ref) close( sync->fd );
  }
  
 -static NTSTATUS get_inproc_sync( HANDLE handle, ACCESS_MASK desired_access, struct inproc_sync *sync )
@@ -1238,7 +1979,7 @@ index dd18c948d22..d8d8406f211 100644
      SERVER_START_REQ( get_inproc_sync_fd )
      {
          req->handle = wine_server_obj_handle( handle );
-@@ -343,9 +338,28 @@ static NTSTATUS get_inproc_sync( HANDLE handle, ACCESS_MASK desired_access, stru
+@@ -347,9 +342,28 @@ static NTSTATUS get_inproc_sync( HANDLE handle, ACCESS_MASK desired_access, stru
      }
      SERVER_END_REQ;
  
@@ -1267,7 +2008,7 @@ index dd18c948d22..d8d8406f211 100644
      if ((sync->access & desired_access) != desired_access)
      {
          release_inproc_sync( sync );
-@@ -361,6 +375,15 @@ extern NTSTATUS check_signal_access( struct inproc_sync *sync )
+@@ -365,6 +379,15 @@ extern NTSTATUS check_signal_access( struct inproc_sync *sync )
      {
      case INPROC_SYNC_INTERNAL:
          return STATUS_OBJECT_TYPE_MISMATCH;
@@ -1283,7 +2024,7 @@ index dd18c948d22..d8d8406f211 100644
      }
  
      assert( 0 );
-@@ -369,50 +392,90 @@ extern NTSTATUS check_signal_access( struct inproc_sync *sync )
+@@ -373,50 +396,90 @@ extern NTSTATUS check_signal_access( struct inproc_sync *sync )
  
  static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *prev_count )
  {
@@ -1382,7 +2123,7 @@ index dd18c948d22..d8d8406f211 100644
  }
  
  static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
-@@ -426,7 +489,7 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
+@@ -430,7 +493,7 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
      assert( count <= ARRAY_SIZE(syncs) );
      for (int i = 0; i < count; ++i)
      {
@@ -1391,7 +2132,7 @@ index dd18c948d22..d8d8406f211 100644
          {
              while (i--) release_inproc_sync( syncs[i] );
              return ret;
-@@ -446,22 +509,17 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
+@@ -450,22 +513,17 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
  
@@ -1436,7 +2177,7 @@ index 54342fc3e2a..8cfd3b1e1e8 100644
  
      if (signal) signal_inproc_sync( sync );
 diff --git a/server/protocol.def b/server/protocol.def
-index 4fc12225fdb..3b2f6c497cf 100644
+index 7be8976911b..5bb0ea6781d 100644
 --- a/server/protocol.def
 +++ b/server/protocol.def
 @@ -4144,6 +4144,9 @@ enum inproc_sync_type
@@ -1450,13 +2191,12 @@ index 4fc12225fdb..3b2f6c497cf 100644
  
  /* Get the in-process synchronization fd associated with the waitable handle */
 -- 
-GitLab
+2.51.0
 
-
-From a1eebe88c5d068046e462b793d3b57de3e74fb59 Mon Sep 17 00:00:00 2001
+From b126ca39376f7bfadedcb49975f29b1afefdc488 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Fri, 19 Sep 2025 12:28:55 +0200
-Subject: [PATCH 6/8] ntdll: Receive the user apc inproc sync fd on alertable
+Subject: [PATCH 18/20] ntdll: Receive the user apc inproc sync fd on alertable
  waits.
 
 ---
@@ -1471,10 +2211,10 @@ Subject: [PATCH 6/8] ntdll: Receive the user apc inproc sync fd on alertable
  8 files changed, 69 insertions(+), 3 deletions(-)
 
 diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
-index d8d8406f211..7095aef30f2 100644
+index be52237c076..514cf59cdf6 100644
 --- a/dlls/ntdll/unix/sync.c
 +++ b/dlls/ntdll/unix/sync.c
-@@ -478,6 +478,33 @@ static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *inf
+@@ -482,6 +482,33 @@ static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *inf
      return ret;
  }
  
@@ -1508,7 +2248,7 @@ index d8d8406f211..7095aef30f2 100644
  static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
                               BOOLEAN alertable, const LARGE_INTEGER *timeout )
  {
-@@ -497,6 +524,8 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
+@@ -501,6 +528,8 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
          syncs[i] = stack + i;
      }
  
@@ -1517,7 +2257,7 @@ index d8d8406f211..7095aef30f2 100644
      while (count--) release_inproc_sync( syncs[count] );
      return STATUS_NOT_IMPLEMENTED;
  }
-@@ -514,6 +543,7 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
+@@ -518,6 +547,7 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
  
      if ((ret = get_inproc_sync( wait, INPROC_SYNC_UNKNOWN, SYNCHRONIZE, wait_sync ))) goto done;
  
@@ -1630,7 +2370,7 @@ index 939b18f0036..bf242d0ad6d 100644
  extern void signal_inproc_sync( struct inproc_sync *sync );
  extern void reset_inproc_sync( struct inproc_sync *sync );
 diff --git a/server/protocol.def b/server/protocol.def
-index 3b2f6c497cf..14704f79b30 100644
+index 5bb0ea6781d..f71bcad379a 100644
 --- a/server/protocol.def
 +++ b/server/protocol.def
 @@ -4158,6 +4158,13 @@ enum inproc_sync_type
@@ -1670,13 +2410,12 @@ index b990907648f..bb16fa9331f 100644
 +    }
 +}
 -- 
-GitLab
+2.51.0
 
-
-From 8ad180654a22a7e6ca4bc8e9e43aeb1952b76d16 Mon Sep 17 00:00:00 2001
+From a5c2ca4c46960d372e7e292eac4e81cccac1672e Mon Sep 17 00:00:00 2001
 From: Elizabeth Figura <zfigura@codeweavers.com>
 Date: Fri, 19 Sep 2025 18:14:15 +0200
-Subject: [PATCH 7/8] ntdll: Use in-process synchronization objects.
+Subject: [PATCH 19/20] ntdll: Use in-process synchronization objects.
 
 ---
  dlls/ntdll/unix/sync.c         | 234 +++++++++++++++++++++++++++++++--
@@ -1689,7 +2428,7 @@ Subject: [PATCH 7/8] ntdll: Use in-process synchronization objects.
  7 files changed, 328 insertions(+), 9 deletions(-)
 
 diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
-index 7095aef30f2..bd0fe666bd1 100644
+index 514cf59cdf6..523beacffa9 100644
 --- a/dlls/ntdll/unix/sync.c
 +++ b/dlls/ntdll/unix/sync.c
 @@ -30,9 +30,11 @@
@@ -1909,7 +2648,7 @@ index 7095aef30f2..bd0fe666bd1 100644
  
  struct inproc_sync
  {
-@@ -397,6 +590,7 @@ static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *pre
+@@ -401,6 +594,7 @@ static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *pre
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
      if ((ret = get_inproc_sync( handle, INPROC_SYNC_SEMAPHORE, SEMAPHORE_MODIFY_STATE, &stack ))) return ret;
@@ -1917,7 +2656,7 @@ index 7095aef30f2..bd0fe666bd1 100644
      release_inproc_sync( sync );
      return ret;
  }
-@@ -408,6 +602,7 @@ static NTSTATUS inproc_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATI
+@@ -412,6 +606,7 @@ static NTSTATUS inproc_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATI
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
      if ((ret = get_inproc_sync( handle, INPROC_SYNC_SEMAPHORE, SEMAPHORE_QUERY_STATE, &stack ))) return ret;
@@ -1925,7 +2664,7 @@ index 7095aef30f2..bd0fe666bd1 100644
      release_inproc_sync( sync );
      return ret;
  }
-@@ -418,7 +613,8 @@ static NTSTATUS inproc_set_event( HANDLE handle, LONG *prev_state )
+@@ -422,7 +617,8 @@ static NTSTATUS inproc_set_event( HANDLE handle, LONG *prev_state )
      NTSTATUS ret;
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
@@ -1935,7 +2674,7 @@ index 7095aef30f2..bd0fe666bd1 100644
      release_inproc_sync( sync );
      return ret;
  }
-@@ -429,7 +625,8 @@ static NTSTATUS inproc_reset_event( HANDLE handle, LONG *prev_state )
+@@ -433,7 +629,8 @@ static NTSTATUS inproc_reset_event( HANDLE handle, LONG *prev_state )
      NTSTATUS ret;
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
@@ -1945,7 +2684,7 @@ index 7095aef30f2..bd0fe666bd1 100644
      release_inproc_sync( sync );
      return ret;
  }
-@@ -440,7 +637,8 @@ static NTSTATUS inproc_pulse_event( HANDLE handle, LONG *prev_state )
+@@ -444,7 +641,8 @@ static NTSTATUS inproc_pulse_event( HANDLE handle, LONG *prev_state )
      NTSTATUS ret;
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
@@ -1955,7 +2694,7 @@ index 7095aef30f2..bd0fe666bd1 100644
      release_inproc_sync( sync );
      return ret;
  }
-@@ -451,7 +649,8 @@ static NTSTATUS inproc_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info
+@@ -455,7 +653,8 @@ static NTSTATUS inproc_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info
      NTSTATUS ret;
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
@@ -1965,7 +2704,7 @@ index 7095aef30f2..bd0fe666bd1 100644
      release_inproc_sync( sync );
      return ret;
  }
-@@ -463,6 +662,7 @@ static NTSTATUS inproc_release_mutex( HANDLE handle, LONG *prev_count )
+@@ -467,6 +666,7 @@ static NTSTATUS inproc_release_mutex( HANDLE handle, LONG *prev_count )
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
      if ((ret = get_inproc_sync( handle, INPROC_SYNC_MUTEX, 0, &stack ))) return ret;
@@ -1973,7 +2712,7 @@ index 7095aef30f2..bd0fe666bd1 100644
      release_inproc_sync( sync );
      return ret;
  }
-@@ -474,6 +674,7 @@ static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *inf
+@@ -478,6 +678,7 @@ static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *inf
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
      if ((ret = get_inproc_sync( handle, INPROC_SYNC_MUTEX, MUTANT_QUERY_STATE, &stack ))) return ret;
@@ -1981,7 +2720,7 @@ index 7095aef30f2..bd0fe666bd1 100644
      release_inproc_sync( sync );
      return ret;
  }
-@@ -509,6 +710,7 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
+@@ -513,6 +714,7 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
                               BOOLEAN alertable, const LARGE_INTEGER *timeout )
  {
      struct inproc_sync *syncs[64], stack[ARRAY_SIZE(syncs)];
@@ -1989,7 +2728,7 @@ index 7095aef30f2..bd0fe666bd1 100644
      NTSTATUS ret;
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
-@@ -521,19 +723,22 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
+@@ -525,19 +727,22 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
              while (i--) release_inproc_sync( syncs[i] );
              return ret;
          }
@@ -2015,7 +2754,7 @@ index 7095aef30f2..bd0fe666bd1 100644
      NTSTATUS ret;
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
-@@ -543,8 +748,19 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
+@@ -547,8 +752,19 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
  
      if ((ret = get_inproc_sync( wait, INPROC_SYNC_UNKNOWN, SYNCHRONIZE, wait_sync ))) goto done;
  
@@ -2261,20 +3000,19 @@ index 1b9109e1f98..69e4cef987e 100644
      sem->count = initial;
      sem->max   = max;
 -- 
-GitLab
+2.51.0
 
-
-From d74f5bb46eba14dadbc460c48547f26b4f086f50 Mon Sep 17 00:00:00 2001
+From 087aaa1a0c73b59e925cd1e3d36e3e29167fd4f8 Mon Sep 17 00:00:00 2001
 From: Elizabeth Figura <zfigura@codeweavers.com>
-Date: Tue, 9 Sep 2025 17:12:34 +0200
-Subject: [PATCH 8/8] ntdll: Cache in-process synchronization objects.
+Date: Fri, 19 Sep 2025 09:07:30 +0200
+Subject: [PATCH 20/20] ntdll: Cache in-process synchronization objects.
 
 ---
  dlls/ntdll/unix/server.c       |  19 ++-
- dlls/ntdll/unix/sync.c         | 239 ++++++++++++++++++++++++++++-----
+ dlls/ntdll/unix/sync.c         | 235 ++++++++++++++++++++++++++++-----
  dlls/ntdll/unix/thread.c       |  11 +-
  dlls/ntdll/unix/unix_private.h |   2 +
- 4 files changed, 239 insertions(+), 32 deletions(-)
+ 4 files changed, 235 insertions(+), 32 deletions(-)
 
 diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
 index bbca17aee8f..ee34c5e9cd8 100644
@@ -2340,10 +3078,10 @@ index bbca17aee8f..ee34c5e9cd8 100644
      SERVER_START_REQ( close_handle )
      {
 diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
-index bd0fe666bd1..1660478b0e1 100644
+index 523beacffa9..1660478b0e1 100644
 --- a/dlls/ntdll/unix/sync.c
 +++ b/dlls/ntdll/unix/sync.c
-@@ -500,16 +500,164 @@ static NTSTATUS linux_wait_objs( int device, const DWORD count, const int *objs,
+@@ -500,19 +500,164 @@ static NTSTATUS linux_wait_objs( int device, const DWORD count, const int *objs,
  
  #endif /* NTSYNC_IOC_EVENT_READ */
  
@@ -2383,7 +3121,7 @@ index bd0fe666bd1..1660478b0e1 100644
 + */
  struct inproc_sync
  {
-+    LONG           refcount;  /* reference count of the sync object */
+     LONG           refcount;  /* reference count of the sync object */
      int            fd;        /* unix file descriptor */
      unsigned int   access;    /* handle access rights */
 -    unsigned int   type;      /* enum inproc_sync_type */
@@ -2473,13 +3211,13 @@ index bd0fe666bd1..1660478b0e1 100644
 +
  static void release_inproc_sync( struct inproc_sync *sync )
  {
--    close( sync->fd );
 +    /* save the fd now; as soon as the refcount hits 0 we cannot
 +     * access the cache anymore */
 +    int fd = sync->fd;
-+    LONG ref = InterlockedDecrement( &sync->refcount );
+     LONG ref = InterlockedDecrement( &sync->refcount );
 +
-+    assert( ref >= 0 );
+     assert( ref >= 0 );
+-    if (!ref) close( sync->fd );
 +    if (!ref) close( fd );
 +}
 +
@@ -2510,12 +3248,7 @@ index bd0fe666bd1..1660478b0e1 100644
  }
  
  /* fd_cache_mutex must be held to avoid races with other thread receiving fds */
-@@ -523,10 +671,12 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
-         if (!(ret = wine_server_call( req )))
-         {
-             obj_handle_t fd_handle;
-+            sync->refcount = 1;
-             sync->fd = wine_server_receive_fd( &fd_handle );
+@@ -531,6 +676,7 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
              assert( wine_server_ptr_handle(fd_handle) == handle );
              sync->access = reply->access;
              sync->type = reply->type;
@@ -2523,7 +3256,7 @@ index bd0fe666bd1..1660478b0e1 100644
          }
      }
      SERVER_END_REQ;
-@@ -534,20 +684,34 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
+@@ -538,20 +684,34 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
      return ret;
  }
  
@@ -2566,7 +3299,7 @@ index bd0fe666bd1..1660478b0e1 100644
      if (desired_type != INPROC_SYNC_UNKNOWN && desired_type != sync->type)
      {
          release_inproc_sync( sync );
-@@ -559,6 +723,7 @@ static NTSTATUS get_inproc_sync( HANDLE handle, enum inproc_sync_type desired_ty
+@@ -563,6 +723,7 @@ static NTSTATUS get_inproc_sync( HANDLE handle, enum inproc_sync_type desired_ty
          return STATUS_ACCESS_DENIED;
      }
  
@@ -2574,7 +3307,7 @@ index bd0fe666bd1..1660478b0e1 100644
      return STATUS_SUCCESS;
  }
  
-@@ -583,13 +748,28 @@ extern NTSTATUS check_signal_access( struct inproc_sync *sync )
+@@ -587,13 +748,28 @@ extern NTSTATUS check_signal_access( struct inproc_sync *sync )
      return STATUS_OBJECT_TYPE_MISMATCH;
  }
  
@@ -2605,7 +3338,7 @@ index bd0fe666bd1..1660478b0e1 100644
      ret = linux_release_semaphore_obj( sync->fd, count, prev_count );
      release_inproc_sync( sync );
      return ret;
-@@ -597,11 +777,11 @@ static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *pre
+@@ -601,11 +777,11 @@ static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *pre
  
  static NTSTATUS inproc_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATION *info )
  {
@@ -2619,7 +3352,7 @@ index bd0fe666bd1..1660478b0e1 100644
      ret = linux_query_semaphore_obj( sync->fd, info );
      release_inproc_sync( sync );
      return ret;
-@@ -609,11 +789,11 @@ static NTSTATUS inproc_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATI
+@@ -613,11 +789,11 @@ static NTSTATUS inproc_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATI
  
  static NTSTATUS inproc_set_event( HANDLE handle, LONG *prev_state )
  {
@@ -2633,7 +3366,7 @@ index bd0fe666bd1..1660478b0e1 100644
      ret = linux_set_event_obj( sync->fd, prev_state );
      release_inproc_sync( sync );
      return ret;
-@@ -621,11 +801,11 @@ static NTSTATUS inproc_set_event( HANDLE handle, LONG *prev_state )
+@@ -625,11 +801,11 @@ static NTSTATUS inproc_set_event( HANDLE handle, LONG *prev_state )
  
  static NTSTATUS inproc_reset_event( HANDLE handle, LONG *prev_state )
  {
@@ -2647,7 +3380,7 @@ index bd0fe666bd1..1660478b0e1 100644
      ret = linux_reset_event_obj( sync->fd, prev_state );
      release_inproc_sync( sync );
      return ret;
-@@ -633,11 +813,11 @@ static NTSTATUS inproc_reset_event( HANDLE handle, LONG *prev_state )
+@@ -637,11 +813,11 @@ static NTSTATUS inproc_reset_event( HANDLE handle, LONG *prev_state )
  
  static NTSTATUS inproc_pulse_event( HANDLE handle, LONG *prev_state )
  {
@@ -2661,7 +3394,7 @@ index bd0fe666bd1..1660478b0e1 100644
      ret = linux_pulse_event_obj( sync->fd, prev_state );
      release_inproc_sync( sync );
      return ret;
-@@ -645,11 +825,11 @@ static NTSTATUS inproc_pulse_event( HANDLE handle, LONG *prev_state )
+@@ -649,11 +825,11 @@ static NTSTATUS inproc_pulse_event( HANDLE handle, LONG *prev_state )
  
  static NTSTATUS inproc_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info )
  {
@@ -2675,7 +3408,7 @@ index bd0fe666bd1..1660478b0e1 100644
      ret = linux_query_event_obj( sync->fd, sync->type, info );
      release_inproc_sync( sync );
      return ret;
-@@ -657,11 +837,11 @@ static NTSTATUS inproc_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info
+@@ -661,11 +837,11 @@ static NTSTATUS inproc_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info
  
  static NTSTATUS inproc_release_mutex( HANDLE handle, LONG *prev_count )
  {
@@ -2689,7 +3422,7 @@ index bd0fe666bd1..1660478b0e1 100644
      ret = linux_release_mutex_obj( sync->fd, prev_count );
      release_inproc_sync( sync );
      return ret;
-@@ -669,11 +849,11 @@ static NTSTATUS inproc_release_mutex( HANDLE handle, LONG *prev_count )
+@@ -673,11 +849,11 @@ static NTSTATUS inproc_release_mutex( HANDLE handle, LONG *prev_count )
  
  static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *info )
  {
@@ -2703,7 +3436,7 @@ index bd0fe666bd1..1660478b0e1 100644
      ret = linux_query_mutex_obj( sync->fd, info );
      release_inproc_sync( sync );
      return ret;
-@@ -718,12 +898,11 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
+@@ -722,12 +898,11 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
      assert( count <= ARRAY_SIZE(syncs) );
      for (int i = 0; i < count; ++i)
      {
@@ -2717,7 +3450,7 @@ index bd0fe666bd1..1660478b0e1 100644
          objs[i] = syncs[i]->fd;
      }
  
-@@ -743,10 +922,10 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
+@@ -747,10 +922,10 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
  
      if (inproc_device_fd < 0) return STATUS_NOT_IMPLEMENTED;
  
@@ -2778,5 +3511,5 @@ index 3ef9041d64e..501eddb1fa3 100644
                                            ULONG_PTR arg3, PNTAPCFUNC func, NTSTATUS status );
  extern NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context );
 -- 
-GitLab
+2.51.0
 
