@@ -1,0 +1,104 @@
+From 1e199825c85ada2d71ef09798a5d24a1423c563d Mon Sep 17 00:00:00 2001
+From: Derek Lesho <dlesho@codeweavers.com>
+Date: Wed, 13 Jul 2022 13:08:41 -0400
+Subject: [PATCH] ntoskrnl, server: Support referencing section objects.
+
+Needed for the shared resource manager to track the shared memory object for shared fences.
+---
+ dlls/ntoskrnl.exe/ntoskrnl.c | 12 +++++++++++-
+ server/mapping.c             | 14 +++++++++++++-
+ 2 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+index a375cd078b5..9a64820cef8 100644
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -258,6 +258,15 @@ POBJECT_TYPE WINAPI ObGetObjectType( void *object )
+     return header->type;
+ }
+ 
++static const WCHAR section_type_name[] = {'S','e','c','t','i','o','n',0};
++
++static struct _OBJECT_TYPE section_type =
++{
++    section_type_name
++};
++
++static POBJECT_TYPE p_section_type = &section_type;
++
+ static const POBJECT_TYPE *known_types[] =
+ {
+     &ExEventObjectType,
+@@ -267,7 +276,8 @@ static const POBJECT_TYPE *known_types[] =
+     &IoFileObjectType,
+     &PsProcessType,
+     &PsThreadType,
+-    &SeTokenObjectType
++    &SeTokenObjectType,
++    &p_section_type,
+ };
+ 
+ DECLARE_CRITICAL_SECTION(handle_map_cs);
+diff --git a/server/mapping.c b/server/mapping.c
+index 32385662165..e68edf8aba4 100644
+--- a/server/mapping.c
++++ b/server/mapping.c
+@@ -159,6 +159,7 @@ struct type_descr mapping_type =
+ struct mapping
+ {
+     struct object   obj;             /* object header */
++    struct list     kernel_object;   /* list of kernel object pointers */
+     mem_size_t      size;            /* mapping size */
+     unsigned int    flags;           /* SEC_* flags */
+     struct fd      *fd;              /* fd for mapped file */
+@@ -169,6 +170,7 @@ struct mapping
+ 
+ static void mapping_dump( struct object *obj, int verbose );
+ static struct fd *mapping_get_fd( struct object *obj );
++static struct list *mapping_get_kernel_obj_list( struct object *obj );
+ static void mapping_destroy( struct object *obj );
+ static enum server_fd_type mapping_get_fd_type( struct fd *fd );
+ 
+@@ -193,7 +195,7 @@ static const struct object_ops mapping_ops =
+     directory_link_name,         /* link_name */
+     default_unlink_name,         /* unlink_name */
+     no_open_file,                /* open_file */
+-    no_kernel_obj_list,          /* get_kernel_obj_list */
++    mapping_get_kernel_obj_list, /* get_kernel_obj_list */
+     no_close_handle,             /* close_handle */
+     mapping_destroy              /* destroy */
+ };
+@@ -1015,6 +1017,8 @@ static struct mapping *create_mapping( struct object *root, const struct unicode
+     if (get_error() == STATUS_OBJECT_NAME_EXISTS)
+         return mapping;  /* Nothing else to do */
+ 
++    list_init( &mapping->kernel_object );
++
+     mapping->size        = size;
+     mapping->fd          = NULL;
+     mapping->shared      = NULL;
+@@ -1106,6 +1110,8 @@ struct mapping *create_fd_mapping( struct object *root, const struct unicode_str
+     if (!(mapping = create_named_object( root, &mapping_ops, name, attr, sd ))) return NULL;
+     if (get_error() == STATUS_OBJECT_NAME_EXISTS) return mapping;  /* Nothing else to do */
+ 
++    list_init( &mapping->kernel_object );
++
+     mapping->shared    = NULL;
+     mapping->committed = NULL;
+     mapping->flags     = SEC_FILE;
+@@ -1212,6 +1218,12 @@ static struct fd *mapping_get_fd( struct object *obj )
+     return (struct fd *)grab_object( mapping->fd );
+ }
+ 
++static struct list *mapping_get_kernel_obj_list( struct object *obj )
++{
++    struct mapping *mapping = (struct mapping *)obj;
++    return &mapping->kernel_object;
++}
++
+ static void mapping_destroy( struct object *obj )
+ {
+     struct mapping *mapping = (struct mapping *)obj;
+-- 
+2.51.0
+
