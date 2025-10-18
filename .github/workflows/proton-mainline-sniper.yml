@@ -1,0 +1,36 @@
+name: Proton mainline sniper container
+
+on:
+  schedule:
+    - cron:  '45 8,20 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Free Disk Space
+        uses: LizardByte/actions/actions/more_space@master
+        with:
+          analyze-space-savings: true
+          clean-all: true
+          safe-packages: "patch,git"
+      - name: Display Analysis
+        run: echo '${{ steps.cleanup.outputs.space-analysis }}'
+      - uses: actions/checkout@v4
+      - name: Compile
+        run: |
+          cd proton-tkg
+          sed -i 's/uninstaller="false"/uninstaller="true"/' proton-tkg.cfg
+          sed -i 's/autoinstall="false"/autoinstall="true"/' proton-tkg.cfg
+          sed -i 's/LOCAL_PRESET=\"\"/LOCAL_PRESET=\"none\"/' proton-tkg.cfg
+          sed -i 's/_no_container="true"/_no_container="false"/' proton-tkg.sh
+          echo '_ci_build="true"' >> proton-tkg.cfg
+          touch tarplz
+          yes|./proton-tkg.sh
+      - name: Archive the artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: proton-tkg-build
+          path: proton-tkg/built/*.tar
