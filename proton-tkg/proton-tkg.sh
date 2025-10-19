@@ -827,6 +827,12 @@ function build_in_valve_container {
   git submodule update --init --recursive
   make clean
 
+  # On mainline-based proton, we depend on newer vkd3d and vkd3d-utils
+  if [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
+    ( cd vkd3d && git pull origin master )
+    patch -Np1 < "$_nowhere"/proton_template/vkd3d-utils.patch
+  fi
+
   rm -rf wine
   cp -r "$_wine_tkg_git_path/src/$_winesrcdir" wine
 
