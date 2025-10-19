@@ -21,7 +21,7 @@ index bf072af84ac..15d6dde0377 100644
 
  static BOOL is_prefix_bootstrap;  /* are we bootstrapping the prefix? */
  static BOOL imports_fixup_done = FALSE;  /* set once the imports have been fixed up, before attaching them */
-From 044787806f5de7888c63409e588e2b64a554fadd Mon Sep 17 00:00:00 2001
+From 38e8f39bda73a48a5aa5153e29ed2a32c635d342 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
 Date: Tue, 22 Nov 2022 11:02:52 +0100
 Subject: [PATCH] HACK: steam: ntdll: Setup steamclient trampolines to
@@ -30,19 +30,19 @@ Subject: [PATCH] HACK: steam: ntdll: Setup steamclient trampolines to
 This uses exec page faults to jump from native steamclient into our
 lsteamclient entry points.
 ---
- dlls/ntdll/loader.c             | 23 +++++++++++
- dlls/ntdll/unix/loader.c        | 70 +++++++++++++++++++++++++++++++++
- dlls/ntdll/unix/signal_i386.c   |  7 ++++
- dlls/ntdll/unix/signal_x86_64.c |  7 ++++
- dlls/ntdll/unix/unix_private.h  |  1 +
- dlls/ntdll/unixlib.h            |  7 ++++
- 6 files changed, 115 insertions(+)
+ dlls/ntdll/loader.c             |  23 ++++++
+ dlls/ntdll/unix/loader.c        | 130 ++++++++++++++++++++++++++++++++
+ dlls/ntdll/unix/signal_i386.c   |   7 ++
+ dlls/ntdll/unix/signal_x86_64.c |   7 ++
+ dlls/ntdll/unix/unix_private.h  |   1 +
+ dlls/ntdll/unixlib.h            |   7 ++
+ 6 files changed, 175 insertions(+)
 
 diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
-index 464d190be87..1e60825b525 100644
+index 0c25fe14133..c659684e307 100644
 --- a/dlls/ntdll/loader.c
 +++ b/dlls/ntdll/loader.c
-@@ -2184,12 +2184,16 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+@@ -2206,12 +2206,16 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
                                DWORD flags, BOOL system, WINE_MODREF **pwm )
  {
      static const char builtin_signature[] = "Wine builtin DLL";
@@ -56,13 +56,13 @@ index 464d190be87..1e60825b525 100644
      SIZE_T map_size;
 +    WCHAR *basename, *tmp;
 +    ULONG basename_len;
-
+ 
      if (!(nt = RtlImageNtHeader( *module ))) return STATUS_INVALID_IMAGE_FORMAT;
-
-@@ -2210,6 +2214,25 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
-
+ 
+@@ -2232,6 +2236,25 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name,
+ 
      update_load_config( *module );
-
+ 
 +    basename = nt_name->Buffer;
 +    if ((tmp = wcsrchr(basename, '\\'))) basename = tmp + 1;
 +    if ((tmp = wcsrchr(basename, '/'))) basename = tmp + 1;
@@ -83,86 +83,72 @@ index 464d190be87..1e60825b525 100644
 +    }
 +
      /* fixup imports */
-
+ 
      if (!(flags & DONT_RESOLVE_DLL_REFERENCES) &&
 diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index 803d8079213..028846f346a 100644
+index 68cd4f50420..f57b16c548a 100644
 --- a/dlls/ntdll/unix/loader.c
 +++ b/dlls/ntdll/unix/loader.c
-@@ -530,11 +530,42 @@
-     WORD machine = pe_info->machine;
-     ULONGLONG res_start = pe_info->base;
-     ULONGLONG res_end = pe_info->base + pe_info->map_size;
-+    const char *ld_preload = getenv( "LD_PRELOAD" );
-     char preloader_reserve[64], socket_env[64];
- 
-     if (pe_info->wine_fakedll) res_start = res_end = 0;
-     if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady) machine = native_machine;
- 
-+    /* HACK: Unset LD_PRELOAD before executing explorer.exe to disable buggy gameoverlayrenderer.so */
-+    if (ld_preload && argv[2] && !strcmp( argv[2], "C:\\windows\\system32\\explorer.exe" ) &&
-+        argv[3] && !strcmp( argv[3], "/desktop" ))
-+    {
-+        static char const gorso[] = "gameoverlayrenderer.so";
-+        static int gorso_len = sizeof(gorso) - 1;
-+        int len = strlen( ld_preload );
-+        char *next, *tmp, *env = malloc( sizeof("LD_PRELOAD=") + len );
-+
-+        if (!env) return STATUS_NO_MEMORY;
-+        strcpy( env, "LD_PRELOAD=" );
-+        strcat( env, ld_preload );
-+
-+        tmp = env + 11;
-+        do
-+        {
-+            if (!(next = strchr( tmp, ':' ))) next = tmp + strlen( tmp );
-+            if (next - tmp >= gorso_len && strncmp( next - gorso_len, gorso, gorso_len ) == 0)
-+            {
-+                if (*next) memmove( tmp, next + 1, strlen(next) );
-+                else *tmp = 0;
-+                next = tmp;
-+            }
-+            else tmp = next + 1;
-+        }
-+        while (*next);
-+
-+        putenv( env );
-+    }
-+
-     signal( SIGPIPE, SIG_DFL );
- 
-     snprintf( socket_env, sizeof(socket_env), "WINESERVERSOCKET=%u", socketfd );
-@@ -905,7 +936,6 @@
+@@ -960,10 +960,57 @@ static NTSTATUS dlopen_dll( const char *so_name, UNICODE_STRING *nt_name, void *
+     }
+     *ret_module = module;
      return STATUS_SUCCESS;
  }
  
--
++static ULONG_PTR find_ordinal_export( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports, DWORD ordinal )
++{
++    const DWORD *functions = (const DWORD *)((BYTE *)module + exports->AddressOfFunctions);
++
++    if (ordinal >= exports->NumberOfFunctions) return 0;
++    if (!functions[ordinal]) return 0;
++    return (ULONG_PTR)module + functions[ordinal];
++}
++
++static ULONG_PTR find_named_export( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,
++                                    const char *name )
++{
++    const WORD *ordinals = (const WORD *)((BYTE *)module + exports->AddressOfNameOrdinals);
++    const DWORD *names = (const DWORD *)((BYTE *)module + exports->AddressOfNames);
++    int min = 0, max = exports->NumberOfNames - 1;
++
++    while (min <= max)
++    {
++        int res, pos = (min + max) / 2;
++        char *ename = (char *)module + names[pos];
++        if (!(res = strcmp( ename, name ))) return find_ordinal_export( module, exports, ordinals[pos] );
++        if (res > 0) max = pos - 1;
++        else min = pos + 1;
++    }
++    return 0;
++}
++
++static inline void *get_rva( void *module, ULONG_PTR addr )
++{
++    return (BYTE *)module + addr;
++}
++
++static const void *get_module_data_dir( HMODULE module, ULONG dir, ULONG *size )
++{
++    const IMAGE_NT_HEADERS *nt = get_rva( module, ((IMAGE_DOS_HEADER *)module)->e_lfanew );
++    const IMAGE_DATA_DIRECTORY *data;
++
++    if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
++        data = &((const IMAGE_NT_HEADERS64 *)nt)->OptionalHeader.DataDirectory[dir];
++    else if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC)
++        data = &((const IMAGE_NT_HEADERS32 *)nt)->OptionalHeader.DataDirectory[dir];
++    else
++        return NULL;
++    if (!data->VirtualAddress || !data->Size) return NULL;
++    if (size) *size = data->Size;
++    return get_rva( module, data->VirtualAddress );
++}
+ 
  /***********************************************************************
   *           load_so_dll
   */
-@@ -1070,20 +1100,6 @@
- 
- #endif /* SO_DLLS_SUPPORTED */
- 
--
--static const unixlib_entry_t unix_call_funcs[] =
--{
--    load_so_dll,
--    unwind_builtin_dll,
--    unixcall_wine_dbg_write,
--    unixcall_wine_server_call,
--    unixcall_wine_server_fd_to_handle,
--    unixcall_wine_server_handle_to_fd,
--    unixcall_wine_spawnvp,
--    system_time_precise,
--};
--
--
- #ifdef _WIN64
- 
- static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
-@@ -1572,6 +1588,109 @@
-     return get_rva( module, data->VirtualAddress );
+ static NTSTATUS load_so_dll( void *args )
+@@ -1005,6 +1005,121 @@ static NTSTATUS load_so_dll( void *args )
+     return 0;
  }
  
 +static void *steamclient_srcs[128];
@@ -184,13 +170,18 @@ index 803d8079213..028846f346a 100644
 +    return NULL;
 +}
 +
-+static void steamclient_write_jump(void *src_addr, void *tgt_addr)
++static void steamclient_write_jump_x64(void *src_addr, ULONGLONG tgt_addr)
 +{
-+#ifdef _WIN64
 +    static const char mov[] = {0x48, 0xb8};
-+#else
++    static const char jmp[] = {0xff, 0xe0};
++    memcpy(src_addr, mov, sizeof(mov));
++    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
++    memcpy((char *)src_addr + sizeof(mov) + sizeof(tgt_addr), jmp, sizeof(jmp));
++}
++
++static void steamclient_write_jump_x86(void *src_addr, ULONG tgt_addr)
++{
 +    static const char mov[] = {0xb8};
-+#endif
 +    static const char jmp[] = {0xff, 0xe0};
 +    memcpy(src_addr, mov, sizeof(mov));
 +    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
@@ -200,12 +191,14 @@ index 803d8079213..028846f346a 100644
 +static NTSTATUS steamclient_setup_trampolines( void *args )
 +{
 +    static int noexec_cached = -1;
++
 +    struct steamclient_setup_trampolines_params *params = args;
 +    HMODULE src_mod = params->src_mod, tgt_mod = params->tgt_mod;
 +    SYSTEM_BASIC_INFORMATION info;
-+    IMAGE_NT_HEADERS *src_nt = (IMAGE_NT_HEADERS *)((UINT_PTR)src_mod + ((IMAGE_DOS_HEADER *)src_mod)->e_lfanew);
-+    IMAGE_NT_HEADERS *tgt_nt = (IMAGE_NT_HEADERS *)((UINT_PTR)tgt_mod + ((IMAGE_DOS_HEADER *)tgt_mod)->e_lfanew);
-+    IMAGE_SECTION_HEADER *src_sec = (IMAGE_SECTION_HEADER *)(src_nt + 1);
++    IMAGE_NT_HEADERS *src_nt = get_rva( src_mod, ((IMAGE_DOS_HEADER *)src_mod)->e_lfanew );
++    IMAGE_NT_HEADERS *tgt_nt = get_rva( tgt_mod, ((IMAGE_DOS_HEADER *)tgt_mod)->e_lfanew );
++    IMAGE_SECTION_HEADER *src_sec = IMAGE_FIRST_SECTION( src_nt );
++    BOOL x64 = src_nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC;
 +    const IMAGE_EXPORT_DIRECTORY *src_exp, *tgt_exp;
 +    const DWORD *names;
 +    SIZE_T size;
@@ -240,61 +233,149 @@ index 803d8079213..028846f346a 100644
 +        assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
 +        steamclient_srcs[steamclient_count] = src_addr;
 +        steamclient_tgts[steamclient_count] = tgt_addr;
-+        if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
++        if (!noexec_cached)
++        {
++            if (x64) steamclient_write_jump_x64( src_addr, (ULONG_PTR)tgt_addr );
++            else steamclient_write_jump_x86( src_addr, PtrToUlong(tgt_addr) );
++        }
 +        else steamclient_count++;
 +    }
 +
-+    src_addr = (void *)((UINT_PTR)src_mod + src_nt->OptionalHeader.AddressOfEntryPoint);
-+    tgt_addr = (void *)((UINT_PTR)tgt_mod + tgt_nt->OptionalHeader.AddressOfEntryPoint);
++    if (x64)
++    {
++        IMAGE_NT_HEADERS64 *src_nt64 = (IMAGE_NT_HEADERS64 *)src_nt, *tgt_nt64 = (IMAGE_NT_HEADERS64 *)tgt_nt;
++        src_addr = (void *)((UINT_PTR)src_mod + src_nt64->OptionalHeader.AddressOfEntryPoint);
++        tgt_addr = (void *)((UINT_PTR)tgt_mod + tgt_nt64->OptionalHeader.AddressOfEntryPoint);
++    }
++    else
++    {
++        IMAGE_NT_HEADERS32 *src_nt32 = (IMAGE_NT_HEADERS32 *)src_nt, *tgt_nt32 = (IMAGE_NT_HEADERS32 *)tgt_nt;
++        src_addr = (void *)((UINT_PTR)src_mod + src_nt32->OptionalHeader.AddressOfEntryPoint);
++        tgt_addr = (void *)((UINT_PTR)tgt_mod + tgt_nt32->OptionalHeader.AddressOfEntryPoint);
++    }
++
 +    assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
 +    steamclient_srcs[steamclient_count] = src_addr;
 +    steamclient_tgts[steamclient_count] = tgt_addr;
-+    if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
++    if (!noexec_cached)
++    {
++        if (x64) steamclient_write_jump_x64( src_addr, (ULONG_PTR)tgt_addr );
++        else steamclient_write_jump_x86( src_addr, PtrToUlong(tgt_addr) );
++    }
 +    else steamclient_count++;
 +
 +    return STATUS_SUCCESS;
 +}
-+
-+static const unixlib_entry_t unix_call_funcs[] =
-+{
-+    load_so_dll,
-+    unwind_builtin_dll,
-+    unixcall_wine_dbg_write,
-+    unixcall_wine_server_call,
-+    unixcall_wine_server_fd_to_handle,
-+    unixcall_wine_server_handle_to_fd,
-+    unixcall_wine_spawnvp,
-+    system_time_precise,
+ 
+ }
+ 
+@@ -1016,6 +1131,7 @@ static const unixlib_entry_t unix_call_funcs[] =
+     unixcall_wine_server_handle_to_fd,
+     unixcall_wine_spawnvp,
+     system_time_precise,
 +    steamclient_setup_trampolines,
-+};
+ };
+ 
+ 
+@@ -1024,6 +1140,19 @@ static const unixlib_entry_t unix_call_funcs[] =
+ static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
+ static NTSTATUS wow64_unwind_builtin_dll( void *args ) { return STATUS_UNSUCCESSFUL; }
+ 
++static NTSTATUS wow64_steamclient_setup_trampolines( void *args )
++{
++    struct
++    {
++        ULONG src_mod;
++        ULONG tgt_mod;
++    } const *params32 = args;
++    struct steamclient_setup_trampolines_params params;
++    params.src_mod = (HMODULE)(UINT_PTR)params32->src_mod;
++    params.tgt_mod = (HMODULE)(UINT_PTR)params32->tgt_mod;
++    return steamclient_setup_trampolines( &params );
++}
 +
+ const unixlib_entry_t unix_call_wow64_funcs[] =
+ {
+     wow64_load_so_dll,
+@@ -1034,6 +1163,7 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
+     wow64_wine_server_handle_to_fd,
+     wow64_wine_spawnvp,
+     system_time_precise,
++    wow64_steamclient_setup_trampolines,
+ };
+ 
+ #endif  /* _WIN64 */
+@@ -1800,57 +1847,10 @@ NTSTATUS load_start_exe( UNICODE_STRING *nt_name, void **module )
+         NtTerminateProcess( GetCurrentProcess(), status );
+     }
+     return status;
+ }
+ 
+-static ULONG_PTR find_ordinal_export( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports, DWORD ordinal )
+-{
+-    const DWORD *functions = (const DWORD *)((BYTE *)module + exports->AddressOfFunctions);
+-
+-    if (ordinal >= exports->NumberOfFunctions) return 0;
+-    if (!functions[ordinal]) return 0;
+-    return (ULONG_PTR)module + functions[ordinal];
+-}
+-
+-static ULONG_PTR find_named_export( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,
+-                                    const char *name )
+-{
+-    const WORD *ordinals = (const WORD *)((BYTE *)module + exports->AddressOfNameOrdinals);
+-    const DWORD *names = (const DWORD *)((BYTE *)module + exports->AddressOfNames);
+-    int min = 0, max = exports->NumberOfNames - 1;
+-
+-    while (min <= max)
+-    {
+-        int res, pos = (min + max) / 2;
+-        char *ename = (char *)module + names[pos];
+-        if (!(res = strcmp( ename, name ))) return find_ordinal_export( module, exports, ordinals[pos] );
+-        if (res > 0) max = pos - 1;
+-        else min = pos + 1;
+-    }
+-    return 0;
+-}
+-
+-static inline void *get_rva( void *module, ULONG_PTR addr )
+-{
+-    return (BYTE *)module + addr;
+-}
+-
+-static const void *get_module_data_dir( HMODULE module, ULONG dir, ULONG *size )
+-{
+-    const IMAGE_NT_HEADERS *nt = get_rva( module, ((IMAGE_DOS_HEADER *)module)->e_lfanew );
+-    const IMAGE_DATA_DIRECTORY *data;
+-
+-    if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+-        data = &((const IMAGE_NT_HEADERS64 *)nt)->OptionalHeader.DataDirectory[dir];
+-    else if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC)
+-        data = &((const IMAGE_NT_HEADERS32 *)nt)->OptionalHeader.DataDirectory[dir];
+-    else
+-        return NULL;
+-    if (!data->VirtualAddress || !data->Size) return NULL;
+-    if (size) *size = data->Size;
+-    return get_rva( module, data->VirtualAddress );
+-}
+ 
  /***********************************************************************
   *           load_ntdll_functions
   */
-@@ -1887,6 +2006,9 @@
-     virtual_map_user_shared_data();
-     init_cpu_info();
-     init_files();
-+
-+    set_thread_teb( teb );
-+
-     init_startup_info();
-     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
-     set_load_order_app_name( main_wargv[0] );
-
+ static void load_ntdll_functions( HMODULE module )
 diff --git a/dlls/ntdll/unix/signal_i386.c b/dlls/ntdll/unix/signal_i386.c
-index 751b0081534..d1b2fb66563 100644
+index 8ae7afc769e..a4345a5b589 100644
 --- a/dlls/ntdll/unix/signal_i386.c
 +++ b/dlls/ntdll/unix/signal_i386.c
-@@ -1906,6 +1906,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -1905,6 +1905,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
      struct xcontext xcontext;
      ucontext_t *ucontext = sigcontext;
      void *stack = setup_exception_record( sigcontext, &rec, &xcontext );
 +    void *steamclient_addr = NULL;
-
+ 
      switch (TRAP_sig(ucontext))
      {
-@@ -1940,6 +1941,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -1939,6 +1940,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
          }
          break;
      case TRAP_x86_PAGEFLT:  /* Page fault */
@@ -308,18 +389,18 @@ index 751b0081534..d1b2fb66563 100644
          rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
          rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
 diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
-index ab544908883..ae100e05e63 100644
+index caa85249896..aace1b59b03 100644
 --- a/dlls/ntdll/unix/signal_x86_64.c
 +++ b/dlls/ntdll/unix/signal_x86_64.c
-@@ -1929,6 +1929,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -1977,6 +1977,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
      ucontext_t *ucontext = init_handler( sigcontext );
      EXCEPTION_RECORD rec = { 0 };
      struct xcontext context;
 +    void *steamclient_addr = NULL;
-
+ 
      rec.ExceptionAddress = (void *)RIP_sig(ucontext);
      save_context( &context, ucontext );
-@@ -1960,6 +1961,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+@@ -2295,6 +2494,11 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
          }
          break;
      case TRAP_x86_PAGEFLT:  /* Page fault */
@@ -328,18 +409,17 @@ index ab544908883..ae100e05e63 100644
 +            RIP_sig(ucontext) = (intptr_t)steamclient_addr;
 +            return;
 +        }
-+
          rec.NumberParameters = 2;
          rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
          rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
 diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
-index 07f2724eac7..c2292765ffb 100644
+index f840045f841..2f956af6966 100644
 --- a/dlls/ntdll/unix/unix_private.h
 +++ b/dlls/ntdll/unix/unix_private.h
-@@ -226,6 +226,7 @@ extern unsigned int alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, stru
+@@ -264,6 +264,7 @@ extern unsigned int alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, stru
                                               data_size_t *ret_len );
  extern NTSTATUS system_time_precise( void *args );
-
+ 
 +extern void *steamclient_handle_fault( LPCVOID addr, DWORD err );
  extern void *anon_mmap_fixed( void *start, size_t size, int prot, int flags );
  extern void *anon_mmap_alloc( size_t size, int prot );
@@ -351,7 +431,7 @@ index 9cb444342fe..475e532b8cf 100644
 @@ -66,6 +66,12 @@ struct unwind_builtin_dll_params
      CONTEXT                    *context;
  };
-
+ 
 +struct steamclient_setup_trampolines_params
 +{
 +    HMODULE src_mod;
@@ -367,81 +447,433 @@ index 9cb444342fe..475e532b8cf 100644
      unix_system_time_precise,
 +    unix_steamclient_setup_trampolines,
  };
-
+ 
  extern unixlib_handle_t __wine_unixlib_handle;
-From 08290ccabc137d205ceec261706d78b021d14fa4 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
-Date: Tue, 22 Nov 2022 11:08:22 +0100
-Subject: [PATCH] HACK: proton: ntdll: Export a function to set a Unix
- environment variable
 
+From 748a5674e33f22919cdcfad766e2fbc58823eb44 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 10 Oct 2025 09:51:13 -0600
+Subject: [PATCH] ntdll: HACK: Export a function to set a Unix environment
+ variable.
+
+Replaces "HACK: proton: ntdll: Export a function to set a Unix environment variable"
+with a non-syscall exported function.
+
+CW-Bug-Id: #26049
 ---
- dlls/ntdll/ntdll.spec          |   1 +
- dlls/ntdll/unix/env.c          |  10 +++
- dlls/ntdll/unix/loader.c       |   1 +
- dlls/ntdll/unix/unix_private.h |   1 +
- tools/gdbinit.py               | 113 +++++++++++++++++++++++++++++++++
- 5 files changed, 126 insertions(+)
- create mode 100644 tools/gdbinit.py
+ dlls/ntdll/env.c         | 14 ++++++++++++++
+ dlls/ntdll/ntdll.spec    |  1 +
+ dlls/ntdll/unix/loader.c | 31 +++++++++++++++++++++++++++++++
+ dlls/ntdll/unixlib.h     |  7 +++++++
+ include/winternl.h       |  1 +
+ 5 files changed, 54 insertions(+)
 
+diff --git a/dlls/ntdll/env.c b/dlls/ntdll/env.c
+index 700ab0803b1..cf558a6494d 100644
+--- a/dlls/ntdll/env.c
++++ b/dlls/ntdll/env.c
+@@ -730,3 +730,17 @@ void init_user_process_params(void)
+     set_wow64_environment( &new_params->Environment );
+     new_params->EnvironmentSize = RtlSizeHeap( GetProcessHeap(), 0, new_params->Environment );
+ }
++
++
++/**********************************************************************
++ *      __wine_set_unix_env
++ */
++NTSTATUS WINAPI __wine_set_unix_env( const char *var, const char *val )
++{
++    struct wine_set_unix_env_params params =
++    {
++        .name = var, .val = val
++    };
++
++    return WINE_UNIX_CALL( unix___wine_set_unix_env, &params );
++}
 diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
-index b41e29c0ff5..05999131fc5 100644
+index 40f2296458b..dcdc12cdbb8 100644
 --- a/dlls/ntdll/ntdll.spec
 +++ b/dlls/ntdll/ntdll.spec
-@@ -1696,6 +1696,7 @@
- @ extern -private __wine_syscall_dispatcher
+@@ -1746,6 +1746,7 @@
  @ extern -private __wine_unix_call_dispatcher
+ @ extern -private -arch=arm64ec __wine_unix_call_dispatcher_arm64ec
  @ extern -private __wine_unixlib_handle
-+@ stdcall -syscall __wine_set_unix_env(ptr ptr)
-
++@ stdcall __wine_set_unix_env(ptr ptr)
+ 
  # Debugging
- @ stdcall -syscall -norelay __wine_dbg_write(ptr long)
-diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
-index 6f1709f4713..3c387ba9027 100644
---- a/dlls/ntdll/unix/env.c
-+++ b/dlls/ntdll/unix/env.c
-@@ -2418,3 +2418,13 @@ void WINAPI RtlSetLastWin32Error( DWORD err )
- #endif
-     teb->LastErrorValue = err;
+ @ stdcall -norelay __wine_dbg_write(ptr long)
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index f399cbd7d65..2e44ed2f8d9 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1085,6 +1085,20 @@ static NTSTATUS load_so_dll( void *args )
+     return status;
  }
-+
+ 
 +
 +/**********************************************************************
-+ *      __wine_set_unix_env  (ntdll.so)
++ *      __wine_set_unix_env
 + */
-+ULONG WINAPI __wine_set_unix_env( const char *var, const char *val )
++NTSTATUS WINAPI wine_set_unix_env( void *args )
 +{
-+    setenv(var, val, 1);
++    struct wine_set_unix_env_params *params = args;
++
++    if (!params->val) unsetenv( params->name );
++    else setenv( params->name, params->val, 1 );
 +    return 0;
 +}
++
++
+ static void *steamclient_srcs[128];
+ static void *steamclient_tgts[128];
+ static int steamclient_count;
+@@ -1262,6 +1276,7 @@ static const unixlib_entry_t unix_call_funcs[] =
+     unixcall_wine_server_handle_to_fd,
+     unixcall_wine_spawnvp,
+     system_time_precise,
++    wine_set_unix_env,
+     steamclient_setup_trampolines,
+     is_pc_in_native_so,
+     debugstr_pc,
+@@ -1273,6 +1288,21 @@ static const unixlib_entry_t unix_call_funcs[] =
+ static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
+ static NTSTATUS wow64_unwind_builtin_dll( void *args ) { return STATUS_UNSUCCESSFUL; }
+ 
++static NTSTATUS wow64___wine_set_unix_env( void *args )
++{
++    struct
++    {
++        ULONG name;
++        ULONG val;
++    } const *params32 = args;
++    struct wine_set_unix_env_params params =
++    {
++        .name = ULongToPtr( params32->name ),
++        .val = ULongToPtr( params32->val ),
++    };
++    return wine_set_unix_env( &params );
++}
++
+ static NTSTATUS wow64_steamclient_setup_trampolines( void *args )
+ {
+     struct
+@@ -1308,6 +1338,7 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
+     wow64_wine_server_handle_to_fd,
+     wow64_wine_spawnvp,
+     system_time_precise,
++    wow64___wine_set_unix_env,
+     wow64_steamclient_setup_trampolines,
+     is_pc_in_native_so,
+     wow64_debugstr_pc,
+diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
+index e0870584a68..9bcfca1fd84 100644
+--- a/dlls/ntdll/unixlib.h
++++ b/dlls/ntdll/unixlib.h
+@@ -66,6 +66,12 @@ struct unwind_builtin_dll_params
+     CONTEXT                    *context;
+ };
+ 
++struct wine_set_unix_env_params
++{
++    const char *name;
++    const char *val;
++};
++
+ struct steamclient_setup_trampolines_params
+ {
+     HMODULE src_mod;
+@@ -89,6 +95,7 @@ enum ntdll_unix_funcs
+     unix_wine_server_handle_to_fd,
+     unix_wine_spawnvp,
+     unix_system_time_precise,
++    unix___wine_set_unix_env,
+     unix_steamclient_setup_trampolines,
+     unix_is_pc_in_native_so,
+     unix_debugstr_pc,
+diff --git a/include/winternl.h b/include/winternl.h
+index e2848a22a56..465341849c8 100644
+--- a/include/winternl.h
++++ b/include/winternl.h
+@@ -5354,6 +5354,7 @@ NTSYSAPI NTSTATUS  WINAPI RtlLargeIntegerToChar(const ULONGLONG *,ULONG,ULONG,PC
+
+ /* Wine internal functions */
+ 
++NTSYSAPI NTSTATUS WINAPI __wine_set_unix_env( const char *var, const char *val );
+ NTSYSAPI NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait );
+
+ /* The thread information for 16-bit threads */
+
+From 10e741280a60b29e1b2b864b2b2bf521d7c451ba Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 10 Oct 2025 11:43:45 -0600
+Subject: [PATCH] fixup! ntdll/loader: add support for overriding
+ IMAGE_FILE_LARGE_ADDRESS_AWARE
+
+Get rid of __wine_needs_override_large_address_aware syscall and
+introduce __wine_get_unix_env() through Unix call instead.
+
+CW-Bug-Id: #26049
+---
+ dlls/kernel32/heap.c           | 15 +++++++++++++-
+ dlls/ntdll/env.c               | 14 +++++++++++++
+ dlls/ntdll/ntdll.spec          |  2 +-
+ dlls/ntdll/signal_arm64ec.c    |  1 -
+ dlls/ntdll/unix/loader.c       | 36 ++++++++++++++++++++++++++++++++++
+ dlls/ntdll/unix/unix_private.h |  2 --
+ dlls/ntdll/unix/virtual.c      |  6 +++---
+ dlls/ntdll/unixlib.h           |  8 ++++++++
+ dlls/wow64/system.c            |  6 ------
+ include/winternl.h             |  1 +
+ 10 files changed, 77 insertions(+), 14 deletions(-)
+
+diff --git a/dlls/kernel32/heap.c b/dlls/kernel32/heap.c
+index 10f6895478e..2738f233fcb 100644
+--- a/dlls/kernel32/heap.c
++++ b/dlls/kernel32/heap.c
+@@ -41,8 +41,21 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(globalmem);
+ 
++#ifndef _WIN64
++static BOOL __wine_needs_override_large_address_aware(void)
++{
++    static int needs_override = -1;
++
++    if (needs_override == -1)
++    {
++        char str[16];
+ 
+-extern BOOL WINAPI __wine_needs_override_large_address_aware(void);
++        needs_override = __wine_get_unix_env( "WINE_LARGE_ADDRESS_AWARE", str, sizeof(str) ) /* on by default */
++                         || atoi(str) == 1;
++    }
++    return needs_override;
++}
++#endif
+ 
+ /***********************************************************************
+  *           HeapCreate   (KERNEL32.@)
+diff --git a/dlls/ntdll/env.c b/dlls/ntdll/env.c
+index cf558a6494d..eeaaf86152d 100644
+--- a/dlls/ntdll/env.c
++++ b/dlls/ntdll/env.c
+@@ -732,6 +732,20 @@ void init_user_process_params(void)
+ }
+ 
+ 
++/**********************************************************************
++ *      __wine_get_unix_env
++ */
++NTSTATUS WINAPI __wine_get_unix_env( const char *var, char *val, unsigned int buffer_len )
++{
++    struct wine_get_unix_env_params params =
++    {
++        .name = var, .val = val, .buffer_len = buffer_len,
++    };
++
++    return WINE_UNIX_CALL( unix___wine_get_unix_env, &params );
++}
++
++
+ /**********************************************************************
+  *      __wine_set_unix_env
+  */
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index a02d9654842..c1a137c1845 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -1746,6 +1746,7 @@
+ @ extern -private __wine_unix_call_dispatcher
+ @ extern -private -arch=arm64ec __wine_unix_call_dispatcher_arm64ec
+ @ extern -private __wine_unixlib_handle
++@ stdcall __wine_get_unix_env(ptr ptr long)
+ @ stdcall __wine_set_unix_env(ptr ptr)
+ 
+ # Debugging
+@@ -1757,9 +1757,6 @@
+ @ cdecl -norelay __wine_dbg_output(str)
+ @ cdecl -norelay __wine_dbg_strdup(str)
+
+-# Virtual memory
+-@ stdcall -syscall __wine_needs_override_large_address_aware()
+-
+ # Version
+ @ cdecl wine_get_version()
+ @ cdecl wine_get_build_id()
+diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
+index 8816b1ed04a..061c9a66680 100644
+--- a/dlls/ntdll/signal_arm64ec.c
++++ b/dlls/ntdll/signal_arm64ec.c
+@@ -580,7 +580,6 @@
+ 
+ #define SYSCALL_API __attribute__((hybrid_patchable))
+ 
+-DEFINE_SYSCALL_(BOOL, __wine_needs_override_large_address_aware, (void))
+ DEFINE_SYSCALL(NtAcceptConnectPort, (HANDLE *handle, ULONG id, LPC_MESSAGE *msg, BOOLEAN accept, LPC_SECTION_WRITE *write, LPC_SECTION_READ *read))
+ DEFINE_SYSCALL(NtAccessCheck, (PSECURITY_DESCRIPTOR descr, HANDLE token, ACCESS_MASK access, GENERIC_MAPPING *mapping, PRIVILEGE_SET *privs, ULONG *retlen, ULONG *access_granted, NTSTATUS *access_status))
+ DEFINE_SYSCALL(NtAccessCheckAndAuditAlarm, (UNICODE_STRING *subsystem, HANDLE handle, UNICODE_STRING *typename, UNICODE_STRING *objectname, PSECURITY_DESCRIPTOR descr, ACCESS_MASK access, GENERIC_MAPPING *mapping, BOOLEAN creation, ACCESS_MASK *access_granted, BOOLEAN *access_status, BOOLEAN *onclose))
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 5eb2c4e045e..0e70aa13f78 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1086,6 +1086,23 @@ static NTSTATUS load_so_dll( void *args )
+ }
+ 
+ 
++/**********************************************************************
++ *      __wine_get_unix_env
++ */
++NTSTATUS WINAPI wine_get_unix_env( void *args )
++{
++    struct wine_get_unix_env_params *params = args;
++    unsigned int len;
++    char *s;
++
++    if (!(s = getenv( params->name ))) return STATUS_VARIABLE_NOT_FOUND;
++    len = strlen( s ) + 1;
++    if (len > params->buffer_len) return STATUS_BUFFER_TOO_SMALL;
++    memcpy( params->val, s, len );
++    return STATUS_SUCCESS;
++}
++
++
+ /**********************************************************************
+  *      __wine_set_unix_env
+  */
+@@ -1287,6 +1304,7 @@ static const unixlib_entry_t unix_call_funcs[] =
+     unixcall_wine_server_handle_to_fd,
+     unixcall_wine_spawnvp,
+     system_time_precise,
++    wine_get_unix_env,
+     wine_set_unix_env,
+     unix__wine_dbg_ftrace,
+     steamclient_setup_trampolines,
+@@ -1300,6 +1318,23 @@ static const unixlib_entry_t unix_call_funcs[] =
+ static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
+ static NTSTATUS wow64_unwind_builtin_dll( void *args ) { return STATUS_UNSUCCESSFUL; }
+ 
++static NTSTATUS wow64___wine_get_unix_env( void *args )
++{
++    struct
++    {
++        ULONG name;
++        ULONG val;
++        unsigned int buffer_len;
++    } const *params32 = args;
++    struct wine_get_unix_env_params params =
++    {
++        .name = ULongToPtr( params32->name ),
++        .val = ULongToPtr( params32->val ),
++        .buffer_len = params32->buffer_len,
++    };
++    return wine_get_unix_env( &params );
++}
++
+ static NTSTATUS wow64___wine_set_unix_env( void *args )
+ {
+     struct
+@@ -1361,6 +1396,7 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
+     wow64_wine_server_handle_to_fd,
+     wow64_wine_spawnvp,
+     system_time_precise,
++    wow64___wine_get_unix_env,
+     wow64___wine_set_unix_env,
+     wow64___wine_dbg_ftrace,
+     wow64_steamclient_setup_trampolines,
 diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
-index 975ac0b334f..a723ae3c5b9 100644
+index dc8c23a5aa9..9f61a2a20c6 100644
 --- a/dlls/ntdll/unix/unix_private.h
 +++ b/dlls/ntdll/unix/unix_private.h
-@@ -294,6 +294,7 @@ extern NTSTATUS call_user_apc_dispatcher( CONTEXT *context_ptr, ULONG_PTR arg1,
-                                           PNTAPCFUNC func, NTSTATUS status );
- extern NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context );
- extern void call_raise_user_exception_dispatcher(void);
-+extern ULONG WINAPI __wine_set_unix_env( const char *var, const char *val );
-
- #define IMAGE_DLLCHARACTERISTICS_PREFER_NATIVE 0x0010 /* Wine extension */
-
-diff --git a/dlls/wow64/syscall.c b/dlls/wow64/syscall.c
-index 764f5fb2c05..dca651ee770 100644
---- a/dlls/wow64/syscall.c
-+++ b/dlls/wow64/syscall.c
-@@ -1335,3 +1335,11 @@ NTSTATUS WINAPI Wow64RaiseException( int code, EXCEPTION_RECORD *rec )
-     __ENDTRY
-     return STATUS_SUCCESS;
+@@ -606,6 +606,4 @@ static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, UL
+                                0, NULL, size, ViewShare, 0, protect );
  }
-+
-+/**********************************************************************
-+ *           wow64___wine_set_unix_env  (wow64.@)
-+ */
-+NTSTATUS WINAPI wow64___wine_set_unix_env( UINT *args )
+ 
+-BOOL WINAPI __wine_needs_override_large_address_aware(void);
+-
+ #endif /* __NTDLL_UNIX_PRIVATE_H */
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index f9535370331..7bbc72ecaa3 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -5136,7 +5136,7 @@ static void virtual_release_address_space(void)
+ 
+ #endif  /* _WIN64 */
+ 
+-BOOL WINAPI __wine_needs_override_large_address_aware(void)
++static int need_override_large_address_aware(void)
+ {
+     static int needs_override = -1;
+ 
+@@ -5144,7 +5144,7 @@ BOOL WINAPI __wine_needs_override_large_address_aware(void)
+     {
+         const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
+ 
+-        needs_override = !str || atoi(str) == 1;
++        needs_override = !str /* on by default */ || atoi(str) == 1;
+     }
+     return needs_override;
+ }
+@@ -5152,7 +5152,7 @@ BOOL WINAPI __wine_needs_override_large_address_aware(void)
+ static BOOL is_large_address_aware(void)
+ {
+     return (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)
+-           || __wine_needs_override_large_address_aware();
++           || need_override_large_address_aware();
+ }
+ 
+ /***********************************************************************
+diff --git a/dlls/ntdll/unixlib.h b/dlls/ntdll/unixlib.h
+index 7ed5b3ae25e..1a05a0ede15 100644
+--- a/dlls/ntdll/unixlib.h
++++ b/dlls/ntdll/unixlib.h
+@@ -66,6 +66,13 @@ struct unwind_builtin_dll_params
+     CONTEXT                    *context;
+ };
+ 
++struct wine_get_unix_env_params
 +{
-+    return __wine_set_unix_env();
-+}
++    const char *name;
++    char *val;
++    unsigned int buffer_len;
++};
++
+ struct wine_set_unix_env_params
+ {
+     const char *name;
+@@ -103,6 +110,7 @@ enum ntdll_unix_funcs
+     unix_wine_server_handle_to_fd,
+     unix_wine_spawnvp,
+     unix_system_time_precise,
++    unix___wine_get_unix_env,
+     unix___wine_set_unix_env,
+     unix_wine_dbg_ftrace,
+     unix_steamclient_setup_trampolines,
+diff --git a/dlls/wow64/system.c b/dlls/wow64/system.c
+index 2f466d869dd..5f3056a4179 100644
+--- a/dlls/wow64/system.c
++++ b/dlls/wow64/system.c
+@@ -855,9 +855,3 @@ NTSTATUS WINAPI wow64_NtWow64GetNativeSystemInformation( UINT *args )
+         return STATUS_INVALID_INFO_CLASS;
+     }
+ }
+-
+-BOOL WINAPI __wine_needs_override_large_address_aware(void);
+-NTSTATUS WINAPI wow64___wine_needs_override_large_address_aware( UINT * args )
+-{
+-    return __wine_needs_override_large_address_aware();
+-}
+diff --git a/include/winternl.h b/include/winternl.h
+index 465341849c8..5a1118f9d87 100644
+--- a/include/winternl.h
++++ b/include/winternl.h
+@@ -5254,6 +5254,7 @@ NTSYSAPI NTSTATUS  WINAPI RtlLargeIntegerToChar(const ULONGLONG *,ULONG,ULONG,PC
+
+ /* Wine internal functions */
+ 
++NTSYSAPI NTSTATUS WINAPI __wine_get_unix_env( const char *var, char *val, unsigned int buffer_len );
+ NTSYSAPI NTSTATUS WINAPI __wine_set_unix_env( const char *var, const char *val );
+ NTSYSAPI NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait );
+ 
 
 diff --git a/tools/gdbinit.py b/tools/gdbinit.py
 new file mode 100644
