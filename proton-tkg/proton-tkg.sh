@@ -833,6 +833,9 @@ function build_in_valve_container {
   # We *will* face warnings
   patch -Np1 < "$_nowhere"/proton_template/disable_wine_werror.patch || patch -Np1 < "$_nowhere"/proton_template/disable_wine_werror-alt.patch || true
 
+  # Use latest container image
+  patch -Np1 < "$_nowhere"/proton_template/always-use-latest-container-image.patch
+
   mkdir build && cd build
   ../configure.sh --enable-ccache --build-name=TKG
   make redist
