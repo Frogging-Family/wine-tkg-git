@@ -1112,7 +1112,7 @@ _polish() {
 	fi
 
 	echo -e "\nRunning make_vulkan" >> "$_where"/prepare.log && dlls/winevulkan/make_vulkan -v >> "$_where"/prepare.log 2>&1
-	if [ "$_no_container" = "false" ]; then
+	if [ "$_no_container" = "false" ] && [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
 	  if [ -e "$HOME"/.cache/wine/vk-* ] && [ -e "$HOME"/.cache/wine/video-* ]; then
 	    cp "$HOME"/.cache/wine/vk-* "${srcdir}"/"${_winesrcdir}"/dlls/winevulkan/vk.xml
 	    cp "$HOME"/.cache/wine/video-* "${srcdir}"/"${_winesrcdir}"/dlls/winevulkan/video.xml
