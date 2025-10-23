@@ -1,3 +1,98 @@
+diff --git b/dlls/win32u/message.c a/dlls/win32u/message.c
+index 9e8f9d54af8..d61263f26e6 100644
+--- b/dlls/win32u/message.c
++++ a/dlls/win32u/message.c
+@@ -3179,7 +3179,7 @@ static HANDLE get_server_queue_handle(void)
+     return ret;
+ }
+ 
+-static BOOL check_internal_bits( UINT mask )
++static BOOL has_hardware_messages(void)
+ {
+     struct object_lock lock = OBJECT_LOCK_INIT;
+     const queue_shm_t *queue_shm;
+@@ -3187,7 +3187,7 @@ static BOOL check_internal_bits( UINT mask )
+     UINT status;
+ 
+     while ((status = get_shared_queue( &lock, &queue_shm )) == STATUS_PENDING)
+-        signaled = queue_shm->internal_bits & mask;
++        signaled = queue_shm->internal_bits & QS_HARDWARE;
+     if (status) return FALSE;
+ 
+     return signaled;
+@@ -3195,7 +3195,7 @@ static BOOL check_internal_bits( UINT mask )
+ 
+ BOOL process_driver_events( UINT mask )
+ {
+-    if (check_internal_bits( QS_DRIVER ) && user_driver->pProcessEvents( mask ))
++    if (user_driver->pProcessEvents( mask ))
+     {
+         SERVER_START_REQ( set_queue_mask )
+         {
+@@ -3205,7 +3205,7 @@ BOOL process_driver_events( UINT mask )
+         SERVER_END_REQ;
+     }
+ 
+-    return check_internal_bits( QS_HARDWARE );
++    return has_hardware_messages();
+ }
+ 
+ void check_for_events( UINT flags )
+diff --git b/dlls/winex11.drv/event.c a/dlls/winex11.drv/event.c
+index 9deccc2acfc..ca261b7bf3b 100644
+--- b/dlls/winex11.drv/event.c
++++ a/dlls/winex11.drv/event.c
+@@ -258,6 +258,7 @@ static void xembed_request_focus( Display *display, Window window, DWORD timesta
+     xev.xclient.data.l[4] = 0;
+ 
+     XSendEvent(display, window, False, NoEventMask, &xev);
++    XFlush( display );
+ }
+ 
+ /***********************************************************************
+@@ -543,10 +544,7 @@ BOOL X11DRV_ProcessEvents( DWORD mask )
+     free_event_data( &prev_event );
+     XFlush( gdi_display );
+     if (count) TRACE( "processed %d events\n", count );
+-
+-    if (check_fd_events( ConnectionNumber( data->display ), POLLIN )) return FALSE;
+-    XFlush( data->display ); /* all events have been processed, flush any pending request */
+-    return TRUE;
++    return !check_fd_events( ConnectionNumber( data->display ), POLLIN );
+ }
+ 
+ 
+diff --git b/dlls/winex11.drv/window.c a/dlls/winex11.drv/window.c
+index 1e006324a54..2e6f13eec53 100644
+--- b/dlls/winex11.drv/window.c
++++ a/dlls/winex11.drv/window.c
+@@ -1333,6 +1333,8 @@ static void window_set_net_wm_state( struct x11drv_win_data *data, UINT new_stat
+                         SubstructureRedirectMask | SubstructureNotifyMask, &xev );
+         }
+     }
++
++    XFlush( data->display );
+ }
+ 
+ static void window_set_config( struct x11drv_win_data *data, RECT rect, BOOL above )
+@@ -1580,6 +1582,8 @@ static void window_set_wm_state( struct x11drv_win_data *data, UINT new_state, B
+ 
+     /* override redirect windows won't receive WM_STATE property changes */
+     if (!data->managed) data->wm_state_serial = 0;
++
++    XFlush( data->display );
+ }
+ 
+ static void window_set_managed( struct x11drv_win_data *data, BOOL new_managed )
+@@ -1968,6 +1972,7 @@ void set_net_active_window( HWND hwnd, HWND previous )
+     TRACE( "requesting _NET_ACTIVE_WINDOW %p/%lx serial %lu\n", hwnd, window, data->net_active_window_serial );
+     XSendEvent( data->display, DefaultRootWindow( data->display ), False,
+                 SubstructureRedirectMask | SubstructureNotifyMask, &xev );
++    XFlush( data->display );
+ }
+ 
+ BOOL window_is_reparenting( HWND hwnd )
+
 diff --git b/dlls/win32u/class.c a/dlls/win32u/class.c
 index ba1f7d650af..57e18cbfc18 100644
 --- b/dlls/win32u/class.c
@@ -1034,7 +1129,7 @@ index 1660478b0e1..dd18c948d22 100644
 -    else if (timeout->QuadPart <= 0)
 -    {
 -        clock_gettime( CLOCK_MONOTONIC, &now );
--        args.timeout = (now.tv_sec * NSECPERSEC) + now.tv_nsec + (-timeout->QuadPart * 100);
+-        args.timeout = ((ULONGLONG)now.tv_sec * NSECPERSEC) + now.tv_nsec + (-timeout->QuadPart * 100);
 -    }
 -    else
 -    {
@@ -5405,20 +5500,21 @@ index 781b4a4e59f..62145442ffc 100644
      struct d3dkmt_object_create_request d3dkmt_object_create_request;
      struct d3dkmt_object_query_request d3dkmt_object_query_request;
  };
-@@ -6883,14 +6859,13 @@ union generic_reply
+@@ -6883,15 +6859,14 @@ union generic_reply
      struct get_next_process_reply get_next_process_reply;
      struct get_next_thread_reply get_next_thread_reply;
      struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
 -    struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
      struct d3dkmt_object_create_reply d3dkmt_object_create_reply;
+     struct d3dkmt_object_update_reply d3dkmt_object_update_reply;
      struct d3dkmt_object_query_reply d3dkmt_object_query_reply;
      struct d3dkmt_object_open_reply d3dkmt_object_open_reply;
      struct d3dkmt_share_objects_reply d3dkmt_share_objects_reply;
      struct d3dkmt_object_open_name_reply d3dkmt_object_open_name_reply;
  };
  
--#define SERVER_PROTOCOL_VERSION 921
-+#define SERVER_PROTOCOL_VERSION 918
+-#define SERVER_PROTOCOL_VERSION 922
++#define SERVER_PROTOCOL_VERSION 919
  
  #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/Makefile.in a/server/Makefile.in
