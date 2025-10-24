@@ -1,1160 +1,3 @@
-diff --git b/server/queue.c a/server/queue.c
-index 8c977278522..50bac5474d1 100644
---- b/server/queue.c
-+++ a/server/queue.c
-@@ -1827,7 +1827,6 @@ static user_handle_t find_hardware_message_window( struct desktop *desktop, stru
-     {
-     case QS_POINTER:
-     case QS_RAWINPUT:
--    case QS_HARDWARE:
-         if (!(win = msg->win) && input) win = input_shm->focus;
-         break;
-     case QS_KEY:
-diff --git b/dlls/win32u/message.c a/dlls/win32u/message.c
-index 4b179619cf9..9e8f9d54af8 100644
---- b/dlls/win32u/message.c
-+++ a/dlls/win32u/message.c
-@@ -2809,7 +2809,7 @@ static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardwar
-  * returns FALSE if we need to make a server request to update the queue masks or bits
-  */
- static BOOL check_queue_bits( UINT wake_mask, UINT changed_mask, UINT signal_bits, UINT clear_bits,
--                              UINT *wake_bits, UINT *changed_bits, BOOL internal )
-+                              UINT *wake_bits, UINT *changed_bits )
- {
-     struct object_lock lock = OBJECT_LOCK_INIT;
-     const queue_shm_t *queue_shm;
-@@ -2818,9 +2818,8 @@ static BOOL check_queue_bits( UINT wake_mask, UINT changed_mask, UINT signal_bit
- 
-     while ((status = get_shared_queue( &lock, &queue_shm )) == STATUS_PENDING)
-     {
--        if (internal) skip = !(queue_shm->internal_bits & QS_HARDWARE);
-         /* if the masks need an update */
--        else if (queue_shm->wake_mask != wake_mask) skip = FALSE;
-+        if (queue_shm->wake_mask != wake_mask) skip = FALSE;
-         else if (queue_shm->changed_mask != changed_mask) skip = FALSE;
-         /* or if some bits need to be cleared, or queue is signaled */
-         else if (queue_shm->wake_bits & signal_bits) skip = FALSE;
-@@ -2885,7 +2884,7 @@ static int peek_message( MSG *msg, const struct peek_message_filter *filter )
-         wake_mask = filter->mask & (QS_SENDMESSAGE | QS_SMRESULT);
- 
-         if (check_queue_bits( wake_mask, filter->mask, wake_mask | signal_bits, filter->mask | clear_bits,
--                              &wake_bits, &changed_bits, filter->internal ))
-+                              &wake_bits, &changed_bits ))
-             res = STATUS_PENDING;
-         else SERVER_START_REQ( get_message )
-         {
-@@ -3180,21 +3179,6 @@ static HANDLE get_server_queue_handle(void)
-     return ret;
- }
- 
--static BOOL is_queue_signaled(void)
--{
--    struct object_lock lock = OBJECT_LOCK_INIT;
--    const queue_shm_t *queue_shm;
--    BOOL signaled = FALSE;
--    UINT status;
--
--    while ((status = get_shared_queue( &lock, &queue_shm )) == STATUS_PENDING)
--        signaled = (queue_shm->wake_bits & queue_shm->wake_mask) ||
--                   (queue_shm->changed_bits & queue_shm->changed_mask);
--    if (status) return FALSE;
--
--    return signaled;
--}
--
- static BOOL check_internal_bits( UINT mask )
- {
-     struct object_lock lock = OBJECT_LOCK_INIT;
-@@ -3221,21 +3205,16 @@ BOOL process_driver_events( UINT mask )
-         SERVER_END_REQ;
-     }
- 
--    /* process every pending internal hardware messages */
--    if (check_internal_bits( QS_HARDWARE ))
--    {
--        struct peek_message_filter filter = {.internal = TRUE};
--        MSG msg;
--        peek_message( &msg, &filter );
--    }
--
--    /* check for hardware messages requiring client dispatch */
-     return check_internal_bits( QS_HARDWARE );
- }
- 
- void check_for_events( UINT flags )
- {
-+    struct peek_message_filter filter = {.internal = TRUE, .flags = PM_REMOVE};
-+    MSG msg;
-+
-     if (!process_driver_events( flags )) flush_window_surfaces( TRUE );
-+    peek_message( &msg, &filter );
- }
- 
- /* monotonic timer tick for throttling driver event checks */
-@@ -3269,16 +3248,10 @@ static inline LARGE_INTEGER *get_nt_timeout( LARGE_INTEGER *time, DWORD timeout
- static DWORD wait_message( DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask, DWORD flags )
- {
-     struct thunk_lock_params params = {.dispatch.callback = thunk_lock_callback};
--    LARGE_INTEGER time, now, *abs;
-+    LARGE_INTEGER time;
-+    DWORD ret;
-     void *ret_ptr;
-     ULONG ret_len;
--    DWORD ret;
--
--    if ((abs = get_nt_timeout( &time, timeout )))
--    {
--        NtQuerySystemTime( &now );
--        abs->QuadPart = now.QuadPart - abs->QuadPart;
--    }
- 
-     if (!KeUserDispatchCallback( &params.dispatch, sizeof(params), &ret_ptr, &ret_len ) &&
-         ret_len == sizeof(params.locks))
-@@ -3290,13 +3263,14 @@ static DWORD wait_message( DWORD count, const HANDLE *handles, DWORD timeout, DW
-     if (process_driver_events( QS_ALLINPUT )) ret = count - 1;
-     else
-     {
--        do ret = NtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL), !!(flags & MWMO_ALERTABLE), abs );
--        while (ret == count - 1 && !process_driver_events( QS_ALLINPUT ) && !is_queue_signaled());
--    }
--    if (HIWORD(ret)) /* is it an error code? */
--    {
--        RtlSetLastWin32Error( RtlNtStatusToDosError(ret) );
--        ret = WAIT_FAILED;
-+        ret = NtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
-+                                        !!(flags & MWMO_ALERTABLE), get_nt_timeout( &time, timeout ));
-+        if (ret == count - 1) process_driver_events( QS_ALLINPUT );
-+        else if (HIWORD(ret)) /* is it an error code? */
-+        {
-+            RtlSetLastWin32Error( RtlNtStatusToDosError(ret) );
-+            ret = WAIT_FAILED;
-+        }
-     }
- 
-     if (ret == WAIT_TIMEOUT && !count && !timeout) NtYieldExecution();
-@@ -3659,7 +3633,7 @@ static void wait_message_reply( UINT flags )
-         UINT wake_bits, changed_bits;
- 
-         if (check_queue_bits( wake_mask, wake_mask, wake_mask, wake_mask,
--                              &wake_bits, &changed_bits, FALSE ))
-+                              &wake_bits, &changed_bits ))
-             wake_bits = wake_bits & wake_mask;
-         else SERVER_START_REQ( set_queue_mask )
-         {
-diff --git b/server/queue.c a/server/queue.c
-index 50bac5474d1..6b48a5dfdc8 100644
---- b/server/queue.c
-+++ a/server/queue.c
-@@ -802,7 +802,8 @@ static inline int get_hardware_msg_bit( unsigned int message )
-     if (message == WM_INPUT_DEVICE_CHANGE || message == WM_INPUT) return QS_RAWINPUT;
-     if (message == WM_MOUSEMOVE || message == WM_NCMOUSEMOVE) return QS_MOUSEMOVE;
-     if (message >= WM_KEYFIRST && message <= WM_KEYLAST) return QS_KEY;
--    if (message >= WM_WINE_FIRST_DRIVER_MSG && message <= WM_WINE_LAST_DRIVER_MSG) return QS_HARDWARE;
-+    if (message == WM_WINE_CLIPCURSOR) return QS_RAWINPUT;
-+    if (message == WM_WINE_SETCURSOR) return QS_RAWINPUT;
-     return QS_MOUSEBUTTON;
- }
- 
-@@ -2691,6 +2692,12 @@ static int check_hw_message_filter( user_handle_t win, unsigned int msg_code,
-     }
- }
- 
-+/* is this message an internal driver notification message */
-+static inline BOOL is_internal_hardware_message( unsigned int message )
-+{
-+    return (message >= WM_WINE_FIRST_DRIVER_MSG && message <= WM_WINE_LAST_DRIVER_MSG);
-+}
-+
- /* find a hardware message for the given queue */
- static int get_hardware_message( struct thread *thread, unsigned int hw_id, user_handle_t filter_win,
-                                  unsigned int first, unsigned int last, unsigned int flags,
-@@ -2795,10 +2802,9 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
- 
-         data->hw_id = msg->unique_id;
-         set_reply_data( msg->data, msg->data_size );
--
--        if (msg_bit == QS_HARDWARE) flags |= PM_REMOVE; /* always remove internal hardware messages right away */
--        else if (!(msg_bit & (QS_RAWINPUT | QS_POINTER))) flags &= ~PM_REMOVE; /* wait for accept_hardware_message request */
--        if (flags & PM_REMOVE) release_hardware_message( current->queue, data->hw_id );
-+        if ((get_hardware_msg_bit( msg->msg ) & (QS_RAWINPUT | QS_POINTER) && (flags & PM_REMOVE)) ||
-+            is_internal_hardware_message( msg->msg ))
-+            release_hardware_message( current->queue, data->hw_id );
-         return 1;
-     }
-     /* nothing found, clear the hardware queue bits */
-@@ -4064,7 +4070,7 @@ DECL_HANDLER(get_rawinput_buffer)
- {
-     const size_t align = is_machine_64bit( current->process->machine ) ? 7 : 3;
-     data_size_t buffer_size = get_reply_max_size() & ~align;
--    struct msg_queue *queue = current->queue;
-+    struct thread_input *input = current->queue->input;
-     struct message *msg, *next_msg;
-     int count = 0;
-     char *buffer;
-@@ -4077,7 +4083,7 @@ DECL_HANDLER(get_rawinput_buffer)
- 
-     if (!req->read_data)
-     {
--        LIST_FOR_EACH_ENTRY( msg, &queue->input->msg_list, struct message, entry )
-+        LIST_FOR_EACH_ENTRY( msg, &input->msg_list, struct message, entry )
-         {
-             if (msg->msg == WM_INPUT)
-             {
-@@ -4095,7 +4101,7 @@ DECL_HANDLER(get_rawinput_buffer)
- 
-         reply->next_size = get_reply_max_size();
- 
--        LIST_FOR_EACH_ENTRY_SAFE( msg, next_msg, &queue->input->msg_list, struct message, entry )
-+        LIST_FOR_EACH_ENTRY_SAFE( msg, next_msg, &input->msg_list, struct message, entry )
-         {
-             if (msg->msg == WM_INPUT)
-             {
-@@ -4125,7 +4131,6 @@ DECL_HANDLER(get_rawinput_buffer)
- 
-         if (!next_size)
-         {
--            clear_queue_bits( queue, QS_RAWINPUT | (list_empty( &queue->input->msg_list ) ? QS_HARDWARE : 0) );
-             if (count) next_size = sizeof(RAWINPUT);
-             else reply->next_size = 0;
-         }
-
-diff --git b/dlls/win32u/message.c a/dlls/win32u/message.c
-index 9e8f9d54af8..d61263f26e6 100644
---- b/dlls/win32u/message.c
-+++ a/dlls/win32u/message.c
-@@ -3179,7 +3179,7 @@ static HANDLE get_server_queue_handle(void)
-     return ret;
- }
- 
--static BOOL check_internal_bits( UINT mask )
-+static BOOL has_hardware_messages(void)
- {
-     struct object_lock lock = OBJECT_LOCK_INIT;
-     const queue_shm_t *queue_shm;
-@@ -3187,7 +3187,7 @@ static BOOL check_internal_bits( UINT mask )
-     UINT status;
- 
-     while ((status = get_shared_queue( &lock, &queue_shm )) == STATUS_PENDING)
--        signaled = queue_shm->internal_bits & mask;
-+        signaled = queue_shm->internal_bits & QS_HARDWARE;
-     if (status) return FALSE;
- 
-     return signaled;
-@@ -3195,7 +3195,7 @@ static BOOL check_internal_bits( UINT mask )
- 
- BOOL process_driver_events( UINT mask )
- {
--    if (check_internal_bits( QS_DRIVER ) && user_driver->pProcessEvents( mask ))
-+    if (user_driver->pProcessEvents( mask ))
-     {
-         SERVER_START_REQ( set_queue_mask )
-         {
-@@ -3205,7 +3205,7 @@ BOOL process_driver_events( UINT mask )
-         SERVER_END_REQ;
-     }
- 
--    return check_internal_bits( QS_HARDWARE );
-+    return has_hardware_messages();
- }
- 
- void check_for_events( UINT flags )
-diff --git b/dlls/winex11.drv/event.c a/dlls/winex11.drv/event.c
-index 9deccc2acfc..ca261b7bf3b 100644
---- b/dlls/winex11.drv/event.c
-+++ a/dlls/winex11.drv/event.c
-@@ -258,6 +258,7 @@ static void xembed_request_focus( Display *display, Window window, DWORD timesta
-     xev.xclient.data.l[4] = 0;
- 
-     XSendEvent(display, window, False, NoEventMask, &xev);
-+    XFlush( display );
- }
- 
- /***********************************************************************
-@@ -543,10 +544,7 @@ BOOL X11DRV_ProcessEvents( DWORD mask )
-     free_event_data( &prev_event );
-     XFlush( gdi_display );
-     if (count) TRACE( "processed %d events\n", count );
--
--    if (check_fd_events( ConnectionNumber( data->display ), POLLIN )) return FALSE;
--    XFlush( data->display ); /* all events have been processed, flush any pending request */
--    return TRUE;
-+    return !check_fd_events( ConnectionNumber( data->display ), POLLIN );
- }
- 
- 
-diff --git b/dlls/winex11.drv/window.c a/dlls/winex11.drv/window.c
-index 1e006324a54..2e6f13eec53 100644
---- b/dlls/winex11.drv/window.c
-+++ a/dlls/winex11.drv/window.c
-@@ -1333,6 +1333,8 @@ static void window_set_net_wm_state( struct x11drv_win_data *data, UINT new_stat
-                         SubstructureRedirectMask | SubstructureNotifyMask, &xev );
-         }
-     }
-+
-+    XFlush( data->display );
- }
- 
- static void window_set_config( struct x11drv_win_data *data, RECT rect, BOOL above )
-@@ -1580,6 +1582,8 @@ static void window_set_wm_state( struct x11drv_win_data *data, UINT new_state, B
- 
-     /* override redirect windows won't receive WM_STATE property changes */
-     if (!data->managed) data->wm_state_serial = 0;
-+
-+    XFlush( data->display );
- }
- 
- static void window_set_managed( struct x11drv_win_data *data, BOOL new_managed )
-@@ -1968,6 +1972,7 @@ void set_net_active_window( HWND hwnd, HWND previous )
-     TRACE( "requesting _NET_ACTIVE_WINDOW %p/%lx serial %lu\n", hwnd, window, data->net_active_window_serial );
-     XSendEvent( data->display, DefaultRootWindow( data->display ), False,
-                 SubstructureRedirectMask | SubstructureNotifyMask, &xev );
-+    XFlush( data->display );
- }
- 
- BOOL window_is_reparenting( HWND hwnd )
-
-diff --git b/dlls/win32u/class.c a/dlls/win32u/class.c
-index ba1f7d650af..57e18cbfc18 100644
---- b/dlls/win32u/class.c
-+++ a/dlls/win32u/class.c
-@@ -47,14 +47,19 @@ SYSTEM_BASIC_INFORMATION system_info;
- typedef struct tagCLASS
- {
-     struct list  entry;         /* Entry in class list */
-+    UINT         style;         /* Class style */
-     BOOL         local;         /* Local class? */
-     WNDPROC      winproc;       /* Window procedure */
-+    INT          cbClsExtra;    /* Class extra bytes */
-+    INT          cbWndExtra;    /* Window extra bytes */
-     struct dce  *dce;           /* Opaque pointer to class DCE */
-+    UINT_PTR     instance;      /* Module that created the task */
-     HICON        hIcon;         /* Default icon */
-     HICON        hIconSm;       /* Default small icon */
-     HICON        hIconSmIntern; /* Internal small icon, derived from hIcon */
-     HCURSOR      hCursor;       /* Default cursor */
-     HBRUSH       hbrBackground; /* Default background */
-+    ATOM         atom;          /* name of the class */
-     struct client_menu_name menu_name; /* Default menu name */
-     const shared_object_t *shared; /* class object in session shared memory */
- } CLASS;
-@@ -384,25 +389,6 @@ static CLASS *get_class_ptr( HWND hwnd, BOOL write_access )
-     return NULL;
- }
- 
--static NTSTATUS get_shared_class( CLASS *class, struct object_lock *lock, const class_shm_t **class_shm )
--{
--    const shared_object_t *object;
--
--    TRACE( "class %p, lock %p, class_shm %p\n", class, lock, class_shm );
--
--    if (!(object = class->shared)) return STATUS_INVALID_HANDLE;
--
--    if (!lock->id || !shared_object_release_seqlock( object, lock->seq ))
--    {
--        shared_object_acquire_seqlock( object, &lock->seq );
--        *class_shm = &object->shm.class;
--        lock->id = object->id;
--        return STATUS_PENDING;
--    }
--
--    return STATUS_SUCCESS;
--}
--
- static NTSTATUS get_shared_window_class( HWND hwnd, struct object_lock *lock, const class_shm_t **class_shm )
- {
-     const shared_object_t *object;
-@@ -444,19 +430,6 @@ static BOOL class_name_matches( CLASS *class, UNICODE_STRING *name )
-     return name->Length == len && !wcsnicmp( class_name, name->Buffer, len / sizeof(WCHAR) );
- }
- 
--static UINT_PTR get_class_instance( CLASS *class )
--{
--    struct object_lock lock = OBJECT_LOCK_INIT;
--    const class_shm_t *class_shm;
--    UINT_PTR instance = 0;
--    NTSTATUS status;
--
--    while ((status = get_shared_class( class, &lock, &class_shm )) == STATUS_PENDING)
--        instance = class_shm->instance;
--    if (status) return 0;
--    return instance;
--}
--
- static CLASS *find_class( HINSTANCE module, UNICODE_STRING *name )
- {
-     ULONG_PTR instance = (UINT_PTR)module;
-@@ -466,11 +439,10 @@ static CLASS *find_class( HINSTANCE module, UNICODE_STRING *name )
-     user_lock();
-     LIST_FOR_EACH_ENTRY( class, &class_list, CLASS, entry )
-     {
--        UINT_PTR class_instance = get_class_instance( class );
-         if (!class_name_matches( class, name )) continue;
--        is_win16 = !(class_instance >> 16);
--        if (!instance || !class->local || class_instance == instance ||
--            (!is_win16 && ((class_instance & ~0xffff) == (instance & ~0xffff))))
-+        is_win16 = !(class->instance >> 16);
-+        if (!instance || !class->local || class->instance == instance ||
-+            (!is_win16 && ((class->instance & ~0xffff) == (instance & ~0xffff))))
-         {
-             TRACE( "%s %lx -> %p\n", debugstr_us(name), instance, class );
-             return class;
-@@ -543,17 +515,21 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
-     if (wc->cbWndExtra > 40)  /* Extra bytes are limited to 40 in Win32 */
-         WARN("Win extra bytes %d is > 40\n", wc->cbWndExtra );
- 
--    if (!(class = calloc( 1, sizeof(*class) ))) return 0;
-+    if (!(class = calloc( 1, sizeof(CLASS) + wc->cbClsExtra ))) return 0;
- 
-+    class->style      = wc->style;
-     class->local      = !is_builtin && !(wc->style & CS_GLOBALCLASS);
-+    class->cbWndExtra = wc->cbWndExtra;
-+    class->cbClsExtra = wc->cbClsExtra;
-+    class->instance   = (UINT_PTR)instance;
- 
-     SERVER_START_REQ( create_class )
-     {
-         req->local      = class->local;
--        req->style      = wc->style;
--        req->instance   = wine_server_client_ptr( instance );
--        req->cls_extra  = wc->cbClsExtra;
--        req->win_extra  = wc->cbWndExtra;
-+        req->style      = class->style;
-+        req->instance   = class->instance;
-+        req->extra      = class->cbClsExtra;
-+        req->win_extra  = class->cbWndExtra;
-         req->client_ptr = wine_server_client_ptr( class );
-         req->atom       = wine_server_add_atom( req, name );
-         req->name_offset = version->Length / sizeof(WCHAR);
-@@ -602,6 +578,7 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
-     class->hIconSmIntern = sm_icon;
-     class->hCursor       = wc->hCursor;
-     class->hbrBackground = wc->hbrBackground;
-+    class->atom          = atom;
-     class->winproc       = alloc_winproc( wc->lpfnWndProc, ansi );
-     if (client_menu_name) class->menu_name = *client_menu_name;
-     class->shared        = shared;
-@@ -649,38 +626,31 @@ BOOL WINAPI NtUserUnregisterClass( UNICODE_STRING *name, HINSTANCE instance,
- ATOM WINAPI NtUserGetClassInfoEx( HINSTANCE instance, UNICODE_STRING *name, WNDCLASSEXW *wc,
-                                   struct client_menu_name *menu_name, BOOL ansi )
- {
--    struct object_lock lock = OBJECT_LOCK_INIT;
--    const class_shm_t *class_shm;
--    NTSTATUS status;
-     CLASS *class;
--    ATOM atom = 0;
-+    ATOM atom;
- 
-     /* create the desktop window to trigger builtin class registration */
-     if (!is_desktop_class( name ) && !is_message_class( name )) get_desktop_window();
- 
-     if (!(class = find_class( instance, name ))) return 0;
- 
--    while ((status = get_shared_class( class, &lock, &class_shm )) == STATUS_PENDING)
-+    if (wc)
-     {
--        if (wc)
--        {
--            wc->style         = class_shm->style;
--            wc->lpfnWndProc   = get_winproc( class->winproc, ansi );
--            wc->cbClsExtra    = class_shm->cls_extra;
--            wc->cbWndExtra    = class_shm->win_extra;
--            wc->hInstance     = (instance == user32_module) ? 0 : instance;
--            wc->hIcon         = class->hIcon;
--            wc->hIconSm       = class->hIconSm ? class->hIconSm : class->hIconSmIntern;
--            wc->hCursor       = class->hCursor;
--            wc->hbrBackground = class->hbrBackground;
--            wc->lpszMenuName  = ansi ? (const WCHAR *)class->menu_name.nameA : class->menu_name.nameW;
--            wc->lpszClassName = name->Buffer;
--        }
--        atom = class_shm->atom;
-+        wc->style         = class->style;
-+        wc->lpfnWndProc   = get_winproc( class->winproc, ansi );
-+        wc->cbClsExtra    = class->cbClsExtra;
-+        wc->cbWndExtra    = class->cbWndExtra;
-+        wc->hInstance     = (instance == user32_module) ? 0 : instance;
-+        wc->hIcon         = class->hIcon;
-+        wc->hIconSm       = class->hIconSm ? class->hIconSm : class->hIconSmIntern;
-+        wc->hCursor       = class->hCursor;
-+        wc->hbrBackground = class->hbrBackground;
-+        wc->lpszMenuName  = ansi ? (const WCHAR *)class->menu_name.nameA : class->menu_name.nameW;
-+        wc->lpszClassName = name->Buffer;
-     }
--    if (status) return 0;
- 
-     if (menu_name) *menu_name = class->menu_name;
-+    atom = class->atom;
-     release_class_ptr( class );
-     return atom;
- }
-@@ -797,7 +767,7 @@ INT WINAPI NtUserGetClassName( HWND hwnd, BOOL real, UNICODE_STRING *name )
- }
- 
- /* Set class info with the wine server. */
--static BOOL set_server_info( HWND hwnd, INT offset, LONG_PTR newval, UINT size, ULONG_PTR *oldval )
-+static BOOL set_server_info( HWND hwnd, INT offset, LONG_PTR newval, UINT size )
- {
-     BOOL ret;
- 
-@@ -808,7 +778,6 @@ static BOOL set_server_info( HWND hwnd, INT offset, LONG_PTR newval, UINT size,
-         req->size = size;
-         req->new_info = newval;
-         ret = !wine_server_call_err( req );
--        *oldval = reply->old_info;
-     }
-     SERVER_END_REQ;
-     return ret;
-@@ -822,7 +791,16 @@ static ULONG_PTR set_class_long_size( HWND hwnd, INT offset, LONG_PTR newval, UI
- 
-     if (!(class = get_class_ptr( hwnd, TRUE ))) return 0;
- 
--    switch(offset)
-+    if (offset >= 0)
-+    {
-+        if (set_server_info( hwnd, offset, newval, size ))
-+        {
-+            void *ptr = (char *)(class + 1) + offset;
-+            memcpy( &retval, ptr, size );
-+            memcpy( ptr, &newval, size );
-+        }
-+    }
-+    else switch(offset)
-     {
-     case GCLP_MENUNAME:
-         {
-@@ -905,20 +883,25 @@ static ULONG_PTR set_class_long_size( HWND hwnd, INT offset, LONG_PTR newval, UI
-         class->hIconSmIntern = small_icon;
-         break;
-     case GCL_STYLE:
--        if (!set_server_info( hwnd, offset, newval, size, &retval )) break;
-+        if (!set_server_info( hwnd, offset, newval, size )) break;
-+        retval = class->style;
-+        class->style = newval;
-         break;
-     case GCL_CBWNDEXTRA:
--        if (!set_server_info( hwnd, offset, newval, size, &retval )) break;
-+        if (!set_server_info( hwnd, offset, newval, size )) break;
-+        retval = class->cbWndExtra;
-+        class->cbWndExtra = newval;
-         break;
-     case GCLP_HMODULE:
--        if (!set_server_info( hwnd, offset, newval, size, &retval )) break;
-+        if (!set_server_info( hwnd, offset, newval, size )) break;
-+        retval = class->instance;
-+        class->instance = newval;
-         break;
-     case GCL_CBCLSEXTRA:  /* cannot change this one */
-         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
-         break;
-     default:
--        if (offset >= 0) set_server_info( hwnd, offset, newval, size, &retval );
--        else RtlSetLastWin32Error( ERROR_INVALID_INDEX );
-+        RtlSetLastWin32Error( ERROR_INVALID_INDEX );
-         break;
-     }
-     release_class_ptr( class );
-@@ -949,62 +932,11 @@ WORD WINAPI NtUserSetClassWord( HWND hwnd, INT offset, WORD newval )
-     return set_class_long_size( hwnd, offset, newval, sizeof(WORD), TRUE );
- }
- 
--static ULONG_PTR get_class_long_shm( HWND hwnd, INT offset, UINT size, BOOL ansi )
--{
--    struct object_lock lock = OBJECT_LOCK_INIT;
--    const class_shm_t *class_shm;
--    ULONG_PTR ret = 0;
--    BOOL valid = TRUE;
--    NTSTATUS status;
--
--    while ((status = get_shared_window_class( hwnd, &lock, &class_shm )) == STATUS_PENDING)
--    {
--        switch (offset)
--        {
--        case GCW_ATOM:           ret = class_shm->atom; break;
--        case GCL_STYLE:          ret = class_shm->style; break;
--        case GCL_CBCLSEXTRA:     ret = class_shm->cls_extra; break;
--        case GCL_CBWNDEXTRA:     ret = class_shm->win_extra; break;
--        case GCLP_HMODULE:       ret = class_shm->instance; break;
--        default:
--            valid = offset >= 0 && offset <= (INT)(class_shm->cls_extra - size);
--            if (valid) memcpy( &ret, (char *)class_shm->extra + offset, size );
--            break;
--        }
--    }
--    if (status)
--    {
--        RtlSetLastWin32Error( ERROR_INVALID_WINDOW_HANDLE );
--        return 0;
--    }
--    if (!valid)
--    {
--        WARN( "Invalid window %p offset %d size %u\n", hwnd, offset, size );
--        RtlSetLastWin32Error( ERROR_INVALID_INDEX );
--        return 0;
--    }
--
--    return ret;
--}
--
- static ULONG_PTR get_class_long_size( HWND hwnd, INT offset, UINT size, BOOL ansi )
- {
-     CLASS *class;
-     ULONG_PTR retvalue = 0;
- 
--    switch (offset)
--    {
--    case GCLP_HICONSM:
--    case GCLP_WNDPROC:
--    case GCLP_HICON:
--    case GCLP_HCURSOR:
--    case GCLP_HBRBACKGROUND:
--    case GCLP_MENUNAME:
--        break;
--    default:
--        return get_class_long_shm( hwnd, offset, size, ansi );
--    }
--
-     if (!(class = get_class_ptr( hwnd, FALSE ))) return 0;
- 
-     if (class == OBJ_OTHER_PROCESS)
-@@ -1036,6 +968,25 @@ static ULONG_PTR get_class_long_size( HWND hwnd, INT offset, UINT size, BOOL ans
-         return retvalue;
-     }
- 
-+    if (offset >= 0)
-+    {
-+        if (offset <= class->cbClsExtra - size)
-+        {
-+            if (size == sizeof(DWORD))
-+            {
-+                DWORD retdword;
-+                memcpy( &retdword, (char *)(class + 1) + offset, sizeof(DWORD) );
-+                retvalue = retdword;
-+            }
-+            else
-+                memcpy( &retvalue, (char *)(class + 1) + offset, sizeof(ULONG_PTR) );
-+        }
-+        else
-+            RtlSetLastWin32Error( ERROR_INVALID_INDEX );
-+        release_class_ptr( class );
-+        return retvalue;
-+    }
-+
-     switch(offset)
-     {
-     case GCLP_HBRBACKGROUND:
-@@ -1050,12 +1001,27 @@ static ULONG_PTR get_class_long_size( HWND hwnd, INT offset, UINT size, BOOL ans
-     case GCLP_HICONSM:
-         retvalue = (ULONG_PTR)(class->hIconSm ? class->hIconSm : class->hIconSmIntern);
-         break;
-+    case GCL_STYLE:
-+        retvalue = class->style;
-+        break;
-+    case GCL_CBWNDEXTRA:
-+        retvalue = class->cbWndExtra;
-+        break;
-+    case GCL_CBCLSEXTRA:
-+        retvalue = class->cbClsExtra;
-+        break;
-+    case GCLP_HMODULE:
-+        retvalue = class->instance;
-+        break;
-     case GCLP_WNDPROC:
-         retvalue = (ULONG_PTR)get_winproc( class->winproc, ansi );
-         break;
-     case GCLP_MENUNAME:
-         retvalue = ansi ? (ULONG_PTR)class->menu_name.nameA : (ULONG_PTR)class->menu_name.nameW;
-         break;
-+    case GCW_ATOM:
-+        retvalue = class->atom;
-+        break;
-     default:
-         RtlSetLastWin32Error( ERROR_INVALID_INDEX );
-         break;
-diff --git b/include/wine/server_protocol.h a/include/wine/server_protocol.h
-index 9bde2f11623..96306c45774 100644
---- b/include/wine/server_protocol.h
-+++ a/include/wine/server_protocol.h
-@@ -1024,16 +1024,9 @@ typedef volatile struct
- 
- typedef volatile struct
- {
--    atom_t               atom;
--    unsigned int         style;
--    unsigned int         cls_extra;
--    unsigned int         win_extra;
--    mod_handle_t         instance;
-     data_size_t          name_offset;
-     data_size_t          name_len;
-     WCHAR                name[MAX_ATOM_LEN];
--    unsigned short       __pad;
--    char                 extra[];
- } class_shm_t;
- 
- typedef volatile struct
-@@ -4493,11 +4486,12 @@ struct create_class_request
-     atom_t         atom;
-     unsigned int   style;
-     mod_handle_t   instance;
-+    int            extra;
-+    int            win_extra;
-     client_ptr_t   client_ptr;
--    short int      cls_extra;
--    short int      win_extra;
-     data_size_t    name_offset;
-     /* VARARG(name,unicode_str); */
-+    char __pad_52[4];
- };
- struct create_class_reply
- {
-diff --git b/server/class.c a/server/class.c
-index 64c789fbf50..098acf8c041 100644
---- b/server/class.c
-+++ a/server/class.c
-@@ -46,36 +46,36 @@ struct window_class
-     struct process     *process;         /* process owning the class */
-     int                 count;           /* reference count */
-     int                 local;           /* local class? */
--    atom_t              atom;            /* class atom for versioned class */
-+    atom_t              atom;            /* class atom */
-+    atom_t              base_atom;       /* base class atom for versioned class */
-+    mod_handle_t        instance;        /* module instance */
-+    unsigned int        style;           /* class style */
-+    int                 win_extra;       /* number of window extra bytes */
-     client_ptr_t        client_ptr;      /* pointer to class in client address space */
-     class_shm_t        *shared;          /* class in session shared memory */
-+    int                 nb_extra_bytes;  /* number of extra bytes */
-+    char                extra_bytes[1];  /* extra bytes storage */
- };
- 
--C_ASSERT( sizeof(class_shm_t) == offsetof(class_shm_t, extra[0]) );
--
--static struct window_class *create_class( struct process *process, int local, struct unicode_str *name, unsigned int name_offset,
--                                          atom_t atom, mod_handle_t instance, unsigned int style, int cls_extra, int win_extra )
-+static struct window_class *create_class( struct process *process, int extra_bytes, int local,
-+                                          struct unicode_str *name, unsigned int name_offset )
- {
-     struct window_class *class;
- 
--    if (!(class = mem_alloc( sizeof(*class) ))) return NULL;
-+    if (!(class = mem_alloc( sizeof(*class) + extra_bytes - 1 ))) return NULL;
- 
-     class->process = (struct process *)grab_object( process );
-     class->count = 0;
-     class->local = local;
-+    class->nb_extra_bytes = extra_bytes;
-+    memset( class->extra_bytes, 0, extra_bytes );
- 
--    if (!(class->shared = alloc_shared_object( offsetof(class_shm_t, extra[cls_extra]) ))) goto failed;
-+    if (!(class->shared = alloc_shared_object())) goto failed;
-     SHARED_WRITE_BEGIN( class->shared, class_shm_t )
-     {
-         memcpy( (void *)shared->name, name->str, name->len );
--        shared->name_offset  = name_offset;
--        shared->name_len     = name->len;
--        shared->atom         = atom;
--        shared->instance     = instance;
--        shared->style        = style;
--        shared->win_extra    = win_extra;
--        shared->cls_extra    = cls_extra;
--        memset( (void *)shared->extra, 0, cls_extra );
-+        shared->name_offset = name_offset;
-+        shared->name_len = name->len;
-     }
-     SHARED_WRITE_END;
- 
-@@ -96,7 +96,7 @@ static void destroy_class( struct window_class *class )
-     struct atom_table *table = get_user_atom_table();
- 
-     release_atom( table, class->atom );
--    release_atom( table, class->shared->atom );
-+    release_atom( table, class->base_atom );
-     list_remove( &class->entry );
-     release_object( class->process );
-     if (class->shared) free_shared_object( class->shared );
-@@ -121,11 +121,10 @@ static struct window_class *find_class( struct process *process, atom_t atom, mo
- 
-     LIST_FOR_EACH_ENTRY( class, &process->classes, struct window_class, entry )
-     {
--        const class_shm_t *shared = class->shared;
-         if (class->atom != atom) continue;
--        is_win16 = !(shared->instance >> 16);
--        if (!instance || !class->local || shared->instance == instance ||
--            (!is_win16 && ((shared->instance & ~0xffff) == (instance & ~0xffff)))) return class;
-+        is_win16 = !(class->instance >> 16);
-+        if (!instance || !class->local || class->instance == instance ||
-+            (!is_win16 && ((class->instance & ~0xffff) == (instance & ~0xffff)))) return class;
-     }
-     return NULL;
- }
-@@ -137,7 +136,7 @@ struct window_class *grab_class( struct process *process, atom_t atom, mod_handl
-     if (class)
-     {
-         class->count++;
--        *extra_bytes = class->shared->win_extra;
-+        *extra_bytes = class->win_extra;
-         *locator = get_shared_object_locator( class->shared );
-     }
-     else set_error( STATUS_INVALID_HANDLE );
-@@ -152,7 +151,7 @@ void release_class( struct window_class *class )
- 
- int is_desktop_class( struct window_class *class )
- {
--    return (class->shared->atom == DESKTOP_ATOM && !class->local);
-+    return (class->atom == DESKTOP_ATOM && !class->local);
- }
- 
- int is_message_class( struct window_class *class )
-@@ -161,17 +160,17 @@ int is_message_class( struct window_class *class )
-     static const struct unicode_str name = { messageW, sizeof(messageW) };
-     struct atom_table *table = get_user_atom_table();
- 
--    return (!class->local && class->shared->atom == find_atom( table, &name ));
-+    return (!class->local && class->atom == find_atom( table, &name ));
- }
- 
- int get_class_style( struct window_class *class )
- {
--    return class->shared->style;
-+    return class->style;
- }
- 
- atom_t get_class_atom( struct window_class *class )
- {
--    return class->shared->atom;
-+    return class->base_atom;
- }
- 
- client_ptr_t get_class_client_ptr( struct window_class *class )
-@@ -230,7 +229,7 @@ DECL_HANDLER(create_class)
-         release_atom( table, base_atom );
-         return;
-     }
--    if (req->cls_extra < 0 || req->cls_extra > 4096 || req->win_extra < 0 || req->win_extra > 4096)
-+    if (req->extra < 0 || req->extra > 4096 || req->win_extra < 0 || req->win_extra > 4096)
-     {
-         /* don't allow stupid values here */
-         set_error( STATUS_INVALID_PARAMETER );
-@@ -239,14 +238,17 @@ DECL_HANDLER(create_class)
-         return;
-     }
- 
--    if (!(class = create_class( current->process, req->local, &name, offset, base_atom,
--                                req->instance, req->style, req->cls_extra, req->win_extra )))
-+    if (!(class = create_class( current->process, req->extra, req->local, &name, offset )))
-     {
-         release_atom( table, atom );
-         release_atom( table, base_atom );
-         return;
-     }
-     class->atom       = atom;
-+    class->base_atom  = base_atom;
-+    class->instance   = req->instance;
-+    class->style      = req->style;
-+    class->win_extra  = req->win_extra;
-     class->client_ptr = req->client_ptr;
-     reply->locator   = get_shared_object_locator( class->shared );
-     reply->atom      = base_atom;
-@@ -287,43 +289,39 @@ DECL_HANDLER(set_class_info)
-         return;
-     }
- 
--    SHARED_WRITE_BEGIN( class->shared, class_shm_t )
-+    switch (req->offset)
-     {
--        switch (req->offset)
-+    case GCL_STYLE:
-+        reply->old_info = class->style;
-+        class->style = req->new_info;
-+        break;
-+    case GCL_CBWNDEXTRA:
-+        if (req->new_info > 4096)
-+        {
-+            set_error( STATUS_INVALID_PARAMETER );
-+            return;
-+        }
-+        reply->old_info = class->win_extra;
-+        class->win_extra = req->new_info;
-+        break;
-+    case GCL_CBCLSEXTRA:
-+        set_win32_error( ERROR_INVALID_INDEX );
-+        break;
-+    case GCLP_HMODULE:
-+        reply->old_info = class->instance;
-+        class->instance = req->new_info;
-+        break;
-+    default:
-+        if (req->size > sizeof(req->new_info) || req->offset < 0 ||
-+            req->offset > class->nb_extra_bytes - (int)req->size)
-         {
--        case GCL_STYLE:
--            reply->old_info = shared->style;
--            shared->style = req->new_info;
--            break;
--        case GCL_CBWNDEXTRA:
--            if (req->new_info > 4096)
--            {
--                set_error( STATUS_INVALID_PARAMETER );
--                return;
--            }
--            reply->old_info = shared->win_extra;
--            shared->win_extra = req->new_info;
--            break;
--        case GCL_CBCLSEXTRA:
-             set_win32_error( ERROR_INVALID_INDEX );
--            break;
--        case GCLP_HMODULE:
--            reply->old_info = shared->instance;
--            shared->instance = req->new_info;
--            break;
--        default:
--            if (req->size > sizeof(req->new_info) || req->offset < 0 ||
--                req->offset > class->shared->cls_extra - (int)req->size)
--            {
--                set_win32_error( ERROR_INVALID_INDEX );
--                return;
--            }
--            memcpy( &reply->old_info, (char *)shared->extra + req->offset, req->size );
--            memcpy( (char *)shared->extra + req->offset, &req->new_info, req->size );
--            break;
-+            return;
-         }
-+        memcpy( &reply->old_info, class->extra_bytes + req->offset, req->size );
-+        memcpy( class->extra_bytes + req->offset, &req->new_info, req->size );
-+        break;
-     }
--    SHARED_WRITE_END;
- }
- 
- 
-@@ -345,8 +343,19 @@ DECL_HANDLER(get_class_info)
-         /* not supported */
-         set_win32_error( ERROR_INVALID_HANDLE );
-         break;
-+    case GCL_STYLE:          reply->info = class->style; break;
-+    case GCL_CBWNDEXTRA:     reply->info = class->win_extra; break;
-+    case GCL_CBCLSEXTRA:     reply->info = class->nb_extra_bytes; break;
-+    case GCLP_HMODULE:       reply->info = class->instance; break;
-+    case GCW_ATOM:           reply->info = class->atom; break;
-     default:
--        set_win32_error( ERROR_INVALID_INDEX );
-+        if (req->size > sizeof(reply->info) || req->offset < 0 ||
-+            req->offset > class->nb_extra_bytes - (int)req->size)
-+        {
-+            set_win32_error( ERROR_INVALID_INDEX );
-+            return;
-+        }
-+        memcpy( &reply->info, class->extra_bytes + req->offset, req->size );
-         break;
-     }
- }
-diff --git b/server/file.h a/server/file.h
-index db89602441f..567194bf00a 100644
---- b/server/file.h
-+++ a/server/file.h
-@@ -195,7 +195,7 @@ extern struct mapping *create_session_mapping( struct object *root, const struct
- extern void set_session_mapping( struct mapping *mapping );
- 
- extern session_shm_t *shared_session;
--extern volatile void *alloc_shared_object( mem_size_t shm_size );
-+extern volatile void *alloc_shared_object(void);
- extern void free_shared_object( volatile void *object_shm );
- extern void invalidate_shared_object( volatile void *object_shm );
- extern struct obj_locator get_shared_object_locator( volatile void *object_shm );
-diff --git b/server/mapping.c a/server/mapping.c
-index 937ba95b9a0..c3f57b6394c 100644
---- b/server/mapping.c
-+++ a/server/mapping.c
-@@ -242,7 +242,6 @@ struct session_object
- {
-     struct list entry;      /* entry in the session free object list */
-     mem_size_t offset;      /* offset of obj in the session shared mapping */
--    mem_size_t size;        /* size of obj in the session shared mapping */
-     shared_object_t obj;    /* object actually shared with the client */
- };
- 
-@@ -1381,41 +1380,31 @@ static struct session_block *find_free_session_block( mem_size_t size )
-     return grow_session_mapping( size );
- }
- 
--static struct session_object *find_free_session_object( mem_size_t size )
-+volatile void *alloc_shared_object(void)
- {
-     struct session_object *object;
-+    struct list *ptr;
- 
--    LIST_FOR_EACH_ENTRY( object, &session.free_objects, struct session_object, entry )
-+    if ((ptr = list_head( &session.free_objects )))
-     {
--        if (size == sizeof(*object) && object->size == size) return object;
--        if (size > sizeof(*object) && size <= object->size) return object;
--    }
--
--    return NULL;
--}
--
--volatile void *alloc_shared_object( mem_size_t shm_size )
--{
--    struct session_object *object;
--    mem_size_t size = sizeof(*object) - sizeof(object_shm_t) + max(shm_size, sizeof(object_shm_t));
--
--    if ((object = find_free_session_object( size )))
-+        object = CONTAINING_RECORD( ptr, struct session_object, entry );
-         list_remove( &object->entry );
-+    }
-     else
-     {
-+        mem_size_t size = sizeof(*object);
-         struct session_block *block;
- 
-         if (!(block = find_free_session_block( size ))) return NULL;
-         object = (struct session_object *)(block->data + block->used_size);
-         object->offset = block->offset + (char *)&object->obj - block->data;
--        object->size = size;
-         block->used_size += size;
-     }
- 
-     SHARED_WRITE_BEGIN( &object->obj.shm, object_shm_t )
-     {
-         /* mark the object data as uninitialized */
--        mark_block_uninitialized( (void *)shared, shm_size );
-+        mark_block_uninitialized( (void *)shared, sizeof(*shared) );
-         CONTAINING_RECORD( shared, shared_object_t, shm )->id = ++session.last_object_id;
-     }
-     SHARED_WRITE_END;
-@@ -1426,11 +1415,10 @@ volatile void *alloc_shared_object( mem_size_t shm_size )
- void free_shared_object( volatile void *object_shm )
- {
-     struct session_object *object = CONTAINING_RECORD( object_shm, struct session_object, obj.shm );
--    mem_size_t shm_size = object->size - sizeof(*object) + sizeof(object_shm_t);
- 
-     SHARED_WRITE_BEGIN( &object->obj.shm, object_shm_t )
-     {
--        mark_block_noaccess( (void *)shared, shm_size );
-+        mark_block_noaccess( (void *)shared, sizeof(*shared) );
-         CONTAINING_RECORD( shared, shared_object_t, shm )->id = 0;
-     }
-     SHARED_WRITE_END;
-diff --git b/server/protocol.def a/server/protocol.def
-index 42095acb936..14704f79b30 100644
---- b/server/protocol.def
-+++ a/server/protocol.def
-@@ -1040,16 +1040,9 @@ typedef volatile struct
- 
- typedef volatile struct
- {
--    atom_t               atom;               /* class atom */
--    unsigned int         style;              /* class style */
--    unsigned int         cls_extra;          /* number of class extra bytes */
--    unsigned int         win_extra;          /* number of window extra bytes */
--    mod_handle_t         instance;           /* module instance */
-     data_size_t          name_offset;        /* offset in WCHAR of the unversioned class name, constant */
-     data_size_t          name_len;           /* len in bytes of the class name, constant */
-     WCHAR                name[MAX_ATOM_LEN]; /* class name, constant */
--    unsigned short       __pad;
--    char                 extra[];            /* extra bytes storage */
- } class_shm_t;
- 
- typedef volatile struct
-@@ -3255,9 +3248,9 @@ enum caret_state
-     atom_t         atom;           /* class atom */
-     unsigned int   style;          /* class style */
-     mod_handle_t   instance;       /* module instance */
-+    int            extra;          /* number of extra class bytes */
-+    int            win_extra;      /* number of window extra bytes */
-     client_ptr_t   client_ptr;     /* pointer to class in client address space */
--    short int      cls_extra;      /* number of extra class bytes */
--    short int      win_extra;      /* number of window extra bytes */
-     data_size_t    name_offset;    /* base class name offset for specified atom */
-     VARARG(name,unicode_str);      /* class name */
- @REPLY
-diff --git b/server/queue.c a/server/queue.c
-index 6b48a5dfdc8..fb9499b5589 100644
---- b/server/queue.c
-+++ a/server/queue.c
-@@ -263,7 +263,7 @@ static struct thread_input *create_thread_input( struct thread *thread )
-         memcpy( input->desktop_keystate, (const void *)input->desktop->shared->keystate,
-                 sizeof(input->desktop_keystate) );
- 
--        if (!(input->shared = alloc_shared_object( sizeof(*input->shared) )))
-+        if (!(input->shared = alloc_shared_object()))
-         {
-             release_object( input );
-             return NULL;
-@@ -324,11 +324,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         for (i = 0; i < NB_MSG_KINDS; i++) list_init( &queue->msg_list[i] );
- 
-         if (!(queue->sync = create_internal_sync( 1, 0 ))) goto error;
--        if (!(queue->shared = alloc_shared_object( sizeof(*queue->shared) )))
--        {
--            release_object( queue );
--            return NULL;
--        }
-+        if (!(queue->shared = alloc_shared_object())) goto error;
- 
-         SHARED_WRITE_BEGIN( queue->shared, queue_shm_t )
-         {
-diff --git b/server/request_handlers.h a/server/request_handlers.h
-index fbd4f97a35c..efa0100fdf0 100644
---- b/server/request_handlers.h
-+++ a/server/request_handlers.h
-@@ -1824,11 +1824,11 @@ C_ASSERT( offsetof(struct create_class_request, local) == 12 );
- C_ASSERT( offsetof(struct create_class_request, atom) == 16 );
- C_ASSERT( offsetof(struct create_class_request, style) == 20 );
- C_ASSERT( offsetof(struct create_class_request, instance) == 24 );
--C_ASSERT( offsetof(struct create_class_request, client_ptr) == 32 );
--C_ASSERT( offsetof(struct create_class_request, cls_extra) == 40 );
--C_ASSERT( offsetof(struct create_class_request, win_extra) == 42 );
--C_ASSERT( offsetof(struct create_class_request, name_offset) == 44 );
--C_ASSERT( sizeof(struct create_class_request) == 48 );
-+C_ASSERT( offsetof(struct create_class_request, extra) == 32 );
-+C_ASSERT( offsetof(struct create_class_request, win_extra) == 36 );
-+C_ASSERT( offsetof(struct create_class_request, client_ptr) == 40 );
-+C_ASSERT( offsetof(struct create_class_request, name_offset) == 48 );
-+C_ASSERT( sizeof(struct create_class_request) == 56 );
- C_ASSERT( offsetof(struct create_class_reply, locator) == 8 );
- C_ASSERT( offsetof(struct create_class_reply, atom) == 24 );
- C_ASSERT( sizeof(struct create_class_reply) == 32 );
-diff --git b/server/request_trace.h a/server/request_trace.h
-index c74c988fff0..cde81d9736d 100644
---- b/server/request_trace.h
-+++ a/server/request_trace.h
-@@ -2376,9 +2376,9 @@ static void dump_create_class_request( const struct create_class_request *req )
-     fprintf( stderr, ", atom=%04x", req->atom );
-     fprintf( stderr, ", style=%08x", req->style );
-     dump_uint64( ", instance=", &req->instance );
--    dump_uint64( ", client_ptr=", &req->client_ptr );
--    fprintf( stderr, ", cls_extra=%d", req->cls_extra );
-+    fprintf( stderr, ", extra=%d", req->extra );
-     fprintf( stderr, ", win_extra=%d", req->win_extra );
-+    dump_uint64( ", client_ptr=", &req->client_ptr );
-     fprintf( stderr, ", name_offset=%u", req->name_offset );
-     dump_varargs_unicode_str( ", name=", cur_size );
- }
-diff --git b/server/window.c a/server/window.c
-index d9a2689ae5a..9f871ed9494 100644
---- b/server/window.c
-+++ a/server/window.c
-@@ -681,7 +681,7 @@ static struct window *create_window( struct window *parent, struct window *owner
-     list_init( &win->children );
-     list_init( &win->unlinked );
- 
--    if (!(win->shared = alloc_shared_object( sizeof(*win->shared) ))) goto failed;
-+    if (!(win->shared = alloc_shared_object())) goto failed;
-     SHARED_WRITE_BEGIN( win->shared, window_shm_t )
-     {
-         shared->class       = class_locator;
-diff --git b/server/winstation.c a/server/winstation.c
-index 52c3f1ce1eb..bfcd4a53613 100644
---- b/server/winstation.c
-+++ a/server/winstation.c
-@@ -308,7 +308,7 @@ static struct desktop *create_desktop( const struct unicode_str *name, unsigned
-             list_init( &desktop->hotkeys );
-             list_init( &desktop->pointers );
- 
--            if (!(desktop->shared = alloc_shared_object( sizeof(*desktop->shared) )))
-+            if (!(desktop->shared = alloc_shared_object()))
-             {
-                 release_object( desktop );
-                 return NULL;
 diff --git b/dlls/ntdll/unix/server.c a/dlls/ntdll/unix/server.c
 index ee34c5e9cd8..bbca17aee8f 100644
 --- b/dlls/ntdll/unix/server.c
@@ -1349,7 +192,7 @@ index 1660478b0e1..dd18c948d22 100644
 -    else if (timeout->QuadPart <= 0)
 -    {
 -        clock_gettime( CLOCK_MONOTONIC, &now );
--        args.timeout = ((ULONGLONG)now.tv_sec * NSECPERSEC) + now.tv_nsec + (-timeout->QuadPart * 100);
+-        args.timeout = (now.tv_sec * NSECPERSEC) + now.tv_nsec + (-timeout->QuadPart * 100);
 -    }
 -    else
 -    {
@@ -2056,6 +899,14 @@ index 96306c45774..8f062ea44ee 100644
      struct d3dkmt_object_create_reply d3dkmt_object_create_reply;
      struct d3dkmt_object_query_reply d3dkmt_object_query_reply;
      struct d3dkmt_object_open_reply d3dkmt_object_open_reply;
+@@ -7015,6 +6995,6 @@ union generic_reply
+     struct d3dkmt_object_open_name_reply d3dkmt_object_open_name_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 918
++#define SERVER_PROTOCOL_VERSION 916
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/completion.c a/server/completion.c
 index dbcf4e2480c..a2028a89823 100644
 --- b/server/completion.c
@@ -2552,7 +1403,7 @@ index 2b6b37cd2e0..435c58947f3 100644
 -
 -    if (event->fd == -1)
 -    {
--        set_error( STATUS_TOO_MANY_OPENED_FILES );
+-        set_error( STATUS_NO_MORE_FILES );
 -        release_object( event );
 -        return NULL;
 -    }
@@ -2571,7 +1422,7 @@ index 2b6b37cd2e0..435c58947f3 100644
 -
 -    if (mutex->fd == -1)
 -    {
--        set_error( STATUS_TOO_MANY_OPENED_FILES );
+-        set_error( STATUS_NO_MORE_FILES );
 -        release_object( mutex );
 -        return NULL;
 -    }
@@ -2590,7 +1441,7 @@ index 2b6b37cd2e0..435c58947f3 100644
 -
 -    if (sem->fd == -1)
 -    {
--        set_error( STATUS_TOO_MANY_OPENED_FILES );
+-        set_error( STATUS_NO_MORE_FILES );
 -        release_object( sem );
 -        return NULL;
 -    }
@@ -3547,6 +2398,14 @@ index 8f062ea44ee..bbad2441877 100644
  };
  struct set_queue_mask_reply
  {
+@@ -6995,6 +6995,6 @@ union generic_reply
+     struct d3dkmt_object_open_name_reply d3dkmt_object_open_name_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 916
++#define SERVER_PROTOCOL_VERSION 915
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/inproc_sync.c a/server/inproc_sync.c
 index 435c58947f3..41a9c2770a7 100644
 --- b/server/inproc_sync.c
@@ -4110,6 +2969,14 @@ index bbad2441877..5f63e12f70d 100644
      int                  hooks_count[NB_HOOKS];
  } queue_shm_t;
  
+@@ -6995,6 +6994,6 @@ union generic_reply
+     struct d3dkmt_object_open_name_reply d3dkmt_object_open_name_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 915
++#define SERVER_PROTOCOL_VERSION 914
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/protocol.def a/server/protocol.def
 index e0bd2ee5a07..6013cbf8841 100644
 --- b/server/protocol.def
@@ -4377,9 +3244,9 @@ index 268c921a914..3f06c15d006 100644
          queue->hooks           = NULL;
          queue->keystate_lock   = 0;
 +        queue->waiting         = 0;
+         queue->ignore_post_msg = 0;
+ 
          list_init( &queue->send_result );
-         list_init( &queue->callback_result );
-         list_init( &queue->pending_timers );
 @@ -1281,8 +1283,26 @@ static void cleanup_results( struct msg_queue *queue )
  /* check if the thread owning the queue is hung (not checking for messages) */
  static int is_queue_hung( struct msg_queue *queue )
@@ -4449,7 +3316,7 @@ index 268c921a914..3f06c15d006 100644
 +    NULL,                           /* get_esync_fd */
      NULL,                           /* satisfied */
      no_signal,                      /* signal */
-     d3dkmt_object_get_fd,           /* get_fd */
+     no_get_fd,                      /* get_fd */
 -    default_get_sync,               /* get_sync */
      default_map_access,             /* map_access */
      default_get_sd,                 /* get_sd */
@@ -4612,6 +3479,14 @@ index 993a432be66..84e75349b0f 100644
  } queue_shm_t;
  
  typedef volatile struct
+@@ -6879,6 +6876,6 @@ union generic_reply
+     struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 914
++#define SERVER_PROTOCOL_VERSION 912
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/hook.c a/server/hook.c
 index fe3c0459651..e53ba4514bf 100644
 --- b/server/hook.c
@@ -4672,8 +3547,8 @@ index 3f06c15d006..b6cff69f38f 100644
          queue->hooks           = NULL;
 +        queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
+         queue->ignore_post_msg = 0;
          queue->waiting         = 0;
-         list_init( &queue->send_result );
 @@ -332,7 +334,6 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
          SHARED_WRITE_BEGIN( queue->shared, queue_shm_t )
          {
@@ -4810,6 +3685,14 @@ index 84e75349b0f..cce625aacc1 100644
  };
  struct set_queue_mask_reply
  {
+@@ -6876,6 +6876,6 @@ union generic_reply
+     struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 912
++#define SERVER_PROTOCOL_VERSION 911
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/protocol.def a/server/protocol.def
 index 0c8be12314a..785f0e26d4e 100644
 --- b/server/protocol.def
@@ -5001,6 +3884,14 @@ index cce625aacc1..ce3bfa7620a 100644
  };
  
  
+@@ -6876,6 +6876,6 @@ union generic_reply
+     struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 911
++#define SERVER_PROTOCOL_VERSION 910
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/inproc_sync.c a/server/inproc_sync.c
 index 41a9c2770a7..f20410c85ed 100644
 --- b/server/inproc_sync.c
@@ -5641,9 +4532,9 @@ index 974766b97a7..1f6396bee0c 100644
  #ifdef __i386__
  extern struct ldt_copy __wine_ldt_copy;
 @@ -235,7 +233,6 @@ extern unsigned int server_queue_process_apc( HANDLE process, const union apc_ca
-                                               union apc_result *result );
  extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
                                 int *needs_close, enum server_fd_type *type, unsigned int *options );
+ extern void wine_server_send_fd( int fd );
 -extern int wine_server_receive_fd( obj_handle_t *handle );
  extern void process_exit_wrapper( int status ) DECLSPEC_NORETURN;
  extern size_t server_init_process(void);
@@ -5710,17 +4601,17 @@ index 781b4a4e59f..62145442ffc 100644
      REQ_set_keyboard_repeat,
 -    REQ_get_inproc_sync_fd,
      REQ_d3dkmt_object_create,
+     REQ_d3dkmt_object_query,
      REQ_NB_REQUESTS
- };
 @@ -6580,7 +6557,6 @@ union generic_request
      struct get_next_process_request get_next_process_request;
      struct get_next_thread_request get_next_thread_request;
      struct set_keyboard_repeat_request set_keyboard_repeat_request;
 -    struct get_inproc_sync_fd_request get_inproc_sync_fd_request;
      struct d3dkmt_object_create_request d3dkmt_object_create_request;
+     struct d3dkmt_object_query_request d3dkmt_object_query_request;
  };
- union generic_reply
-@@ -6883,7 +6859,6 @@ union generic_reply
+@@ -6883,14 +6859,13 @@ union generic_reply
      struct get_next_process_reply get_next_process_reply;
      struct get_next_thread_reply get_next_thread_reply;
      struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
@@ -5728,6 +4619,14 @@ index 781b4a4e59f..62145442ffc 100644
      struct d3dkmt_object_create_reply d3dkmt_object_create_reply;
      struct d3dkmt_object_query_reply d3dkmt_object_query_reply;
      struct d3dkmt_object_open_reply d3dkmt_object_open_reply;
+     struct d3dkmt_share_objects_reply d3dkmt_share_objects_reply;
+     struct d3dkmt_object_open_name_reply d3dkmt_object_open_name_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 910
++#define SERVER_PROTOCOL_VERSION 907
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
 diff --git b/server/Makefile.in a/server/Makefile.in
 index 57250fd0332..6e4e68d6ebf 100644
 --- b/server/Makefile.in
@@ -6088,16 +4987,16 @@ index cfaf03d1b67..ecb46926845 100644
  DECL_HANDLER(set_keyboard_repeat);
 -DECL_HANDLER(get_inproc_sync_fd);
  DECL_HANDLER(d3dkmt_object_create);
+ DECL_HANDLER(d3dkmt_object_query);
  
- typedef void (*req_handler)( const void *req, void *reply );
 @@ -606,7 +605,6 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
      (req_handler)req_get_next_process,
      (req_handler)req_get_next_thread,
      (req_handler)req_set_keyboard_repeat,
 -    (req_handler)req_get_inproc_sync_fd,
      (req_handler)req_d3dkmt_object_create,
+     (req_handler)req_d3dkmt_object_query,
  };
- 
 @@ -709,9 +707,8 @@ C_ASSERT( offsetof(struct init_first_thread_reply, pid) == 8 );
  C_ASSERT( offsetof(struct init_first_thread_reply, tid) == 12 );
  C_ASSERT( offsetof(struct init_first_thread_reply, server_start) == 16 );
@@ -6158,24 +5057,24 @@ index f2fe556cd5f..b5d789b2205 100644
      (dump_func)dump_set_keyboard_repeat_request,
 -    (dump_func)dump_get_inproc_sync_fd_request,
      (dump_func)dump_d3dkmt_object_create_request,
+     (dump_func)dump_d3dkmt_object_query_request,
  };
- 
 @@ -3998,7 +3985,6 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
      (dump_func)dump_get_next_process_reply,
      (dump_func)dump_get_next_thread_reply,
      (dump_func)dump_set_keyboard_repeat_reply,
 -    (dump_func)dump_get_inproc_sync_fd_reply,
      (dump_func)dump_d3dkmt_object_create_reply,
+     (dump_func)dump_d3dkmt_object_query_reply,
  };
- 
 @@ -4300,7 +4286,6 @@ static const char * const req_names[REQ_NB_REQUESTS] =
      "get_next_process",
      "get_next_thread",
      "set_keyboard_repeat",
 -    "get_inproc_sync_fd",
      "d3dkmt_object_create",
+     "d3dkmt_object_query",
  };
- 
 diff --git b/server/thread.c a/server/thread.c
 index 64cd1a74702..aa566c10be4 100644
 --- b/server/thread.c
@@ -6213,6 +5112,7 @@ index 0ec6ef3145e..0ebda06b49b 100644
  extern int attach_thread_input( struct thread *thread_from, struct thread *thread_to );
  extern void detach_thread_input( struct thread *thread_from );
  extern void set_clip_rectangle( struct desktop *desktop, const struct rectangle *rect,
+
 diff --git b/server/mutex.c a/server/mutex.c
 index 573fcda1083..4737b6f711b 100644
 --- b/server/mutex.c
@@ -6518,11 +5418,11 @@ index 3845a86c962..3b0bd1826ef 100644
      int                    hotkey_count;    /* pending hotkey messages count */
      int                    quit_message;    /* is there a pending quit message? */
 @@ -134,7 +133,6 @@ struct msg_queue
-     struct hook_table     *hooks;           /* hook table */
      timeout_t              last_get_msg;    /* time of last get message call */
      int                    keystate_lock;   /* owns an input keystate lock */
 -    int                    waiting;         /* is thread waiting on queue */
      queue_shm_t           *shared;          /* queue in session shared memory */
+     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
  };
  
 @@ -306,7 +304,6 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
@@ -6534,13 +5434,13 @@ index 3845a86c962..3b0bd1826ef 100644
          queue->hotkey_count    = 0;
          queue->quit_message    = 0;
 @@ -318,7 +315,6 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
 -        queue->waiting         = 0;
+         queue->ignore_post_msg = 0;
+ 
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
-         list_init( &queue->pending_timers );
 @@ -709,18 +705,6 @@ void add_queue_hook_count( struct thread *thread, unsigned int index, int count
      assert( thread->queue->shared->hooks_count[index] >= 0 );
  }
@@ -8768,15 +7668,24 @@ index 05ec6a4ec00..83fa8760474 100644
          release_object( apc );
      }
  }
-@@ -1568,7 +1537,7 @@ void kill_thread( struct thread *thread, int violent_death )
-     }
-     kill_console_processes( thread, 0 );
-     abandon_mutexes( thread );
+@@ -1527,7 +1527,7 @@
+     /* grab reference since object can be destroyed while trying to wake up */
+     grab_object( &thread->obj );
+     thread->exit_poll = NULL;
 -    signal_sync( thread->sync );
 +    wake_up( &thread->obj, 0 );
-     if (violent_death) send_thread_signal( thread, SIGQUIT );
+     release_object( &thread->obj );
+ }
+ 
+@@ -1568,7 +1537,7 @@ void kill_thread( struct thread *thread, int violent_death )
+         check_terminated( thread );
+     }
+     else
+-        signal_sync( thread->sync );
++        wake_up( &thread->obj, 0 );
      cleanup_thread( thread );
      remove_process_thread( thread->process, thread );
+     release_object( thread );
 @@ -1922,7 +1891,7 @@ DECL_HANDLER(select)
          }
          ctx->status = STATUS_SUCCESS;
@@ -13573,9 +12482,9 @@ index a3479055ed4..08635c047b2 100644
  #define WM_NCMOUSEFIRST WM_NCMOUSEMOVE
  #define WM_NCMOUSELAST  (WM_NCMOUSEFIRST+(WM_MOUSELAST-WM_MOUSEFIRST))
 @@ -135,6 +136,7 @@ struct msg_queue
-     timeout_t              last_get_msg;    /* time of last get message call */
      int                    keystate_lock;   /* owns an input keystate lock */
      queue_shm_t           *shared;          /* queue in session shared memory */
+     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
 +    int                    esync_fd;        /* esync file descriptor (signalled on message) */
  };
  
@@ -13598,13 +12507,13 @@ index a3479055ed4..08635c047b2 100644
      no_signal,                 /* signal */
      no_get_fd,                 /* get_fd */
 @@ -317,6 +320,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
-         queue->hooks           = NULL;
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
+         queue->ignore_post_msg = 0;
 +        queue->esync_fd        = -1;
+ 
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
-         list_init( &queue->pending_timers );
 @@ -339,6 +343,9 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
          }
          SHARED_WRITE_END;
@@ -13675,9 +12584,9 @@ index a3479055ed4..08635c047b2 100644
 +    if (do_esync() && !is_signaled( queue ))
 +        esync_clear( queue->esync_fd );
 +
- }
+     return;
  
- 
+ found_msg:
 -- 
 2.47.2
 
@@ -13807,8 +12716,8 @@ index 08635c047b2..8f1a68acd7f 100644
 --- a/server/queue.c
 +++ b/server/queue.c
 @@ -137,6 +137,7 @@ struct msg_queue
-     int                    keystate_lock;   /* owns an input keystate lock */
      queue_shm_t           *shared;          /* queue in session shared memory */
+     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
      int                    esync_fd;        /* esync file descriptor (signalled on message) */
 +    int                    esync_in_msgwait; /* our thread is currently waiting on us */
  };
@@ -13817,22 +12726,12 @@ index 08635c047b2..8f1a68acd7f 100644
 @@ -321,6 +322,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
          queue->last_get_msg    = current_time;
          queue->keystate_lock   = 0;
+         queue->ignore_post_msg = 0;
          queue->esync_fd        = -1;
 +        queue->esync_in_msgwait = 0;
+ 
          list_init( &queue->send_result );
          list_init( &queue->callback_result );
-         list_init( &queue->pending_timers );
-@@ -1291,6 +1293,10 @@ static int is_queue_hung( struct msg_queue *queue )
-         if (get_wait_queue_thread(entry)->queue == queue)
-             return 0;  /* thread is waiting on queue -> not hung */
-     }
-+
-+    if (do_esync() && queue->esync_in_msgwait)
-+        return 0;   /* thread is waiting on queue in absentia -> not hung */
-+
-     return 1;
- }
- 
 @@ -4281,6 +4287,23 @@ DECL_HANDLER(update_rawinput_devices)
      }
  }
@@ -17317,14 +16216,14 @@ index 83f80740a46..bffe229586f 100644
 --- a/server/thread.c
 +++ b/server/thread.c
 @@ -1325,6 +1325,8 @@ void kill_thread( struct thread *thread, int violent_death )
-     kill_console_processes( thread, 0 );
-     abandon_mutexes( thread );
-     wake_up( &thread->obj, 0 );
-+    if (do_esync())
-+        esync_abandon_mutexes( thread );
-     if (violent_death) send_thread_signal( thread, SIGQUIT );
+     }
+     else
+         wake_up( &thread->obj, 0 );
++        if (do_esync())
++            esync_abandon_mutexes( thread );
      cleanup_thread( thread );
      remove_process_thread( thread->process, thread );
+     release_object( thread );
 -- 
 2.29.2
 
@@ -17577,3 +16476,40 @@ index 59f8809fc1a..9102cf911aa 100644
 -- 
 2.45.2
 
+--- b/server/queue.c
++++ a/server/queue.c
+@@ -1307,6 +1307,10 @@
+         if (get_wait_queue_thread(entry)->queue == queue)
+             return 0;  /* thread is waiting on queue -> not hung */
+     }
++
++    if (do_esync() && queue->esync_in_msgwait)
++        return 0;   /* thread is waiting on queue in absentia -> not hung */
++
+     return 1;
+ }
+ 
+@@ -4281,6 +4287,23 @@ DECL_HANDLER(update_rawinput_devices)
+     }
+ }
+ 
++DECL_HANDLER(esync_msgwait)
++{
++    struct msg_queue *queue = get_current_queue();
++    const queue_shm_t *queue_shm;
++
++    if (!queue) return;
++    queue_shm = queue->shared;
++    queue->esync_in_msgwait = req->in_msgwait;
++
++    if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
++        set_event( current->process->idle_event );
++
++    /* and start/stop waiting on the driver */
++    if (queue->fd)
++        set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
++}
++
+ DECL_HANDLER(set_keyboard_repeat)
+ {
+     struct desktop *desktop;

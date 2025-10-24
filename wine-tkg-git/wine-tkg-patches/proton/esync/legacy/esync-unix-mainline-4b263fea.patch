@@ -1,318 +1,3 @@
-diff --git b/server/queue.c a/server/queue.c
-index 8c977278522..50bac5474d1 100644
---- b/server/queue.c
-+++ a/server/queue.c
-@@ -1827,7 +1827,6 @@ static user_handle_t find_hardware_message_window( struct desktop *desktop, stru
-     {
-     case QS_POINTER:
-     case QS_RAWINPUT:
--    case QS_HARDWARE:
-         if (!(win = msg->win) && input) win = input_shm->focus;
-         break;
-     case QS_KEY:
-diff --git b/dlls/win32u/message.c a/dlls/win32u/message.c
-index 4b179619cf9..9e8f9d54af8 100644
---- b/dlls/win32u/message.c
-+++ a/dlls/win32u/message.c
-@@ -2809,7 +2809,7 @@ static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardwar
-  * returns FALSE if we need to make a server request to update the queue masks or bits
-  */
- static BOOL check_queue_bits( UINT wake_mask, UINT changed_mask, UINT signal_bits, UINT clear_bits,
--                              UINT *wake_bits, UINT *changed_bits, BOOL internal )
-+                              UINT *wake_bits, UINT *changed_bits )
- {
-     struct object_lock lock = OBJECT_LOCK_INIT;
-     const queue_shm_t *queue_shm;
-@@ -2818,9 +2818,8 @@ static BOOL check_queue_bits( UINT wake_mask, UINT changed_mask, UINT signal_bit
- 
-     while ((status = get_shared_queue( &lock, &queue_shm )) == STATUS_PENDING)
-     {
--        if (internal) skip = !(queue_shm->internal_bits & QS_HARDWARE);
-         /* if the masks need an update */
--        else if (queue_shm->wake_mask != wake_mask) skip = FALSE;
-+        if (queue_shm->wake_mask != wake_mask) skip = FALSE;
-         else if (queue_shm->changed_mask != changed_mask) skip = FALSE;
-         /* or if some bits need to be cleared, or queue is signaled */
-         else if (queue_shm->wake_bits & signal_bits) skip = FALSE;
-@@ -2885,7 +2884,7 @@ static int peek_message( MSG *msg, const struct peek_message_filter *filter )
-         wake_mask = filter->mask & (QS_SENDMESSAGE | QS_SMRESULT);
- 
-         if (check_queue_bits( wake_mask, filter->mask, wake_mask | signal_bits, filter->mask | clear_bits,
--                              &wake_bits, &changed_bits, filter->internal ))
-+                              &wake_bits, &changed_bits ))
-             res = STATUS_PENDING;
-         else SERVER_START_REQ( get_message )
-         {
-@@ -3180,21 +3179,6 @@ static HANDLE get_server_queue_handle(void)
-     return ret;
- }
- 
--static BOOL is_queue_signaled(void)
--{
--    struct object_lock lock = OBJECT_LOCK_INIT;
--    const queue_shm_t *queue_shm;
--    BOOL signaled = FALSE;
--    UINT status;
--
--    while ((status = get_shared_queue( &lock, &queue_shm )) == STATUS_PENDING)
--        signaled = (queue_shm->wake_bits & queue_shm->wake_mask) ||
--                   (queue_shm->changed_bits & queue_shm->changed_mask);
--    if (status) return FALSE;
--
--    return signaled;
--}
--
- static BOOL check_internal_bits( UINT mask )
- {
-     struct object_lock lock = OBJECT_LOCK_INIT;
-@@ -3221,21 +3205,16 @@ BOOL process_driver_events( UINT mask )
-         SERVER_END_REQ;
-     }
- 
--    /* process every pending internal hardware messages */
--    if (check_internal_bits( QS_HARDWARE ))
--    {
--        struct peek_message_filter filter = {.internal = TRUE};
--        MSG msg;
--        peek_message( &msg, &filter );
--    }
--
--    /* check for hardware messages requiring client dispatch */
-     return check_internal_bits( QS_HARDWARE );
- }
- 
- void check_for_events( UINT flags )
- {
-+    struct peek_message_filter filter = {.internal = TRUE, .flags = PM_REMOVE};
-+    MSG msg;
-+
-     if (!process_driver_events( flags )) flush_window_surfaces( TRUE );
-+    peek_message( &msg, &filter );
- }
- 
- /* monotonic timer tick for throttling driver event checks */
-@@ -3269,16 +3248,10 @@ static inline LARGE_INTEGER *get_nt_timeout( LARGE_INTEGER *time, DWORD timeout
- static DWORD wait_message( DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask, DWORD flags )
- {
-     struct thunk_lock_params params = {.dispatch.callback = thunk_lock_callback};
--    LARGE_INTEGER time, now, *abs;
-+    LARGE_INTEGER time;
-+    DWORD ret;
-     void *ret_ptr;
-     ULONG ret_len;
--    DWORD ret;
--
--    if ((abs = get_nt_timeout( &time, timeout )))
--    {
--        NtQuerySystemTime( &now );
--        abs->QuadPart = now.QuadPart - abs->QuadPart;
--    }
- 
-     if (!KeUserDispatchCallback( &params.dispatch, sizeof(params), &ret_ptr, &ret_len ) &&
-         ret_len == sizeof(params.locks))
-@@ -3290,13 +3263,14 @@ static DWORD wait_message( DWORD count, const HANDLE *handles, DWORD timeout, DW
-     if (process_driver_events( QS_ALLINPUT )) ret = count - 1;
-     else
-     {
--        do ret = NtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL), !!(flags & MWMO_ALERTABLE), abs );
--        while (ret == count - 1 && !process_driver_events( QS_ALLINPUT ) && !is_queue_signaled());
--    }
--    if (HIWORD(ret)) /* is it an error code? */
--    {
--        RtlSetLastWin32Error( RtlNtStatusToDosError(ret) );
--        ret = WAIT_FAILED;
-+        ret = NtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
-+                                        !!(flags & MWMO_ALERTABLE), get_nt_timeout( &time, timeout ));
-+        if (ret == count - 1) process_driver_events( QS_ALLINPUT );
-+        else if (HIWORD(ret)) /* is it an error code? */
-+        {
-+            RtlSetLastWin32Error( RtlNtStatusToDosError(ret) );
-+            ret = WAIT_FAILED;
-+        }
-     }
- 
-     if (ret == WAIT_TIMEOUT && !count && !timeout) NtYieldExecution();
-@@ -3659,7 +3633,7 @@ static void wait_message_reply( UINT flags )
-         UINT wake_bits, changed_bits;
- 
-         if (check_queue_bits( wake_mask, wake_mask, wake_mask, wake_mask,
--                              &wake_bits, &changed_bits, FALSE ))
-+                              &wake_bits, &changed_bits ))
-             wake_bits = wake_bits & wake_mask;
-         else SERVER_START_REQ( set_queue_mask )
-         {
-diff --git b/server/queue.c a/server/queue.c
-index 50bac5474d1..6b48a5dfdc8 100644
---- b/server/queue.c
-+++ a/server/queue.c
-@@ -802,7 +802,8 @@ static inline int get_hardware_msg_bit( unsigned int message )
-     if (message == WM_INPUT_DEVICE_CHANGE || message == WM_INPUT) return QS_RAWINPUT;
-     if (message == WM_MOUSEMOVE || message == WM_NCMOUSEMOVE) return QS_MOUSEMOVE;
-     if (message >= WM_KEYFIRST && message <= WM_KEYLAST) return QS_KEY;
--    if (message >= WM_WINE_FIRST_DRIVER_MSG && message <= WM_WINE_LAST_DRIVER_MSG) return QS_HARDWARE;
-+    if (message == WM_WINE_CLIPCURSOR) return QS_RAWINPUT;
-+    if (message == WM_WINE_SETCURSOR) return QS_RAWINPUT;
-     return QS_MOUSEBUTTON;
- }
- 
-@@ -2691,6 +2692,12 @@ static int check_hw_message_filter( user_handle_t win, unsigned int msg_code,
-     }
- }
- 
-+/* is this message an internal driver notification message */
-+static inline BOOL is_internal_hardware_message( unsigned int message )
-+{
-+    return (message >= WM_WINE_FIRST_DRIVER_MSG && message <= WM_WINE_LAST_DRIVER_MSG);
-+}
-+
- /* find a hardware message for the given queue */
- static int get_hardware_message( struct thread *thread, unsigned int hw_id, user_handle_t filter_win,
-                                  unsigned int first, unsigned int last, unsigned int flags,
-@@ -2795,10 +2802,9 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
- 
-         data->hw_id = msg->unique_id;
-         set_reply_data( msg->data, msg->data_size );
--
--        if (msg_bit == QS_HARDWARE) flags |= PM_REMOVE; /* always remove internal hardware messages right away */
--        else if (!(msg_bit & (QS_RAWINPUT | QS_POINTER))) flags &= ~PM_REMOVE; /* wait for accept_hardware_message request */
--        if (flags & PM_REMOVE) release_hardware_message( current->queue, data->hw_id );
-+        if ((get_hardware_msg_bit( msg->msg ) & (QS_RAWINPUT | QS_POINTER) && (flags & PM_REMOVE)) ||
-+            is_internal_hardware_message( msg->msg ))
-+            release_hardware_message( current->queue, data->hw_id );
-         return 1;
-     }
-     /* nothing found, clear the hardware queue bits */
-@@ -4064,7 +4070,7 @@ DECL_HANDLER(get_rawinput_buffer)
- {
-     const size_t align = is_machine_64bit( current->process->machine ) ? 7 : 3;
-     data_size_t buffer_size = get_reply_max_size() & ~align;
--    struct msg_queue *queue = current->queue;
-+    struct thread_input *input = current->queue->input;
-     struct message *msg, *next_msg;
-     int count = 0;
-     char *buffer;
-@@ -4077,7 +4083,7 @@ DECL_HANDLER(get_rawinput_buffer)
- 
-     if (!req->read_data)
-     {
--        LIST_FOR_EACH_ENTRY( msg, &queue->input->msg_list, struct message, entry )
-+        LIST_FOR_EACH_ENTRY( msg, &input->msg_list, struct message, entry )
-         {
-             if (msg->msg == WM_INPUT)
-             {
-@@ -4095,7 +4101,7 @@ DECL_HANDLER(get_rawinput_buffer)
- 
-         reply->next_size = get_reply_max_size();
- 
--        LIST_FOR_EACH_ENTRY_SAFE( msg, next_msg, &queue->input->msg_list, struct message, entry )
-+        LIST_FOR_EACH_ENTRY_SAFE( msg, next_msg, &input->msg_list, struct message, entry )
-         {
-             if (msg->msg == WM_INPUT)
-             {
-@@ -4125,7 +4131,6 @@ DECL_HANDLER(get_rawinput_buffer)
- 
-         if (!next_size)
-         {
--            clear_queue_bits( queue, QS_RAWINPUT | (list_empty( &queue->input->msg_list ) ? QS_HARDWARE : 0) );
-             if (count) next_size = sizeof(RAWINPUT);
-             else reply->next_size = 0;
-         }
-
-diff --git b/dlls/win32u/message.c a/dlls/win32u/message.c
-index 9e8f9d54af8..d61263f26e6 100644
---- b/dlls/win32u/message.c
-+++ a/dlls/win32u/message.c
-@@ -3179,7 +3179,7 @@ static HANDLE get_server_queue_handle(void)
-     return ret;
- }
- 
--static BOOL check_internal_bits( UINT mask )
-+static BOOL has_hardware_messages(void)
- {
-     struct object_lock lock = OBJECT_LOCK_INIT;
-     const queue_shm_t *queue_shm;
-@@ -3187,7 +3187,7 @@ static BOOL check_internal_bits( UINT mask )
-     UINT status;
- 
-     while ((status = get_shared_queue( &lock, &queue_shm )) == STATUS_PENDING)
--        signaled = queue_shm->internal_bits & mask;
-+        signaled = queue_shm->internal_bits & QS_HARDWARE;
-     if (status) return FALSE;
- 
-     return signaled;
-@@ -3195,7 +3195,7 @@ static BOOL check_internal_bits( UINT mask )
- 
- BOOL process_driver_events( UINT mask )
- {
--    if (check_internal_bits( QS_DRIVER ) && user_driver->pProcessEvents( mask ))
-+    if (user_driver->pProcessEvents( mask ))
-     {
-         SERVER_START_REQ( set_queue_mask )
-         {
-@@ -3205,7 +3205,7 @@ BOOL process_driver_events( UINT mask )
-         SERVER_END_REQ;
-     }
- 
--    return check_internal_bits( QS_HARDWARE );
-+    return has_hardware_messages();
- }
- 
- void check_for_events( UINT flags )
-diff --git b/dlls/winex11.drv/event.c a/dlls/winex11.drv/event.c
-index 9deccc2acfc..ca261b7bf3b 100644
---- b/dlls/winex11.drv/event.c
-+++ a/dlls/winex11.drv/event.c
-@@ -258,6 +258,7 @@ static void xembed_request_focus( Display *display, Window window, DWORD timesta
-     xev.xclient.data.l[4] = 0;
- 
-     XSendEvent(display, window, False, NoEventMask, &xev);
-+    XFlush( display );
- }
- 
- /***********************************************************************
-@@ -543,10 +544,7 @@ BOOL X11DRV_ProcessEvents( DWORD mask )
-     free_event_data( &prev_event );
-     XFlush( gdi_display );
-     if (count) TRACE( "processed %d events\n", count );
--
--    if (check_fd_events( ConnectionNumber( data->display ), POLLIN )) return FALSE;
--    XFlush( data->display ); /* all events have been processed, flush any pending request */
--    return TRUE;
-+    return !check_fd_events( ConnectionNumber( data->display ), POLLIN );
- }
- 
- 
-diff --git b/dlls/winex11.drv/window.c a/dlls/winex11.drv/window.c
-index 1e006324a54..2e6f13eec53 100644
---- b/dlls/winex11.drv/window.c
-+++ a/dlls/winex11.drv/window.c
-@@ -1333,6 +1333,8 @@ static void window_set_net_wm_state( struct x11drv_win_data *data, UINT new_stat
-                         SubstructureRedirectMask | SubstructureNotifyMask, &xev );
-         }
-     }
-+
-+    XFlush( data->display );
- }
- 
- static void window_set_config( struct x11drv_win_data *data, RECT rect, BOOL above )
-@@ -1580,6 +1582,8 @@ static void window_set_wm_state( struct x11drv_win_data *data, UINT new_state, B
- 
-     /* override redirect windows won't receive WM_STATE property changes */
-     if (!data->managed) data->wm_state_serial = 0;
-+
-+    XFlush( data->display );
- }
- 
- static void window_set_managed( struct x11drv_win_data *data, BOOL new_managed )
-@@ -1968,6 +1972,7 @@ void set_net_active_window( HWND hwnd, HWND previous )
-     TRACE( "requesting _NET_ACTIVE_WINDOW %p/%lx serial %lu\n", hwnd, window, data->net_active_window_serial );
-     XSendEvent( data->display, DefaultRootWindow( data->display ), False,
-                 SubstructureRedirectMask | SubstructureNotifyMask, &xev );
-+    XFlush( data->display );
- }
- 
- BOOL window_is_reparenting( HWND hwnd )
-
 diff --git b/dlls/win32u/class.c a/dlls/win32u/class.c
 index ba1f7d650af..57e18cbfc18 100644
 --- b/dlls/win32u/class.c
@@ -1349,7 +1034,7 @@ index 1660478b0e1..dd18c948d22 100644
 -    else if (timeout->QuadPart <= 0)
 -    {
 -        clock_gettime( CLOCK_MONOTONIC, &now );
--        args.timeout = ((ULONGLONG)now.tv_sec * NSECPERSEC) + now.tv_nsec + (-timeout->QuadPart * 100);
+-        args.timeout = (now.tv_sec * NSECPERSEC) + now.tv_nsec + (-timeout->QuadPart * 100);
 -    }
 -    else
 -    {
@@ -4449,7 +4134,7 @@ index 268c921a914..3f06c15d006 100644
 +    NULL,                           /* get_esync_fd */
      NULL,                           /* satisfied */
      no_signal,                      /* signal */
-     d3dkmt_object_get_fd,           /* get_fd */
+     no_get_fd,                      /* get_fd */
 -    default_get_sync,               /* get_sync */
      default_map_access,             /* map_access */
      default_get_sd,                 /* get_sd */
@@ -5641,9 +5326,9 @@ index 974766b97a7..1f6396bee0c 100644
  #ifdef __i386__
  extern struct ldt_copy __wine_ldt_copy;
 @@ -235,7 +233,6 @@ extern unsigned int server_queue_process_apc( HANDLE process, const union apc_ca
-                                               union apc_result *result );
  extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
                                 int *needs_close, enum server_fd_type *type, unsigned int *options );
+ extern void wine_server_send_fd( int fd );
 -extern int wine_server_receive_fd( obj_handle_t *handle );
  extern void process_exit_wrapper( int status ) DECLSPEC_NORETURN;
  extern size_t server_init_process(void);
@@ -5720,7 +5405,7 @@ index 781b4a4e59f..62145442ffc 100644
      struct d3dkmt_object_create_request d3dkmt_object_create_request;
  };
  union generic_reply
-@@ -6883,7 +6859,6 @@ union generic_reply
+@@ -6883,13 +6859,12 @@ union generic_reply
      struct get_next_process_reply get_next_process_reply;
      struct get_next_thread_reply get_next_thread_reply;
      struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
@@ -5728,6 +5413,13 @@ index 781b4a4e59f..62145442ffc 100644
      struct d3dkmt_object_create_reply d3dkmt_object_create_reply;
      struct d3dkmt_object_query_reply d3dkmt_object_query_reply;
      struct d3dkmt_object_open_reply d3dkmt_object_open_reply;
+     struct d3dkmt_share_objects_reply d3dkmt_share_objects_reply;
+     struct d3dkmt_object_open_name_reply d3dkmt_object_open_name_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 920
++#define SERVER_PROTOCOL_VERSION 917
+ 
 diff --git b/server/Makefile.in a/server/Makefile.in
 index 57250fd0332..6e4e68d6ebf 100644
 --- b/server/Makefile.in
