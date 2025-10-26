@@ -1,4 +1,385 @@
 diff --git b/dlls/win32u/d3dkmt.c a/dlls/win32u/d3dkmt.c
+index 1e731ded520..85474a00ec1 100644
+--- b/dlls/win32u/d3dkmt.c
++++ a/dlls/win32u/d3dkmt.c
+@@ -31,117 +31,8 @@
+ #include "win32u_private.h"
+ #include "ntuser_private.h"
+ 
+-#include <d3d9types.h>
+-#include <dxgi.h>
+-#include <d3d10.h>
+-#include <d3d11.h>
+-#include <d3d12.h>
+-
+ WINE_DEFAULT_DEBUG_CHANNEL(d3dkmt);
+ 
+-/* D3DKMT runtime descriptors */
+-
+-struct d3dkmt_dxgi_desc
+-{
+-    UINT                        size;
+-    UINT                        version;
+-    UINT                        width;
+-    UINT                        height;
+-    DXGI_FORMAT                 format;
+-    UINT                        unknown_0;
+-    UINT                        unknown_1;
+-    UINT                        keyed_mutex;
+-    D3DKMT_HANDLE               mutex_handle;
+-    D3DKMT_HANDLE               sync_handle;
+-    UINT                        nt_shared;
+-    UINT                        unknown_2;
+-    UINT                        unknown_3;
+-    UINT                        unknown_4;
+-};
+-
+-struct d3dkmt_d3d9_desc
+-{
+-    struct d3dkmt_dxgi_desc     dxgi;
+-    D3DFORMAT                   format;
+-    D3DRESOURCETYPE             type;
+-    UINT                        usage;
+-    union
+-    {
+-        struct
+-        {
+-            UINT                unknown_0;
+-            UINT                width;
+-            UINT                height;
+-            UINT                levels;
+-            UINT                depth;
+-        } texture;
+-        struct
+-        {
+-            UINT                unknown_0;
+-            UINT                unknown_1;
+-            UINT                unknown_2;
+-            UINT                width;
+-            UINT                height;
+-        } surface;
+-        struct
+-        {
+-            UINT                unknown_0;
+-            UINT                width;
+-            UINT                format;
+-            UINT                unknown_1;
+-            UINT                unknown_2;
+-        } buffer;
+-    };
+-};
+-
+-C_ASSERT( sizeof(struct d3dkmt_d3d9_desc) == 0x58 );
+-
+-struct d3dkmt_d3d11_desc
+-{
+-    struct d3dkmt_dxgi_desc     dxgi;
+-    D3D11_RESOURCE_DIMENSION    dimension;
+-    union
+-    {
+-        D3D10_BUFFER_DESC       d3d10_buf;
+-        D3D10_TEXTURE1D_DESC    d3d10_1d;
+-        D3D10_TEXTURE2D_DESC    d3d10_2d;
+-        D3D10_TEXTURE3D_DESC    d3d10_3d;
+-        D3D11_BUFFER_DESC       d3d11_buf;
+-        D3D11_TEXTURE1D_DESC    d3d11_1d;
+-        D3D11_TEXTURE2D_DESC    d3d11_2d;
+-        D3D11_TEXTURE3D_DESC    d3d11_3d;
+-    };
+-};
+-
+-C_ASSERT( sizeof(struct d3dkmt_d3d11_desc) == 0x68 );
+-
+-struct d3dkmt_d3d12_desc
+-{
+-    struct d3dkmt_d3d11_desc    d3d11;
+-    UINT                        unknown_5[4];
+-    UINT                        resource_size;
+-    UINT                        unknown_6[7];
+-    UINT                        resource_align;
+-    UINT                        unknown_7[9];
+-    union
+-    {
+-        D3D12_RESOURCE_DESC     desc;
+-        D3D12_RESOURCE_DESC1    desc1;
+-    };
+-    UINT64                      unknown_8[1];
+-};
+-
+-C_ASSERT( sizeof(struct d3dkmt_d3d12_desc) == 0x108 );
+-C_ASSERT( offsetof(struct d3dkmt_d3d12_desc, unknown_5) == sizeof(struct d3dkmt_d3d11_desc) );
+-
+-union d3dkmt_desc
+-{
+-    struct d3dkmt_dxgi_desc     dxgi;
+-    struct d3dkmt_d3d9_desc     d3d9;
+-    struct d3dkmt_d3d11_desc    d3d11;
+-    struct d3dkmt_d3d12_desc    d3d12;
+-};
+-
+ struct d3dkmt_object
+ {
+     enum d3dkmt_type    type;           /* object type */
+@@ -1522,7 +1413,7 @@ NTSTATUS WINAPI NtGdiDdDDICreateKeyedMutex( D3DKMT_CREATEKEYEDMUTEX *params )
+     return status;
+ }
+ 
+-NTSTATUS d3dkmt_destroy_mutex( D3DKMT_HANDLE local )
++static NTSTATUS d3dkmt_destroy_mutex( D3DKMT_HANDLE local )
+ {
+     struct d3dkmt_mutex *mutex;
+     BOOL owned;
+@@ -1912,21 +1803,15 @@ failed:
+  */
+ NTSTATUS WINAPI NtGdiDdDDIDestroySynchronizationObject( const D3DKMT_DESTROYSYNCHRONIZATIONOBJECT *params )
+ {
++    struct d3dkmt_object *sync;
++
+     TRACE( "params %p\n", params );
+ 
+-    return d3dkmt_destroy_sync( params->hSyncObject );
+-}
++    if (!(sync = get_d3dkmt_object( params->hSyncObject, D3DKMT_SYNC )))
++        return STATUS_INVALID_PARAMETER;
++    d3dkmt_object_free( sync );
+ 
+-static void get_resource_global_keyed_mutex( struct d3dkmt_dxgi_desc *desc, D3DKMT_HANDLE *mutex_global, D3DKMT_HANDLE *sync_global )
+-{
+-    if ((desc->size != sizeof(struct d3dkmt_d3d9_desc) && desc->size != sizeof(struct d3dkmt_d3d11_desc)) ||
+-        (desc->version != 0 && desc->version != 1 && desc->version != 4))
+-        WARN( "Unsupported runtime data size %#x version %#x\n", desc->size, desc->version );
+-    else if (desc->keyed_mutex && !desc->nt_shared)
+-    {
+-        *mutex_global = desc->mutex_handle;
+-        *sync_global = desc->sync_handle;
+-    }
++    return STATUS_SUCCESS;
+ }
+ 
+ /* get a locally opened D3DKMT object host-specific fd */
+@@ -1975,55 +1860,28 @@ failed:
+ }
+ 
+ /* open a D3DKMT global or shared resource */
+-D3DKMT_HANDLE d3dkmt_open_resource( D3DKMT_HANDLE global, HANDLE shared, D3DKMT_HANDLE *mutex_local, D3DKMT_HANDLE *sync_local )
++D3DKMT_HANDLE d3dkmt_open_resource( D3DKMT_HANDLE global, HANDLE shared )
+ {
+-    struct d3dkmt_object *allocation = NULL, *mutex = NULL, *sync = NULL;
+-    UINT runtime_size, mutex_size = 0, sync_size = 0;
+-    D3DKMT_HANDLE mutex_global = 0, sync_global = 0;
++    struct d3dkmt_object *allocation = NULL;
+     struct d3dkmt_resource *resource = NULL;
+-    void *runtime_data = NULL;
+     NTSTATUS status;
++    UINT dummy = 0;
+ 
+     TRACE( "global %#x, shared %p\n", global, shared );
+ 
+-    if ((status = d3dkmt_object_query( D3DKMT_RESOURCE, global, shared, &runtime_size ))) goto failed;
+-    if (runtime_size && !(runtime_data = malloc( runtime_size ))) goto failed;
+-
+-    if ((status = d3dkmt_object_alloc( sizeof(*sync), D3DKMT_SYNC, (void **)&sync ))) goto failed;
+-    if ((status = d3dkmt_object_alloc( sizeof(*mutex), D3DKMT_MUTEX, (void **)&mutex ))) goto failed;
+     if ((status = d3dkmt_object_alloc( sizeof(*resource), D3DKMT_RESOURCE, (void **)&resource ))) goto failed;
+     if ((status = d3dkmt_object_alloc( sizeof(*allocation), D3DKMT_ALLOCATION, (void **)&allocation ))) goto failed;
+-    if ((status = d3dkmt_object_open( &resource->obj, global, shared, runtime_data, &runtime_size ))) goto failed;
++    if ((status = d3dkmt_object_open( &resource->obj, global, shared, NULL, &dummy ))) goto failed;
+ 
+     if ((status = alloc_object_handle( allocation ))) goto failed;
+     resource->allocation = allocation->local;
+ 
+-    if (!runtime_data || runtime_size <= sizeof(struct d3dkmt_dxgi_desc)) WARN( "Unsupported runtime data size %#x\n", runtime_size );
+-    else get_resource_global_keyed_mutex( runtime_data, &mutex_global, &sync_global );
+-
+-    if (!d3dkmt_object_open( mutex, mutex_global, shared, NULL, &mutex_size ) &&
+-        !d3dkmt_object_open( sync, sync_global, shared, NULL, &sync_size ))
+-    {
+-        *mutex_local = mutex->local;
+-        *sync_local = sync->local;
+-    }
+-    else
+-    {
+-        d3dkmt_object_free( mutex );
+-        d3dkmt_object_free( sync );
+-        *mutex_local = *sync_local = 0;
+-    }
+-
+-    free( runtime_data );
+     return resource->obj.local;
+ 
+ failed:
+     WARN( "Failed to open resource, status %#x\n", status );
+     if (allocation) d3dkmt_object_free( allocation );
+     if (resource) d3dkmt_object_free( &resource->obj );
+-    if (mutex) d3dkmt_object_free( mutex );
+-    if (sync) d3dkmt_object_free( sync );
+-    free( runtime_data );
+     return 0;
+ }
+ 
+@@ -2036,7 +1894,7 @@ NTSTATUS d3dkmt_destroy_resource( D3DKMT_HANDLE local )
+     TRACE( "local %#x\n", local );
+ 
+     if (!(resource = get_d3dkmt_object( local, D3DKMT_RESOURCE ))) return STATUS_INVALID_PARAMETER;
+-    if ((allocation = get_d3dkmt_object( resource->allocation, D3DKMT_ALLOCATION ))) d3dkmt_object_free( allocation );
++    if ((allocation = get_d3dkmt_object( resource->allocation, D3DKMT_RESOURCE ))) d3dkmt_object_free( allocation );
+     d3dkmt_object_free( &resource->obj );
+ 
+     return STATUS_SUCCESS;
+diff --git b/dlls/win32u/vulkan.c a/dlls/win32u/vulkan.c
+index c075fad1c37..017b84df8c3 100644
+--- b/dlls/win32u/vulkan.c
++++ a/dlls/win32u/vulkan.c
+@@ -68,9 +68,6 @@ struct device_memory
+     D3DKMT_HANDLE local;
+     D3DKMT_HANDLE global;
+     HANDLE shared;
+-
+-    D3DKMT_HANDLE sync;
+-    D3DKMT_HANDLE mutex;
+ };
+ 
+ static inline struct device_memory *device_memory_from_handle( VkDeviceMemory handle )
+@@ -282,8 +279,8 @@ static VkResult win32u_vkAllocateMemory( VkDevice client_device, const VkMemoryA
+     VkImportMemoryHostPointerInfoEXT host_pointer_info, *pointer_info = NULL;
+     VkExportMemoryWin32HandleInfoKHR export_win32 = {.dwAccess = GENERIC_ALL};
+     VkImportMemoryWin32HandleInfoKHR *import_win32 = NULL;
+-    VkDeviceMemory host_device_memory = VK_NULL_HANDLE;
+     VkExportMemoryAllocateInfo *export_info = NULL;
++    VkDeviceMemory host_device_memory;
+     struct device_memory *memory;
+     BOOL nt_shared = FALSE;
+     uint32_t mem_flags;
+@@ -341,7 +338,7 @@ static VkResult win32u_vkAllocateMemory( VkDevice client_device, const VkMemoryA
+         case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT:
+         case VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT:
+             memory->global = PtrToUlong( import_win32->handle );
+-            memory->local = d3dkmt_open_resource( memory->global, NULL, &memory->mutex, &memory->sync );
++            memory->local = d3dkmt_open_resource( memory->global, NULL );
+             break;
+         case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT:
+         case VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT:
+@@ -350,7 +347,7 @@ static VkResult win32u_vkAllocateMemory( VkDevice client_device, const VkMemoryA
+         {
+             HANDLE shared = import_win32->handle;
+             if (import_win32->name && !(shared = open_shared_resource_from_name( import_win32->name ))) break;
+-            memory->local = d3dkmt_open_resource( 0, shared, &memory->mutex, &memory->sync );
++            memory->local = d3dkmt_open_resource( 0, shared );
+             if (shared && shared != import_win32->handle) NtClose( shared );
+             break;
+         }
+@@ -361,8 +358,8 @@ static VkResult win32u_vkAllocateMemory( VkDevice client_device, const VkMemoryA
+ 
+         if ((fd_info.fd = d3dkmt_object_get_fd( memory->local )) < 0)
+         {
+-            res = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+-            goto failed;
++            free( memory );
++            return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+         }
+ 
+         fd_info.handleType = get_host_external_memory_type();
+@@ -370,7 +367,12 @@ static VkResult win32u_vkAllocateMemory( VkDevice client_device, const VkMemoryA
+         alloc_info->pNext = &fd_info;
+     }
+ 
+-    if ((res = device->p_vkAllocateMemory( device->host.device, alloc_info, NULL, &host_device_memory ))) goto failed;
++    if ((res = device->p_vkAllocateMemory( device->host.device, alloc_info, NULL, &host_device_memory )))
++    {
++        if (memory->local) d3dkmt_destroy_resource( memory->local );
++        free( memory );
++        return res;
++    }
+ 
+     if (export_info)
+     {
+@@ -408,10 +410,8 @@ static VkResult win32u_vkAllocateMemory( VkDevice client_device, const VkMemoryA
+ 
+ failed:
+     WARN( "Failed to allocate memory, res %d\n", res );
+-    if (host_device_memory) device->p_vkFreeMemory( device->host.device, host_device_memory, NULL );
+-    d3dkmt_destroy_resource( memory->local );
+-    d3dkmt_destroy_mutex( memory->mutex );
+-    d3dkmt_destroy_sync( memory->sync );
++    device->p_vkFreeMemory( device->host.device, host_device_memory, NULL );
++    if (memory->local) d3dkmt_destroy_resource( memory->local );
+     free( memory );
+     return VK_ERROR_OUT_OF_HOST_MEMORY;
+ }
+@@ -447,9 +447,7 @@ static void win32u_vkFreeMemory( VkDevice client_device, VkDeviceMemory client_m
+     }
+ 
+     if (memory->shared) NtClose( memory->shared );
+-    d3dkmt_destroy_resource( memory->local );
+-    d3dkmt_destroy_mutex( memory->mutex );
+-    d3dkmt_destroy_sync( memory->sync );
++    if (memory->local) d3dkmt_destroy_resource( memory->local );
+     free( memory );
+ }
+ 
+@@ -1569,7 +1567,7 @@ static VkResult win32u_vkCreateSemaphore( VkDevice client_device, const VkSemaph
+ failed:
+     WARN( "Failed to create semaphore, res %d\n", res );
+     device->p_vkDestroySemaphore( device->host.device, host_semaphore, NULL );
+-    d3dkmt_destroy_sync( semaphore->local );
++    if (semaphore->local) d3dkmt_destroy_sync( semaphore->local );
+     free( semaphore );
+     return VK_ERROR_OUT_OF_HOST_MEMORY;
+ }
+@@ -1588,7 +1586,7 @@ static void win32u_vkDestroySemaphore( VkDevice client_device, VkSemaphore clien
+     instance->p_remove_object( instance, &semaphore->obj.obj );
+ 
+     if (semaphore->shared) NtClose( semaphore->shared );
+-    d3dkmt_destroy_sync( semaphore->local );
++    if (semaphore->local) d3dkmt_destroy_sync( semaphore->local );
+     free( semaphore );
+ }
+ 
+@@ -1672,7 +1670,7 @@ static VkResult win32u_vkImportSemaphoreWin32HandleKHR( VkDevice client_device,
+     else
+     {
+         if (semaphore->shared) NtClose( semaphore->shared );
+-        d3dkmt_destroy_sync( semaphore->local );
++        if (semaphore->local) d3dkmt_destroy_sync( semaphore->local );
+         semaphore->shared = shared;
+         semaphore->global = global;
+         semaphore->local = local;
+@@ -1777,7 +1775,7 @@ static VkResult win32u_vkCreateFence( VkDevice client_device, const VkFenceCreat
+ failed:
+     WARN( "Failed to create fence, res %d\n", res );
+     device->p_vkDestroyFence( device->host.device, host_fence, NULL );
+-    d3dkmt_destroy_sync( fence->local );
++    if (fence->local) d3dkmt_destroy_sync( fence->local );
+     free( fence );
+     return VK_ERROR_OUT_OF_HOST_MEMORY;
+ }
+@@ -1796,7 +1794,7 @@ static void win32u_vkDestroyFence( VkDevice client_device, VkFence client_fence,
+     instance->p_remove_object( instance, &fence->obj.obj );
+ 
+     if (fence->shared) NtClose( fence->shared );
+-    d3dkmt_destroy_sync( fence->local );
++    if (fence->local) d3dkmt_destroy_sync( fence->local );
+     free( fence );
+ }
+ 
+diff --git b/dlls/win32u/win32u_private.h a/dlls/win32u/win32u_private.h
+index ba0a9834d9f..7bca9db4226 100644
+--- b/dlls/win32u/win32u_private.h
++++ a/dlls/win32u/win32u_private.h
+@@ -207,10 +207,9 @@ extern BOOL get_vulkan_uuid_from_luid( const LUID *luid, GUID *uuid );
+ extern BOOL get_luid_from_vulkan_uuid( const GUID *uuid, LUID *luid, UINT32 *node_mask );
+ 
+ extern int d3dkmt_object_get_fd( D3DKMT_HANDLE local );
+-extern NTSTATUS d3dkmt_destroy_mutex( D3DKMT_HANDLE local );
+ 
+ extern D3DKMT_HANDLE d3dkmt_create_resource( int fd, D3DKMT_HANDLE *global );
+-extern D3DKMT_HANDLE d3dkmt_open_resource( D3DKMT_HANDLE global, HANDLE shared, D3DKMT_HANDLE *mutex_local, D3DKMT_HANDLE *sync_local );
++extern D3DKMT_HANDLE d3dkmt_open_resource( D3DKMT_HANDLE global, HANDLE shared );
+ extern NTSTATUS d3dkmt_destroy_resource( D3DKMT_HANDLE local );
+ 
+ extern D3DKMT_HANDLE d3dkmt_create_sync( int fd, D3DKMT_HANDLE *global );
+
+diff --git b/dlls/win32u/d3dkmt.c a/dlls/win32u/d3dkmt.c
 index 85474a00ec1..c54145f6090 100644
 --- b/dlls/win32u/d3dkmt.c
 +++ a/dlls/win32u/d3dkmt.c
