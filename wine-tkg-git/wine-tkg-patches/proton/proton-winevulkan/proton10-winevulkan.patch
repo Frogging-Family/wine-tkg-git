@@ -1,4 +1,1010 @@
 diff --git b/dlls/win32u/d3dkmt.c a/dlls/win32u/d3dkmt.c
+index 85474a00ec1..c54145f6090 100644
+--- b/dlls/win32u/d3dkmt.c
++++ a/dlls/win32u/d3dkmt.c
+@@ -42,12 +42,6 @@ struct d3dkmt_object
+     HANDLE              handle;         /* internal handle of the server object */
+ };
+ 
+-struct d3dkmt_mutex
+-{
+-    struct d3dkmt_object obj;
+-    BOOL owned;
+-};
+-
+ struct d3dkmt_resource
+ {
+     struct d3dkmt_object obj;
+@@ -186,8 +180,7 @@ static NTSTATUS d3dkmt_object_alloc( UINT size, enum d3dkmt_type type, void **ob
+ }
+ 
+ /* create a global D3DKMT object, either with a global handle or later shareable */
+-static NTSTATUS d3dkmt_object_create( struct d3dkmt_object *object, int fd, UINT value, BOOL shared,
+-                                      const void *runtime, UINT runtime_size )
++static NTSTATUS d3dkmt_object_create( struct d3dkmt_object *object, int fd, BOOL shared, const void *runtime, UINT runtime_size )
+ {
+     NTSTATUS status;
+ 
+@@ -197,7 +190,6 @@ static NTSTATUS d3dkmt_object_create( struct d3dkmt_object *object, int fd, UINT
+     {
+         req->type = object->type;
+         req->fd = fd;
+-        req->value = value;
+         if (runtime_size) wine_server_add_data( req, runtime, runtime_size );
+         status = wine_server_call( req );
+         object->handle = wine_server_ptr_handle( reply->handle );
+@@ -1061,7 +1053,7 @@ NTSTATUS WINAPI NtGdiDdDDICreateAllocation2( D3DKMT_CREATEALLOCATION *params )
+         if ((status = d3dkmt_object_alloc( sizeof(*allocation), D3DKMT_ALLOCATION, (void **)&allocation ))) goto failed;
+ 
+         if (!params->Flags.CreateShared) status = alloc_object_handle( &resource->obj );
+-        else status = d3dkmt_object_create( &resource->obj, -1, 0, params->Flags.NtSecuritySharing,
++        else status = d3dkmt_object_create( &resource->obj, -1, params->Flags.NtSecuritySharing,
+                                             params->pPrivateRuntimeData, params->PrivateRuntimeDataSize );
+         if (status) goto failed;
+ 
+@@ -1245,8 +1237,7 @@ failed:
+  */
+ NTSTATUS WINAPI NtGdiDdDDIOpenResourceFromNtHandle( D3DKMT_OPENRESOURCEFROMNTHANDLE *params )
+ {
+-    struct d3dkmt_object *sync = NULL;
+-    struct d3dkmt_mutex *mutex = NULL;
++    struct d3dkmt_object *mutex = NULL, *sync = NULL;
+     struct d3dkmt_resource *resource = NULL;
+     NTSTATUS status;
+     UINT dummy = 0;
+@@ -1267,9 +1258,9 @@ NTSTATUS WINAPI NtGdiDdDDIOpenResourceFromNtHandle( D3DKMT_OPENRESOURCEFROMNTHAN
+                                       &params->PrivateRuntimeDataSize )))
+         goto failed;
+ 
+-    if (d3dkmt_object_open( &mutex->obj, 0, params->hNtHandle, params->pKeyedMutexPrivateRuntimeData, &params->KeyedMutexPrivateRuntimeDataSize ))
++    if (d3dkmt_object_open( mutex, 0, params->hNtHandle, params->pKeyedMutexPrivateRuntimeData, &params->KeyedMutexPrivateRuntimeDataSize ))
+     {
+-        d3dkmt_object_free( &mutex->obj );
++        d3dkmt_object_free( mutex );
+         mutex = NULL;
+     }
+ 
+@@ -1280,7 +1271,7 @@ NTSTATUS WINAPI NtGdiDdDDIOpenResourceFromNtHandle( D3DKMT_OPENRESOURCEFROMNTHAN
+     }
+ 
+     params->hResource = resource->obj.local;
+-    params->hKeyedMutex = mutex ? mutex->obj.local : 0;
++    params->hKeyedMutex = mutex ? mutex->local : 0;
+     params->hSyncObject = sync ? sync->local : 0;
+     params->TotalPrivateDriverDataBufferSize = 0;
+     params->ResourcePrivateDriverDataSize = 0;
+@@ -1288,7 +1279,7 @@ NTSTATUS WINAPI NtGdiDdDDIOpenResourceFromNtHandle( D3DKMT_OPENRESOURCEFROMNTHAN
+ 
+ failed:
+     if (sync) d3dkmt_object_free( sync );
+-    if (mutex) d3dkmt_object_free( &mutex->obj );
++    if (mutex) d3dkmt_object_free( mutex );
+     if (resource) d3dkmt_object_free( &resource->obj );
+     return status;
+ }
+@@ -1373,7 +1364,7 @@ NTSTATUS WINAPI NtGdiDdDDIQueryResourceInfoFromNtHandle( D3DKMT_QUERYRESOURCEINF
+  */
+ NTSTATUS WINAPI NtGdiDdDDICreateKeyedMutex2( D3DKMT_CREATEKEYEDMUTEX2 *params )
+ {
+-    struct d3dkmt_mutex *mutex;
++    struct d3dkmt_object *mutex;
+     NTSTATUS status;
+ 
+     FIXME( "params %p semi-stub!\n", params );
+@@ -1381,16 +1372,16 @@ NTSTATUS WINAPI NtGdiDdDDICreateKeyedMutex2( D3DKMT_CREATEKEYEDMUTEX2 *params )
+     if (!params) return STATUS_INVALID_PARAMETER;
+ 
+     if ((status = d3dkmt_object_alloc( sizeof(*mutex), D3DKMT_MUTEX, (void **)&mutex ))) return status;
+-    if ((status = d3dkmt_object_create( &mutex->obj, -1, params->InitialValue, params->Flags.NtSecuritySharing,
++    if ((status = d3dkmt_object_create( mutex, -1, params->Flags.NtSecuritySharing,
+                                         params->pPrivateRuntimeData, params->PrivateRuntimeDataSize )))
+         goto failed;
+ 
+-    params->hSharedHandle = mutex->obj.shared ? 0 : mutex->obj.global;
+-    params->hKeyedMutex = mutex->obj.local;
++    params->hSharedHandle = mutex->shared ? 0 : mutex->global;
++    params->hKeyedMutex = mutex->local;
+     return STATUS_SUCCESS;
+ 
+ failed:
+-    d3dkmt_object_free( &mutex->obj );
++    d3dkmt_object_free( mutex );
+     return status;
+ }
+ 
+@@ -1413,42 +1404,20 @@ NTSTATUS WINAPI NtGdiDdDDICreateKeyedMutex( D3DKMT_CREATEKEYEDMUTEX *params )
+     return status;
+ }
+ 
+-static NTSTATUS d3dkmt_destroy_mutex( D3DKMT_HANDLE local )
+-{
+-    struct d3dkmt_mutex *mutex;
+-    BOOL owned;
+-
+-    TRACE( "local %#x\n", local );
+-
+-    if (!(mutex = get_d3dkmt_object( local, D3DKMT_MUTEX ))) return STATUS_INVALID_PARAMETER;
+-
+-    pthread_mutex_lock( &d3dkmt_lock );
+-    owned = mutex->owned;
+-    pthread_mutex_unlock( &d3dkmt_lock );
+-
+-    if (owned)
+-    {
+-        SERVER_START_REQ( d3dkmt_mutex_release )
+-        {
+-            req->mutex = mutex->obj.global;
+-            req->abandon = 1;
+-            wine_server_call( req );
+-        }
+-        SERVER_END_REQ;
+-    }
+-
+-    d3dkmt_object_free( &mutex->obj );
+-    return STATUS_SUCCESS;
+-}
+-
+ /******************************************************************************
+  *           NtGdiDdDDIDestroyKeyedMutex    (win32u.@)
+  */
+ NTSTATUS WINAPI NtGdiDdDDIDestroyKeyedMutex( const D3DKMT_DESTROYKEYEDMUTEX *params )
+ {
++    struct d3dkmt_object *mutex;
++
+     TRACE( "params %p\n", params );
+ 
+-    return d3dkmt_destroy_mutex( params->hKeyedMutex );
++    if (!(mutex = get_d3dkmt_object( params->hKeyedMutex, D3DKMT_MUTEX )))
++        return STATUS_INVALID_PARAMETER;
++    d3dkmt_object_free( mutex );
++
++    return STATUS_SUCCESS;
+ }
+ 
+ /******************************************************************************
+@@ -1456,7 +1425,7 @@ NTSTATUS WINAPI NtGdiDdDDIDestroyKeyedMutex( const D3DKMT_DESTROYKEYEDMUTEX *par
+  */
+ NTSTATUS WINAPI NtGdiDdDDIOpenKeyedMutex2( D3DKMT_OPENKEYEDMUTEX2 *params )
+ {
+-    struct d3dkmt_mutex *mutex;
++    struct d3dkmt_object *mutex;
+     UINT runtime_size;
+     NTSTATUS status;
+ 
+@@ -1469,13 +1438,13 @@ NTSTATUS WINAPI NtGdiDdDDIOpenKeyedMutex2( D3DKMT_OPENKEYEDMUTEX2 *params )
+     if ((status = d3dkmt_object_alloc( sizeof(*mutex), D3DKMT_MUTEX, (void **)&mutex ))) return status;
+ 
+     runtime_size = params->PrivateRuntimeDataSize;
+-    if ((status = d3dkmt_object_open( &mutex->obj, params->hSharedHandle, NULL, params->pPrivateRuntimeData, &runtime_size ))) goto failed;
++    if ((status = d3dkmt_object_open( mutex, params->hSharedHandle, NULL, params->pPrivateRuntimeData, &runtime_size ))) goto failed;
+ 
+-    params->hKeyedMutex = mutex->obj.local;
++    params->hKeyedMutex = mutex->local;
+     return STATUS_SUCCESS;
+ 
+ failed:
+-    d3dkmt_object_free( &mutex->obj );
++    d3dkmt_object_free( mutex );
+     return status;
+ }
+ 
+@@ -1502,21 +1471,21 @@ NTSTATUS WINAPI NtGdiDdDDIOpenKeyedMutex( D3DKMT_OPENKEYEDMUTEX *params )
+  */
+ NTSTATUS WINAPI NtGdiDdDDIOpenKeyedMutexFromNtHandle( D3DKMT_OPENKEYEDMUTEXFROMNTHANDLE *params )
+ {
+-    struct d3dkmt_mutex *mutex;
++    struct d3dkmt_object *mutex;
+     NTSTATUS status;
+ 
+     FIXME( "params %p semi-stub!\n", params );
+ 
+     if ((status = d3dkmt_object_alloc( sizeof(*mutex), D3DKMT_MUTEX, (void **)&mutex ))) return status;
+-    if ((status = d3dkmt_object_open( &mutex->obj, 0, params->hNtHandle, params->pPrivateRuntimeData,
++    if ((status = d3dkmt_object_open( mutex, 0, params->hNtHandle, params->pPrivateRuntimeData,
+                                       &params->PrivateRuntimeDataSize )))
+         goto failed;
+ 
+-    params->hKeyedMutex = mutex->obj.local;
++    params->hKeyedMutex = mutex->local;
+     return STATUS_SUCCESS;
+ 
+ failed:
+-    d3dkmt_object_free( &mutex->obj );
++    d3dkmt_object_free( mutex );
+     return status;
+ }
+ 
+@@ -1525,46 +1494,8 @@ failed:
+  */
+ NTSTATUS WINAPI NtGdiDdDDIAcquireKeyedMutex2( D3DKMT_ACQUIREKEYEDMUTEX2 *params )
+ {
+-    NTSTATUS status = STATUS_SUCCESS;
+-    LARGE_INTEGER now, *timeout;
+-    struct d3dkmt_mutex *mutex;
+-    HANDLE wait_handle = NULL;
+-
+-    TRACE( "params %p\n", params );
+-
+-    if ((timeout = params->pTimeout) && timeout->QuadPart < 0)
+-    {
+-        NtQuerySystemTime( &now );
+-        now.QuadPart -= timeout->QuadPart;
+-        timeout = &now;
+-    }
+-
+-    if (!(mutex = get_d3dkmt_object( params->hKeyedMutex, D3DKMT_MUTEX ))) return STATUS_INVALID_PARAMETER;
+-
+-    do
+-    {
+-        if (wait_handle) status = NtWaitForSingleObject( wait_handle, FALSE, timeout );
+-        SERVER_START_REQ( d3dkmt_mutex_acquire )
+-        {
+-            req->mutex = mutex->obj.global;
+-            req->key_value = params->Key;
+-            req->wait_handle = wine_server_obj_handle( wait_handle );
+-            req->wait_status = status;
+-
+-            status = wine_server_call( req );
+-            params->FenceValue = reply->fence_value;
+-            wait_handle = wine_server_ptr_handle( reply->wait_handle );
+-        }
+-        SERVER_END_REQ;
+-    } while (status == STATUS_PENDING);
+-
+-    if (!status)
+-    {
+-        pthread_mutex_lock( &d3dkmt_lock );
+-        mutex->owned = TRUE;
+-        pthread_mutex_unlock( &d3dkmt_lock );
+-    }
+-    return status;
++    FIXME( "params %p stub!\n", params );
++    return STATUS_NOT_IMPLEMENTED;
+ }
+ 
+ /******************************************************************************
+@@ -1593,30 +1524,8 @@ NTSTATUS WINAPI NtGdiDdDDIAcquireKeyedMutex( D3DKMT_ACQUIREKEYEDMUTEX *params )
+  */
+ NTSTATUS WINAPI NtGdiDdDDIReleaseKeyedMutex2( D3DKMT_RELEASEKEYEDMUTEX2 *params )
+ {
+-    struct d3dkmt_mutex *mutex;
+-    NTSTATUS status;
+-
+-    TRACE( "params %p\n", params );
+-
+-    if (!(mutex = get_d3dkmt_object( params->hKeyedMutex, D3DKMT_MUTEX ))) return STATUS_INVALID_PARAMETER;
+-
+-    SERVER_START_REQ( d3dkmt_mutex_release )
+-    {
+-        req->mutex = mutex->obj.global;
+-        req->key_value = params->Key;
+-        req->fence_value = params->FenceValue;
+-        status = wine_server_call( req );
+-    }
+-    SERVER_END_REQ;
+-
+-    if (!status)
+-    {
+-        pthread_mutex_lock( &d3dkmt_lock );
+-        mutex->owned = FALSE;
+-        pthread_mutex_unlock( &d3dkmt_lock );
+-    }
+-
+-    return status;
++    FIXME( "params %p stub!\n", params );
++    return STATUS_NOT_IMPLEMENTED;
+ }
+ 
+ /******************************************************************************
+@@ -1657,7 +1566,7 @@ NTSTATUS WINAPI NtGdiDdDDICreateSynchronizationObject2( D3DKMT_CREATESYNCHRONIZA
+ 
+     if ((status = d3dkmt_object_alloc( sizeof(*sync), D3DKMT_SYNC, (void **)&sync ))) return status;
+     if (!params->Info.Flags.Shared) status = alloc_object_handle( sync );
+-    else status = d3dkmt_object_create( sync, -1, 0, params->Info.Flags.NtSecuritySharing, NULL, 0 );
++    else status = d3dkmt_object_create( sync, -1, params->Info.Flags.NtSecuritySharing, NULL, 0 );
+     if (status) goto failed;
+ 
+     if (params->Info.Flags.Shared) params->Info.SharedHandle = sync->shared ? 0 : sync->global;
+@@ -1844,7 +1753,7 @@ D3DKMT_HANDLE d3dkmt_create_resource( int fd, D3DKMT_HANDLE *global )
+ 
+     if ((status = d3dkmt_object_alloc( sizeof(*resource), D3DKMT_RESOURCE, (void **)&resource ))) goto failed;
+     if ((status = d3dkmt_object_alloc( sizeof(*allocation), D3DKMT_ALLOCATION, (void **)&allocation ))) goto failed;
+-    if ((status = d3dkmt_object_create( &resource->obj, fd, 0, !global, NULL, 0 ))) goto failed;
++    if ((status = d3dkmt_object_create( &resource->obj, fd, !global, NULL, 0 ))) goto failed;
+ 
+     if ((status = alloc_object_handle( allocation ))) goto failed;
+     resource->allocation = allocation->local;
+@@ -1909,7 +1818,7 @@ D3DKMT_HANDLE d3dkmt_create_sync( int fd, D3DKMT_HANDLE *global )
+     TRACE( "global %p\n", global );
+ 
+     if ((status = d3dkmt_object_alloc( sizeof(*sync), D3DKMT_SYNC, (void **)&sync ))) goto failed;
+-    if ((status = d3dkmt_object_create( sync, fd, 0, !global, NULL, 0 ))) goto failed;
++    if ((status = d3dkmt_object_create( sync, fd, !global, NULL, 0 ))) goto failed;
+     if (global) *global = sync->global;
+     return sync->local;
+ 
+diff --git b/dlls/win32u/tests/d3dkmt.c a/dlls/win32u/tests/d3dkmt.c
+index b3a9baf4785..4c9e6e5704d 100644
+--- b/dlls/win32u/tests/d3dkmt.c
++++ a/dlls/win32u/tests/d3dkmt.c
+@@ -2074,7 +2074,7 @@ static void test_D3DKMTCreateKeyedMutex( void )
+ static DWORD WINAPI test_acquire_mutex( void *arg )
+ {
+     NTSTATUS status = D3DKMTAcquireKeyedMutex( arg );
+-    ok_nt( STATUS_ABANDONED, status );
++    todo_wine ok_nt( STATUS_ABANDONED, status );
+     return 0;
+ }
+ 
+@@ -2104,7 +2104,7 @@ static void test_D3DKMTAcquireKeyedMutex( void )
+     acquire.pTimeout = &timeout;
+     acquire.FenceValue = 0xdeadbeef;
+     status = D3DKMTAcquireKeyedMutex( &acquire );
+-    ok_nt( STATUS_INVALID_PARAMETER, status );
++    todo_wine ok_nt( STATUS_INVALID_PARAMETER, status );
+     ok_x4( acquire.Key, ==, 0xdeadbeef );
+     ok_x8( acquire.FenceValue, ==, 0xdeadbeef );
+ 
+@@ -2112,17 +2112,17 @@ static void test_D3DKMTAcquireKeyedMutex( void )
+     acquire.Key = 0xdeadbeef;
+     acquire.FenceValue = 0xdeadbeef;
+     status = D3DKMTAcquireKeyedMutex( &acquire );
+-    ok_nt( STATUS_TIMEOUT, status );
++    todo_wine ok_nt( STATUS_TIMEOUT, status );
+     ok_x4( acquire.Key, ==, 0xdeadbeef );
+-    ok_x8( acquire.FenceValue, ==, 0 );
++    todo_wine ok_x8( acquire.FenceValue, ==, 0 );
+ 
+     acquire.hKeyedMutex = create.hKeyedMutex;
+     acquire.Key = 0;
+     acquire.FenceValue = 0xdeadbeef;
+     status = D3DKMTAcquireKeyedMutex( &acquire );
+-    ok_nt( STATUS_SUCCESS, status );
++    todo_wine ok_nt( STATUS_SUCCESS, status );
+     ok_x4( acquire.Key, ==, 0 );
+-    ok_x8( acquire.FenceValue, ==, 0 );
++    todo_wine ok_x8( acquire.FenceValue, ==, 0 );
+ 
+     status = D3DKMTReleaseKeyedMutex( NULL );
+     ok_nt( STATUS_INVALID_PARAMETER, status );
+@@ -2130,42 +2130,42 @@ static void test_D3DKMTAcquireKeyedMutex( void )
+     release.Key = 0xdeadbeef;
+     release.FenceValue = 0xdeadbeef;
+     status = D3DKMTReleaseKeyedMutex( &release );
+-    ok_nt( STATUS_INVALID_PARAMETER, status );
++    todo_wine ok_nt( STATUS_INVALID_PARAMETER, status );
+     ok_x4( release.Key, ==, 0xdeadbeef );
+     ok_x8( release.FenceValue, ==, 0xdeadbeef );
+     release.hKeyedMutex = create.hKeyedMutex;
+     release.Key = 1;
+     release.FenceValue = 1234;
+     status = D3DKMTReleaseKeyedMutex( &release );
+-    ok_nt( STATUS_SUCCESS, status );
++    todo_wine ok_nt( STATUS_SUCCESS, status );
+     ok_x4( release.Key, ==, 1 );
+     ok_x8( release.FenceValue, ==, 1234 );
+     release.FenceValue = 0xdeadbeef;
+     status = D3DKMTReleaseKeyedMutex( &release );
+-    ok_nt( STATUS_INVALID_PARAMETER, status );
++    todo_wine ok_nt( STATUS_INVALID_PARAMETER, status );
+     ok_x4( release.Key, ==, 1 );
+     ok_x8( release.FenceValue, ==, 0xdeadbeef );
+ 
+     acquire.Key = 0;
+     acquire.FenceValue = 0xdeadbeef;
+     status = D3DKMTAcquireKeyedMutex( &acquire );
+-    ok_nt( STATUS_TIMEOUT, status );
+-    ok_x8( acquire.FenceValue, ==, 0 );
++    todo_wine ok_nt( STATUS_TIMEOUT, status );
++    todo_wine ok_x8( acquire.FenceValue, ==, 0 );
+     acquire.Key = 1;
+     acquire.FenceValue = 0xdeadbeef;
+     status = D3DKMTAcquireKeyedMutex( &acquire );
+-    ok_nt( STATUS_SUCCESS, status );
+-    ok_x8( acquire.FenceValue, ==, 1234 );
++    todo_wine ok_nt( STATUS_SUCCESS, status );
++    todo_wine ok_x8( acquire.FenceValue, ==, 1234 );
+ 
+     release.Key = 0;
+     release.FenceValue = 0;
+     status = D3DKMTReleaseKeyedMutex( &release );
+-    ok_nt( STATUS_SUCCESS, status );
++    todo_wine ok_nt( STATUS_SUCCESS, status );
+     acquire.Key = 0;
+     acquire.FenceValue = 0xdeadbeef;
+     status = D3DKMTAcquireKeyedMutex( &acquire );
+-    ok_nt( STATUS_SUCCESS, status );
+-    ok_x8( acquire.FenceValue, ==, 0 );
++    todo_wine ok_nt( STATUS_SUCCESS, status );
++    todo_wine ok_x8( acquire.FenceValue, ==, 0 );
+ 
+     open.hSharedHandle = create.hSharedHandle;
+     open.hKeyedMutex = 0xdeadbeef;
+@@ -2180,7 +2180,7 @@ static void test_D3DKMTAcquireKeyedMutex( void )
+     thread = CreateThread( NULL, 0, test_acquire_mutex, &acquire, 0, NULL );
+     ok_ptr( thread, !=, NULL );
+     ret = WaitForSingleObject( thread, 100 );
+-    ok_u4( ret, ==, WAIT_TIMEOUT );
++    todo_wine ok_u4( ret, ==, WAIT_TIMEOUT );
+ 
+     destroy.hKeyedMutex = create.hKeyedMutex;
+     status = D3DKMTDestroyKeyedMutex( &destroy );
+@@ -2193,11 +2193,11 @@ static void test_D3DKMTAcquireKeyedMutex( void )
+     acquire.FenceValue = 0xdeadbeef;
+     timeout.QuadPart = 100 * -10000;
+     status = D3DKMTAcquireKeyedMutex( &acquire );
+-    ok_nt( STATUS_ABANDONED, status );
+-    ok_x8( acquire.FenceValue, ==, 0 );
++    todo_wine ok_nt( STATUS_ABANDONED, status );
++    todo_wine ok_x8( acquire.FenceValue, ==, 0 );
+     status = D3DKMTAcquireKeyedMutex( &acquire );
+-    ok_nt( STATUS_ABANDONED, status );
+-    ok_x8( acquire.FenceValue, ==, 0 );
++    todo_wine ok_nt( STATUS_ABANDONED, status );
++    todo_wine ok_x8( acquire.FenceValue, ==, 0 );
+ 
+     destroy.hKeyedMutex = open.hKeyedMutex;
+     status = D3DKMTDestroyKeyedMutex( &destroy );
+diff --git b/include/wine/server_protocol.h a/include/wine/server_protocol.h
+index b3203fe5082..573c944ebe2 100644
+--- b/include/wine/server_protocol.h
++++ a/include/wine/server_protocol.h
+@@ -6015,8 +6015,8 @@ struct d3dkmt_object_create_request
+     struct request_header __header;
+     unsigned int        type;
+     int                 fd;
+-    unsigned int        value;
+     /* VARARG(runtime,bytes); */
++    char __pad_20[4];
+ };
+ struct d3dkmt_object_create_reply
+ {
+@@ -6114,44 +6114,6 @@ struct d3dkmt_object_open_name_reply
+ };
+ 
+ 
+-
+-struct d3dkmt_mutex_acquire_request
+-{
+-    struct request_header __header;
+-    d3dkmt_handle_t     mutex;
+-    unsigned int        key_value;
+-    obj_handle_t        wait_handle;
+-    unsigned int        wait_status;
+-    char __pad_28[4];
+-};
+-struct d3dkmt_mutex_acquire_reply
+-{
+-    struct reply_header __header;
+-    unsigned __int64    fence_value;
+-    data_size_t         runtime_size;
+-    obj_handle_t        wait_handle;
+-    /* VARARG(runtime,bytes); */
+-};
+-
+-
+-
+-struct d3dkmt_mutex_release_request
+-{
+-    struct request_header __header;
+-    d3dkmt_handle_t     mutex;
+-    int                 abandon;
+-    unsigned int        key_value;
+-    unsigned __int64    fence_value;
+-    data_size_t         runtime_size;
+-    /* VARARG(runtime,bytes); */
+-    char __pad_36[4];
+-};
+-struct d3dkmt_mutex_release_reply
+-{
+-    struct reply_header __header;
+-};
+-
+-
+ enum request
+ {
+     REQ_new_process,
+@@ -6458,8 +6420,6 @@ enum request
+     REQ_d3dkmt_object_open,
+     REQ_d3dkmt_share_objects,
+     REQ_d3dkmt_object_open_name,
+-    REQ_d3dkmt_mutex_acquire,
+-    REQ_d3dkmt_mutex_release,
+     REQ_NB_REQUESTS
+ };
+ 
+@@ -6771,8 +6731,6 @@ union generic_request
+     struct d3dkmt_object_open_request d3dkmt_object_open_request;
+     struct d3dkmt_share_objects_request d3dkmt_share_objects_request;
+     struct d3dkmt_object_open_name_request d3dkmt_object_open_name_request;
+-    struct d3dkmt_mutex_acquire_request d3dkmt_mutex_acquire_request;
+-    struct d3dkmt_mutex_release_request d3dkmt_mutex_release_request;
+ };
+ union generic_reply
+ {
+@@ -7082,10 +7040,8 @@ union generic_reply
+     struct d3dkmt_object_open_reply d3dkmt_object_open_reply;
+     struct d3dkmt_share_objects_reply d3dkmt_share_objects_reply;
+     struct d3dkmt_object_open_name_reply d3dkmt_object_open_name_reply;
+-    struct d3dkmt_mutex_acquire_reply d3dkmt_mutex_acquire_reply;
+-    struct d3dkmt_mutex_release_reply d3dkmt_mutex_release_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 926
++#define SERVER_PROTOCOL_VERSION 924
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
+diff --git b/server/d3dkmt.c a/server/d3dkmt.c
+index 6c8c971dc44..4d30ec65966 100644
+--- b/server/d3dkmt.c
++++ a/server/d3dkmt.c
+@@ -95,53 +95,6 @@ static const struct fd_ops d3dkmt_fd_ops =
+     default_fd_reselect_async     /* reselect_async */
+ };
+ 
+-struct keyed_wait
+-{
+-    struct list     entry;
+-    int             key;
+-    int             waiters;
+-    struct object  *sync;
+-};
+-
+-struct d3dkmt_mutex
+-{
+-    struct d3dkmt_object base;
+-    unsigned int         key_value;      /* last released key value */
+-    unsigned __int64     fence_value;    /* last released fence value */
+-    bool                 abandoned;      /* mutex has been abandonned */
+-    struct thread       *owner;          /* current owner thread */
+-    struct list          waits;          /* list of pending keyed_waits */
+-    struct list          entry;          /* entry in owner d3dkmt_mutexes */
+-};
+-
+-static void d3dkmt_mutex_dump( struct object *obj, int verbose );
+-static void d3dkmt_mutex_destroy( struct object *obj );
+-
+-static const struct object_ops d3dkmt_mutex_ops =
+-{
+-    sizeof(struct d3dkmt_mutex),    /* size */
+-    &no_type,                       /* type */
+-    d3dkmt_mutex_dump,              /* dump */
+-    no_add_queue,                   /* add_queue */
+-    NULL,                           /* remove_queue */
+-    NULL,                           /* signaled */
+-    NULL,                           /* satisfied */
+-    no_signal,                      /* signal */
+-    no_get_fd,                      /* get_fd */
+-    default_get_sync,               /* get_sync */
+-    default_map_access,             /* map_access */
+-    default_get_sd,                 /* get_sd */
+-    default_set_sd,                 /* set_sd */
+-    no_get_full_name,               /* get_full_name */
+-    no_lookup_name,                 /* lookup_name */
+-    no_link_name,                   /* link_name */
+-    NULL,                           /* unlink_name */
+-    no_open_file,                   /* open_file */
+-    no_kernel_obj_list,             /* get_kernel_obj_list */
+-    no_close_handle,                /* close_handle */
+-    d3dkmt_mutex_destroy,           /* destroy */
+-};
+-
+ #define DXGK_SHARED_SYNC_QUERY_STATE  0x0001
+ #define DXGK_SHARED_SYNC_MODIFY_STATE 0x0002
+ #define DXGK_SHARED_SYNC_ALL_ACCESS   (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0x3)
+@@ -417,131 +370,6 @@ static struct d3dkmt_object *d3dkmt_object_create( enum d3dkmt_type type, data_s
+     return object;
+ }
+ 
+-static void d3dkmt_mutex_dump( struct object *obj, int verbose )
+-{
+-    struct d3dkmt_mutex *mutex = (struct d3dkmt_mutex *)obj;
+-    assert( obj->ops == &d3dkmt_mutex_ops );
+-
+-    fprintf( stderr, "d3dkmt mutex global=%#x\n", mutex->base.global );
+-}
+-
+-static void d3dkmt_mutex_destroy( struct object *obj )
+-{
+-    struct d3dkmt_mutex *mutex = (struct d3dkmt_mutex *)obj;
+-    struct keyed_wait *wait, *next;
+-
+-    assert( obj->ops == &d3dkmt_mutex_ops );
+-
+-    LIST_FOR_EACH_ENTRY_SAFE( wait, next, &mutex->waits, struct keyed_wait, entry )
+-    {
+-        release_object( wait->sync );
+-        list_remove( &wait->entry );
+-        free( wait );
+-    }
+-
+-    if (mutex->base.global) free_object_handle( mutex->base.global );
+-    free( mutex->base.runtime );
+-}
+-
+-static struct d3dkmt_object *d3dkmt_mutex_create( unsigned int key_value, data_size_t runtime_size, const void *runtime )
+-{
+-    struct d3dkmt_mutex *object;
+-
+-    if (!(object = alloc_object( &d3dkmt_mutex_ops ))) return NULL;
+-    object->base.type            = D3DKMT_MUTEX;
+-    object->base.global          = 0;
+-    object->base.runtime_size    = runtime_size;
+-    object->base.fd              = NULL;
+-    object->key_value            = key_value;
+-    object->fence_value          = 0;
+-    object->abandoned            = false;
+-    object->owner                = NULL;
+-    list_init( &object->waits );
+-
+-    if (!(object->base.runtime = memdup( runtime, runtime_size )) ||
+-        !(object->base.global = alloc_object_handle( &object->base )))
+-    {
+-        release_object( object );
+-        return NULL;
+-    }
+-
+-    return &object->base;
+-}
+-
+-static struct object *keyed_wait_grab( struct d3dkmt_mutex *mutex, int key )
+-{
+-    struct keyed_wait *wait;
+-
+-    LIST_FOR_EACH_ENTRY( wait, &mutex->waits, struct keyed_wait, entry )
+-    {
+-        if (wait->key != key) continue;
+-        wait->waiters++;
+-        return grab_object( wait->sync );
+-    }
+-
+-    if (!(wait = mem_alloc( sizeof(*wait) ))) return NULL;
+-    wait->key       = key;
+-    wait->waiters   = 1;
+-    if (!(wait->sync = create_internal_sync( 0, 0 )))
+-    {
+-        free( wait );
+-        return NULL;
+-    }
+-
+-    list_add_tail( &mutex->waits, &wait->entry );
+-    return grab_object( wait->sync );
+-}
+-
+-static void keyed_wait_release( struct d3dkmt_mutex *mutex, int key )
+-{
+-    struct keyed_wait *wait;
+-
+-    LIST_FOR_EACH_ENTRY( wait, &mutex->waits, struct keyed_wait, entry )
+-    {
+-        if (wait->key == key && !--wait->waiters)
+-        {
+-            release_object( wait->sync );
+-            list_remove( &wait->entry );
+-            free( wait );
+-            break;
+-        }
+-    }
+-}
+-
+-static void mutex_grab( struct d3dkmt_mutex *mutex )
+-{
+-    grab_object( mutex );
+-    list_add_tail( &current->d3dkmt_mutexes, &mutex->entry );
+-    mutex->owner = current;
+-}
+-
+-static void mutex_release( struct d3dkmt_mutex *mutex, bool abandon )
+-{
+-    struct keyed_wait *wait;
+-
+-    LIST_FOR_EACH_ENTRY( wait, &mutex->waits, struct keyed_wait, entry )
+-    {
+-        if (abandon || wait->key == mutex->key_value)
+-        {
+-            signal_sync( wait->sync );
+-            if (!abandon) break;
+-        }
+-    }
+-    if (abandon) mutex->abandoned = true;
+-
+-    mutex->owner = NULL;
+-    list_remove( &mutex->entry );
+-    release_object( mutex );
+-}
+-
+-void abandon_d3dkmt_mutexes( struct thread *thread )
+-{
+-    struct d3dkmt_mutex *mutex, *next;
+-
+-    LIST_FOR_EACH_ENTRY_SAFE( mutex, next, &thread->d3dkmt_mutexes, struct d3dkmt_mutex, entry )
+-        mutex_release( mutex, true );
+-}
+-
+ /* return a pointer to a d3dkmt object from its global handle */
+ static void *d3dkmt_object_open( d3dkmt_handle_t global, enum d3dkmt_type type )
+ {
+@@ -598,16 +426,7 @@ DECL_HANDLER(d3dkmt_object_create)
+         if (!(fd = create_anonymous_fd( NULL, unix_fd, NULL, 0 ))) return;
+     }
+ 
+-    switch (req->type)
+-    {
+-    case D3DKMT_MUTEX:
+-        if (!(object = d3dkmt_mutex_create( req->value, get_req_data_size(), get_req_data() ))) goto done;
+-        break;
+-    default:
+-        if (!(object = d3dkmt_object_create( req->type, get_req_data_size(), get_req_data() ))) goto done;
+-        break;
+-    }
+-
++    if (!(object = d3dkmt_object_create( req->type, get_req_data_size(), get_req_data() ))) goto done;
+     if (fd)
+     {
+         set_fd_user( fd, &d3dkmt_fd_ops, &object->obj );
+@@ -746,54 +565,3 @@ DECL_HANDLER(d3dkmt_object_open_name)
+         break;
+     }
+ }
+-
+-/* Acquire a global d3dkmt keyed mutex */
+-DECL_HANDLER(d3dkmt_mutex_acquire)
+-{
+-    struct d3dkmt_mutex *mutex;
+-    struct object *sync;
+-
+-    if (!(mutex = d3dkmt_object_open( req->mutex, D3DKMT_MUTEX ))) goto done;
+-
+-    if (req->wait_status) set_error( req->wait_status );
+-    else if (mutex->abandoned) set_error( STATUS_ABANDONED );
+-    else if (mutex->key_value == req->key_value && !mutex->owner)
+-    {
+-        reply->fence_value = mutex->fence_value;
+-        mutex_grab( mutex );
+-    }
+-    else if ((reply->wait_handle = req->wait_handle)) set_error( STATUS_PENDING );
+-    else if ((sync = keyed_wait_grab( mutex, req->key_value )))
+-    {
+-        if ((reply->wait_handle = alloc_handle( current->process, sync, SYNCHRONIZE, 0 ))) set_error( STATUS_PENDING );
+-        release_object( sync );
+-    }
+-
+-    release_object( mutex );
+-
+-done:
+-    if (get_error() != STATUS_PENDING && req->wait_handle)
+-    {
+-        close_handle( current->process, req->wait_handle );
+-        if (mutex) keyed_wait_release( mutex, req->key_value );
+-    }
+-}
+-
+-/* Release a global d3dkmt keyed mutex */
+-DECL_HANDLER(d3dkmt_mutex_release)
+-{
+-    struct d3dkmt_mutex *mutex;
+-
+-    if (!(mutex = d3dkmt_object_open( req->mutex, D3DKMT_MUTEX ))) return;
+-
+-    if (mutex->abandoned) set_error( STATUS_ABANDONED );
+-    else if (mutex->owner != current) set_error( STATUS_INVALID_PARAMETER );
+-    else
+-    {
+-        mutex->key_value = req->key_value;
+-        mutex->fence_value = req->fence_value;
+-        mutex_release( mutex, req->abandon );
+-    }
+-
+-    release_object( mutex );
+-}
+diff --git b/server/object.h a/server/object.h
+index cab8ad25a59..2a0ecfc2cf2 100644
+--- b/server/object.h
++++ a/server/object.h
+@@ -240,7 +240,6 @@ extern void reset_event( struct event *event );
+ /* mutex functions */
+ 
+ extern void abandon_mutexes( struct thread *thread );
+-extern void abandon_d3dkmt_mutexes( struct thread *thread );
+ 
+ /* in-process synchronization functions */
+ 
+diff --git b/server/protocol.def a/server/protocol.def
+index 93e574b61a3..cb46a5ff2dc 100644
+--- b/server/protocol.def
++++ a/server/protocol.def
+@@ -4179,7 +4179,6 @@ enum inproc_sync_type
+ @REQ(d3dkmt_object_create)
+     unsigned int        type;           /* d3dkmt object type */
+     int                 fd;             /* host specific fd */
+-    unsigned int        value;          /* initial value for keyed mutex */
+     VARARG(runtime,bytes);              /* client runtime data */
+ @REPLY
+     d3dkmt_handle_t     global;         /* global d3dkmt handle */
+@@ -4240,28 +4239,3 @@ enum inproc_sync_type
+ @REPLY
+     obj_handle_t        handle;         /* shared object handle */
+ @END
+-
+-
+-/* Acquire a global d3dkmt keyed mutex */
+-@REQ(d3dkmt_mutex_acquire)
+-    d3dkmt_handle_t     mutex;          /* mutex global handle */
+-    unsigned int        key_value;      /* the key to acquire/wait for */
+-    obj_handle_t        wait_handle;    /* previously returned wait handle */
+-    unsigned int        wait_status;    /* status returned from previous wait */
+-@REPLY
+-    unsigned __int64    fence_value;    /* semaphore fence value */
+-    data_size_t         runtime_size;   /* size of client runtime data */
+-    obj_handle_t        wait_handle;    /* wait handle for pending acquire */
+-    VARARG(runtime,bytes);              /* client runtime data */
+-@END
+-
+-
+-/* Release a global d3dkmt keyed mutex */
+-@REQ(d3dkmt_mutex_release)
+-    d3dkmt_handle_t     mutex;          /* mutex global handle */
+-    int                 abandon;        /* mutex is being abandonned */
+-    unsigned int        key_value;      /* the key to release */
+-    unsigned __int64    fence_value;    /* semaphore fence value */
+-    data_size_t         runtime_size;   /* size of client runtime data */
+-    VARARG(runtime,bytes);              /* client runtime data */
+-@END
+diff --git b/server/request_handlers.h a/server/request_handlers.h
+index 0f6c6f42f07..6d866a744fe 100644
+--- b/server/request_handlers.h
++++ a/server/request_handlers.h
+@@ -311,8 +311,6 @@ DECL_HANDLER(d3dkmt_object_query);
+ DECL_HANDLER(d3dkmt_object_open);
+ DECL_HANDLER(d3dkmt_share_objects);
+ DECL_HANDLER(d3dkmt_object_open_name);
+-DECL_HANDLER(d3dkmt_mutex_acquire);
+-DECL_HANDLER(d3dkmt_mutex_release);
+ 
+ typedef void (*req_handler)( const void *req, void *reply );
+ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+@@ -621,8 +619,6 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+     (req_handler)req_d3dkmt_object_open,
+     (req_handler)req_d3dkmt_share_objects,
+     (req_handler)req_d3dkmt_object_open_name,
+-    (req_handler)req_d3dkmt_mutex_acquire,
+-    (req_handler)req_d3dkmt_mutex_release,
+ };
+ 
+ C_ASSERT( sizeof(abstime_t) == 8 );
+@@ -2316,7 +2312,6 @@ C_ASSERT( offsetof(struct get_inproc_alert_fd_reply, handle) == 8 );
+ C_ASSERT( sizeof(struct get_inproc_alert_fd_reply) == 16 );
+ C_ASSERT( offsetof(struct d3dkmt_object_create_request, type) == 12 );
+ C_ASSERT( offsetof(struct d3dkmt_object_create_request, fd) == 16 );
+-C_ASSERT( offsetof(struct d3dkmt_object_create_request, value) == 20 );
+ C_ASSERT( sizeof(struct d3dkmt_object_create_request) == 24 );
+ C_ASSERT( offsetof(struct d3dkmt_object_create_reply, global) == 8 );
+ C_ASSERT( offsetof(struct d3dkmt_object_create_reply, handle) == 12 );
+@@ -2352,18 +2347,3 @@ C_ASSERT( offsetof(struct d3dkmt_object_open_name_request, rootdir) == 24 );
+ C_ASSERT( sizeof(struct d3dkmt_object_open_name_request) == 32 );
+ C_ASSERT( offsetof(struct d3dkmt_object_open_name_reply, handle) == 8 );
+ C_ASSERT( sizeof(struct d3dkmt_object_open_name_reply) == 16 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_acquire_request, mutex) == 12 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_acquire_request, key_value) == 16 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_acquire_request, wait_handle) == 20 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_acquire_request, wait_status) == 24 );
+-C_ASSERT( sizeof(struct d3dkmt_mutex_acquire_request) == 32 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_acquire_reply, fence_value) == 8 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_acquire_reply, runtime_size) == 16 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_acquire_reply, wait_handle) == 20 );
+-C_ASSERT( sizeof(struct d3dkmt_mutex_acquire_reply) == 24 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_release_request, mutex) == 12 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_release_request, abandon) == 16 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_release_request, key_value) == 20 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_release_request, fence_value) == 24 );
+-C_ASSERT( offsetof(struct d3dkmt_mutex_release_request, runtime_size) == 32 );
+-C_ASSERT( sizeof(struct d3dkmt_mutex_release_request) == 40 );
+diff --git b/server/request_trace.h a/server/request_trace.h
+index 7445f0e8120..ba0aaf42c61 100644
+--- b/server/request_trace.h
++++ a/server/request_trace.h
+@@ -3398,7 +3398,6 @@ static void dump_d3dkmt_object_create_request( const struct d3dkmt_object_create
+ {
+     fprintf( stderr, " type=%08x", req->type );
+     fprintf( stderr, ", fd=%d", req->fd );
+-    fprintf( stderr, ", value=%08x", req->value );
+     dump_varargs_bytes( ", runtime=", cur_size );
+ }
+ 
+@@ -3470,32 +3469,6 @@ static void dump_d3dkmt_object_open_name_reply( const struct d3dkmt_object_open_
+     fprintf( stderr, " handle=%04x", req->handle );
+ }
+ 
+-static void dump_d3dkmt_mutex_acquire_request( const struct d3dkmt_mutex_acquire_request *req )
+-{
+-    fprintf( stderr, " mutex=%08x", req->mutex );
+-    fprintf( stderr, ", key_value=%08x", req->key_value );
+-    fprintf( stderr, ", wait_handle=%04x", req->wait_handle );
+-    fprintf( stderr, ", wait_status=%08x", req->wait_status );
+-}
+-
+-static void dump_d3dkmt_mutex_acquire_reply( const struct d3dkmt_mutex_acquire_reply *req )
+-{
+-    dump_uint64( " fence_value=", &req->fence_value );
+-    fprintf( stderr, ", runtime_size=%u", req->runtime_size );
+-    fprintf( stderr, ", wait_handle=%04x", req->wait_handle );
+-    dump_varargs_bytes( ", runtime=", cur_size );
+-}
+-
+-static void dump_d3dkmt_mutex_release_request( const struct d3dkmt_mutex_release_request *req )
+-{
+-    fprintf( stderr, " mutex=%08x", req->mutex );
+-    fprintf( stderr, ", abandon=%d", req->abandon );
+-    fprintf( stderr, ", key_value=%08x", req->key_value );
+-    dump_uint64( ", fence_value=", &req->fence_value );
+-    fprintf( stderr, ", runtime_size=%u", req->runtime_size );
+-    dump_varargs_bytes( ", runtime=", cur_size );
+-}
+-
+ typedef void (*dump_func)( const void *req );
+ 
+ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
+@@ -3804,8 +3777,6 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
+     (dump_func)dump_d3dkmt_object_open_request,
+     (dump_func)dump_d3dkmt_share_objects_request,
+     (dump_func)dump_d3dkmt_object_open_name_request,
+-    (dump_func)dump_d3dkmt_mutex_acquire_request,
+-    (dump_func)dump_d3dkmt_mutex_release_request,
+ };
+ 
+ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
+@@ -4114,8 +4085,6 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
+     (dump_func)dump_d3dkmt_object_open_reply,
+     (dump_func)dump_d3dkmt_share_objects_reply,
+     (dump_func)dump_d3dkmt_object_open_name_reply,
+-    (dump_func)dump_d3dkmt_mutex_acquire_reply,
+-    NULL,
+ };
+ 
+ static const char * const req_names[REQ_NB_REQUESTS] =
+@@ -4424,8 +4393,6 @@ static const char * const req_names[REQ_NB_REQUESTS] =
+     "d3dkmt_object_open",
+     "d3dkmt_share_objects",
+     "d3dkmt_object_open_name",
+-    "d3dkmt_mutex_acquire",
+-    "d3dkmt_mutex_release",
+ };
+ 
+ static const struct
+@@ -4434,7 +4401,6 @@ static const struct
+     unsigned int value;
+ } status_names[] =
+ {
+-    { "ABANDONED",                   STATUS_ABANDONED },
+     { "ABANDONED_WAIT_0",            STATUS_ABANDONED_WAIT_0 },
+     { "ACCESS_DENIED",               STATUS_ACCESS_DENIED },
+     { "ACCESS_VIOLATION",            STATUS_ACCESS_VIOLATION },
+diff --git b/server/thread.c a/server/thread.c
+index 3aed496450a..6a1b1f8c559 100644
+--- b/server/thread.c
++++ a/server/thread.c
+@@ -434,7 +434,6 @@ static inline void init_thread_structure( struct thread *thread )
+     thread->completion_wait = NULL;
+ 
+     list_init( &thread->mutex_list );
+-    list_init( &thread->d3dkmt_mutexes );
+     list_init( &thread->system_apc );
+     list_init( &thread->user_apc );
+     list_init( &thread->kernel_object );
+diff --git b/server/thread.h a/server/thread.h
+index 77ea355483d..fb77901ba7c 100644
+--- b/server/thread.h
++++ a/server/thread.h
+@@ -58,7 +58,6 @@ struct thread
+     struct process        *process;
+     thread_id_t            id;            /* thread id */
+     struct list            mutex_list;    /* list of currently owned mutexes */
+-    struct list            d3dkmt_mutexes;/* list of currently owned d3dkmt mutexes */
+     unsigned int           system_regs;   /* which system regs have been set */
+     struct msg_queue      *queue;         /* message queue */
+     struct thread_wait    *wait;          /* current wait condition if sleeping */
+
+diff --git b/dlls/win32u/d3dkmt.c a/dlls/win32u/d3dkmt.c
 index b60639374b3..ded774215fe 100644
 --- b/dlls/win32u/d3dkmt.c
 +++ a/dlls/win32u/d3dkmt.c
