@@ -533,6 +533,232 @@ index d2fc629c843..5a97590dbce 100644
  
      desc->VendorId = adapter_id.vendor_id;
      desc->DeviceId = adapter_id.device_id;
+From 4aa052e0c8ae276fc07afcd93d6e290a88214837 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Wed, 15 Jan 2020 10:17:23 -0600
+Subject: [PATCH] dsound: Initialize primary buffer with device's channel
+ layout
+
+Fixes surround sound in some games, like Borderlands GOTY and Dead
+Space.
+---
+ dlls/dsound/dsound.c         | 77 +-----------------------------------
+ dlls/dsound/dsound_private.h |  1 -
+ dlls/dsound/primary.c        | 75 ++++++++++++++++++++++++++++++++++-
+ 3 files changed, 76 insertions(+), 77 deletions(-)
+
+diff --git a/dlls/dsound/dsound.c b/dlls/dsound/dsound.c
+index 8e2b839fe89..630d8c7e16a 100644
+--- a/dlls/dsound/dsound.c
++++ b/dlls/dsound/dsound.c
+@@ -23,7 +23,6 @@
+ #include <assert.h>
+ #include <stdarg.h>
+ #include <stdio.h>
+-#include <math.h>
+ 
+ #define COBJMACROS
+ 
+@@ -138,9 +137,9 @@ static HRESULT DirectSoundDevice_Create(DirectSoundDevice ** ppDevice)
+     device->ref            = 1;
+     device->priolevel      = DSSCL_NORMAL;
+     device->stopped        = 1;
+-    device->speaker_config = DSSPEAKER_COMBINED(DSSPEAKER_STEREO, DSSPEAKER_GEOMETRY_WIDE);
+ 
+-    DSOUND_ParseSpeakerConfig(device);
++    device->speaker_config = 0;
++    device->num_speakers = 0;
+ 
+     /* 3D listener initial parameters */
+     device->ds3dl.dwSize   = sizeof(DS3DLISTENER);
+@@ -1127,75 +1126,3 @@ HRESULT WINAPI DirectSoundCreate8(
+ 
+     return hr;
+ }
+-
+-void DSOUND_ParseSpeakerConfig(DirectSoundDevice *device)
+-{
+-    switch (DSSPEAKER_CONFIG(device->speaker_config)) {
+-        case DSSPEAKER_MONO:
+-            device->speaker_angles[0] = M_PI/180.0f * 0.0f;
+-            device->speaker_num[0] = 0;
+-            device->num_speakers = 1;
+-            device->lfe_channel = -1;
+-        break;
+-
+-        case DSSPEAKER_STEREO:
+-        case DSSPEAKER_HEADPHONE:
+-            device->speaker_angles[0] = M_PI/180.0f * -90.0f;
+-            device->speaker_angles[1] = M_PI/180.0f *  90.0f;
+-            device->speaker_num[0] = 0; /* Left */
+-            device->speaker_num[1] = 1; /* Right */
+-            device->num_speakers = 2;
+-            device->lfe_channel = -1;
+-        break;
+-
+-        case DSSPEAKER_QUAD:
+-            device->speaker_angles[0] = M_PI/180.0f * -135.0f;
+-            device->speaker_angles[1] = M_PI/180.0f *  -45.0f;
+-            device->speaker_angles[2] = M_PI/180.0f *   45.0f;
+-            device->speaker_angles[3] = M_PI/180.0f *  135.0f;
+-            device->speaker_num[0] = 2; /* Rear left */
+-            device->speaker_num[1] = 0; /* Front left */
+-            device->speaker_num[2] = 1; /* Front right */
+-            device->speaker_num[3] = 3; /* Rear right */
+-            device->num_speakers = 4;
+-            device->lfe_channel = -1;
+-        break;
+-
+-        case DSSPEAKER_5POINT1_BACK:
+-            device->speaker_angles[0] = M_PI/180.0f * -135.0f;
+-            device->speaker_angles[1] = M_PI/180.0f *  -45.0f;
+-            device->speaker_angles[2] = M_PI/180.0f *    0.0f;
+-            device->speaker_angles[3] = M_PI/180.0f *   45.0f;
+-            device->speaker_angles[4] = M_PI/180.0f *  135.0f;
+-            device->speaker_angles[5] = 9999.0f;
+-            device->speaker_num[0] = 4; /* Rear left */
+-            device->speaker_num[1] = 0; /* Front left */
+-            device->speaker_num[2] = 2; /* Front centre */
+-            device->speaker_num[3] = 1; /* Front right */
+-            device->speaker_num[4] = 5; /* Rear right */
+-            device->speaker_num[5] = 3; /* LFE */
+-            device->num_speakers = 6;
+-            device->lfe_channel = 3;
+-        break;
+-
+-        case DSSPEAKER_5POINT1_SURROUND:
+-            device->speaker_angles[0] = M_PI/180.0f *  -90.0f;
+-            device->speaker_angles[1] = M_PI/180.0f *  -30.0f;
+-            device->speaker_angles[2] = M_PI/180.0f *    0.0f;
+-            device->speaker_angles[3] = M_PI/180.0f *   30.0f;
+-            device->speaker_angles[4] = M_PI/180.0f *   90.0f;
+-            device->speaker_angles[5] = 9999.0f;
+-            device->speaker_num[0] = 4; /* Rear left */
+-            device->speaker_num[1] = 0; /* Front left */
+-            device->speaker_num[2] = 2; /* Front centre */
+-            device->speaker_num[3] = 1; /* Front right */
+-            device->speaker_num[4] = 5; /* Rear right */
+-            device->speaker_num[5] = 3; /* LFE */
+-            device->num_speakers = 6;
+-            device->lfe_channel = 3;
+-        break;
+-
+-        default:
+-            WARN("unknown speaker_config %lu\n", device->speaker_config);
+-    }
+-}
+diff --git a/dlls/dsound/dsound_private.h b/dlls/dsound/dsound_private.h
+index 69c4a2f3902..1a3e88a0d29 100644
+--- a/dlls/dsound/dsound_private.h
++++ b/dlls/dsound/dsound_private.h
+@@ -202,7 +202,6 @@ HRESULT IKsPrivatePropertySetImpl_Create(REFIID riid, void **ppv) DECLSPEC_HIDDE
+ HRESULT DSOUND_Create(REFIID riid, void **ppv);
+ HRESULT DSOUND_Create8(REFIID riid, void **ppv);
+ HRESULT IDirectSoundImpl_Create(IUnknown *outer_unk, REFIID riid, void **ppv, BOOL has_ds8);
+-void DSOUND_ParseSpeakerConfig(DirectSoundDevice *device);
+ 
+ /* primary.c */
+ 
+diff --git a/dlls/dsound/primary.c b/dlls/dsound/primary.c
+index 852ec51b7ff..fdbbc00cd33 100644
+--- a/dlls/dsound/primary.c
++++ b/dlls/dsound/primary.c
+@@ -24,6 +24,7 @@
+  */
+ 
+ #include <stdarg.h>
++#include <math.h>
+ 
+ #define COBJMACROS
+ #define NONAMELESSUNION
+@@ -110,6 +111,78 @@ static DWORD DSOUND_FindSpeakerConfig(IMMDevice *mmdevice, int channels)
+     return def;
+ }
+ 
++static void DSOUND_ParseSpeakerConfig(DirectSoundDevice *device)
++{
++    switch (DSSPEAKER_CONFIG(device->speaker_config)) {
++        case DSSPEAKER_MONO:
++            device->speaker_angles[0] = M_PI/180.0f * 0.0f;
++            device->speaker_num[0] = 0;
++            device->num_speakers = 1;
++            device->lfe_channel = -1;
++        break;
++
++        case DSSPEAKER_STEREO:
++        case DSSPEAKER_HEADPHONE:
++            device->speaker_angles[0] = M_PI/180.0f * -90.0f;
++            device->speaker_angles[1] = M_PI/180.0f *  90.0f;
++            device->speaker_num[0] = 0; /* Left */
++            device->speaker_num[1] = 1; /* Right */
++            device->num_speakers = 2;
++            device->lfe_channel = -1;
++        break;
++
++        case DSSPEAKER_QUAD:
++            device->speaker_angles[0] = M_PI/180.0f * -135.0f;
++            device->speaker_angles[1] = M_PI/180.0f *  -45.0f;
++            device->speaker_angles[2] = M_PI/180.0f *   45.0f;
++            device->speaker_angles[3] = M_PI/180.0f *  135.0f;
++            device->speaker_num[0] = 2; /* Rear left */
++            device->speaker_num[1] = 0; /* Front left */
++            device->speaker_num[2] = 1; /* Front right */
++            device->speaker_num[3] = 3; /* Rear right */
++            device->num_speakers = 4;
++            device->lfe_channel = -1;
++        break;
++
++        case DSSPEAKER_5POINT1_BACK:
++            device->speaker_angles[0] = M_PI/180.0f * -135.0f;
++            device->speaker_angles[1] = M_PI/180.0f *  -45.0f;
++            device->speaker_angles[2] = M_PI/180.0f *    0.0f;
++            device->speaker_angles[3] = M_PI/180.0f *   45.0f;
++            device->speaker_angles[4] = M_PI/180.0f *  135.0f;
++            device->speaker_angles[5] = 9999.0f;
++            device->speaker_num[0] = 4; /* Rear left */
++            device->speaker_num[1] = 0; /* Front left */
++            device->speaker_num[2] = 2; /* Front centre */
++            device->speaker_num[3] = 1; /* Front right */
++            device->speaker_num[4] = 5; /* Rear right */
++            device->speaker_num[5] = 3; /* LFE */
++            device->num_speakers = 6;
++            device->lfe_channel = 3;
++        break;
++
++        case DSSPEAKER_5POINT1_SURROUND:
++            device->speaker_angles[0] = M_PI/180.0f *  -90.0f;
++            device->speaker_angles[1] = M_PI/180.0f *  -30.0f;
++            device->speaker_angles[2] = M_PI/180.0f *    0.0f;
++            device->speaker_angles[3] = M_PI/180.0f *   30.0f;
++            device->speaker_angles[4] = M_PI/180.0f *   90.0f;
++            device->speaker_angles[5] = 9999.0f;
++            device->speaker_num[0] = 4; /* Rear left */
++            device->speaker_num[1] = 0; /* Front left */
++            device->speaker_num[2] = 2; /* Front centre */
++            device->speaker_num[3] = 1; /* Front right */
++            device->speaker_num[4] = 5; /* Rear right */
++            device->speaker_num[5] = 3; /* LFE */
++            device->num_speakers = 6;
++            device->lfe_channel = 3;
++        break;
++
++        default:
++            WARN("unknown speaker_config %u\n", device->speaker_config);
++    }
++}
++
+ static HRESULT DSOUND_WaveFormat(DirectSoundDevice *device, IAudioClient *client,
+ 				 BOOL forcewave, WAVEFORMATEX **wfx)
+ {
+@@ -124,7 +197,7 @@ static HRESULT DSOUND_WaveFormat(DirectSoundDevice *device, IAudioClient *client
+         if (FAILED(hr))
+             return hr;
+ 
+-        if (mixwfe->Format.nChannels < device->num_speakers) {
++        if (device->num_speakers == 0 || mixwfe->Format.nChannels < device->num_speakers) {
+             device->speaker_config = DSOUND_FindSpeakerConfig(device->mmdevice, mixwfe->Format.nChannels);
+             DSOUND_ParseSpeakerConfig(device);
+         } else if (mixwfe->Format.nChannels > device->num_speakers) {
 From b739d48093cce805b7b4f48fdbd9d0bb62bc8013 Mon Sep 17 00:00:00 2001
 From: Brendan Shanks <bshanks@codeweavers.com>
 Date: Mon, 13 Apr 2020 16:25:47 -0700
@@ -577,6 +803,42 @@ index 5a97590dbce..a5563498cdd 100644
      return hr;
  }
  
+From 0255dbc3afd3ff673fa701e7802474483252fcb2 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Mon, 13 Jul 2020 10:21:49 -0500
+Subject: [PATCH] ntdll: Handle NULL object name buffer in
+ nt_to_unix_file_name_attr().
+
+---
+ dlls/ntdll/tests/file.c | 22 +++++++++++++++++++++-
+ dlls/ntdll/unix/file.c  |  8 ++++++++
+ 2 files changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 20eb6a05922..d99c6b462b2 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -3593,14 +3593,20 @@ NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret,
+     char *unix_name;
+     int name_len, unix_len;
+     NTSTATUS status;
+ 
++    if (!attr->ObjectName->Buffer && attr->ObjectName->Length)
++        return STATUS_ACCESS_VIOLATION;
++
+     fileobj.FileName = *attr->ObjectName;
+ reparse:
+     if (reparse_count++ == 31)
+         return STATUS_REPARSE_POINT_NOT_RESOLVED;
+     if (!rootdir) /* without root dir fall back to normal lookup */
+     {
++        if (!attr->ObjectName->Buffer)
++            return STATUS_OBJECT_PATH_SYNTAX_BAD;
++
+         status = nt_to_unix_file_name_no_root( &fileobj, name_ret, disposition );
+         if (status == STATUS_REPARSE) goto reparse;
+         if (fileobj.FileName.Buffer != attr->ObjectName->Buffer) free( fileobj.FileName.Buffer);
+         return status;
 From 514d3e11c999b11a95ab35df5b4ab454d34fe791 Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Wed, 13 May 2020 13:55:55 +0300
@@ -1820,49 +2082,6 @@ index d8db79b1263a..4631ac8d0bcf 100644
  {
      UINT32 code;
 
-
-From 995fdfb8cdb0a8eed82e16640034dc9673ded681 Mon Sep 17 00:00:00 2001
-From: Paul Gofman <pgofman@codeweavers.com>
-Date: Fri, 12 Mar 2021 23:58:39 +0300
-Subject: [PATCH 14/16] esync: Fix restoring the objects state on wait all
- objects retry.
-
----
- dlls/ntdll/unix/esync.c | 16 ++++++++++++++--
- 1 file changed, 14 insertions(+), 2 deletions(-)
-
-diff --git a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
-index 9a615fb277c..810477d02a0 100644
---- a/dlls/ntdll/unix/esync.c
-+++ b/dlls/ntdll/unix/esync.c
-@@ -1168,10 +1168,22 @@ tryagain:
-                         {
-                             /* We were too slow. Put everything back. */
-                             value = 1;
--                            for (j = i; j >= 0; j--)
-+                            for (j = i - 1; j >= 0; j--)
-                             {
--                                if (write( obj->fd, &value, sizeof(value) ) == -1)
-+                                struct esync *obj = objs[j];
-+
-+                                if (obj->type == ESYNC_MUTEX)
-+                                {
-+                                    struct mutex *mutex = obj->shm;
-+
-+                                    if (mutex->tid == GetCurrentThreadId())
-+                                        continue;
-+                                }
-+                                if (write( fds[j].fd, &value, sizeof(value) ) == -1)
-+                                {
-+                                    ERR("write failed.\n");
-                                     return errno_to_status( errno );
-+                                }
-                             }
- 
-                             goto tryagain;  /* break out of two loops and a switch */
--- 
-2.30.2
-
 From 47be204baf902d876fc5e5b0240b6167500ec0dd Mon Sep 17 00:00:00 2001
 From: Paul Gofman <pgofman@codeweavers.com>
 Date: Mon, 29 Mar 2021 21:54:30 +0300
@@ -2441,7 +2660,7 @@ index 82e5fbf811d..b1153ac4927 100644
 -static ULONG STDMETHODCALLTYPE d3d11_swapchain_Release(IDXGISwapChain4 *iface)
 +static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_Release(IDXGISwapChain4 *iface)
  {
-     struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
+     struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
      ULONG refcount = InterlockedDecrement(&swapchain->refcount);
 @@ -325,7 +325,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDevice(IDXGISwapChain1 *ifac
  
@@ -2460,7 +2679,7 @@ index 82e5fbf811d..b1153ac4927 100644
 +static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_Present1(IDXGISwapChain4 *iface,
          UINT sync_interval, UINT flags, const DXGI_PRESENT_PARAMETERS *present_parameters)
  {
-     struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
+     struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
 From 003223a6816f3121a8e60d8ef3ec79e1768878ce Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Fri, 7 May 2021 13:44:00 -0500
@@ -2639,6 +2858,62 @@ index 020faa26a11..ba7d3e78905 100644
 +    return hr;
 +}
 
+
+From 43c3113aa696898ec5758118b92f8c2a5fb61714 Mon Sep 17 00:00:00 2001
+From: Paul Gofman <pgofman@codeweavers.com>
+Date: Fri, 30 Jul 2021 21:01:13 +0300
+Subject: [PATCH] kernelbase: HACK: Force CEF software rendering for
+ UplayWebCore.
+
+(To be revisited once builtin d3dcompiler is added).
+---
+ dlls/kernelbase/process.c | 27 ++++++++++++++++++++++++++-
+ 1 file changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
+index 33197563cd8..9bcb377a62e 100644
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -33,6 +33,7 @@
+ #include "kernelbase.h"
+ #include "wine/debug.h"
+ #include "wine/condrv.h"
++#include "wine/heap.h"
+
+ WINE_DEFAULT_DEBUG_CHANNEL(process);
+
+@@ -517,7 +518,31 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR
+     }
+     else
+     {
+-        if (!(tidy_cmdline = get_file_name( cmd_line, name, ARRAY_SIZE(name) ))) return FALSE;
++        static const WCHAR *opt = L" --use-gl=swiftshader";
++        WCHAR *cmdline_new = NULL;
++
++        if (cmd_line && wcsstr( cmd_line, L"UplayWebCore.exe" ))
++        {
++            FIXME( "HACK: appending %s to command line %s.\n", debugstr_w(opt), debugstr_w(cmd_line) );
++
++            cmdline_new = heap_alloc( sizeof(WCHAR) * (lstrlenW(cmd_line) + lstrlenW(opt) + 1) );
++            lstrcpyW(cmdline_new, cmd_line);
++            lstrcatW(cmdline_new, opt);
++        }
++
++        tidy_cmdline = get_file_name( cmdline_new ? cmdline_new : cmd_line, name, ARRAY_SIZE(name) );
++
++        if (!tidy_cmdline)
++        {
++            heap_free( cmdline_new );
++            return FALSE;
++        }
++
++        if (cmdline_new)
++        {
++            if (cmdline_new == tidy_cmdline) cmd_line = NULL;
++            else heap_free( cmdline_new );
++        }
+         app_name = name;
+     }
 
 From a9ec37d83082b1623aea4bc5933f77f4c8a356cf Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?R=C3=A9mi=20Bernon?= <rbernon@codeweavers.com>
@@ -3019,120 +3294,3 @@ index 0a080ea6be8..667013df5ac 100644
      }
      pXRRFreeScreenResources( screen_resources );
      return FALSE;
-From 98bce52ddf46c0c8c6be57c27d4aa9c48303798b Mon Sep 17 00:00:00 2001
-From: Paul Gofman <pgofman@codeweavers.com>
-Date: Tue, 14 Mar 2023 21:12:22 -0600
-Subject: [PATCH] ntdll: HACK: Add WINE_SIMULATE_WRITECOPY option.
-
-CW-Bug-Id: #22034
-
-Edit: Enable for UplayWebCore.exe
----
- dlls/ntdll/unix/loader.c       |  5 +++++
- dlls/ntdll/unix/unix_private.h |  1 +
- dlls/ntdll/unix/virtual.c      | 13 +++++++++++--
- 3 files changed, 17 insertions(+), 2 deletions(-)
-
-diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index 9f00e45..67d071a 100644
---- a/dlls/ntdll/unix/loader.c
-+++ b/dlls/ntdll/unix/loader.c
-@@ -1346,6 +1346,7 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
- 
- BOOL ac_odyssey;
- BOOL fsync_simulate_sched_quantum;
-+BOOL simulate_writecopy;
- 
- static void hacks_init(void)
- {
-@@ -1367,6 +1368,9 @@ static void hacks_init(void)
-     if (fsync_simulate_sched_quantum)
-         ERR("HACK: Simulating sched quantum in fsync.\n");
- 
-+    env_str = getenv("WINE_SIMULATE_WRITECOPY");
-+    if (env_str) simulate_writecopy = atoi(env_str);
-+
-     env_str = getenv("SteamGameId");
-     if (env_str && !strcmp(env_str, "50130"))
-         setenv("WINESTEAMNOEXEC", "1", 0);
-diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
-index 2bf8975..8a5baf3 100644
---- a/dlls/ntdll/unix/unix_private.h
-+++ b/dlls/ntdll/unix/unix_private.h
-@@ -175,6 +175,7 @@ extern struct ldt_copy __wine_ldt_copy;
- 
- extern BOOL ac_odyssey;
- extern BOOL fsync_simulate_sched_quantum;
-+extern BOOL simulate_writecopy;
- 
- extern void init_environment( int argc, char *argv[], char *envp[] );
- extern void init_startup_info(void);
-diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index 59c0e6d..9a7af20 100644
---- a/dlls/ntdll/unix/virtual.c
-+++ b/dlls/ntdll/unix/virtual.c
-@@ -122,6 +122,7 @@ struct file_view
- #define VPROT_GUARD      0x10
- #define VPROT_COMMITTED  0x20
- #define VPROT_WRITEWATCH 0x40
-+#define VPROT_COPIED     0x80
- /* per-mapping protection flags */
- #define VPROT_ARM64EC          0x0100  /* view may contain ARM64EC code */
- #define VPROT_SYSTEM           0x0200  /* system view (underlying mmap not under our control) */
-@@ -1102,7 +1103,8 @@ static const char *get_prot_str( BYTE prot )
-     buffer[0] = (prot & VPROT_COMMITTED) ? 'c' : '-';
-     buffer[1] = (prot & VPROT_GUARD) ? 'g' : ((prot & VPROT_WRITEWATCH) ? 'H' : '-');
-     buffer[2] = (prot & VPROT_READ) ? 'r' : '-';
--    buffer[3] = (prot & VPROT_WRITECOPY) ? 'W' : ((prot & VPROT_WRITE) ? 'w' : '-');
-+    buffer[3] = (prot & VPROT_WRITECOPY) ? (prot & VPROT_COPIED ? 'w' : 'W')
-+        : ((prot & VPROT_WRITE) ? 'w' : '-');
-     buffer[4] = (prot & VPROT_EXEC) ? 'x' : '-';
-     buffer[5] = 0;
-     return buffer;
-@@ -1517,7 +1519,11 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
-  */
- static DWORD get_win32_prot( BYTE vprot, unsigned int map_prot )
- {
--    DWORD ret = VIRTUAL_Win32Flags[vprot & 0x0f];
-+    DWORD ret;
-+
-+    if ((vprot & (VPROT_COPIED | VPROT_WRITECOPY)) == (VPROT_COPIED | VPROT_WRITECOPY))
-+        vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
-+    ret = VIRTUAL_Win32Flags[vprot & 0x0f];
-     if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
-     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
-     return ret;
-@@ -4730,6 +4731,33 @@ NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T
-         {
-             old = get_win32_prot( vprot, view->protect );
-             status = set_protection( view, base, size, new_prot );
-+
-+            if (simulate_writecopy && status == STATUS_SUCCESS
-+                && ((old == PAGE_WRITECOPY || old == PAGE_EXECUTE_WRITECOPY)))
-+            {
-+                TRACE("Setting VPROT_COPIED.\n");
-+
-+                set_page_vprot_bits(base, size, VPROT_COPIED, 0);
-+                vprot |= VPROT_COPIED;
-+                old = get_win32_prot( vprot, view->protect );
-+            }
-+            else if (status == STATUS_SUCCESS && (view->protect & SEC_IMAGE) &&
-+                    base == (void*)NtCurrentTeb()->Peb->ImageBaseAddress)
-+            {
-+                /* GTA5 HACK: Mark first page as copied. */
-+                const WCHAR gta5W[] = { 'g','t','a','5','.','e','x','e',0 };
-+                WCHAR *name, *p;
-+
-+                name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
-+                p = wcsrchr(name, '\\');
-+                p = p ? p+1 : name;
-+
-+                if(!wcsicmp(p, gta5W))
-+                {
-+                    FIXME("HACK: changing GTA5.exe vprot\n");
-+                    set_page_vprot_bits(base, page_size, VPROT_COPIED, 0);
-+                }
-+            }
-         }
-         else status = STATUS_NOT_COMMITTED;
-     }
