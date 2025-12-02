@@ -829,6 +829,7 @@ function build_in_valve_container {
 
   ## The variable eventually ends empty here
   ## Needs some more checks
+  ##
   # On mainline-based proton, we depend on newer vkd3d and vkd3d-utils
   #if [[ "$_custom_wine_source" != *"ValveSoftware"* ]]; then
   #  ( cd vkd3d && git pull origin master )
@@ -840,7 +841,7 @@ function build_in_valve_container {
   cp -r "$_wine_tkg_git_path/src/$_winesrcdir" wine
 
   # We *will* face warnings
-  patch -Np1 < "$_nowhere"/proton_template/disable_wine_werror.patch || patch -Np1 < "$_nowhere"/proton_template/disable_wine_werror-alt.patch || true
+  sed -i "/--enable-werror.*/d" Makefile.in
 
   # Use latest container image
   sed -i "s|STEAMRT_IMAGE ?= registry.gitlab.steamos.cloud.*|STEAMRT_IMAGE ?= ghcr.io/open-wine-components/umu-sdk:latest|g" Makefile.in
