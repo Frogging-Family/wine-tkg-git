@@ -43,7 +43,7 @@ pkgname=wine-tkg
 _build_in_tmpfs="true"
 _esyncsrcdir='esync'
 _where="$PWD" # Track the base directory as different Arch-based distros are moving srcdir around
-_use_latest_mono="false"
+_use_latest_mono="true"
 # Source common functions
 source "$_where"/wine-tkg-scripts/prepare.sh
 source "$_where"/wine-tkg-scripts/build.sh
