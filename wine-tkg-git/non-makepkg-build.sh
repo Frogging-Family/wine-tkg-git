@@ -43,7 +43,7 @@ pkgname=wine-tkg
 _build_in_tmpfs="true"
 _esyncsrcdir='esync'
 _where="$PWD" # Track the base directory as different Arch-based distros are moving srcdir around
-
+_use_latest_mono="false"
 # Source common functions
 source "$_where"/wine-tkg-scripts/prepare.sh
 source "$_where"/wine-tkg-scripts/build.sh
@@ -352,6 +352,7 @@ build_wine_tkg() {
 
   if [ "$_SKIPBUILDING" != "true" ] && [ "$_NOCOMPILE" != "true" ]; then
     _build
+    inject_mono_gecko
   fi
 
   if [ "$_NOCOMPILE" != "true" ]; then
@@ -371,6 +372,44 @@ _script_usage() {
     echo "    -c|--config <path> : Use a custom config file"
     echo ""
     exit 0
+}
+
+inject_mono_gecko() {
+    function latest_mono {
+      if [ "$_use_latest_mono" = "true" ]; then
+        curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.tar.xz" | cut -d : -f 2,3 | tr -d \"
+      else
+        _current_mono=$( grep "#define MONO_VERSION" "$_wine_tkg_git_path/src/$_winesrcdir/dlls/appwiz.cpl/addons.c" | cut -d'"' -f 2 )
+        echo "https://github.com/madewokherd/wine-mono/releases/download/wine-mono-$_current_mono/wine-mono-$_current_mono-x86.tar.xz"
+      fi
+    }
+    msg2 "Injecting wine-mono & wine-gecko..."
+    _nowhere="$srcdir"
+    proton_dist_tmp="$_prefix/share/wine"
+    # mono
+    mkdir -p "$_nowhere"/mono && cd "$_nowhere"/mono
+    rm -rf "$_nowhere"/mono/*
+    _mono_bin=$(latest_mono)
+    if [ ! -e ${_mono_bin##*/} ]; then
+      latest_mono | wget -qi -
+    fi
+    mkdir -p "$proton_dist_tmp"/mono
+    tar -xvJf "$_nowhere"/mono/wine-mono-*.tar.xz -C "$proton_dist_tmp"/mono >/dev/null 2>&1
+    # gecko
+    _gecko_ver="2.47.2"
+    _gecko_compression=".tar.xz"
+    mkdir -p "$_nowhere"/gecko && cd "$_nowhere"/gecko
+    if [ ! -e "wine-gecko-$_gecko_ver-x86_64$_gecko_compression" ]; then
+      wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86_64$_gecko_compression
+    fi
+    if [ ! -e "wine-gecko-$_gecko_ver-x86$_gecko_compression" ]; then
+      wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86$_gecko_compression
+    fi
+    mkdir -p "$proton_dist_tmp"/gecko
+    tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86_64$_gecko_compression -C "$proton_dist_tmp"/gecko >/dev/null 2>&1
+    tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86$_gecko_compression -C "$proton_dist_tmp"/gecko >/dev/null 2>&1
+    cd "$_where"
+    msg2 "wine-mono & wine-gecko injection complete."
 }
 
 _script_parse_args() {
