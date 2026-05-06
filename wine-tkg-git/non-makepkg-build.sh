@@ -375,21 +375,19 @@ _script_usage() {
 }
 
 inject_mono_gecko() {
-    function latest_mono {
-      if [ "$_use_latest_mono" = "true" ]; then
-        curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.tar.xz" | cut -d : -f 2,3 | tr -d \"
-      else
-        _current_mono=$( grep "#define MONO_VERSION" "$_wine_tkg_git_path/src/$_winesrcdir/dlls/appwiz.cpl/addons.c" | cut -d'"' -f 2 )
-        echo "https://github.com/madewokherd/wine-mono/releases/download/wine-mono-$_current_mono/wine-mono-$_current_mono-x86.tar.xz"
-      fi
-    }
     msg2 "Injecting wine-mono & wine-gecko..."
     _nowhere="$srcdir"
     proton_dist_tmp="$_prefix/share/wine"
     # mono
     mkdir -p "$_nowhere"/mono && cd "$_nowhere"/mono
     rm -rf "$_nowhere"/mono/*
-    _mono_bin=$(latest_mono)
+    if [ "$_use_latest_mono" = "true" ]; then
+        _mono_bin=$(curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.tar.xz" | cut -d : -f 2,3 | tr -d \")
+    else
+        _current_mono=$(grep "#define MONO_VERSION" "$_wine_tkg_git_path/src/$_winesrcdir/dlls/appwiz.cpl/addons.c" | cut -d'"' -f 2)
+        _mono_bin="https://github.com/madewokherd/wine-mono/releases/download/wine-mono-$_current_mono/wine-mono-$_current_mono-x86.tar.xz"
+    fi
+
     if [ ! -e ${_mono_bin##*/} ]; then
       latest_mono | wget -qi -
     fi
