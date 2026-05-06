@@ -6,7 +6,7 @@ pkgver=0
 # workaround for pkgrel overwritten on regen
 pkgrel=1
 eval pkgrel=327
-
+_use_latest_mono="false"
 _esyncsrcdir='esync'
 if [ -z "$_where" ]; then
   export _where="$PWD" # track basedir as different Arch based distros are moving srcdir around
@@ -459,13 +459,52 @@ build() {
   fi
 }
 
+latest_mono() {
+  if [ "$_use_latest_mono" = "true" ]; then
+    curl -s https://api.github.com/repos/madewokherd/wine-mono/releases/latest | grep "browser_download_url.*x86.tar.xz" | cut -d : -f 2,3 | tr -d \"
+  else
+    _current_mono=$(grep "#define MONO_VERSION" "$srcdir/$_winesrcdir/dlls/appwiz.cpl/addons.c" | cut -d'"' -f 2)
+    echo "https://github.com/madewokherd/wine-mono/releases/download/wine-mono-$_current_mono/wine-mono-$_current_mono-x86.tar.xz"
+  fi
+}
+
 package() {
   if [ "$_allow_server_rt_prio" = "true" ]; then
     install=wine-tkg.install
   else
     install=wine.install
   fi
+  msg2 "Injecting wine-mono & wine-gecko..."
 
+  local _nowhere="$srcdir"
+  local _wine_prefix="$pkgdir/usr/share/wine"
+
+  # mono
+  mkdir -p "$_nowhere/mono" && cd "$_nowhere/mono"
+  rm -rf "$_nowhere/mono/"*
+  _mono_bin=$(latest_mono)
+  if [ ! -e ${_mono_bin##*/} ]; then
+    latest_mono | wget -qi -
+  fi
+  mkdir -p "$_wine_prefix/mono"
+  tar -xvJf "$_nowhere/mono/wine-mono-*.tar.xz" -C "$_wine_prefix/mono" >/dev/null 2>&1
+
+  # gecko
+  local _gecko_ver="2.47.2"
+  local _gecko_compression=".tar.xz"
+  mkdir -p "$_nowhere/gecko" && cd "$_nowhere/gecko"
+  if [ ! -e "wine-gecko-$_gecko_ver-x86_64$_gecko_compression" ]; then
+    wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86_64$_gecko_compression
+  fi
+  if [ ! -e "wine-gecko-$_gecko_ver-x86$_gecko_compression" ]; then
+    wget https://dl.winehq.org/wine/wine-gecko/$_gecko_ver/wine-gecko-$_gecko_ver-x86$_gecko_compression
+  fi
+  mkdir -p "$_wine_prefix/gecko"
+  tar -xvf "$_nowhere/gecko/wine-gecko-$_gecko_ver-x86_64$_gecko_compression" -C "$_wine_prefix/gecko" >/dev/null 2>&1
+  tar -xvf "$_nowhere/gecko/wine-gecko-$_gecko_ver-x86$_gecko_compression" -C "$_wine_prefix/gecko" >/dev/null 2>&1
+
+  cd "$_where"
+  msg2 "wine-mono & wine-gecko injection complete."
   if [ "$_NOCOMPILE" != "true" ]; then
     _package_makepkg
   fi
