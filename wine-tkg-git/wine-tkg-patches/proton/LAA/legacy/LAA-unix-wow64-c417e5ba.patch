@@ -1,0 +1,154 @@
+From 9bd9ea5e4dd8b9a33c8922562979ae4c9bb8a76b Mon Sep 17 00:00:00 2001
+From: Steven Noonan <steven@valvesoftware.com>
+Date: Wed, 17 Oct 2018 04:13:37 -0700
+Subject: [PATCH] ntdll/loader: add support for overriding
+ IMAGE_FILE_LARGE_ADDRESS_AWARE
+
+---
+ dlls/kernel32/heap.c           |  8 +++++++-
+ dlls/ntdll/ntdll.spec          |  3 +++
+ dlls/ntdll/signal_arm64ec.c    |  1 +
+ dlls/ntdll/unix/unix_private.h |  2 ++
+ dlls/ntdll/unix/virtual.c      | 22 ++++++++++++++++++++--
+ dlls/wow64/system.c            |  6 ++++++
+ 6 files changed, 39 insertions(+), 3 deletions(-)
+
+diff --git a/dlls/kernel32/heap.c b/dlls/kernel32/heap.c
+index 834f4d07e9b..4d27b38ddca 100644
+--- a/dlls/kernel32/heap.c
++++ b/dlls/kernel32/heap.c
+@@ -42,6 +42,8 @@
+ WINE_DEFAULT_DEBUG_CHANNEL(globalmem);
+ 
+ 
++extern BOOL WINAPI __wine_needs_override_large_address_aware(void);
++
+ /***********************************************************************
+  *           HeapCreate   (KERNEL32.@)
+  *
+@@ -424,6 +426,7 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
+     OSVERSIONINFOW osver;
+ #ifndef _WIN64
+     IMAGE_NT_HEADERS *nt = RtlImageNtHeader( GetModuleHandleW(0) );
++    static int force_large_address_aware = -1;
+ #endif
+ 
+     /* Because GlobalMemoryStatus is identical to GlobalMemoryStatusEX save
+@@ -450,6 +453,8 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
+     lpBuffer->dwAvailVirtual = memstatus.ullAvailVirtual;
+ 
+ #ifndef _WIN64
++    if (force_large_address_aware == -1)
++        force_large_address_aware = __wine_needs_override_large_address_aware();
+     if ( osver.dwMajorVersion >= 5 || osver.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS )
+     {
+         lpBuffer->dwTotalPhys = min( memstatus.ullTotalPhys, MAXDWORD );
+@@ -463,7 +468,8 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
+ 
+     /* values are limited to 2Gb unless the app has the IMAGE_FILE_LARGE_ADDRESS_AWARE flag */
+     /* page file sizes are not limited (Adobe Illustrator 8 depends on this) */
+-    if (!(nt->FileHeader.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE))
++    if (!(nt->FileHeader.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) &&
++        !force_large_address_aware)
+     {
+         if (lpBuffer->dwTotalPhys > MAXLONG) lpBuffer->dwTotalPhys = MAXLONG;
+         if (lpBuffer->dwAvailPhys > MAXLONG) lpBuffer->dwAvailPhys = MAXLONG;
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+index cdd28e31242..db139ca8f7d 100644
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -1778,6 +1778,9 @@
+ @ cdecl -norelay __wine_dbg_output(str)
+ @ cdecl -norelay __wine_dbg_strdup(str)
+ 
++# Virtual memory
++@ stdcall -syscall __wine_needs_override_large_address_aware()
++
+ # Version
+ @ cdecl wine_get_version()
+ @ cdecl wine_get_build_id()
+diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
+index c9815c958c4..ea7243b8207 100644
+--- a/dlls/ntdll/signal_arm64ec.c
++++ b/dlls/ntdll/signal_arm64ec.c
+@@ -348,6 +348,7 @@ ALL_SYSCALLS
+ 
+ #define SYSCALL_API __attribute__((hybrid_patchable))
+ 
++DEFINE_SYSCALL_(BOOL, __wine_needs_override_large_address_aware, (void))
+ DEFINE_SYSCALL(NtAcceptConnectPort, (HANDLE *handle, ULONG id, LPC_MESSAGE *msg, BOOLEAN accept, LPC_SECTION_WRITE *write, LPC_SECTION_READ *read))
+ DEFINE_SYSCALL(NtAccessCheck, (PSECURITY_DESCRIPTOR descr, HANDLE token, ACCESS_MASK access, GENERIC_MAPPING *mapping, PRIVILEGE_SET *privs, ULONG *retlen, ULONG *access_granted, NTSTATUS *access_status))
+ DEFINE_SYSCALL(NtAccessCheckAndAuditAlarm, (UNICODE_STRING *subsystem, HANDLE handle, UNICODE_STRING *typename, UNICODE_STRING *objectname, PSECURITY_DESCRIPTOR descr, ACCESS_MASK access, GENERIC_MAPPING *mapping, BOOLEAN creation, ACCESS_MASK *access_granted, NTSTATUS *access_status, BOOLEAN *onclose))
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index ef1d9ef5005..c168eccda38 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -738,4 +738,6 @@ static inline int is_gdt_sel( WORD sel )
+ 
+ #endif  /* defined(__i386__) || defined(__x86_64__) */
+ 
++BOOL WINAPI __wine_needs_override_large_address_aware(void);
++
+ #endif /* __NTDLL_UNIX_PRIVATE_H */
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 38cab90..40e2d9d 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -4069,6 +4069,25 @@ static struct thread_data *init_thread_data( void *ptr )
+     return data;
+ }
+ 
++BOOL WINAPI __wine_needs_override_large_address_aware(void)
++{
++    static int needs_override = -1;
++
++    if (needs_override == -1)
++    {
++        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
++
++        needs_override = !str || atoi(str) == 1;
++    }
++    return needs_override;
++}
++
++static BOOL is_large_address_aware(void)
++{
++    return (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)
++           || __wine_needs_override_large_address_aware();
++}
++
+ /* enable use of a large address space when allowed by the application */
+ static void set_large_address_space(void)
+ {
+@@ -4091,7 +4110,7 @@ static void set_large_address_space(void)
+             if (use_aslr()) free_reserved_memory( 0, (char *)0x7ffe0000 );
+ #endif
+         }
+-        else if (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)
++        else if (is_large_address_aware())
+         {
+             user_space_wow_limit = limit_4g - 1;
+             /* reserve space for top-down allocations; some apps break if the entire high 2G is available */
+@@ -4101,7 +4120,7 @@ static void set_large_address_space(void)
+     }
+     else
+     {
+-        if (!(main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) return;
++        if (!is_large_address_aware()) return;
+         free_reserved_memory( (char *)0x80000000, address_space_limit );
+     }
+     user_space_limit = working_set_limit = address_space_limit;
+diff --git a/dlls/wow64/system.c b/dlls/wow64/system.c
+index eb57d35f41e..8b108b406d6 100644
+--- a/dlls/wow64/system.c
++++ b/dlls/wow64/system.c
+@@ -886,3 +886,9 @@ NTSTATUS WINAPI wow64_NtWow64GetNativeSystemInformation( UINT *args )
+         return STATUS_INVALID_INFO_CLASS;
+     }
+ }
++
++BOOL WINAPI __wine_needs_override_large_address_aware(void);
++NTSTATUS WINAPI wow64___wine_needs_override_large_address_aware( UINT * args )
++{
++    return __wine_needs_override_large_address_aware();
++}
