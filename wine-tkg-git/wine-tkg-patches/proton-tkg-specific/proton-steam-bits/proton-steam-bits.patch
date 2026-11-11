@@ -116,9 +116,13 @@ From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Fri, 19 Jan 2018 14:01:07 -0600
 Subject: [PATCH] HACK: proton: advapi32: Use steamuser as Wine username.
 
+Keep LookupAccountSidW() using the patched GetUserNameW() so profile paths
+also use steamuser after Wine started reading WINEUSERNAME directly.
+
 ---
- dlls/advapi32/advapi.c | 69 ++++++++---------------------------
- 1 file changed, 11 insertions(+), 58 deletions(-)
+ dlls/advapi32/advapi.c   | 69 ++++++++---------------------------
+ dlls/advapi32/security.c |  5 +----
+ 2 files changed, 12 insertions(+), 62 deletions(-)
 
 diff --git a/dlls/advapi32/advapi.c b/dlls/advapi32/advapi.c
 --- a/dlls/advapi32/advapi.c
@@ -212,6 +216,25 @@ diff --git a/dlls/advapi32/advapi.c b/dlls/advapi32/advapi.c
      return TRUE;
  }
  
+
+diff --git a/dlls/advapi32/security.c b/dlls/advapi32/security.c
+--- a/dlls/advapi32/security.c
++++ b/dlls/advapi32/security.c
+@@ -928,12 +928,9 @@
+                             break;
+                         case 1000:	/* first user account */
+                         {
+-                            DWORD length;
+-
+                             size = UNLEN + 1;
+                             account_name = malloc(size * sizeof(WCHAR));
+-                            length = GetEnvironmentVariableW( L"WINEUSERNAME", account_name, size );
+-                            if (length && length < size)
++                            if (GetUserNameW( account_name, &size ))
+                                 ac = account_name;
+                             else
+                                 dm = NULL;
+
 From ec9e7190ea7045012b6e33e5ee64cd678bec68c9 Mon Sep 17 00:00:00 2001
 From: Andrew Eikum <aeikum@codeweavers.com>
 Date: Mon, 22 Jan 2018 14:32:40 -0600
