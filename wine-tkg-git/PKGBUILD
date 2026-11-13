@@ -219,7 +219,7 @@ if [ ! -e "$_where"/BIG_UGLY_FROGMINER ]; then
   if [ -L "$_where"/src ]; then
     rm -rf "$_where"/src
   fi
-  find "$_where"/wine-tkg-patches -type f '(' -iname '*.conf' ')' -not -path "*hotfixes*" -exec cp -n {} "$_where" \; && # copy .conf files inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
+  find "$_where"/wine-tkg-patches -type f '(' -iname '*.conf' ')' -not -path "*hotfixes*" -exec cp -ns {} "$_where" \; && # link .conf files inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
   cp "$_where"/wine-tkg-userpatches/*.my* "$_where" 2>/dev/null # copy userpatches inside the PKGBUILD's dir
 fi
 
@@ -459,6 +459,20 @@ build() {
   fi
 }
 
+_restore_conf_sources() {
+  local _conf
+  # Cleanup removes these sources, but makepkg -e/-R skips extracting them again.
+  for _conf in "${source[@]}"; do
+    [[ "$_conf" == *.conf && "$_conf" != */* && "$_conf" != *::* ]] || continue
+    [[ -e "$srcdir/$_conf" ]] && continue
+    if [[ ! -f "$_where/$_conf" ]]; then
+      error "Missing configuration source: %s" "$_conf"
+      return 1
+    fi
+    ln -sfT -- "$_where/$_conf" "$srcdir/$_conf" || return 1
+  done
+}
+
 package() {
   if [ "$_allow_server_rt_prio" = "true" ]; then
     install=wine-tkg.install
@@ -467,6 +481,9 @@ package() {
   fi
 
   if [ "$_NOCOMPILE" != "true" ]; then
+    if [ "$_EXTERNAL_INSTALL" != "proton" ]; then
+      _restore_conf_sources || return 1
+    fi
     _package_makepkg
   fi
 }

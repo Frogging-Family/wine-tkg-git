@@ -105,11 +105,7 @@ _src_init() {
   fi
 
   if [ "$_NUKR" != "debug" ]; then
-    # Performing the following:
-    #
-    #   - copy .conf files inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
-    #   - copy userpatches inside the PKGBUILD's dir
-    find "$_where"/wine-tkg-patches -type f '(' -iname '*.conf' ')' -not -path "*hotfixes*" -exec cp -n {} "$_where" \;
+    # Copy userpatches inside the build script's dir.
     find "$_where"/wine-tkg-userpatches -type f,l -name "*.my*" -exec cp -n {} "$_where" \;
 
     ## Handle git repos similarly to makepkg to preserve repositories when building both with and without makepkg on Arch
