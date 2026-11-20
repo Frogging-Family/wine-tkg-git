@@ -1,0 +1,49 @@
+From 19b86fe3d35e00c8985e0c616cd7bc2eeb5e2df7 Mon Sep 17 00:00:00 2001
+From: Andrew Eikum <aeikum@codeweavers.com>
+Date: Wed, 27 Jun 2018 10:06:48 -0500
+Subject: [PATCH] HACK: winex11.drv: Let the WM focus our windows by default.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This should fix game windows not being in focus when first started
+and when exiting, which can cause surprising keyboard behavior (e.g.
+accidentally Alt-F4ing Steam itself, which is in the background).
+
+This may break modal dialogs in some WMs (fvwm2?) which do not respect
+our responses to WM_TAKE_FOCUS. For games that show that issue, we can
+re-enable UseTakeFocus.
+
+From Zeb:
+
+"""
+The basic problem, if I understand it correctly, is that Wine uses the
+"globally active" focus model by default. This means that the window
+manager won't focus our windows unless we respond in the affirmative to
+a WM_TAKE_FOCUS event. Since the GUI thread isn't processing messages,
+this doesn't happen.
+
+Luckily, there is a very easy workaround: create the registry key
+HKCU\Software\Wine\X11 Driver and set the somewhat inaptly named value
+"UseTakeFocus" to "N" (i.e. No). This causes Wine to use the "locally
+active" model instead, which means that the window manager will focus
+our windows when it sees fit—i.e. when the user clicks on them, or when
+they are created.
+"""
+---
+ dlls/winex11.drv/x11drv_main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/winex11.drv/x11drv_main.c b/dlls/winex11.drv/x11drv_main.c
+index 8c2688f2a58..6bf4a0a4211 100644
+--- a/dlls/winex11.drv/x11drv_main.c
++++ b/dlls/winex11.drv/x11drv_main.c
+@@ -68,7 +68,7 @@ BOOL usexrandr = TRUE;
+ BOOL usexrandr = TRUE;
+ BOOL usexcomposite = TRUE;
+ BOOL use_egl = TRUE;
+-BOOL use_take_focus = TRUE;
++BOOL use_take_focus = FALSE;
+ BOOL use_primary_selection = FALSE;
+ BOOL use_system_cursors = TRUE;
+ BOOL grab_fullscreen = TRUE;
