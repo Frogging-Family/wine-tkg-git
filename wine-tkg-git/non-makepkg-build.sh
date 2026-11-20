@@ -260,6 +260,12 @@ build_wine_tkg() {
   # state tracker start - FEAR THE MIGHTY FROG MINER
   touch "${_where}"/BIG_UGLY_FROGMINER
 
+  # Fork builds ship their own wine tree - skip TKG wine prep
+  if [ "$_EXTERNAL_INSTALL" = "proton" ] && [ -n "$_proton_source" ] && [ "$_proton_source" != "valve" ]; then
+    msg2 "Proton fork (${_proton_source}) build detected - skipping TKG wine preparation/build."
+    return 0
+  fi
+
   if [ "$_SKIPBUILDING" != "true" ]; then
     msg2 "Cloning and preparing sources... Please be patient."
     if [ -z "$_localbuild" ]; then

@@ -6,7 +6,8 @@ _exit_cleanup() {
   fi
 
   # Proton-tkg specifics to send to token
-  if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ -n "$_proton_tkg_path" ] && [ -d "${srcdir}"/"${_winesrcdir}" ]; then
+  # Fork builds have no TKG wine tree - token is still written
+  if [ -e "$_where"/BIG_UGLY_FROGMINER ] && [ "$_EXTERNAL_INSTALL" = "proton" ] && [ -n "$_proton_tkg_path" ] && { [ -d "${srcdir}"/"${_winesrcdir}" ] || { [ -n "$_proton_source" ] && [ "$_proton_source" != "valve" ]; }; }; then
     if [ -n "$_PROTON_NAME_ADDON" ]; then
       if [ "$_ispkgbuild" = "true" ]; then
         echo "_protontkg_version='makepkg.${_PROTON_NAME_ADDON}'" >> "$_proton_tkg_path"/proton_tkg_token
@@ -55,6 +56,7 @@ _exit_cleanup() {
     echo "_use_vkd3dlib='${_use_vkd3dlib}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_pkgdest='${pkgdir}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_proton_branch_exp='${_proton_branch_exp}'" >> "$_proton_tkg_path"/proton_tkg_token
+    echo "_proton_source='${_proton_source}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_steamvr_support='${_steamvr_support}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_NUKR='${_NUKR}'" >> "$_proton_tkg_path"/proton_tkg_token
     echo "_winesrcdir='${_winesrcdir}'" >> "$_proton_tkg_path"/proton_tkg_token
@@ -254,7 +256,8 @@ _init() {
 
   # Check for proton-tkg token to prevent broken state as we need to enforce some defaults
   if [ -e "$_proton_tkg_path"/proton_tkg_token ] && [ -n "$_proton_tkg_path" ]; then
-    if [[ "$_LOCAL_PRESET" != valve* ]] && [ "$_LOCAL_PRESET" != "none" ]; then
+    # Allow valve presets and fork profiles (proton-*)
+    if [[ "$_LOCAL_PRESET" != valve* ]] && [[ "$_LOCAL_PRESET" != proton-* ]] && [ "$_LOCAL_PRESET" != "none" ]; then
       _LOCAL_PRESET=""
     fi
     # makepkg proton pkgver loop hack
@@ -264,7 +267,7 @@ _init() {
     if [ -z "$_LOCAL_PRESET" ]; then
       msg2 "No _LOCAL_PRESET set in .cfg. Please select your desired base:"
       warning "With Valve trees, most wine-specific customization options will be ignored such as game-specific patches, esync/fsync/fastsync or Proton-specific features support. Those patches and features are for the most part already in, but some bits deemed useful such as FSR support for Proton's fshack are made available through community patches. Staging and GE patches are available through regular .cfg options."
-      read -p "    What kind of Proton base do you want?`echo $'\n    > 1.Valve Proton Experimental Bleeding Edge (Recommended for gaming on the edge)\n      2.Valve Proton Experimental\n      3.Valve Proton\n      4.Wine upstream Proton (Expect breakage)\n      5.Other and legacy presets\n    choice[1-5?]: '`" CONDITION;
+      read -p "    What kind of Proton base do you want?`echo $'\n    > 1.Valve Proton Experimental Bleeding Edge (Recommended for gaming on the edge)\n      2.Valve Proton Experimental\n      3.Valve Proton\n      4.Wine upstream Proton (Expect breakage)\n      5.Proton GE (gloriouseggroll/proton-ge-custom)\n      6.Proton EM (BananaWorks07/Proton)\n      7.Proton CachyOS (CachyOS/proton-cachyos)\n      8.Other and legacy presets\n    choice[1-8?]: '`" CONDITION;
       if [ "$CONDITION" = "2" ]; then
         _LOCAL_PRESET="valve-exp"
       elif [ "$CONDITION" = "3" ]; then
@@ -272,6 +275,12 @@ _init() {
       elif [ "$CONDITION" = "4" ]; then
         _LOCAL_PRESET=""
       elif [ "$CONDITION" = "5" ]; then
+        _LOCAL_PRESET="proton-ge"
+      elif [ "$CONDITION" = "6" ]; then
+        _LOCAL_PRESET="proton-em"
+      elif [ "$CONDITION" = "7" ]; then
+        _LOCAL_PRESET="proton-cachyos"
+      elif [ "$CONDITION" = "8" ]; then
         i=0
         for _profiles in "$_where/wine-tkg-profiles"/legacy/wine-tkg-*.cfg; do
           _GOTCHA=( "${_profiles//*\/wine-tkg-/}" )
@@ -379,7 +388,10 @@ _init() {
       fi
       msg2 "Preset configuration $_LOCAL_PRESET will be used to override customization.cfg values." && msg2 ""
     else
-      source "$_where"/wine-tkg-profiles/wine-tkg.cfg
+      # Don't load base wine preset (resets state) - fork profiles are self-contained
+      if [ ! -e "$_proton_tkg_path"/proton_tkg_token ] || [ -z "$_proton_tkg_path" ]; then
+        source "$_where"/wine-tkg-profiles/wine-tkg.cfg
+      fi
       if [ -e "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg ]; then
         source "$_where"/wine-tkg-profiles/wine-tkg-"$_LOCAL_PRESET".cfg
       elif [ -e "$_where"/wine-tkg-profiles/legacy/wine-tkg-"$_LOCAL_PRESET".cfg ]; then

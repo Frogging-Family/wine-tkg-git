@@ -59,6 +59,120 @@ ln -s "${_resources_path}"/gecko "${_nowhere}"/gecko
 ln -s "${_resources_path}"/steam-runtime "${_nowhere}"/steam-runtime
 ln -s "${_resources_path}"/openvr "${_nowhere}"/openvr
 
+# Resolve which Proton source tree to build against (valve / em / ge / cachyos / custom git url)
+# Sets: _proton_repo_url, _proton_is_valve, and defaults _proton_branch when empty
+function resolve_proton_source {
+  case "$_proton_source" in
+    ""|valve)   _proton_repo_url="https://github.com/ValveSoftware/Proton.git"; _proton_is_valve="true" ;;
+    em)      _proton_repo_url="https://github.com/BananaWorks07/Proton.git"; _proton_is_valve="false" ;;
+    ge)      _proton_repo_url="https://github.com/gloriouseggroll/proton-ge-custom.git"; _proton_is_valve="false" ;;
+    cachyos) _proton_repo_url="https://github.com/CachyOS/proton-cachyos.git"; _proton_is_valve="false" ;;
+    http*|https*|git@*|ssh*) _proton_repo_url="$_proton_source"; _proton_is_valve="false" ;;
+    *) echo -e "######\nUnknown _proton_source: '$_proton_source'\n######" ; exit 1 ;;
+  esac
+  # Default branches per source when none was explicitly set
+  if [ -z "$_proton_branch" ]; then
+    case "$_proton_source" in
+      em)      _proton_branch="em-11-hdr" ;;
+      ge)      _proton_branch="master" ;;
+      # cachyos_main is docs-only - the actual source trees live in versioned release branches
+      cachyos) _proton_branch="cachyos_11.0_20261001/main" ;;
+    esac
+  fi
+  # Wipe the tree if its origin doesn't match the requested source (Proton is a symlink)
+  if [ -n "$(ls -A "$_nowhere"/external-resources/Proton 2>/dev/null)" ]; then
+    _tree_origin=$(git -C "$_nowhere"/external-resources/Proton remote get-url origin 2>/dev/null || true)
+    if [ -z "$_tree_origin" ] || [ "$_tree_origin" != "$_proton_repo_url" ]; then
+      echo -e "\n######\nProton tree mismatch (origin: ${_tree_origin:-<none>}, expected: $_proton_repo_url) - clearing previous Proton tree\n######"
+      rm -rf "$_nowhere"/Proton "$_nowhere"/external-resources/Proton
+      mkdir -p "$_nowhere"/external-resources/Proton
+      ln -s "$_nowhere"/external-resources/Proton "$_nowhere"/Proton
+    fi
+  fi
+  echo "$_proton_repo_url" > "$_nowhere/.proton_source_marker"
+
+  echo -e "\n######\nProton source: $_proton_source\nRepo: $_proton_repo_url\nBranch: $_proton_branch\n######"
+}
+
+# Assemble a prebuilt onnxruntime dir for piper-phonemize (microsoft/onnxruntime is gone from GitHub)
+function proton_assemble_onnxruntime {
+  [ -f piper/CMakeLists.txt ] || return 0 # no piper in this tree - nothing to do
+  _onnxrt_version="1.23.0"
+  case "$(uname -m)" in
+    aarch64) _onnxrt_arch="aarch64" ;;
+    *)       _onnxrt_arch="x64" ;;
+  esac
+  # Must live inside the Proton tree (container only mounts $(SRC))
+  _onnxrt_dir="$_nowhere"/external-resources/Proton/onnxruntime-linux-${_onnxrt_arch}-${_onnxrt_version}
+  if [ ! -e "$_onnxrt_dir"/include/onnxruntime_cxx_api.h ] || [ ! -e "$_onnxrt_dir"/lib/libonnxruntime.so ]; then
+    echo -e "\n######\nAssembling onnxruntime ${_onnxrt_version} for piper-phonemize (microsoft/onnxruntime is gone from GitHub)\n######"
+    rm -rf "$_onnxrt_dir"
+    mkdir -p "$_onnxrt_dir"/include "$_onnxrt_dir"/lib
+
+    # C/C++ API headers
+    for _h in onnxruntime_c_api.h onnxruntime_cxx_api.h onnxruntime_cxx_inline.h onnxruntime_float16.h; do
+      curl -fL --retry 3 -o "$_onnxrt_dir"/include/"$_h" \
+        "https://gitlab.com/sovansela/onnxruntime/-/raw/main/include/onnxruntime/core/session/${_h}"
+    done
+
+    # .so from the matching PyPI wheel
+    case "$(uname -m)" in
+      aarch64) _onnxrt_wheel="onnxruntime-${_onnxrt_version}-cp310-cp310-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl" ;;
+      *)       _onnxrt_wheel="onnxruntime-${_onnxrt_version}-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" ;;
+    esac
+    _onnxrt_wheel_url=$(curl -fsL "https://pypi.org/simple/onnxruntime/" | grep -o "https://[^\"']*${_onnxrt_wheel}" | head -1)
+    _onnxrt_whl="$(mktemp -d)"/"$_onnxrt_wheel"
+    curl -fL --retry 3 -o "$_onnxrt_whl" "$_onnxrt_wheel_url"
+    _onnxrt_tmp=$(mktemp -d)
+    python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extract(sys.argv[2], sys.argv[3])" \
+      "$_onnxrt_whl" "onnxruntime/capi/libonnxruntime.so.${_onnxrt_version}" "$_onnxrt_tmp"
+    cp "$_onnxrt_tmp"/onnxruntime/capi/"libonnxruntime.so.${_onnxrt_version}" "$_onnxrt_dir"/lib/libonnxruntime.so
+    # Provide the SONAME symlink
+    ln -sf libonnxruntime.so "$_onnxrt_dir"/lib/libonnxruntime.so.1
+    rm -rf "$_onnxrt_tmp" "$(dirname "$_onnxrt_whl")"
+  fi
+
+  # ExternalProject doesn't inherit parent -D vars - inject ONNXRUNTIME_DIR directly
+  sed -i 's|CMAKE_ARGS -DCMAKE_INSTALL_PREFIX:PATH=${PIPER_PHONEMIZE_DIR}|& -DONNXRUNTIME_DIR='"${_onnxrt_dir}"'|' piper/CMakeLists.txt
+}
+
+# Source-specific hook after clone/checkout
+function proton_source_post_checkout {
+  case "$_proton_source" in
+    ge)
+      # GE's own patch prep script
+      if [ -x "./patches/protonprep-valve-staging.sh" ]; then
+        echo -e "\n######\nRunning GE-Proton specific patch prep (patches/protonprep-valve-staging.sh)\n######"
+        ./patches/protonprep-valve-staging.sh &> "$_nowhere/ge_patchlog.txt" || {
+          echo -e "######\nGE patch prep reported failures - check $_nowhere/ge_patchlog.txt\n######"
+          grep -i fail "$_nowhere/ge_patchlog.txt" || true
+        }
+      else
+        echo -e "######\nWARNING: GE patch script patches/protonprep-valve-staging.sh not found!\n######"
+      fi
+
+      proton_assemble_onnxruntime
+      ;;
+    em|cachyos)
+      proton_assemble_onnxruntime
+      ;;
+  esac
+}
+
+# Proton forks carry their own version (VERSION file or branch name)
+function proton_native_version {
+  [ "$_proton_is_valve" = "true" ] && return 0
+  if [ -f VERSION ]; then
+    _protontkg_version=$(cat VERSION)
+  else
+    _protontkg_version=$(git branch --show-current | tr '/' '-')
+  fi
+  export _protontkg_true_version="$_protontkg_version"
+  # Append to token (a later source would clobber the live value)
+  echo "_protontkg_version='$_protontkg_version'" >> "$_nowhere"/proton_tkg_token
+  echo -e "\n######\nProton fork version: $_protontkg_version\n######"
+}
+
 # Enforce using makepkg when using --makepkg
 if [ "$1" = "--makepkg" ]; then
   _nomakepkg="false"
@@ -626,7 +740,14 @@ proton_patcher() {
 	        echo "Reverting your own ${_userpatch_target} patch ${_f}"
 	        echo ""
 	        echo "######################################################"
-	        patch -Np1 -R < "${_f}"
+	        if [ "$_proton_is_valve" = "true" ]; then
+	          patch -Np1 -R < "${_f}"
+	        else
+	          # Non-applying patches warn instead of failing for forks
+	          if ! patch -Np1 -R < "${_f}"; then
+	            echo -e "\n⚠️  Userpatch ${_f} could not be fully reverted on this Proton source - check the .rej files\n"
+	          fi
+	        fi
 	      fi
 	    done
 	  fi
@@ -647,7 +768,14 @@ proton_patcher() {
 	        echo "Applying your own ${_userpatch_target} patch ${_f}"
 	        echo ""
 	        echo "######################################################"
-	        patch -Np1 < "${_f}"
+	        if [ "$_proton_is_valve" = "true" ]; then
+	          patch -Np1 < "${_f}"
+	        else
+	          # Non-applying patches warn instead of failing for forks
+	          if ! patch -Np1 < "${_f}"; then
+	            echo -e "\n⚠️  Userpatch ${_f} could not be fully applied to this Proton source - check the .rej files\n"
+	          fi
+	        fi
 	      fi
 	    done
 	  fi
@@ -819,57 +947,92 @@ function latest_mono_msi {
 
 function build_in_valve_container {
   cd "$_nowhere"
-  git clone --recurse-submodules https://github.com/ValveSoftware/Proton.git || true # It'll complain the path already exists on subsequent builds
+  source "$_nowhere/proton_tkg_token"
+  resolve_proton_source
+
+  # Clone is fatal when the tree is empty - a silent failure would leave us operating on a stale tree
+  if [ -z "$(ls -A Proton 2>/dev/null)" ]; then
+    git clone --recurse-submodules "$_proton_repo_url" Proton
+  else
+    git clone --recurse-submodules "$_proton_repo_url" Proton || true # It'll complain the path already exists on subsequent builds
+  fi
   cd Proton
   rm -rf ./build
-  rm -rf ./wine # required for subsequent compilations of mainline-based and force-pushed proton experimental bleeding edge builds
+  if [ "$_proton_is_valve" = "true" ]; then
+    rm -rf ./wine # required for subsequent compilations of mainline-based and force-pushed proton experimental bleeding edge builds
+  fi
   git reset --hard
   git fetch --all -pP
   git submodule sync --recursive
-  git submodule update --remote --init --force --recursive
+  if [ "$_proton_is_valve" = "true" ]; then
+    git submodule update --remote --init --force --recursive
+  else
+    # Forks pin submodules to tags - --remote would break them
+    git submodule update --init --force --recursive
+  fi
   git clean -ffdx
   git submodule foreach --recursive git clean -ffdx
 
-  source "$_nowhere/proton_tkg_token"
-  if [ -n "$_bleeding_tag" ]; then
+  if [ -n "$_bleeding_tag" ] && [ "$_proton_is_valve" = "true" ]; then
     git checkout "$_bleeding_tag"
   else
     git checkout "$_proton_branch"
   fi
   git submodule update --init --recursive
+
+  proton_native_version
+
   make clean
 
-  # userpatches
+  proton_source_post_checkout
+
+  # userpatches - TKG personalization system, preserved for all sources
   _user_patches_no_confirm="true" _userpatch_target="proton" _userpatch_ext="myproton" proton_patcher
   ( cd dxvk && _user_patches_no_confirm="true" _userpatch_target="dxvk" _userpatch_ext="mydxvk" proton_patcher )
   ( cd vkd3d-proton && _user_patches_no_confirm="true" _userpatch_target="vkd3d-proton" _userpatch_ext="myvkd3d" proton_patcher )
 
   # Upstream bases require some targeted fixes and - at least for now - disabling vr support
-  if [ "$_unfrog" != "true" ]; then
+  if [ "$_proton_is_valve" = "true" ] && [ "$_unfrog" != "true" ]; then
     patch -Np1 < "$_nowhere"/proton_template/proton_upstream_fixes.patch
     patch -Np1 < "$_nowhere"/proton_template/proton_upstream_vr_disable.patch
   fi
 
-  rm -rf wine
-  cp -r "$_wine_tkg_git_path/src/$_winesrcdir" wine
+  # Inject the TKG wine tree (valve only)
+  if [ "$_proton_is_valve" = "true" ]; then
+    rm -rf wine
+    cp -r "$_wine_tkg_git_path/src/$_winesrcdir" wine
+  fi
 
   # We *will* face warnings
   sed -i "/--enable-werror.*/d" Makefile.in
 
-  # Use latest container image from UMU
-  # note regarding Proton (bleeding edge) 11: using steamrt4 instead for a little while due to missing deps in UMU image
-  if [ -z "$_bleeding_tag" ] && [ "$_unfrog" = "true" ]; then
+  # Use latest UMU container image (valve only)
+  # note: BE 11 uses steamrt4 temporarily due to missing deps in UMU image
+  if [ "$_proton_is_valve" = "true" ] && [ -z "$_bleeding_tag" ] && [ "$_unfrog" = "true" ]; then
     sed -i "s|STEAMRT_IMAGE ?= registry.gitlab.steamos.cloud.*|STEAMRT_IMAGE ?= ghcr.io/open-wine-components/umu-sdk:latest|g" Makefile.in
   fi
 
   mkdir build && cd build
-  _configure_flags="--enable-ccache --build-name=TKG"
+  if [ "$_proton_is_valve" = "true" ]; then
+    _configure_flags="--enable-ccache --build-name=TKG"
+  else
+    _configure_flags="--build-name=TKG"
+  fi
   if command -v selinuxenabled > /dev/null && selinuxenabled; then
     _configure_flags+=" --relabel-volumes"
   fi
   ../configure.sh $_configure_flags
   make redist
-  echo "_proton_pkgdest='$_nowhere/external-resources/Proton/build/redist'" >> "$_nowhere"/proton_tkg_token
+  # Detect output dir (redist for valve, dist for forks)
+  if [ -d "$_nowhere/external-resources/Proton/build/redist" ]; then
+    _proton_pkg="redist"
+  elif [ -d "$_nowhere/external-resources/Proton/build/dist" ]; then
+    _proton_pkg="dist"
+  else
+    echo -e "######\nERROR: no Proton build output found (expected build/redist or build/dist)\n######"
+    return 1
+  fi
+  echo "_proton_pkgdest='$_nowhere/external-resources/Proton/build/${_proton_pkg}'" >> "$_nowhere"/proton_tkg_token
 }
 
 if [ "$1" = "clean" ]; then
@@ -950,6 +1113,7 @@ else
 
   # Wine-tkg-git has injected versioning and settings in the token for us, so get the values back
   source "$_nowhere/proton_tkg_token"
+  resolve_proton_source
 
   if [ "$_no_container" = "true" ]; then
     if [ "$_NOLIB32" = "true" ]; then
@@ -1031,25 +1195,36 @@ else
         if [ -d Proton ] && [ ! -f Proton/proton ]; then
           ( cd Proton && find . -name . -o -prune -exec rm -rf -- {} + ) # We need to clean everything including dotfiles
         fi
-        # Clone Proton tree as we need to build some tools from it
-        git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
-        cd Proton
-        git reset --hard origin/HEAD
-        git clean -xdf
-        if ( ! git pull --ff-only ) || ( [ -n "$_bleeding_tag" ] ); then
-          echo -e "######\nProton tree was force-pushed upstream.. Recloning clean to avoid issues..\n######"
-          find . -name . -o -prune -exec rm -rf -- {} + # We need to clean everything including dotfiles
-          cd ..
-          git clone https://github.com/ValveSoftware/Proton || true # It'll complain the path already exists on subsequent builds
-          cd Proton
+        # Clone Proton tree as we need to build some tools from it - fatal when the tree is empty
+        if [ -z "$(ls -A Proton 2>/dev/null)" ]; then
+          git clone --recurse-submodules "$_proton_repo_url" Proton
         else
-          git pull origin
+          git clone --recurse-submodules "$_proton_repo_url" Proton || true # It'll complain the path already exists on subsequent builds
         fi
-        if [ -n "$_bleeding_tag" ]; then
-          _bleeding_commit=$(git rev-list -n 1 "${_bleeding_tag}")
-          _proton_branch="$_bleeding_commit"
+        cd Proton
+        if [ "$_proton_is_valve" = "true" ]; then
+          git reset --hard origin/HEAD
+          git clean -xdf
+          if ( ! git pull --ff-only ) || ( [ -n "$_bleeding_tag" ] ); then
+            echo -e "######\nProton tree was force-pushed upstream.. Recloning clean to avoid issues..\n######"
+            find . -name . -o -prune -exec rm -rf -- {} + # We need to clean everything including dotfiles
+            cd ..
+            git clone --recurse-submodules "$_proton_repo_url" Proton
+            cd Proton
+          else
+            git pull origin
+          fi
+          if [ -n "$_bleeding_tag" ]; then
+            _bleeding_commit=$(git rev-list -n 1 "${_bleeding_tag}")
+            _proton_branch="$_bleeding_commit"
+          fi
         fi
         git checkout "$_proton_branch"
+        git submodule update --init --recursive
+
+        proton_native_version
+
+        proton_source_post_checkout
 
         _user_patches_no_confirm="true"
         _userpatch_target="proton"
@@ -1059,16 +1234,18 @@ else
         cd Proton
       fi
 
-      # Tooling compilation needs an update for latest BE - Use slightly older tooling for now
-      if [ -n "$_bleeding_tag" ] || [[ "$_proton_branch" = experimental_8* ]] || [[ "$_proton_branch" = *9* ]] || [[ "$_proton_branch" = *10* ]]; then
+      # Pin older tooling for latest BE (valve only)
+      if [ "$_proton_is_valve" = "true" ] && ( [ -n "$_bleeding_tag" ] || [[ "$_proton_branch" = experimental_8* ]] || [[ "$_proton_branch" = *9* ]] || [[ "$_proton_branch" = *10* ]] ); then
         git checkout f5e9c76903e4e18e0416e719a6d42d0cb00998aa
       fi
 
-      # Embed fake data to spoof desired fonts
+      # Font spoofing (valve only)
+      if [ "$_proton_is_valve" = "true" ]; then
       fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSans-Regular" "Arial" "Arial" "Arial" "$_nowhere/proton_template/share/fonts"/arial.ttf
       fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSans-Bold" "Arial-Bold" "Arial" "Arial Bold" "$_nowhere/proton_template/share/fonts"/arialbd.ttf
       fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationSerif-Regular" "TimesNewRoman" "Times New Roman" "Times New Roman" "$_nowhere/proton_template/share/fonts"/times.ttf
       fontforge -script "$_nowhere/Proton/fonts/scripts/generatefont.pe" "$_nowhere/proton_template/share/fonts/LiberationMono-Regular" "CourierNew" "Courier New" "Courier New" "$_nowhere/proton_template/share/fonts"/cour.ttf
+      fi
 
       # Build GST/mediaconverter
       if [ "$_build_mediaconv" = "true" ] || [ "$_build_gstreamer" = "true" ]; then
@@ -1086,6 +1263,8 @@ else
     echo "$_versionpre" "TKG-proton-$_protontkg_true_version" > "$_nowhere/proton_dist_tmp/version"
 
     if [ "$_no_container" = "true" ]; then
+      # TKG dist injections (valve only)
+      if [ "$_proton_is_valve" = "true" ]; then
       cp -r "$_nowhere/proton_template/share"/* "$_nowhere/proton_dist_tmp/share"/
 
       # Create the dxvk dirs
@@ -1208,6 +1387,7 @@ else
       mkdir -p proton_dist_tmp/share/wine/gecko
       tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86_64$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
       tar -xvf "$_nowhere"/gecko/wine-gecko-$_gecko_ver-x86$_gecko_compression -C proton_dist_tmp/share/wine/gecko >/dev/null 2>&1
+      fi
     fi
 
     cd "$_nowhere"
@@ -1247,13 +1427,15 @@ else
       cp "$_nowhere"/proton_template/steampipe_fixups.py "$_nowhere"/"proton_tkg_$_protontkg_version"/
     fi
 
-    # Inject current wine tree prefix version value in a proton-friendly format - major.minor-commitnumber
-    _prefix_version=$( echo ${_protontkg_true_version} | sed 's/rc[0-9]//g; s/.r/-/; s/.[^.]*//4g; s/\.[^.*-]*//2g;' )
-    if [[ "$_prefix_version" = *.*-* ]]; then
-      sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version\"|" "proton_tkg_$_protontkg_version/proton"
-    else
-      _prefix_version=$( echo "$_proton_branch" | egrep -o '[0-9].[0-9]' )
-      sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version-999\"|" "proton_tkg_$_protontkg_version/proton"
+    # Inject prefix version (valve only)
+    if [ "$_proton_is_valve" = "true" ]; then
+      _prefix_version=$( echo ${_protontkg_true_version} | sed 's/rc[0-9]//g; s/.r/-/; s/.[^.]*//4g; s/\.[^.*-]*//2g;' )
+      if [[ "$_prefix_version" = *.*-* ]]; then
+        sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version\"|" "proton_tkg_$_protontkg_version/proton"
+      else
+        _prefix_version=$( echo "$_proton_branch" | egrep -o '[0-9].[0-9]' )
+        sed -i -e "s|CURRENT_PREFIX_VERSION=\"TKG\"|CURRENT_PREFIX_VERSION=\"$_prefix_version-999\"|" "proton_tkg_$_protontkg_version/proton"
+      fi
     fi
 
     if [ "$_no_container" = "true" ]; then
